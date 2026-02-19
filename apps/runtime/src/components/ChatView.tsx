@@ -17,6 +17,7 @@ export function ChatView({ skill, models }: Props) {
   const [streamBuffer, setStreamBuffer] = useState("");
   const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? "");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const streamBufferRef = useRef("");
 
   useEffect(() => {
     startNewSession();
@@ -34,14 +35,19 @@ export function ChatView({ skill, models }: Props) {
       ({ payload }) => {
         if (payload.session_id !== currentSessionId) return;
         if (payload.done) {
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", content: payload.token, created_at: new Date().toISOString() },
-          ]);
+          const finalContent = streamBufferRef.current;
+          if (finalContent) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: finalContent, created_at: new Date().toISOString() },
+            ]);
+          }
+          streamBufferRef.current = "";
           setStreamBuffer("");
           setStreaming(false);
         } else {
-          setStreamBuffer((b) => b + payload.token);
+          streamBufferRef.current += payload.token;
+          setStreamBuffer(streamBufferRef.current);
         }
       }
     );
@@ -60,6 +66,7 @@ export function ChatView({ skill, models }: Props) {
     });
     setSessionId(id);
     setMessages([]);
+    streamBufferRef.current = "";
     setStreamBuffer("");
   }
 
@@ -69,6 +76,7 @@ export function ChatView({ skill, models }: Props) {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: msg, created_at: new Date().toISOString() }]);
     setStreaming(true);
+    streamBufferRef.current = "";
     setStreamBuffer("");
     try {
       await invoke("send_message", { sessionId, userMessage: msg });
