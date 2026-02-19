@@ -3,18 +3,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { ModelConfig } from "../types";
 
 const PROVIDER_PRESETS = [
-  { label: "— 快速选择 —", value: "" },
-  { label: "OpenAI", value: "openai", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini" },
-  { label: "Claude (Anthropic)", value: "anthropic", api_format: "anthropic", base_url: "https://api.anthropic.com/v1", model_name: "claude-3-5-haiku-20241022" },
-  { label: "MiniMax (OpenAI 兼容)", value: "minimax-oai", api_format: "openai", base_url: "https://api.minimax.io/v1", model_name: "MiniMax-M2.5" },
-  { label: "MiniMax (Anthropic 兼容)", value: "minimax-ant", api_format: "anthropic", base_url: "https://api.minimax.io/anthropic/v1", model_name: "MiniMax-M2.5" },
-  { label: "DeepSeek", value: "deepseek", api_format: "openai", base_url: "https://api.deepseek.com/v1", model_name: "deepseek-chat" },
-  { label: "Qwen (国际)", value: "qwen-intl", api_format: "openai", base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max" },
-  { label: "Qwen (国内)", value: "qwen-cn", api_format: "openai", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max" },
-  { label: "Moonshot / Kimi", value: "moonshot", api_format: "openai", base_url: "https://api.moonshot.ai/v1", model_name: "kimi-k2" },
-  { label: "Yi", value: "yi", api_format: "openai", base_url: "https://api.lingyiwanwu.com/v1", model_name: "yi-large" },
-  { label: "自定义", value: "custom" },
-] as const;
+  { label: "— 快速选择 —", value: "", models: [] as string[] },
+  { label: "OpenAI", value: "openai", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"] },
+  { label: "Claude (Anthropic)", value: "anthropic", api_format: "anthropic", base_url: "https://api.anthropic.com/v1", model_name: "claude-3-5-haiku-20241022", models: ["claude-sonnet-4-5-20250929", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022"] },
+  { label: "MiniMax (OpenAI 兼容)", value: "minimax-oai", api_format: "openai", base_url: "https://api.minimax.io/v1", model_name: "MiniMax-M2.5", models: ["MiniMax-M2.5", "MiniMax-M1", "MiniMax-Text-01"] },
+  { label: "MiniMax (Anthropic 兼容)", value: "minimax-ant", api_format: "anthropic", base_url: "https://api.minimax.io/anthropic/v1", model_name: "MiniMax-M2.5", models: ["MiniMax-M2.5", "MiniMax-M1", "MiniMax-Text-01"] },
+  { label: "DeepSeek", value: "deepseek", api_format: "openai", base_url: "https://api.deepseek.com/v1", model_name: "deepseek-chat", models: ["deepseek-chat", "deepseek-reasoner"] },
+  { label: "Qwen (国际)", value: "qwen-intl", api_format: "openai", base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max", models: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long", "qwen-vl-max", "qwen-vl-plus"] },
+  { label: "Qwen (国内)", value: "qwen-cn", api_format: "openai", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max", models: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long", "qwen-vl-max", "qwen-vl-plus"] },
+  { label: "Moonshot / Kimi", value: "moonshot", api_format: "openai", base_url: "https://api.moonshot.ai/v1", model_name: "kimi-k2", models: ["kimi-k2", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"] },
+  { label: "Yi", value: "yi", api_format: "openai", base_url: "https://api.lingyiwanwu.com/v1", model_name: "yi-large", models: ["yi-large", "yi-medium", "yi-spark"] },
+  { label: "自定义", value: "custom", models: [] as string[] },
+];
 
 interface Props {
   onClose: () => void;
@@ -32,6 +32,7 @@ export function SettingsView({ onClose }: Props) {
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
+  const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
 
   useEffect(() => { loadModels(); }, []);
 
@@ -87,13 +88,17 @@ export function SettingsView({ onClose }: Props) {
 
   function applyPreset(value: string) {
     const preset = PROVIDER_PRESETS.find((p) => p.value === value);
-    if (!preset || !("api_format" in preset)) return;
+    if (!preset || !preset.api_format) {
+      setModelSuggestions([]);
+      return;
+    }
     setForm((f) => ({
       ...f,
-      api_format: preset.api_format,
-      base_url: preset.base_url,
-      model_name: preset.model_name,
+      api_format: preset.api_format!,
+      base_url: preset.base_url!,
+      model_name: preset.model_name!,
     }));
+    setModelSuggestions(preset.models);
   }
 
   async function handleDelete(id: string) {
@@ -161,7 +166,14 @@ export function SettingsView({ onClose }: Props) {
         </div>
         <div>
           <label className={labelCls}>模型名称</label>
-          <input className={inputCls} value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} />
+          <input className={inputCls} list="model-suggestions" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} />
+          {modelSuggestions.length > 0 && (
+            <datalist id="model-suggestions">
+              {modelSuggestions.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          )}
         </div>
         <div>
           <label className={labelCls}>API Key</label>
