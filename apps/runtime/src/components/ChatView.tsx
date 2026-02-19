@@ -60,6 +60,7 @@ export function ChatView({ skill, models }: Props) {
   async function startNewSession() {
     const modelId = selectedModelId || models[0]?.id;
     if (!modelId) return;
+    setStreaming(false);
     const id = await invoke<string>("create_session", {
       skillId: skill.id,
       modelId,
@@ -81,11 +82,12 @@ export function ChatView({ skill, models }: Props) {
     try {
       await invoke("send_message", { sessionId, userMessage: msg });
     } catch (e) {
-      setStreaming(false);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "错误: " + String(e), created_at: new Date().toISOString() },
       ]);
+    } finally {
+      setStreaming(false);
     }
   }
 
