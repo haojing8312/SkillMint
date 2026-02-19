@@ -1,4 +1,3 @@
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
@@ -14,14 +13,6 @@ pub struct ModelConfig {
     pub is_default: bool,
 }
 
-fn keyring_entry(model_id: &str) -> keyring::Result<Entry> {
-    Entry::new("skillhub-runtime", &format!("model-{}", model_id))
-}
-
-pub fn get_api_key(model_id: &str) -> Option<String> {
-    keyring_entry(model_id).ok()?.get_password().ok()
-}
-
 #[tauri::command]
 pub async fn save_model_config(
     config: ModelConfig,
@@ -35,7 +26,7 @@ pub async fn save_model_config(
     };
 
     sqlx::query(
-        "INSERT OR REPLACE INTO model_configs (id, name, api_format, base_url, model_name, is_default) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT OR REPLACE INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key) VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&id)
     .bind(&config.name)
@@ -43,15 +34,16 @@ pub async fn save_model_config(
     .bind(&config.base_url)
     .bind(&config.model_name)
     .bind(config.is_default)
+    .bind(&api_key)
     .execute(&db.0)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("保存模型配置失败: {e}"))?;
 
-    if !api_key.is_empty() {
-        keyring_entry(&id)
-            .and_then(|e| e.set_password(&api_key))
-            .map_err(|e| e.to_string())?;
-    }
+    eprintln!("[models] 模型已保存: id={id}, name={}, api_key={}...{}",
+        config.name,
+        &api_key[..6.min(api_key.len())],
+        &api_key[api_key.len().saturating_sub(4)..]);
+
     Ok(())
 }
 
@@ -76,14 +68,13 @@ pub async fn delete_model_config(model_id: String, db: State<'_, DbState>) -> Re
         .execute(&db.0)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = keyring_entry(&model_id).and_then(|e| e.delete_credential());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn test_connection_cmd(config: ModelConfig, api_key: String) -> Result<bool, String> {
     if config.api_format == "anthropic" {
-        crate::adapters::anthropic::test_connection(&api_key, &config.model_name)
+        crate::adapters::anthropic::test_connection(&config.base_url, &api_key, &config.model_name)
             .await
             .map_err(|e| e.to_string())
     } else {

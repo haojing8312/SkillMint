@@ -57,11 +57,17 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             api_format TEXT NOT NULL,
             base_url TEXT NOT NULL,
             model_name TEXT NOT NULL,
-            is_default INTEGER DEFAULT 0
+            is_default INTEGER DEFAULT 0,
+            api_key TEXT NOT NULL DEFAULT ''
         )"
     )
     .execute(&pool)
     .await?;
+
+    // Migration: add api_key column for databases created before this column existed
+    let _ = sqlx::query("ALTER TABLE model_configs ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
 
     Ok(pool)
 }

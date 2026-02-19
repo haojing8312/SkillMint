@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::Utc;
 use super::skills::DbState;
-use super::models::get_api_key;
 use crate::adapters;
 
 #[derive(serde::Serialize, Clone)]
@@ -103,16 +102,18 @@ pub async fn send_message(
         .map(|(role, content)| json!({"role": role, "content": content}))
         .collect();
 
-    // Load model config
-    let (api_format, base_url, model_name) = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT api_format, base_url, model_name FROM model_configs WHERE id = ?"
+    // Load model config (including api_key from DB)
+    let (api_format, base_url, model_name, api_key) = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT api_format, base_url, model_name, api_key FROM model_configs WHERE id = ?"
     )
     .bind(&model_id)
     .fetch_one(&db.0)
     .await
     .map_err(|e| format!("模型配置不存在 (model_id={model_id}): {e}"))?;
 
-    let api_key = get_api_key(&model_id).ok_or("No API key found for this model")?;
+    if api_key.is_empty() {
+        return Err(format!("模型 API Key 为空，请在设置中重新配置 (model_id={model_id})"));
+    }
 
     // Stream tokens to frontend via Tauri event
     let app_clone = app.clone();
