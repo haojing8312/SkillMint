@@ -61,14 +61,18 @@ export function ChatView({ skill, models }: Props) {
     const modelId = selectedModelId || models[0]?.id;
     if (!modelId) return;
     setStreaming(false);
-    const id = await invoke<string>("create_session", {
-      skillId: skill.id,
-      modelId,
-    });
-    setSessionId(id);
-    setMessages([]);
-    streamBufferRef.current = "";
-    setStreamBuffer("");
+    try {
+      const id = await invoke<string>("create_session", {
+        skillId: skill.id,
+        modelId,
+      });
+      setSessionId(id);
+      setMessages([]);
+      streamBufferRef.current = "";
+      setStreamBuffer("");
+    } catch (e) {
+      console.error("创建会话失败:", e);
+    }
   }
 
   async function handleSend() {
