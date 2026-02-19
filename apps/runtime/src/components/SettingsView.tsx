@@ -2,6 +2,20 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ModelConfig } from "../types";
 
+const PROVIDER_PRESETS = [
+  { label: "— 快速选择 —", value: "" },
+  { label: "OpenAI", value: "openai", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini" },
+  { label: "Claude (Anthropic)", value: "anthropic", api_format: "anthropic", base_url: "https://api.anthropic.com/v1", model_name: "claude-3-5-haiku-20241022" },
+  { label: "MiniMax (OpenAI 兼容)", value: "minimax-oai", api_format: "openai", base_url: "https://api.minimax.io/v1", model_name: "MiniMax-M2.5" },
+  { label: "MiniMax (Anthropic 兼容)", value: "minimax-ant", api_format: "anthropic", base_url: "https://api.minimax.io/anthropic/v1", model_name: "MiniMax-M2.5" },
+  { label: "DeepSeek", value: "deepseek", api_format: "openai", base_url: "https://api.deepseek.com/v1", model_name: "deepseek-chat" },
+  { label: "Qwen (国际)", value: "qwen-intl", api_format: "openai", base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max" },
+  { label: "Qwen (国内)", value: "qwen-cn", api_format: "openai", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max" },
+  { label: "Moonshot / Kimi", value: "moonshot", api_format: "openai", base_url: "https://api.moonshot.ai/v1", model_name: "kimi-k2" },
+  { label: "Yi", value: "yi", api_format: "openai", base_url: "https://api.lingyiwanwu.com/v1", model_name: "yi-large" },
+  { label: "自定义", value: "custom" },
+] as const;
+
 interface Props {
   onClose: () => void;
 }
@@ -63,11 +77,23 @@ export function SettingsView({ onClose }: Props) {
         apiKey: form.api_key,
       });
       setTestResult(ok);
-    } catch {
+    } catch (e: unknown) {
+      setError(String(e));
       setTestResult(false);
     } finally {
       setTesting(false);
     }
+  }
+
+  function applyPreset(value: string) {
+    const preset = PROVIDER_PRESETS.find((p) => p.value === value);
+    if (!preset || !("api_format" in preset)) return;
+    setForm((f) => ({
+      ...f,
+      api_format: preset.api_format,
+      base_url: preset.base_url,
+      model_name: preset.model_name,
+    }));
   }
 
   async function handleDelete(id: string) {
@@ -106,6 +132,18 @@ export function SettingsView({ onClose }: Props) {
 
       <div className="bg-slate-800 rounded-lg p-4 space-y-3">
         <div className="text-xs font-medium text-slate-400 mb-2">添加模型</div>
+        <div>
+          <label className={labelCls}>快速选择 Provider</label>
+          <select
+            className={inputCls}
+            defaultValue=""
+            onChange={(e) => applyPreset(e.target.value)}
+          >
+            {PROVIDER_PRESETS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
         <div>
           <label className={labelCls}>名称</label>
           <input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
