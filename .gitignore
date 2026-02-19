@@ -5,3 +5,6 @@ target/
 *.skillpack
 *.key
 .env
+.DS_Store
+*.pdb
+*.ilk
