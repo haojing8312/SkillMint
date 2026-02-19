@@ -64,7 +64,7 @@ pub async fn send_message(
     .bind(&session_id)
     .fetch_one(&db.0)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("会话不存在 (session_id={session_id}): {e}"))?;
 
     // Load skill with pack_path for re-unpack
     let (manifest_json, username, pack_path) = sqlx::query_as::<_, (String, String, String)>(
@@ -73,7 +73,7 @@ pub async fn send_message(
     .bind(&skill_id)
     .fetch_one(&db.0)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("Skill 不存在 (skill_id={skill_id}): {e}"))?;
 
     // Re-unpack to get actual SKILL.md content as system prompt
     let system_prompt = match skillpack_rs::verify_and_unpack(&pack_path, &username) {
@@ -110,7 +110,7 @@ pub async fn send_message(
     .bind(&model_id)
     .fetch_one(&db.0)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("模型配置不存在 (model_id={model_id}): {e}"))?;
 
     let api_key = get_api_key(&model_id).ok_or("No API key found for this model")?;
 
@@ -121,6 +121,7 @@ pub async fn send_message(
 
     let result = if api_format == "anthropic" {
         adapters::anthropic::chat_stream(
+            &base_url,
             &api_key,
             &model_name,
             &system_prompt,

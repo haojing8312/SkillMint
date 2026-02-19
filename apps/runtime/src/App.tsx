@@ -45,7 +45,7 @@ export default function App() {
       />
       <div className="flex-1 overflow-hidden">
         {showSettings ? (
-          <SettingsView onClose={() => { setShowSettings(false); loadModels(); }} />
+          <SettingsView onClose={async () => { await loadModels(); setShowSettings(false); }} />
         ) : selectedSkill && models.length > 0 ? (
           <ChatView skill={selectedSkill} models={models} />
         ) : selectedSkill && models.length === 0 ? (
