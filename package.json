@@ -1,0 +1,13 @@
+{
+  "name": "skillhub",
+  "private": true,
+  "scripts": {
+    "studio": "pnpm --filter studio tauri dev",
+    "runtime": "pnpm --filter runtime tauri dev",
+    "build:studio": "pnpm --filter studio tauri build",
+    "build:runtime": "pnpm --filter runtime tauri build"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  }
+}
