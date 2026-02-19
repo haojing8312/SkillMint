@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Extract Slack browser tokens (xoxc + xoxd) for slackcli authentication.
+# Opens the Slack workspace in a browser and guides the user through extraction.
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <workspace-url>" >&2
+  echo "  Example: $0 https://your-workspace.slack.com" >&2
+  exit 1
+fi
+
+WORKSPACE_URL="$1"
+
+echo "=== Slack Browser Token Extraction ==="
+echo ""
+echo "This script helps you extract browser tokens for slackcli."
+echo "These tokens let you use Slack from the CLI without creating a Slack app."
+echo ""
+echo "Step 1: Open your Slack workspace in a browser:"
+echo "  $WORKSPACE_URL"
+echo ""
+echo "Step 2: Open DevTools (F12) -> Network tab"
+echo ""
+echo "Step 3: Refresh the page or send a message"
+echo ""
+echo "Step 4: Click any request to api.slack.com (e.g., client.boot, conversations.list)"
+echo ""
+echo "Step 5: From the Request Headers, find the Cookie header."
+echo "  Look for: d=xoxd-..."
+echo "  Copy the full xoxd value (starts with 'xoxd-', ends before the next ';')"
+echo ""
+echo "Step 6: From the Request Body (or Form Data), find:"
+echo "  token=xoxc-..."
+echo "  Copy the full xoxc value"
+echo ""
+
+read -rp "Paste your xoxc token: " XOXC
+if [[ ! "$XOXC" =~ ^xoxc- ]]; then
+  echo "Error: Token must start with 'xoxc-'" >&2
+  exit 1
+fi
+
+read -rp "Paste your xoxd token (URL-encoded is fine): " XOXD
+if [[ ! "$XOXD" =~ ^xoxd- ]]; then
+  echo "Error: Token must start with 'xoxd-'" >&2
+  exit 1
+fi
+
+echo ""
+echo "Authenticating with slackcli..."
+slackcli auth login-browser \
+  --xoxd="$XOXD" \
+  --xoxc="$XOXC" \
+  --workspace-url="$WORKSPACE_URL"
+
+echo ""
+echo "Verifying..."
+slackcli auth list
