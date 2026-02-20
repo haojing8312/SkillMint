@@ -1,3 +1,4 @@
+use super::tools::{GlobTool, GrepTool, ReadFileTool, WriteFileTool};
 use super::types::Tool;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -12,6 +13,15 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
         }
+    }
+
+    pub fn with_file_tools() -> Self {
+        let mut registry = Self::new();
+        registry.register(Arc::new(ReadFileTool));
+        registry.register(Arc::new(WriteFileTool));
+        registry.register(Arc::new(GlobTool));
+        registry.register(Arc::new(GrepTool));
+        registry
     }
 
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
