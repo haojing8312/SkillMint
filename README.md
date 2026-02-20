@@ -1,5 +1,7 @@
 # SkillMint
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange.svg)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://reactjs.org/)
