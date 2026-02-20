@@ -1,6 +1,7 @@
-mod db;
-mod commands;
+pub mod agent;
 mod adapters;
+mod commands;
+mod db;
 
 use commands::skills::DbState;
 use tauri::Manager;
