@@ -34,7 +34,13 @@ export function SettingsView({ onClose }: Props) {
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
 
-  useEffect(() => { loadModels(); }, []);
+  // MCP 服务器管理
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [mcpServers, setMcpServers] = useState<any[]>([]);
+  const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "" });
+  const [mcpError, setMcpError] = useState("");
+
+  useEffect(() => { loadModels(); loadMcpServers(); }, []);
 
   async function loadModels() {
     const list = await invoke<ModelConfig[]>("list_model_configs");
@@ -104,6 +110,38 @@ export function SettingsView({ onClose }: Props) {
   async function handleDelete(id: string) {
     await invoke("delete_model_config", { modelId: id });
     loadModels();
+  }
+
+  async function loadMcpServers() {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const list = await invoke<any[]>("list_mcp_servers");
+      setMcpServers(list);
+    } catch (e) {
+      console.error("加载 MCP 服务器失败:", e);
+    }
+  }
+
+  async function handleAddMcp() {
+    setMcpError("");
+    try {
+      const args = mcpForm.args.split(/\s+/).filter(Boolean);
+      await invoke("add_mcp_server", {
+        name: mcpForm.name,
+        command: mcpForm.command,
+        args,
+        env: {},
+      });
+      setMcpForm({ name: "", command: "", args: "" });
+      loadMcpServers();
+    } catch (e) {
+      setMcpError(String(e));
+    }
+  }
+
+  async function handleRemoveMcp(id: string) {
+    await invoke("remove_mcp_server", { id });
+    loadMcpServers();
   }
 
   const inputCls = "w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500";
@@ -200,6 +238,48 @@ export function SettingsView({ onClose }: Props) {
             保存
           </button>
         </div>
+      </div>
+
+      {/* MCP 服务器管理 */}
+      <div className="bg-slate-800 rounded-lg p-4 space-y-3 mt-6">
+        <div className="text-xs font-medium text-slate-400 mb-2">MCP 服务器</div>
+
+        {mcpServers.length > 0 && (
+          <div className="space-y-2 mb-3">
+            {mcpServers.map((s) => (
+              <div key={s.id} className="flex items-center justify-between bg-slate-700 rounded px-3 py-2 text-sm">
+                <div>
+                  <span className="font-medium">{s.name}</span>
+                  <span className="text-slate-400 ml-2 text-xs">{s.command} {s.args?.join(" ")}</span>
+                </div>
+                <button onClick={() => handleRemoveMcp(s.id)} className="text-red-400 hover:text-red-300 text-xs">
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div>
+          <label className={labelCls}>名称</label>
+          <input className={inputCls} placeholder="例: filesystem" value={mcpForm.name} onChange={(e) => setMcpForm({ ...mcpForm, name: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>命令</label>
+          <input className={inputCls} placeholder="例: npx" value={mcpForm.command} onChange={(e) => setMcpForm({ ...mcpForm, command: e.target.value })} />
+        </div>
+        <div>
+          <label className={labelCls}>参数（空格分隔）</label>
+          <input className={inputCls} placeholder="例: @anthropic/mcp-server-filesystem /tmp" value={mcpForm.args} onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })} />
+        </div>
+        {mcpError && <div className="text-red-400 text-xs">{mcpError}</div>}
+        <button
+          onClick={handleAddMcp}
+          disabled={!mcpForm.name || !mcpForm.command}
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-sm py-1.5 rounded transition-colors"
+        >
+          添加 MCP 服务器
+        </button>
       </div>
     </div>
   );
