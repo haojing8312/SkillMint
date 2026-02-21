@@ -8,29 +8,37 @@ import { ToolCallCard } from "./ToolCallCard";
 interface Props {
   skill: SkillManifest;
   models: ModelConfig[];
+  sessionId: string;
+  onSessionUpdate?: () => void;
 }
 
-export function ChatView({ skill, models }: Props) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
+export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
-  const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? "");
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
   const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
 
+  // sessionId 变化时加载历史消息
   useEffect(() => {
-    startNewSession();
+    loadMessages(sessionId);
+    // 切换会话时重置流式状态
+    setStreaming(false);
+    setStreamBuffer("");
+    streamBufferRef.current = "";
+    setCurrentToolCalls([]);
+    currentToolCallsRef.current = [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skill.id]);
+  }, [sessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
 
+  // stream-token 事件监听（依赖 sessionId prop）
   useEffect(() => {
     let currentSessionId: string | null = sessionId;
     const unlistenPromise = listen<{ session_id: string; token: string; done: boolean }>(
@@ -39,7 +47,10 @@ export function ChatView({ skill, models }: Props) {
         if (payload.session_id !== currentSessionId) return;
         if (payload.done) {
           const finalContent = streamBufferRef.current;
-          const toolCalls = currentToolCallsRef.current.length > 0 ? [...currentToolCallsRef.current] : undefined;
+          const toolCalls =
+            currentToolCallsRef.current.length > 0
+              ? [...currentToolCallsRef.current]
+              : undefined;
           if (finalContent || toolCalls) {
             setMessages((prev) => [
               ...prev,
@@ -68,6 +79,7 @@ export function ChatView({ skill, models }: Props) {
     };
   }, [sessionId]);
 
+  // tool-call-event 事件监听（依赖 sessionId prop）
   useEffect(() => {
     const unlistenPromise = listen<{
       session_id: string;
@@ -98,7 +110,9 @@ export function ChatView({ skill, models }: Props) {
               ? {
                   ...tc,
                   output: payload.tool_output ?? undefined,
-                  status: (payload.status === "completed" ? "completed" : "error") as "completed" | "error",
+                  status: (payload.status === "completed"
+                    ? "completed"
+                    : "error") as "completed" | "error",
                 }
               : tc
           );
@@ -112,21 +126,13 @@ export function ChatView({ skill, models }: Props) {
     };
   }, [sessionId]);
 
-  async function startNewSession() {
-    const modelId = selectedModelId || models[0]?.id;
-    if (!modelId) return;
-    setStreaming(false);
+  async function loadMessages(sid: string) {
     try {
-      const id = await invoke<string>("create_session", {
-        skillId: skill.id,
-        modelId,
-      });
-      setSessionId(id);
-      setMessages([]);
-      streamBufferRef.current = "";
-      setStreamBuffer("");
+      const list = await invoke<Message[]>("get_messages", { sessionId: sid });
+      setMessages(list);
     } catch (e) {
-      console.error("创建会话失败:", e);
+      console.error("加载历史消息失败:", e);
+      setMessages([]);
     }
   }
 
@@ -134,7 +140,10 @@ export function ChatView({ skill, models }: Props) {
     if (!input.trim() || streaming || !sessionId) return;
     const msg = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: msg, created_at: new Date().toISOString() }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: msg, created_at: new Date().toISOString() },
+    ]);
     setStreaming(true);
     currentToolCallsRef.current = [];
     setCurrentToolCalls([]);
@@ -142,42 +151,38 @@ export function ChatView({ skill, models }: Props) {
     setStreamBuffer("");
     try {
       await invoke("send_message", { sessionId, userMessage: msg });
+      onSessionUpdate?.();
     } catch (e) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "错误: " + String(e), created_at: new Date().toISOString() },
+        {
+          role: "assistant",
+          content: "错误: " + String(e),
+          created_at: new Date().toISOString(),
+        },
       ]);
     } finally {
       setStreaming(false);
     }
   }
 
+  // 从 models 查找当前会话的模型名称（用于头部展示）
+  const currentModel = models[0];
+
   return (
     <div className="flex flex-col h-full">
+      {/* 头部：简化，仅显示 skill 名称和模型信息 */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-800">
         <div>
           <span className="font-medium">{skill.name}</span>
           <span className="text-xs text-slate-400 ml-2">v{skill.version}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={selectedModelId}
-            onChange={(e) => setSelectedModelId(e.target.value)}
-            className="bg-slate-700 text-sm rounded px-2 py-1 border border-slate-600 focus:outline-none"
-          >
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-          <button
-            onClick={startNewSession}
-            className="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded transition-colors"
-          >
-            新建会话
-          </button>
-        </div>
+        {currentModel && (
+          <span className="text-xs text-slate-400">{currentModel.name}</span>
+        )}
       </div>
 
+      {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map((m, i) => (
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
@@ -204,6 +209,7 @@ export function ChatView({ skill, models }: Props) {
             </div>
           </div>
         ))}
+        {/* 流式输出区域 */}
         {(currentToolCalls.length > 0 || streamBuffer) && (
           <div className="flex justify-start">
             <div className="max-w-2xl bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
@@ -218,6 +224,7 @@ export function ChatView({ skill, models }: Props) {
         <div ref={bottomRef} />
       </div>
 
+      {/* 输入区域 */}
       <div className="px-6 py-4 border-t border-slate-700 bg-slate-800">
         <div className="flex gap-2">
           <textarea
