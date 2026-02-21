@@ -58,6 +58,25 @@ pub async fn send_message(
     .await
     .map_err(|e| e.to_string())?;
 
+    // 如果是第一条消息，用消息前 20 个字符更新会话标题
+    let msg_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM messages WHERE session_id = ?"
+    )
+    .bind(&session_id)
+    .fetch_one(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if msg_count.0 <= 1 {
+        let title: String = user_message.chars().take(20).collect();
+        sqlx::query("UPDATE sessions SET title = ? WHERE id = ?")
+            .bind(&title)
+            .bind(&session_id)
+            .execute(&db.0)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     // 加载会话信息
     let (skill_id, model_id) = sqlx::query_as::<_, (String, String)>(
         "SELECT skill_id, model_id FROM sessions WHERE id = ?"
@@ -148,19 +167,51 @@ pub async fn send_message(
         done: true,
     });
 
-    // 保存所有新消息到数据库
-    for msg in final_messages.iter().skip(history.len()) {
+    // 从新消息中提取最终文本和 tool_calls，只保存一条 assistant 消息
+    let new_messages: Vec<&Value> = final_messages.iter().skip(history.len()).collect();
+
+    // 收集所有 tool_calls（来自 tool_use、tool_result、tool 角色的消息）
+    let mut tool_calls: Vec<Value> = Vec::new();
+    let mut final_text = String::new();
+
+    for msg in &new_messages {
+        let role = msg["role"].as_str().unwrap_or("");
+        match role {
+            "tool_use" | "tool_result" | "tool" => {
+                // 中间工具消息：收集工具调用信息
+                tool_calls.push((*msg).clone());
+            }
+            "assistant" => {
+                // 取最后一条 assistant 纯文本消息
+                if let Some(text) = msg["content"].as_str() {
+                    final_text = text.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 组装最终 content：有 tool_calls 时包裹为 JSON 对象，否则纯文本
+    let content = if !tool_calls.is_empty() {
+        serde_json::to_string(&json!({
+            "text": final_text,
+            "tool_calls": tool_calls,
+        }))
+        .unwrap_or(final_text.clone())
+    } else {
+        final_text.clone()
+    };
+
+    // 只有存在 assistant 回复时才保存
+    if !final_text.is_empty() || !tool_calls.is_empty() {
         let msg_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
-        let role = msg["role"].as_str().unwrap_or("assistant");
-        let content = serde_json::to_string(&msg["content"]).unwrap_or_default();
-
         sqlx::query(
             "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)"
         )
         .bind(&msg_id)
         .bind(&session_id)
-        .bind(role)
+        .bind("assistant")
         .bind(&content)
         .bind(&now)
         .execute(&db.0)
