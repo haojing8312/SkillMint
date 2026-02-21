@@ -3,65 +3,6 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use futures_util::StreamExt;
 
-pub async fn chat_stream(
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    system_prompt: &str,
-    messages: Vec<Value>,
-    mut on_token: impl FnMut(String) + Send,
-) -> Result<()> {
-    let client = Client::new();
-    let mut all_messages = vec![json!({"role": "system", "content": system_prompt})];
-    all_messages.extend(messages);
-
-    let body = json!({
-        "model": model,
-        "messages": all_messages,
-        "stream": true
-    });
-
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let resp = client
-        .post(&url)
-        .bearer_auth(api_key)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let text = resp.text().await?;
-        return Err(anyhow!("API error: {text}"));
-    }
-
-    let mut stream = resp.bytes_stream();
-    let mut in_think = false;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        let text = String::from_utf8_lossy(&chunk);
-        for line in text.lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                if data.trim() == "[DONE]" { break; }
-                if let Ok(v) = serde_json::from_str::<Value>(data) {
-                    let delta = &v["choices"][0]["delta"];
-                    // Skip DeepSeek reasoning_content tokens entirely
-                    if delta["reasoning_content"].as_str().map(|s| !s.is_empty()).unwrap_or(false) {
-                        continue;
-                    }
-                    if let Some(token) = delta["content"].as_str() {
-                        let filtered = filter_thinking(token, &mut in_think);
-                        if !filtered.is_empty() {
-                            on_token(filtered);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Strip <think>…</think> spans from a streaming token chunk.
 /// `in_think` carries state across chunk boundaries.
 fn filter_thinking(input: &str, in_think: &mut bool) -> String {
