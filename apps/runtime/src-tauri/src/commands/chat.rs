@@ -4,7 +4,6 @@ use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 use super::skills::DbState;
-use crate::adapters;
 use crate::agent::AgentExecutor;
 
 #[derive(serde::Serialize, Clone)]
@@ -41,7 +40,6 @@ pub async fn send_message(
     app: AppHandle,
     session_id: String,
     user_message: String,
-    enable_tools: bool,
     db: State<'_, DbState>,
     agent_executor: State<'_, Arc<AgentExecutor>>,
 ) -> Result<(), String> {
@@ -119,117 +117,50 @@ pub async fn send_message(
         return Err(format!("模型 API Key 为空，请在设置中重新配置 (model_id={model_id})"));
     }
 
-    if enable_tools {
-        // Agent 模式：使用 AgentExecutor 的 ReAct 循环
-        let app_clone = app.clone();
-        let session_id_clone = session_id.clone();
-        let final_messages = agent_executor
-            .execute_turn(
-                &api_format,
-                &base_url,
-                &api_key,
-                &model_name,
-                &system_prompt,
-                messages,
-                move |token: String| {
-                    let _ = app_clone.emit("stream-token", StreamToken {
-                        session_id: session_id_clone.clone(),
-                        token,
-                        done: false,
-                    });
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+    // 始终走 Agent 模式
+    let app_clone = app.clone();
+    let session_id_clone = session_id.clone();
+    let final_messages = agent_executor
+        .execute_turn(
+            &api_format,
+            &base_url,
+            &api_key,
+            &model_name,
+            &system_prompt,
+            messages,
+            move |token: String| {
+                let _ = app_clone.emit("stream-token", StreamToken {
+                    session_id: session_id_clone.clone(),
+                    token,
+                    done: false,
+                });
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
-        // 发送结束事件
-        let _ = app.emit("stream-token", StreamToken {
-            session_id: session_id.clone(),
-            token: String::new(),
-            done: true,
-        });
+    // 发送结束事件
+    let _ = app.emit("stream-token", StreamToken {
+        session_id: session_id.clone(),
+        token: String::new(),
+        done: true,
+    });
 
-        // 保存所有新消息（工具调用和结果）到数据库
-        for msg in final_messages.iter().skip(history.len()) {
-            let msg_id = Uuid::new_v4().to_string();
-            let now = Utc::now().to_rfc3339();
-            let role = msg["role"].as_str().unwrap_or("assistant");
-            let content = serde_json::to_string(&msg["content"]).unwrap_or_default();
+    // 保存所有新消息到数据库
+    for msg in final_messages.iter().skip(history.len()) {
+        let msg_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        let role = msg["role"].as_str().unwrap_or("assistant");
+        let content = serde_json::to_string(&msg["content"]).unwrap_or_default();
 
-            sqlx::query(
-                "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)"
-            )
-            .bind(&msg_id)
-            .bind(&session_id)
-            .bind(role)
-            .bind(&content)
-            .bind(&now)
-            .execute(&db.0)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-    } else {
-        // 普通聊天模式（不使用工具）
-        let app_clone = app.clone();
-        let session_id_clone = session_id.clone();
-        let mut full_response = String::new();
-
-        let result = if api_format == "anthropic" {
-            adapters::anthropic::chat_stream(
-                &base_url,
-                &api_key,
-                &model_name,
-                &system_prompt,
-                messages,
-                |token: String| {
-                    full_response.push_str(&token);
-                    let _ = app_clone.emit("stream-token", StreamToken {
-                        session_id: session_id_clone.clone(),
-                        token,
-                        done: false,
-                    });
-                },
-            ).await
-        } else {
-            adapters::openai::chat_stream(
-                &base_url,
-                &api_key,
-                &model_name,
-                &system_prompt,
-                messages,
-                |token: String| {
-                    full_response.push_str(&token);
-                    let _ = app_clone.emit("stream-token", StreamToken {
-                        session_id: session_id_clone.clone(),
-                        token,
-                        done: false,
-                    });
-                },
-            ).await
-        };
-
-        // 发送结束事件
-        let _ = app.emit("stream-token", StreamToken {
-            session_id: session_id.clone(),
-            token: String::new(),
-            done: true,
-        });
-
-        if let Err(e) = result {
-            return Err(e.to_string());
-        }
-
-        // 保存助手消息
-        let asst_id = Uuid::new_v4().to_string();
-        let now2 = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)"
         )
-        .bind(&asst_id)
+        .bind(&msg_id)
         .bind(&session_id)
-        .bind("assistant")
-        .bind(&full_response)
-        .bind(&now2)
+        .bind(role)
+        .bind(&content)
+        .bind(&now)
         .execute(&db.0)
         .await
         .map_err(|e| e.to_string())?;
