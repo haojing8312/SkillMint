@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
-import { SkillManifest, ModelConfig, Message } from "../types";
+import { SkillManifest, ModelConfig, Message, ToolCallInfo } from "../types";
+import { ToolCallCard } from "./ToolCallCard";
 
 interface Props {
   skill: SkillManifest;
@@ -16,8 +17,10 @@ export function ChatView({ skill, models }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [selectedModelId, setSelectedModelId] = useState(models[0]?.id ?? "");
+  const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
+  const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
 
   useEffect(() => {
     startNewSession();
@@ -36,12 +39,20 @@ export function ChatView({ skill, models }: Props) {
         if (payload.session_id !== currentSessionId) return;
         if (payload.done) {
           const finalContent = streamBufferRef.current;
-          if (finalContent) {
+          const toolCalls = currentToolCallsRef.current.length > 0 ? [...currentToolCallsRef.current] : undefined;
+          if (finalContent || toolCalls) {
             setMessages((prev) => [
               ...prev,
-              { role: "assistant", content: finalContent, created_at: new Date().toISOString() },
+              {
+                role: "assistant",
+                content: finalContent,
+                created_at: new Date().toISOString(),
+                toolCalls,
+              },
             ]);
           }
+          currentToolCallsRef.current = [];
+          setCurrentToolCalls([]);
           streamBufferRef.current = "";
           setStreamBuffer("");
           setStreaming(false);
@@ -53,6 +64,50 @@ export function ChatView({ skill, models }: Props) {
     );
     return () => {
       currentSessionId = null;
+      unlistenPromise.then((fn) => fn());
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    const unlistenPromise = listen<{
+      session_id: string;
+      tool_name: string;
+      tool_input: Record<string, unknown>;
+      tool_output: string | null;
+      status: string;
+    }>("tool-call-event", ({ payload }) => {
+      if (payload.session_id !== sessionId) return;
+      if (payload.status === "started") {
+        setCurrentToolCalls((prev) => {
+          const next = [
+            ...prev,
+            {
+              id: `${payload.tool_name}-${Date.now()}`,
+              name: payload.tool_name,
+              input: payload.tool_input,
+              status: "running" as const,
+            },
+          ];
+          currentToolCallsRef.current = next;
+          return next;
+        });
+      } else {
+        setCurrentToolCalls((prev) => {
+          const next = prev.map((tc) =>
+            tc.name === payload.tool_name && tc.status === "running"
+              ? {
+                  ...tc,
+                  output: payload.tool_output ?? undefined,
+                  status: (payload.status === "completed" ? "completed" : "error") as "completed" | "error",
+                }
+              : tc
+          );
+          currentToolCallsRef.current = next;
+          return next;
+        });
+      }
+    });
+    return () => {
       unlistenPromise.then((fn) => fn());
     };
   }, [sessionId]);
@@ -81,6 +136,8 @@ export function ChatView({ skill, models }: Props) {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: msg, created_at: new Date().toISOString() }]);
     setStreaming(true);
+    currentToolCallsRef.current = [];
+    setCurrentToolCalls([]);
     streamBufferRef.current = "";
     setStreamBuffer("");
     try {
@@ -132,6 +189,13 @@ export function ChatView({ skill, models }: Props) {
                   : "bg-slate-700 text-slate-100")
               }
             >
+              {m.role === "assistant" && m.toolCalls && (
+                <div className="mb-2">
+                  {m.toolCalls.map((tc) => (
+                    <ToolCallCard key={tc.id} toolCall={tc} />
+                  ))}
+                </div>
+              )}
               {m.role === "assistant" ? (
                 <ReactMarkdown>{m.content}</ReactMarkdown>
               ) : (
@@ -140,10 +204,13 @@ export function ChatView({ skill, models }: Props) {
             </div>
           </div>
         ))}
-        {streamBuffer && (
+        {(currentToolCalls.length > 0 || streamBuffer) && (
           <div className="flex justify-start">
             <div className="max-w-2xl bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
-              <ReactMarkdown>{streamBuffer}</ReactMarkdown>
+              {currentToolCalls.map((tc) => (
+                <ToolCallCard key={tc.id} toolCall={tc} />
+              ))}
+              {streamBuffer && <ReactMarkdown>{streamBuffer}</ReactMarkdown>}
               <span className="animate-pulse">|</span>
             </div>
           </div>
