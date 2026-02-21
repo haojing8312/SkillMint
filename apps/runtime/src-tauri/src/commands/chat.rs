@@ -2,8 +2,10 @@ use tauri::{AppHandle, Emitter, State};
 use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::Utc;
+use std::sync::Arc;
 use super::skills::DbState;
 use crate::adapters;
+use crate::agent::AgentExecutor;
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -39,9 +41,11 @@ pub async fn send_message(
     app: AppHandle,
     session_id: String,
     user_message: String,
+    enable_tools: bool,
     db: State<'_, DbState>,
+    agent_executor: State<'_, Arc<AgentExecutor>>,
 ) -> Result<(), String> {
-    // Save user message
+    // 保存用户消息
     let msg_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
@@ -56,7 +60,7 @@ pub async fn send_message(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Load session info
+    // 加载会话信息
     let (skill_id, model_id) = sqlx::query_as::<_, (String, String)>(
         "SELECT skill_id, model_id FROM sessions WHERE id = ?"
     )
@@ -65,7 +69,7 @@ pub async fn send_message(
     .await
     .map_err(|e| format!("会话不存在 (session_id={session_id}): {e}"))?;
 
-    // Load skill with pack_path for re-unpack
+    // 加载 Skill 信息（含 pack_path 用于重新解包）
     let (manifest_json, username, pack_path) = sqlx::query_as::<_, (String, String, String)>(
         "SELECT manifest, username, pack_path FROM installed_skills WHERE id = ?"
     )
@@ -74,7 +78,7 @@ pub async fn send_message(
     .await
     .map_err(|e| format!("Skill 不存在 (skill_id={skill_id}): {e}"))?;
 
-    // Re-unpack to get actual SKILL.md content as system prompt
+    // 重新解包获取 SKILL.md 内容作为 system prompt
     let system_prompt = match skillpack_rs::verify_and_unpack(&pack_path, &username) {
         Ok(unpacked) => {
             String::from_utf8_lossy(
@@ -82,14 +86,14 @@ pub async fn send_message(
             ).to_string()
         }
         Err(_) => {
-            // Fallback to manifest description if re-unpack fails
+            // 解包失败时回退到 manifest 描述
             let manifest: skillpack_rs::SkillManifest = serde_json::from_str(&manifest_json)
                 .map_err(|e| e.to_string())?;
             manifest.description
         }
     };
 
-    // Load message history
+    // 加载消息历史
     let history = sqlx::query_as::<_, (String, String)>(
         "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC"
     )
@@ -102,7 +106,7 @@ pub async fn send_message(
         .map(|(role, content)| json!({"role": role, "content": content}))
         .collect();
 
-    // Load model config (including api_key from DB)
+    // 加载模型配置（含 api_key）
     let (api_format, base_url, model_name, api_key) = sqlx::query_as::<_, (String, String, String, String)>(
         "SELECT api_format, base_url, model_name, api_key FROM model_configs WHERE id = ?"
     )
@@ -115,70 +119,121 @@ pub async fn send_message(
         return Err(format!("模型 API Key 为空，请在设置中重新配置 (model_id={model_id})"));
     }
 
-    // Stream tokens to frontend via Tauri event
-    let app_clone = app.clone();
-    let session_id_clone = session_id.clone();
-    let mut full_response = String::new();
+    if enable_tools {
+        // Agent 模式：使用 AgentExecutor 的 ReAct 循环
+        let app_clone = app.clone();
+        let session_id_clone = session_id.clone();
+        let final_messages = agent_executor
+            .execute_turn(
+                &api_format,
+                &base_url,
+                &api_key,
+                &model_name,
+                &system_prompt,
+                messages,
+                move |token: String| {
+                    let _ = app_clone.emit("stream-token", StreamToken {
+                        session_id: session_id_clone.clone(),
+                        token,
+                        done: false,
+                    });
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
-    let result = if api_format == "anthropic" {
-        adapters::anthropic::chat_stream(
-            &base_url,
-            &api_key,
-            &model_name,
-            &system_prompt,
-            messages,
-            |token: String| {
-                full_response.push_str(&token);
-                let _ = app_clone.emit("stream-token", StreamToken {
-                    session_id: session_id_clone.clone(),
-                    token,
-                    done: false,
-                });
-            },
-        ).await
+        // 发送结束事件
+        let _ = app.emit("stream-token", StreamToken {
+            session_id: session_id.clone(),
+            token: String::new(),
+            done: true,
+        });
+
+        // 保存所有新消息（工具调用和结果）到数据库
+        for msg in final_messages.iter().skip(history.len()) {
+            let msg_id = Uuid::new_v4().to_string();
+            let now = Utc::now().to_rfc3339();
+            let role = msg["role"].as_str().unwrap_or("assistant");
+            let content = serde_json::to_string(&msg["content"]).unwrap_or_default();
+
+            sqlx::query(
+                "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)"
+            )
+            .bind(&msg_id)
+            .bind(&session_id)
+            .bind(role)
+            .bind(&content)
+            .bind(&now)
+            .execute(&db.0)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
     } else {
-        adapters::openai::chat_stream(
-            &base_url,
-            &api_key,
-            &model_name,
-            &system_prompt,
-            messages,
-            |token: String| {
-                full_response.push_str(&token);
-                let _ = app_clone.emit("stream-token", StreamToken {
-                    session_id: session_id_clone.clone(),
-                    token,
-                    done: false,
-                });
-            },
-        ).await
-    };
+        // 普通聊天模式（不使用工具）
+        let app_clone = app.clone();
+        let session_id_clone = session_id.clone();
+        let mut full_response = String::new();
 
-    // Emit done event
-    let _ = app.emit("stream-token", StreamToken {
-        session_id: session_id.clone(),
-        token: String::new(),
-        done: true,
-    });
+        let result = if api_format == "anthropic" {
+            adapters::anthropic::chat_stream(
+                &base_url,
+                &api_key,
+                &model_name,
+                &system_prompt,
+                messages,
+                |token: String| {
+                    full_response.push_str(&token);
+                    let _ = app_clone.emit("stream-token", StreamToken {
+                        session_id: session_id_clone.clone(),
+                        token,
+                        done: false,
+                    });
+                },
+            ).await
+        } else {
+            adapters::openai::chat_stream(
+                &base_url,
+                &api_key,
+                &model_name,
+                &system_prompt,
+                messages,
+                |token: String| {
+                    full_response.push_str(&token);
+                    let _ = app_clone.emit("stream-token", StreamToken {
+                        session_id: session_id_clone.clone(),
+                        token,
+                        done: false,
+                    });
+                },
+            ).await
+        };
 
-    if let Err(e) = result {
-        return Err(e.to_string());
+        // 发送结束事件
+        let _ = app.emit("stream-token", StreamToken {
+            session_id: session_id.clone(),
+            token: String::new(),
+            done: true,
+        });
+
+        if let Err(e) = result {
+            return Err(e.to_string());
+        }
+
+        // 保存助手消息
+        let asst_id = Uuid::new_v4().to_string();
+        let now2 = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(&asst_id)
+        .bind(&session_id)
+        .bind("assistant")
+        .bind(&full_response)
+        .bind(&now2)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
     }
-
-    // Save assistant message
-    let asst_id = Uuid::new_v4().to_string();
-    let now2 = Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)"
-    )
-    .bind(&asst_id)
-    .bind(&session_id)
-    .bind("assistant")
-    .bind(&full_response)
-    .bind(&now2)
-    .execute(&db.0)
-    .await
-    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
