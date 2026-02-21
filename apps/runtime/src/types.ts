@@ -23,4 +23,13 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+  toolCalls?: ToolCallInfo[];
+}
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  output?: string;
+  status: "running" | "completed" | "error";
 }
