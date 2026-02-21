@@ -22,6 +22,8 @@ async fn test_openai_tool_calling_executor_branch() {
             "You are a helpful assistant.",
             messages,
             |_| {},
+            None,
+            None,
         )
         .await;
 
@@ -56,6 +58,8 @@ async fn test_openai_tool_calling_real() {
             |token| {
                 eprint!("{}", token);
             },
+            None,
+            None,
         )
         .await;
 

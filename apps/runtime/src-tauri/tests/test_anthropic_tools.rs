@@ -21,6 +21,8 @@ async fn test_anthropic_tool_parsing() {
             "You are a helpful assistant.",
             messages,
             |_token| {},
+            None,
+            None,
         )
         .await;
 
@@ -44,6 +46,8 @@ async fn test_anthropic_tool_parsing_network_error() {
             "You are a helpful assistant.",
             messages,
             |_token| {},
+            None,
+            None,
         )
         .await;
 

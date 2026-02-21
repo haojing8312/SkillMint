@@ -4,6 +4,16 @@ use crate::adapters;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct ToolCallEvent {
+    pub session_id: String,
+    pub tool_name: String,
+    pub tool_input: Value,
+    pub tool_output: Option<String>,
+    pub status: String, // "started" | "completed" | "error"
+}
 
 pub struct AgentExecutor {
     registry: Arc<ToolRegistry>,
@@ -34,6 +44,8 @@ impl AgentExecutor {
         system_prompt: &str,
         mut messages: Vec<Value>,
         on_token: impl Fn(String) + Send + Clone,
+        app_handle: Option<&AppHandle>,
+        session_id: Option<&str>,
     ) -> Result<Vec<Value>> {
         let mut iteration = 0;
 
@@ -93,6 +105,17 @@ impl AgentExecutor {
                     for call in &tool_calls {
                         eprintln!("[agent] Calling tool: {}", call.name);
 
+                        // 发送工具开始事件
+                        if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                            let _ = app.emit("tool-call-event", ToolCallEvent {
+                                session_id: sid.to_string(),
+                                tool_name: call.name.clone(),
+                                tool_input: call.input.clone(),
+                                tool_output: None,
+                                status: "started".to_string(),
+                            });
+                        }
+
                         let result = match self.registry.get(&call.name) {
                             Some(tool) => match tool.execute(call.input.clone()) {
                                 Ok(output) => output,
@@ -100,6 +123,17 @@ impl AgentExecutor {
                             },
                             None => format!("工具不存在: {}", call.name),
                         };
+
+                        // 发送工具完成事件
+                        if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                            let _ = app.emit("tool-call-event", ToolCallEvent {
+                                session_id: sid.to_string(),
+                                tool_name: call.name.clone(),
+                                tool_input: call.input.clone(),
+                                tool_output: Some(result.clone()),
+                                status: "completed".to_string(),
+                            });
+                        }
 
                         tool_results.push(ToolResult {
                             tool_use_id: call.id.clone(),

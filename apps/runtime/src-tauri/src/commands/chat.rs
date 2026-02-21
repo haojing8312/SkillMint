@@ -135,6 +135,8 @@ pub async fn send_message(
                     done: false,
                 });
             },
+            Some(&app),
+            Some(&session_id),
         )
         .await
         .map_err(|e| e.to_string())?;
