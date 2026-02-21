@@ -236,6 +236,22 @@ pub async fn get_messages(
     .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|(role, content, created_at)| {
+        // 对 assistant 消息尝试解析结构化 content
+        if role == "assistant" {
+            if let Ok(parsed) = serde_json::from_str::<Value>(content) {
+                if let Some(text) = parsed.get("text") {
+                    // 包含 text 字段，说明是带 tool_calls 的结构化消息
+                    let tool_calls = parsed.get("tool_calls").cloned().unwrap_or(Value::Null);
+                    return json!({
+                        "role": role,
+                        "content": text,
+                        "created_at": created_at,
+                        "tool_calls": tool_calls,
+                    });
+                }
+            }
+        }
+        // 其他情况直接返回原始 content
         json!({"role": role, "content": content, "created_at": created_at})
     }).collect())
 }
