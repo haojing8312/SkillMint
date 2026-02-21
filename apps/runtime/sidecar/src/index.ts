@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
-import { BrowserController } from './browser';
-import type { ApiResponse } from './types';
+import { BrowserController } from './browser.js';
+import { MCPManager } from './mcp.js';
+import type { ApiResponse } from './types.js';
 
 const app = new Hono();
 const browser = new BrowserController();
+const mcp = new MCPManager();
 
 app.use('/*', cors());
 
@@ -72,12 +74,53 @@ app.post('/api/browser/close', async (c) => {
   }
 });
 
+// MCP endpoints
+app.post('/api/mcp/add-server', async (c) => {
+  try {
+    const { name, command, args, env } = await c.req.json();
+    await mcp.addServer(name, { command, args, env });
+    return c.json({ output: `MCP 服务器 ${name} 已添加` } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+app.post('/api/mcp/list-servers', async (c) => {
+  try {
+    const servers = mcp.listServers();
+    return c.json({ output: JSON.stringify(servers) } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+app.post('/api/mcp/call-tool', async (c) => {
+  try {
+    const { server_name, tool_name, arguments: args } = await c.req.json();
+    const result = await mcp.callTool(server_name, tool_name, args);
+    return c.json({ output: JSON.stringify(result) } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+app.post('/api/mcp/list-tools', async (c) => {
+  try {
+    const { server_name } = await c.req.json();
+    const tools = await mcp.listTools(server_name);
+    return c.json({ output: JSON.stringify(tools) } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
 const PORT = Number(process.env.PORT || 8765);
 console.log(`[sidecar] Starting on http://localhost:${PORT}`);
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
   await browser.close();
+  await mcp.closeAll();
   process.exit(0);
 });
 

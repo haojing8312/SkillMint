@@ -10,6 +10,7 @@
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "hono": "^4.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "playwright": "^1.40.0"
   },
   "devDependencies": {
