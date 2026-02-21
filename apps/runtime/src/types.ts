@@ -33,3 +33,10 @@ export interface ToolCallInfo {
   output?: string;
   status: "running" | "completed" | "error";
 }
+
+export interface SessionInfo {
+  id: string;
+  title: string;
+  created_at: string;
+  model_id: string;
+}
