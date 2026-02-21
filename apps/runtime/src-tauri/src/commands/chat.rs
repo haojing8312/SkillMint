@@ -255,3 +255,48 @@ pub async fn get_messages(
         json!({"role": role, "content": content, "created_at": created_at})
     }).collect())
 }
+
+#[tauri::command]
+pub async fn get_sessions(
+    skill_id: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, title, created_at, model_id FROM sessions WHERE skill_id = ? ORDER BY created_at DESC"
+    )
+    .bind(&skill_id)
+    .fetch_all(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows.iter().map(|(id, title, created_at, model_id)| {
+        json!({
+            "id": id,
+            "title": title,
+            "created_at": created_at,
+            "model_id": model_id,
+        })
+    }).collect())
+}
+
+#[tauri::command]
+pub async fn delete_session(
+    session_id: String,
+    db: State<'_, DbState>,
+) -> Result<(), String> {
+    // 先删除该会话下的所有消息
+    sqlx::query("DELETE FROM messages WHERE session_id = ?")
+        .bind(&session_id)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 再删除会话本身
+    sqlx::query("DELETE FROM sessions WHERE id = ?")
+        .bind(&session_id)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
