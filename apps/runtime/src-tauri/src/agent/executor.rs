@@ -61,8 +61,17 @@ impl AgentExecutor {
                 )
                 .await?
             } else {
-                // TODO: 实现 OpenAI tool calling
-                return Err(anyhow!("OpenAI tool calling not yet implemented"));
+                // OpenAI 兼容格式
+                adapters::openai::chat_stream_with_tools(
+                    base_url,
+                    api_key,
+                    model,
+                    system_prompt,
+                    messages.clone(),
+                    tools,
+                    on_token.clone(),
+                )
+                .await?
             };
 
             // 处理响应
@@ -120,6 +129,27 @@ impl AgentExecutor {
                                 "content": tr.content,
                             })).collect::<Vec<_>>()
                         }));
+                    } else {
+                        // OpenAI 格式
+                        messages.push(json!({
+                            "role": "assistant",
+                            "tool_calls": tool_calls.iter().map(|tc| json!({
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": serde_json::to_string(&tc.input).unwrap_or_default(),
+                                }
+                            })).collect::<Vec<_>>()
+                        }));
+                        // OpenAI: 每个工具结果是独立的 "tool" 角色消息
+                        for tr in &tool_results {
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tr.tool_use_id,
+                                "content": tr.content,
+                            }));
+                        }
                     }
 
                     // 继续下一轮迭代

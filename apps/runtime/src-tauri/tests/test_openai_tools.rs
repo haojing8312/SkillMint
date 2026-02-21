@@ -4,9 +4,8 @@ use std::sync::Arc;
 
 /// 验证 execute_turn 对 OpenAI 格式的行为
 ///
-/// 当前 executor 中 OpenAI 分支尚未接入 chat_stream_with_tools，
-/// 因此会返回 "not yet implemented" 错误。
-/// Task 2 接入后本测试将改为验证网络错误（而非 "not yet implemented"）。
+/// OpenAI 分支已接入 chat_stream_with_tools，
+/// 使用无效 URL 时应返回网络错误（而非 "not yet implemented"）。
 #[tokio::test]
 async fn test_openai_tool_calling_executor_branch() {
     let registry = Arc::new(ToolRegistry::with_file_tools());
@@ -26,14 +25,12 @@ async fn test_openai_tool_calling_executor_branch() {
         )
         .await;
 
-    // executor 的 openai 分支尚未接入，应返回错误
+    // 使用无效 URL 应返回网络错误
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
-    // 当前预期：返回 "not yet implemented"
-    // Task 2 完成后，此断言将被更新为 !contains("not yet implemented")
     assert!(
-        err_msg.contains("not yet implemented"),
-        "executor 的 OpenAI 分支尚未接入，预期 'not yet implemented'，实际: {}",
+        !err_msg.contains("not yet implemented"),
+        "OpenAI tool calling 应该已实现，但得到: {}",
         err_msg
     );
 }

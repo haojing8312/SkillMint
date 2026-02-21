@@ -36,3 +36,28 @@ async fn test_react_loop_max_iterations_error() {
         .to_string()
         .contains("最大迭代次数"));
 }
+
+#[tokio::test]
+async fn test_react_loop_openai_format_network_error() {
+    let registry = Arc::new(ToolRegistry::with_file_tools());
+    let executor = AgentExecutor::new(registry);
+
+    let messages = vec![json!({"role": "user", "content": "hello"})];
+
+    let result = executor
+        .execute_turn(
+            "openai",
+            "http://invalid-openai-url",
+            "mock-key",
+            "gpt-4",
+            "You are a helpful assistant.",
+            messages,
+            |_token| {},
+        )
+        .await;
+
+    // OpenAI 格式应返回网络错误（不是 "not yet implemented"）
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(!err_msg.contains("not yet implemented"));
+}
