@@ -1,6 +1,8 @@
 use super::registry::ToolRegistry;
-use anyhow::Result;
-use serde_json::Value;
+use super::types::{LLMResponse, ToolResult};
+use crate::adapters;
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub struct AgentExecutor {
@@ -16,17 +18,114 @@ impl AgentExecutor {
         }
     }
 
+    pub fn with_max_iterations(registry: Arc<ToolRegistry>, max_iterations: usize) -> Self {
+        Self {
+            registry,
+            max_iterations,
+        }
+    }
+
     pub async fn execute_turn(
         &self,
-        _api_format: &str,
-        _base_url: &str,
-        _api_key: &str,
-        _model: &str,
-        _system_prompt: &str,
-        messages: Vec<Value>,
-        _on_token: impl Fn(String) + Send + Clone,
+        api_format: &str,
+        base_url: &str,
+        api_key: &str,
+        model: &str,
+        system_prompt: &str,
+        mut messages: Vec<Value>,
+        on_token: impl Fn(String) + Send + Clone,
     ) -> Result<Vec<Value>> {
-        // Stub implementation for now
-        Ok(messages)
+        let mut iteration = 0;
+
+        loop {
+            if iteration >= self.max_iterations {
+                return Err(anyhow!("达到最大迭代次数 {}", self.max_iterations));
+            }
+            iteration += 1;
+
+            eprintln!("[agent] Iteration {}/{}", iteration, self.max_iterations);
+
+            // 获取工具定义
+            let tools = self.registry.get_tool_definitions();
+
+            // 调用 LLM
+            let response = if api_format == "anthropic" {
+                adapters::anthropic::chat_stream_with_tools(
+                    base_url,
+                    api_key,
+                    model,
+                    system_prompt,
+                    messages.clone(),
+                    tools,
+                    on_token.clone(),
+                )
+                .await?
+            } else {
+                // TODO: 实现 OpenAI tool calling
+                return Err(anyhow!("OpenAI tool calling not yet implemented"));
+            };
+
+            // 处理响应
+            match response {
+                LLMResponse::Text(content) => {
+                    // 纯文本响应 - 结束循环
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": content
+                    }));
+                    eprintln!("[agent] Finished with text response");
+                    return Ok(messages);
+                }
+                LLMResponse::ToolCalls(tool_calls) => {
+                    eprintln!("[agent] Executing {} tool calls", tool_calls.len());
+
+                    // 执行所有工具调用
+                    let mut tool_results = vec![];
+                    for call in &tool_calls {
+                        eprintln!("[agent] Calling tool: {}", call.name);
+
+                        let result = match self.registry.get(&call.name) {
+                            Some(tool) => match tool.execute(call.input.clone()) {
+                                Ok(output) => output,
+                                Err(e) => format!("工具执行错误: {}", e),
+                            },
+                            None => format!("工具不存在: {}", call.name),
+                        };
+
+                        tool_results.push(ToolResult {
+                            tool_use_id: call.id.clone(),
+                            content: result,
+                        });
+                    }
+
+                    // 添加工具调用和结果到消息历史
+                    if api_format == "anthropic" {
+                        // Anthropic 格式: assistant 消息包含 tool_use blocks
+                        messages.push(json!({
+                            "role": "assistant",
+                            "content": tool_calls.iter().map(|tc| json!({
+                                "type": "tool_use",
+                                "id": tc.id,
+                                "name": tc.name,
+                                "input": tc.input,
+                            })).collect::<Vec<_>>()
+                        }));
+
+                        // user 消息包含 tool_result blocks
+                        messages.push(json!({
+                            "role": "user",
+                            "content": tool_results.iter().map(|tr| json!({
+                                "type": "tool_result",
+                                "tool_use_id": tr.tool_use_id,
+                                "content": tr.content,
+                            })).collect::<Vec<_>>()
+                        }));
+                    }
+
+                    // 继续下一轮迭代
+                    continue;
+                }
+            }
+        }
     }
 }
