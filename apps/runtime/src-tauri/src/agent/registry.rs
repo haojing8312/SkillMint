@@ -2,21 +2,21 @@ use super::tools::{GlobTool, GrepTool, ReadFileTool, WriteFileTool};
 use super::types::Tool;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn Tool>>,
+    tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
+            tools: RwLock::new(HashMap::new()),
         }
     }
 
     pub fn with_file_tools() -> Self {
-        let mut registry = Self::new();
+        let registry = Self::new();
         registry.register(Arc::new(ReadFileTool));
         registry.register(Arc::new(WriteFileTool));
         registry.register(Arc::new(GlobTool));
@@ -24,16 +24,22 @@ impl ToolRegistry {
         registry
     }
 
-    pub fn register(&mut self, tool: Arc<dyn Tool>) {
-        self.tools.insert(tool.name().to_string(), tool);
+    pub fn register(&self, tool: Arc<dyn Tool>) {
+        self.tools.write().unwrap().insert(tool.name().to_string(), tool);
     }
 
-    pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
-        self.tools.get(name)
+    pub fn unregister(&self, name: &str) {
+        self.tools.write().unwrap().remove(name);
+    }
+
+    pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.read().unwrap().get(name).cloned()
     }
 
     pub fn get_tool_definitions(&self) -> Vec<Value> {
         self.tools
+            .read()
+            .unwrap()
             .values()
             .map(|t| {
                 json!({
@@ -42,6 +48,14 @@ impl ToolRegistry {
                     "input_schema": t.input_schema(),
                 })
             })
+            .collect()
+    }
+
+    /// 返回所有以指定前缀开头的工具名称
+    pub fn tools_with_prefix(&self, prefix: &str) -> Vec<String> {
+        self.tools.read().unwrap().keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
             .collect()
     }
 }
