@@ -21,8 +21,9 @@ pub fn run() {
 
             // 初始化 AgentExecutor（包含文件工具）
             let registry = Arc::new(ToolRegistry::with_file_tools());
-            let agent_executor = Arc::new(AgentExecutor::new(registry));
+            let agent_executor = Arc::new(AgentExecutor::new(Arc::clone(&registry)));
             app.manage(agent_executor);
+            app.manage(Arc::clone(&registry));
 
             Ok(())
         })
@@ -39,6 +40,9 @@ pub fn run() {
             commands::chat::get_messages,
             commands::chat::get_sessions,
             commands::chat::delete_session,
+            commands::mcp::add_mcp_server,
+            commands::mcp::list_mcp_servers,
+            commands::mcp::remove_mcp_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
