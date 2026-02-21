@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_read_file_success() {
-    let mut registry = ToolRegistry::new();
+    let registry = ToolRegistry::new();
     registry.register(Arc::new(ReadFileTool));
 
     let tool = registry.get("read_file");
