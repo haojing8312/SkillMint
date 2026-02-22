@@ -1,11 +1,16 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 use super::skills::DbState;
 use crate::agent::AgentExecutor;
-use crate::agent::tools::TaskTool;
+use crate::agent::tools::{
+    TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder, new_responder,
+};
+
+/// 全局 AskUser 响应通道（用于 answer_user_question command）
+pub struct AskUserState(pub AskUserResponder);
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -166,7 +171,7 @@ pub async fn send_message(
         max_iter,
     );
 
-    // 动态注册 Task 工具（需要运行时模型配置）
+    // 动态注册运行时工具
     let task_tool = TaskTool::new(
         agent_executor.registry_arc(),
         api_format.clone(),
@@ -175,6 +180,43 @@ pub async fn send_message(
         model_name.clone(),
     );
     agent_executor.registry().register(Arc::new(task_tool));
+
+    // 注册 WebSearch 工具（通过 Sidecar 代理）
+    let web_search = WebSearchTool::new("http://localhost:8765".to_string());
+    agent_executor.registry().register(Arc::new(web_search));
+
+    // 注册 Memory 工具（基于 Skill ID 的持久存储）
+    let app_data_dir = app.path().app_data_dir().unwrap_or_default();
+    let memory_dir = app_data_dir.join("memory").join(&skill_id);
+    let memory_tool = MemoryTool::new(memory_dir.clone());
+    agent_executor.registry().register(Arc::new(memory_tool));
+
+    // 注册 AskUser 工具（交互式问答）
+    let ask_user_responder = new_responder();
+    let ask_user_tool = AskUserTool::new(
+        app.clone(),
+        session_id.clone(),
+        ask_user_responder.clone(),
+    );
+    agent_executor.registry().register(Arc::new(ask_user_tool));
+
+    // 将 responder 存入全局状态，供 answer_user_question command 使用
+    app.manage(AskUserState(ask_user_responder));
+
+    // 如果存在 MEMORY.md，注入到 system prompt
+    let memory_content = {
+        let memory_file = memory_dir.join("MEMORY.md");
+        if memory_file.exists() {
+            std::fs::read_to_string(&memory_file).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+    let system_prompt = if memory_content.is_empty() {
+        system_prompt
+    } else {
+        format!("{}\n\n---\n持久内存:\n{}", system_prompt, memory_content)
+    };
 
     // 始终走 Agent 模式
     let app_clone = app.clone();
@@ -340,4 +382,25 @@ pub async fn delete_session(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// 用户回答 AskUser 工具的问题
+#[tauri::command]
+pub async fn answer_user_question(
+    answer: String,
+    ask_user_state: State<'_, AskUserState>,
+) -> Result<(), String> {
+    let guard = ask_user_state
+        .0
+        .lock()
+        .map_err(|e| format!("锁获取失败: {}", e))?;
+
+    if let Some(sender) = guard.as_ref() {
+        sender
+            .send(answer)
+            .map_err(|e| format!("发送响应失败: {}", e))?;
+        Ok(())
+    } else {
+        Err("没有等待中的用户问题".to_string())
+    }
 }

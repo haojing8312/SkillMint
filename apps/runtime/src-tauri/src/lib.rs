@@ -108,6 +108,7 @@ pub fn run() {
             commands::chat::get_messages,
             commands::chat::get_sessions,
             commands::chat::delete_session,
+            commands::chat::answer_user_question,
             commands::mcp::add_mcp_server,
             commands::mcp::list_mcp_servers,
             commands::mcp::remove_mcp_server,

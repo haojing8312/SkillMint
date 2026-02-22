@@ -1,3 +1,4 @@
+mod ask_user;
 mod bash;
 mod edit_tool;
 mod glob_tool;
@@ -11,6 +12,7 @@ pub mod web_fetch;
 mod web_search;
 mod write_file;
 
+pub use ask_user::{AskUserTool, AskUserResponder, new_responder};
 pub use bash::BashTool;
 pub use edit_tool::EditTool;
 pub use glob_tool::GlobTool;
