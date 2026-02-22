@@ -8,7 +8,8 @@ fn test_registry_with_file_tools() {
     assert!(registry.get("write_file").is_some());
     assert!(registry.get("glob").is_some());
     assert!(registry.get("grep").is_some());
+    assert!(registry.get("edit").is_some());
 
     let defs = registry.get_tool_definitions();
-    assert_eq!(defs.len(), 4);
+    assert_eq!(defs.len(), 5);
 }

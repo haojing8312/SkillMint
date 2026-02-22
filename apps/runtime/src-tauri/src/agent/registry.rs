@@ -1,4 +1,4 @@
-use super::tools::{GlobTool, GrepTool, ReadFileTool, WriteFileTool};
+use super::tools::{EditTool, GlobTool, GrepTool, ReadFileTool, WriteFileTool};
 use super::types::Tool;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -21,6 +21,7 @@ impl ToolRegistry {
         registry.register(Arc::new(WriteFileTool));
         registry.register(Arc::new(GlobTool));
         registry.register(Arc::new(GrepTool));
+        registry.register(Arc::new(EditTool));
         registry
     }
 
