@@ -246,15 +246,110 @@ strip = true
 - `unpack.rs` - 验证和解压
 - `types.rs` - PackConfig, SkillManifest, FrontMatter
 
+## 参考开源项目
+
+**重要**：`reference/` 目录包含了三个优秀的 AI Agent 开源项目作为技术参考。在实现 SkillHub 功能时，强烈建议先查阅相关项目的实现方案。
+
+⚠️ **使用原则**：
+- ✅ **参考设计思路和架构模式** - 学习其设计理念、架构选择、问题解决方案
+- ✅ **借鉴最佳实践** - 错误处理、安全机制、性能优化等经验
+- ✅ **理解实现细节** - 深入了解具体功能的实现方式
+- ❌ **不要直接复制代码** - 必须根据 SkillHub 的实际需求重新设计和实现
+- ❌ **不要照搬架构** - SkillHub 有自己独特的定位（加密 Skill 打包分发平台）
+- ⚠️ **注意许可证差异** - WorkAny (Community License), Gemini CLI (Apache 2.0), OpenClaw (MIT)
+
+**正确的参考方式**：
+1. 先理解 SkillHub 的需求和约束
+2. 查看参考项目如何解决类似问题
+3. 分析其方案的优缺点
+4. 结合 SkillHub 特点重新设计
+5. 用自己的代码实现，不直接复制
+
+### 快速索引
+
+**查看总览**：[reference/README.md](reference/README.md)
+
+**按功能查找参考**：
+
+| 功能需求 | 参考项目 | 文档路径 |
+|---------|---------|---------|
+| **Tauri 桌面应用架构** | WorkAny | [reference/docs/workany.md](reference/docs/workany.md) |
+| **Sidecar 二进制打包** | WorkAny | [reference/docs/workany.md#2-codex-sandbox-隔离执行](reference/docs/workany.md) |
+| **Agent Runtime 实现** | Gemini CLI | [reference/docs/gemini-cli.md#1-自研-agent-runtime](reference/docs/gemini-cli.md) |
+| **MCP 服务器集成** | Gemini CLI | [reference/docs/gemini-cli.md#2-mcp-model-context-protocol-集成](reference/docs/gemini-cli.md) |
+| **Tool 系统设计** | Gemini CLI | [reference/docs/gemini-cli.md#3-内置工具系统](reference/docs/gemini-cli.md) |
+| **沙箱代码执行** | WorkAny, Gemini CLI | [reference/docs/workany.md#2-codex-sandbox-隔离执行](reference/docs/workany.md) |
+| **首次运行向导** | OpenClaw | [reference/docs/openclaw.md#1-向导式安装onboard](reference/docs/openclaw.md) |
+| **系统诊断工具** | OpenClaw | [reference/docs/openclaw.md#2-doctor-诊断工具](reference/docs/openclaw.md) |
+| **Skill/插件系统** | OpenClaw | [reference/docs/openclaw.md#5-skills-platform](reference/docs/openclaw.md) |
+| **Extensions 扩展** | Gemini CLI | [reference/docs/gemini-cli.md#5-extensions-扩展系统](reference/docs/gemini-cli.md) |
+| **多平台构建脚本** | WorkAny | [reference/docs/workany.md#1-跨平台构建脚本](reference/docs/workany.md) |
+| **Artifact 预览** | WorkAny | [reference/docs/workany.md#3-artifact-实时预览](reference/docs/workany.md) |
+| **浏览器自动化** | MiniMax | [reference/docs/minimax.md#1-browserview-浏览器控制](reference/docs/minimax.md) |
+| **反检测技术** | MiniMax | [reference/docs/minimax.md#2-反检测技术-stealthjs](reference/docs/minimax.md) |
+
+### 四个参考项目概览
+
+1. **[WorkAny](reference/docs/workany.md)** (811 ⭐) - 桌面 AI Agent，Tauri + Claude Code
+   - ✅ 与 SkillHub 架构最相似（Tauri + React + Rust）
+   - ✅ externalBin 打包策略可直接应用于 Sidecar
+   - ✅ Artifact 实时预览设计
+
+2. **[Gemini CLI](reference/docs/gemini-cli.md)** (11.4K+ ⭐) - Google 官方 AI Agent，CLI 工具
+   - ✅ 完整的 Agent Runtime 实现（自研）
+   - ✅ MCP 集成最佳实践（Google 官方）
+   - ✅ 丰富的内置工具系统
+
+3. **[OpenClaw](reference/docs/openclaw.md)** - 多渠道 AI 助手 Gateway
+   - ✅ Onboard Wizard 交互式安装向导
+   - ✅ Doctor 诊断工具
+   - ✅ Skills 三级分类（bundled/managed/workspace）
+
+4. **[MiniMax Agent](reference/docs/minimax.md)** - MiniMax 桌面端逆向工程
+   - ✅ BrowserView 浏览器控制（15+ 工具）
+   - ✅ 反检测技术（stealth.js 18种方法）
+   - ✅ Electron 主进程代码可直接复用
+
+### 使用示例
+
+**场景 1：实现 MCP 服务器管理 UI**
+```bash
+# 1. 查看 Gemini CLI 的 MCP 集成章节
+cat reference/docs/gemini-cli.md | grep -A 20 "MCP 集成"
+
+# 2. 查看源码实现
+cd reference/gemini-cli
+grep -r "mcpServers" packages/cli/src/mcp/
+```
+
+**场景 2：优化 Sidecar 打包**
+```bash
+# 1. 查看 WorkAny 的 externalBin 配置
+cat reference/docs/workany.md | grep -A 20 "externalBin"
+
+# 2. 查看源码
+cat reference/workany/src-tauri/tauri.conf.json
+```
+
+**场景 3：添加首次运行向导**
+```bash
+# 1. 查看 OpenClaw 的 Onboard Wizard
+cat reference/docs/openclaw.md | grep -A 30 "向导式安装"
+
+# 2. 查看源码实现
+cd reference/openclaw && cat src/cli/commands/onboard.ts
+```
+
 ## 文档阅读顺序
 
 按以下顺序阅读文档以获得完整上下文：
 
 1. **README.md** - 项目概述、技术栈、路线图
-2. **docs/plans/2026-02-19-skillhub-mvp-design.md** - MVP 架构、数据库 schema
-3. **docs/plans/2026-02-19-llm-adapter-provider-presets-design.md** - 多模型设计
-4. **docs/plans/2026-02-20-agent-capabilities-design.md** - Agent 系统架构
-5. **SkillHub_PRD.md** - 产品需求文档
+2. **reference/README.md** - 参考开源项目总览（⭐ 新增）
+3. **docs/plans/2026-02-19-skillhub-mvp-design.md** - MVP 架构、数据库 schema
+4. **docs/plans/2026-02-19-llm-adapter-provider-presets-design.md** - 多模型设计
+5. **docs/plans/2026-02-20-agent-capabilities-design.md** - Agent 系统架构
+6. **SkillHub_PRD.md** - 产品需求文档
 
 ## 当前开发状态
 

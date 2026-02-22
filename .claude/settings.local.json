@@ -3,7 +3,10 @@
     "allow": [
       "Bash(git clone:*)",
       "Skill(brainstorming)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(if not exist \"reference\" mkdir reference)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
