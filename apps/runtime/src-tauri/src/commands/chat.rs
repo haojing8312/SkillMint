@@ -5,6 +5,7 @@ use chrono::Utc;
 use std::sync::Arc;
 use super::skills::DbState;
 use crate::agent::AgentExecutor;
+use crate::agent::tools::TaskTool;
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -164,6 +165,16 @@ pub async fn send_message(
         model_name,
         max_iter,
     );
+
+    // 动态注册 Task 工具（需要运行时模型配置）
+    let task_tool = TaskTool::new(
+        agent_executor.registry_arc(),
+        api_format.clone(),
+        base_url.clone(),
+        api_key.clone(),
+        model_name.clone(),
+    );
+    agent_executor.registry().register(Arc::new(task_tool));
 
     // 始终走 Agent 模式
     let app_clone = app.clone();
