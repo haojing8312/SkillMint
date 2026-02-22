@@ -25,6 +25,79 @@ pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
     )
 }
 
+const CHARS_PER_TOKEN: usize = 4;
+const DEFAULT_TOKEN_BUDGET: usize = 100_000; // 约 400k 字符
+
+/// 估算消息列表的 token 数（简单估算：字符数 / 4）
+fn estimate_tokens(messages: &[Value]) -> usize {
+    let total_chars: usize = messages
+        .iter()
+        .map(|m| {
+            // 纯文本 content
+            let text_len = m["content"].as_str().map_or(0, |s| s.len());
+            // 数组型 content（如 tool_use / tool_result blocks）
+            let array_len = m["content"].as_array().map_or(0, |arr| {
+                arr.iter()
+                    .map(|v| serde_json::to_string(v).map_or(0, |s| s.len()))
+                    .sum()
+            });
+            text_len + array_len
+        })
+        .sum();
+    total_chars / CHARS_PER_TOKEN
+}
+
+/// 裁剪消息列表到 token 预算内
+/// 保留第一条消息和最后的消息，从第二条开始裁剪中间的
+pub fn trim_messages(messages: &[Value], token_budget: usize) -> Vec<Value> {
+    if messages.len() <= 2 || estimate_tokens(messages) <= token_budget {
+        return messages.to_vec();
+    }
+
+    let first = &messages[0];
+    let last = &messages[messages.len() - 1];
+
+    // 从后往前累加保留的消息
+    let budget_chars = token_budget * CHARS_PER_TOKEN * 70 / 100;
+    let first_chars = first["content"].as_str().map_or(0, |s| s.len());
+    let last_chars = last["content"].as_str().map_or(0, |s| s.len());
+    let mut char_count = first_chars + last_chars;
+
+    let mut keep_from_end: Vec<&Value> = Vec::new();
+
+    for msg in messages[1..messages.len() - 1].iter().rev() {
+        let msg_chars = msg["content"].as_str().map_or(0, |s| s.len())
+            + msg["content"].as_array().map_or(0, |arr| {
+                arr.iter()
+                    .map(|v| serde_json::to_string(v).map_or(0, |s| s.len()))
+                    .sum()
+            });
+        if char_count + msg_chars > budget_chars {
+            break;
+        }
+        char_count += msg_chars;
+        keep_from_end.push(msg);
+    }
+    keep_from_end.reverse();
+
+    let trimmed_count = messages.len() - 2 - keep_from_end.len();
+    let mut result = vec![first.clone()];
+
+    if trimmed_count > 0 {
+        result.push(json!({
+            "role": "user",
+            "content": format!("[前 {} 条消息已省略]", trimmed_count)
+        }));
+    }
+
+    for msg in keep_from_end {
+        result.push(msg.clone());
+    }
+    result.push(last.clone());
+
+    result
+}
+
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ToolCallEvent {
     pub session_id: String,
@@ -79,6 +152,9 @@ impl AgentExecutor {
             // 获取工具定义
             let tools = self.registry.get_tool_definitions();
 
+            // 上下文裁剪：将传给 LLM 的消息裁剪到 token 预算内
+            let trimmed = trim_messages(&messages, DEFAULT_TOKEN_BUDGET);
+
             // 调用 LLM
             let response = if api_format == "anthropic" {
                 adapters::anthropic::chat_stream_with_tools(
@@ -86,7 +162,7 @@ impl AgentExecutor {
                     api_key,
                     model,
                     system_prompt,
-                    messages.clone(),
+                    trimmed.clone(),
                     tools,
                     on_token.clone(),
                 )
@@ -98,7 +174,7 @@ impl AgentExecutor {
                     api_key,
                     model,
                     system_prompt,
-                    messages.clone(),
+                    trimmed.clone(),
                     tools,
                     on_token.clone(),
                 )
