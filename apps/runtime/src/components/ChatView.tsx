@@ -18,6 +18,9 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
+  const [askUserQuestion, setAskUserQuestion] = useState<string | null>(null);
+  const [askUserOptions, setAskUserOptions] = useState<string[]>([]);
+  const [askUserAnswer, setAskUserAnswer] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
   const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
@@ -31,12 +34,15 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     streamBufferRef.current = "";
     setCurrentToolCalls([]);
     currentToolCallsRef.current = [];
+    setAskUserQuestion(null);
+    setAskUserOptions([]);
+    setAskUserAnswer("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamBuffer]);
+  }, [messages, streamBuffer, askUserQuestion]);
 
   // stream-token 事件监听（依赖 sessionId prop）
   useEffect(() => {
@@ -75,6 +81,22 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     );
     return () => {
       currentSessionId = null;
+      unlistenPromise.then((fn) => fn());
+    };
+  }, [sessionId]);
+
+  // ask-user-event 事件监听
+  useEffect(() => {
+    const unlistenPromise = listen<{
+      session_id: string;
+      question: string;
+      options: string[];
+    }>("ask-user-event", ({ payload }) => {
+      if (payload.session_id !== sessionId) return;
+      setAskUserQuestion(payload.question);
+      setAskUserOptions(payload.options);
+    });
+    return () => {
       unlistenPromise.then((fn) => fn());
     };
   }, [sessionId]);
@@ -166,6 +188,18 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     }
   }
 
+  async function handleAnswerUser(answer: string) {
+    if (!answer.trim()) return;
+    try {
+      await invoke("answer_user_question", { answer: answer.trim() });
+    } catch (e) {
+      console.error("回答用户问题失败:", e);
+    }
+    setAskUserQuestion(null);
+    setAskUserOptions([]);
+    setAskUserAnswer("");
+  }
+
   // 从 models 查找当前会话的模型名称（用于头部展示）
   const currentModel = models[0];
 
@@ -218,6 +252,48 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
               ))}
               {streamBuffer && <ReactMarkdown>{streamBuffer}</ReactMarkdown>}
               <span className="animate-pulse">|</span>
+            </div>
+          </div>
+        )}
+        {/* AskUser 问答卡片 */}
+        {askUserQuestion && (
+          <div className="flex justify-start">
+            <div className="max-w-2xl bg-amber-900/40 border border-amber-600/50 rounded-lg px-4 py-3 text-sm">
+              <div className="font-medium text-amber-200 mb-2">{askUserQuestion}</div>
+              {askUserOptions.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {askUserOptions.map((opt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleAnswerUser(opt)}
+                      className="bg-amber-700/50 hover:bg-amber-600/50 text-amber-100 px-3 py-1 rounded text-xs transition-colors"
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  value={askUserAnswer}
+                  onChange={(e) => setAskUserAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAnswerUser(askUserAnswer);
+                    }
+                  }}
+                  placeholder="输入回答..."
+                  className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-500"
+                />
+                <button
+                  onClick={() => handleAnswerUser(askUserAnswer)}
+                  disabled={!askUserAnswer.trim()}
+                  className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-600 px-3 py-1 rounded text-xs transition-colors"
+                >
+                  回答
+                </button>
+              </div>
             </div>
           </div>
         )}
