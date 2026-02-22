@@ -8,6 +8,7 @@ mod sidecar_bridge;
 mod task_tool;
 mod todo_tool;
 pub mod web_fetch;
+mod web_search;
 mod write_file;
 
 pub use bash::BashTool;
@@ -20,4 +21,5 @@ pub use sidecar_bridge::SidecarBridgeTool;
 pub use task_tool::TaskTool;
 pub use todo_tool::TodoWriteTool;
 pub use web_fetch::WebFetchTool;
+pub use web_search::WebSearchTool;
 pub use write_file::WriteFileTool;

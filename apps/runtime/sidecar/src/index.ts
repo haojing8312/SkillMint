@@ -114,6 +114,54 @@ app.post('/api/mcp/list-tools', async (c) => {
   }
 });
 
+// Web search endpoint (DuckDuckGo HTML)
+app.post('/api/web/search', async (c) => {
+  try {
+    const { query, count = 5 } = await c.req.json();
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'SkillMint/1.0' },
+    });
+    const html = await resp.text();
+
+    // 解析 DuckDuckGo HTML 结果
+    const results: { title: string; url: string; snippet: string }[] = [];
+    const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>(.*?)<\/a>/gi;
+    let match;
+    while ((match = resultRegex.exec(html)) !== null && results.length < count) {
+      results.push({
+        url: match[1].replace(/\/\/duckduckgo\.com\/l\/\?uddg=/, '').split('&')[0],
+        title: match[2].replace(/<[^>]+>/g, '').trim(),
+        snippet: match[3].replace(/<[^>]+>/g, '').trim(),
+      });
+    }
+
+    // 如果正则没匹配到，尝试简单解析
+    if (results.length === 0) {
+      const linkRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+      while ((match = linkRegex.exec(html)) !== null && results.length < count) {
+        const rawUrl = match[1];
+        const decodedUrl = rawUrl.includes('uddg=')
+          ? decodeURIComponent(rawUrl.split('uddg=')[1]?.split('&')[0] || rawUrl)
+          : rawUrl;
+        results.push({
+          url: decodedUrl,
+          title: match[2].replace(/<[^>]+>/g, '').trim(),
+          snippet: '',
+        });
+      }
+    }
+
+    const output = results
+      .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
+      .join('\n\n');
+
+    return c.json({ output: output || '未找到搜索结果' } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
 const PORT = Number(process.env.PORT || 8765);
 console.log(`[sidecar] Starting on http://localhost:${PORT}`);
 
