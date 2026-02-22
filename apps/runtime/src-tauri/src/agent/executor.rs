@@ -6,6 +6,25 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
+/// 单次工具输出允许的最大字符数
+const MAX_TOOL_OUTPUT_CHARS: usize = 30_000;
+
+/// 截断过长的工具输出
+///
+/// 当输出超过 `max_chars` 字符时，保留前 `max_chars` 个字符并附加截断提示信息。
+pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
+    if output.len() <= max_chars {
+        return output.to_string();
+    }
+    let truncated: String = output.chars().take(max_chars).collect();
+    format!(
+        "{}\n\n[输出已截断，共 {} 字符，已显示前 {} 字符]",
+        truncated,
+        output.len(),
+        max_chars
+    )
+}
+
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ToolCallEvent {
     pub session_id: String,
@@ -123,6 +142,8 @@ impl AgentExecutor {
                             },
                             None => format!("工具不存在: {}", call.name),
                         };
+                        // 截断过长的工具输出，防止超出上下文窗口
+                        let result = truncate_tool_output(&result, MAX_TOOL_OUTPUT_CHARS);
 
                         // 发送工具完成事件
                         if let (Some(app), Some(sid)) = (app_handle, session_id) {
