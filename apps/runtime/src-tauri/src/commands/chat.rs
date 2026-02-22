@@ -95,8 +95,8 @@ pub async fn send_message(
     .await
     .map_err(|e| format!("Skill 不存在 (skill_id={skill_id}): {e}"))?;
 
-    // 重新解包获取 SKILL.md 内容作为 system prompt
-    let system_prompt = match skillpack_rs::verify_and_unpack(&pack_path, &username) {
+    // 重新解包获取 SKILL.md 内容作为原始 prompt
+    let raw_prompt = match skillpack_rs::verify_and_unpack(&pack_path, &username) {
         Ok(unpacked) => {
             String::from_utf8_lossy(
                 unpacked.files.get("SKILL.md").map(|v| v.as_slice()).unwrap_or_default()
@@ -136,6 +136,35 @@ pub async fn send_message(
         return Err(format!("模型 API Key 为空，请在设置中重新配置 (model_id={model_id})"));
     }
 
+    // 解析 Skill 元数据（frontmatter + system prompt）
+    let skill_config = crate::agent::skill_config::SkillConfig::parse(&raw_prompt);
+
+    // 确定工具白名单
+    let allowed_tools = skill_config.allowed_tools.clone();
+
+    // 获取工具名称列表用于模板渲染
+    let tool_names = match &allowed_tools {
+        Some(whitelist) => whitelist.join(", "),
+        None => agent_executor
+            .registry()
+            .get_tool_definitions()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+
+    let max_iter = skill_config.max_iterations.unwrap_or(10);
+
+    // 构建完整 system prompt（含运行环境信息）
+    let system_prompt = format!(
+        "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
+        skill_config.system_prompt,
+        tool_names,
+        model_name,
+        max_iter,
+    );
+
     // 始终走 Agent 模式
     let app_clone = app.clone();
     let session_id_clone = session_id.clone();
@@ -156,6 +185,7 @@ pub async fn send_message(
             },
             Some(&app),
             Some(&session_id),
+            allowed_tools.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())?;

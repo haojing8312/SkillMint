@@ -127,6 +127,14 @@ impl AgentExecutor {
         }
     }
 
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
+    }
+
+    pub fn registry_arc(&self) -> Arc<ToolRegistry> {
+        Arc::clone(&self.registry)
+    }
+
     pub async fn execute_turn(
         &self,
         api_format: &str,
@@ -138,6 +146,7 @@ impl AgentExecutor {
         on_token: impl Fn(String) + Send + Clone,
         app_handle: Option<&AppHandle>,
         session_id: Option<&str>,
+        allowed_tools: Option<&[String]>,
     ) -> Result<Vec<Value>> {
         let mut iteration = 0;
 
@@ -149,8 +158,11 @@ impl AgentExecutor {
 
             eprintln!("[agent] Iteration {}/{}", iteration, self.max_iterations);
 
-            // 获取工具定义
-            let tools = self.registry.get_tool_definitions();
+            // 根据白名单过滤工具定义
+            let tools = match allowed_tools {
+                Some(whitelist) => self.registry.get_filtered_tool_definitions(whitelist),
+                None => self.registry.get_tool_definitions(),
+            };
 
             // 上下文裁剪：将传给 LLM 的消息裁剪到 token 预算内
             let trimmed = trim_messages(&messages, DEFAULT_TOKEN_BUDGET);
@@ -212,10 +224,24 @@ impl AgentExecutor {
                         }
 
                         let result = match self.registry.get(&call.name) {
-                            Some(tool) => match tool.execute(call.input.clone()) {
-                                Ok(output) => output,
-                                Err(e) => format!("工具执行错误: {}", e),
-                            },
+                            Some(tool) => {
+                                // 检查白名单：若设置了白名单但工具不在其中，拒绝执行
+                                if let Some(whitelist) = allowed_tools {
+                                    if !whitelist.iter().any(|w| w == &call.name) {
+                                        format!("此 Skill 不允许使用工具: {}", call.name)
+                                    } else {
+                                        match tool.execute(call.input.clone()) {
+                                            Ok(output) => output,
+                                            Err(e) => format!("工具执行错误: {}", e),
+                                        }
+                                    }
+                                } else {
+                                    match tool.execute(call.input.clone()) {
+                                        Ok(output) => output,
+                                        Err(e) => format!("工具执行错误: {}", e),
+                                    }
+                                }
+                            }
                             None => format!("工具不存在: {}", call.name),
                         };
                         // 截断过长的工具输出，防止超出上下文窗口

@@ -29,6 +29,7 @@ async fn test_react_loop_max_iterations_error() {
             |_token| {},
             None,
             None,
+            None,
         )
         .await;
 
@@ -55,6 +56,7 @@ async fn test_react_loop_openai_format_network_error() {
             "You are a helpful assistant.",
             messages,
             |_token| {},
+            None,
             None,
             None,
         )

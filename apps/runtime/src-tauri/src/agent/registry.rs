@@ -53,6 +53,23 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// 返回仅包含白名单中工具的定义
+    pub fn get_filtered_tool_definitions(&self, whitelist: &[String]) -> Vec<Value> {
+        self.tools
+            .read()
+            .unwrap()
+            .values()
+            .filter(|t| whitelist.iter().any(|w| w == t.name()))
+            .map(|t| {
+                json!({
+                    "name": t.name(),
+                    "description": t.description(),
+                    "input_schema": t.input_schema(),
+                })
+            })
+            .collect()
+    }
+
     /// 返回所有以指定前缀开头的工具名称
     pub fn tools_with_prefix(&self, prefix: &str) -> Vec<String> {
         self.tools.read().unwrap().keys()

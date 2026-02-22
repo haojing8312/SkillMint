@@ -24,6 +24,7 @@ async fn test_openai_tool_calling_executor_branch() {
             |_| {},
             None,
             None,
+            None,
         )
         .await;
 
@@ -58,6 +59,7 @@ async fn test_openai_tool_calling_real() {
             |token| {
                 eprint!("{}", token);
             },
+            None,
             None,
             None,
         )
