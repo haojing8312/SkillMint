@@ -16,6 +16,7 @@ reqwest = { version = "0.12", features = ["json", "stream", "blocking", "native-
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"
 chrono = { version = "0.4", features = ["serde"] }

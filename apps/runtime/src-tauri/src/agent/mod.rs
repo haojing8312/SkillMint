@@ -1,5 +1,6 @@
 pub mod executor;
 pub mod registry;
+pub mod skill_config;
 pub mod tools;
 pub mod types;
 
