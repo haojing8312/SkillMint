@@ -5,7 +5,7 @@ use crate::adapters;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 单次工具输出允许的最大字符数
 const MAX_TOOL_OUTPUT_CHARS: usize = 30_000;
@@ -263,6 +263,46 @@ impl AgentExecutor {
                     detail: None,
                     iteration,
                 });
+            }
+
+            // 自动压缩检查（仅在第二轮及之后，避免首轮触发）
+            if iteration > 1 {
+                let tokens = estimate_tokens(&messages);
+                if super::compactor::needs_auto_compact(tokens) {
+                    eprintln!("[agent] Token 数 {} 超过阈值，触发自动压缩", tokens);
+                    if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                        let transcript_dir = app
+                            .path()
+                            .app_data_dir()
+                            .unwrap_or_default()
+                            .join("transcripts");
+                        if let Ok(path) =
+                            super::compactor::save_transcript(&transcript_dir, sid, &messages)
+                        {
+                            let path_str = path.to_string_lossy().to_string();
+                            match super::compactor::auto_compact(
+                                api_format,
+                                base_url,
+                                api_key,
+                                model,
+                                &messages,
+                                &path_str,
+                            )
+                            .await
+                            {
+                                Ok(compacted) => {
+                                    eprintln!(
+                                        "[agent] 自动压缩完成，消息数 {} → {}",
+                                        messages.len(),
+                                        compacted.len()
+                                    );
+                                    messages = compacted;
+                                }
+                                Err(e) => eprintln!("[agent] 自动压缩失败: {}", e),
+                            }
+                        }
+                    }
+                }
             }
 
             // 根据白名单过滤工具定义

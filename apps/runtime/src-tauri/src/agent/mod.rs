@@ -1,3 +1,4 @@
+pub mod compactor;
 pub mod executor;
 pub mod permissions;
 pub mod registry;
