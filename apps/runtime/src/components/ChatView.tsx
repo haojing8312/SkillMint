@@ -30,8 +30,10 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     toolName: string;
     toolInput: Record<string, unknown>;
   } | null>(null);
+  const [subAgentBuffer, setSubAgentBuffer] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
+  const subAgentBufferRef = useRef("");
   const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
 
   // sessionId 变化时加载历史消息
@@ -41,6 +43,8 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     setStreaming(false);
     setStreamBuffer("");
     streamBufferRef.current = "";
+    setSubAgentBuffer("");
+    subAgentBufferRef.current = "";
     setCurrentToolCalls([]);
     currentToolCallsRef.current = [];
     setAskUserQuestion(null);
@@ -58,7 +62,12 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
   // stream-token 事件监听（依赖 sessionId prop）
   useEffect(() => {
     let currentSessionId: string | null = sessionId;
-    const unlistenPromise = listen<{ session_id: string; token: string; done: boolean }>(
+    const unlistenPromise = listen<{
+      session_id: string;
+      token: string;
+      done: boolean;
+      sub_agent?: boolean;
+    }>(
       "stream-token",
       ({ payload }) => {
         if (payload.session_id !== currentSessionId) return;
@@ -83,7 +92,13 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
           setCurrentToolCalls([]);
           streamBufferRef.current = "";
           setStreamBuffer("");
+          subAgentBufferRef.current = "";
+          setSubAgentBuffer("");
           setStreaming(false);
+        } else if (payload.sub_agent) {
+          // 子 Agent 的 token 单独缓冲
+          subAgentBufferRef.current += payload.token;
+          setSubAgentBuffer(subAgentBufferRef.current);
         } else {
           streamBufferRef.current += payload.token;
           setStreamBuffer(streamBufferRef.current);
@@ -224,6 +239,8 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     setCurrentToolCalls([]);
     streamBufferRef.current = "";
     setStreamBuffer("");
+    subAgentBufferRef.current = "";
+    setSubAgentBuffer("");
     try {
       await invoke("send_message", { sessionId, userMessage: msg });
       onSessionUpdate?.();
@@ -321,7 +338,11 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
           <div className="flex justify-start">
             <div className="max-w-2xl bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
               {currentToolCalls.map((tc) => (
-                <ToolCallCard key={tc.id} toolCall={tc} />
+                <ToolCallCard
+                  key={tc.id}
+                  toolCall={tc}
+                  subAgentBuffer={tc.name === "task" && tc.status === "running" ? subAgentBuffer : undefined}
+                />
               ))}
               {streamBuffer && <ReactMarkdown>{streamBuffer}</ReactMarkdown>}
               <span className="animate-pulse">|</span>

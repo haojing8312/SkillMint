@@ -16,9 +16,10 @@ const TOOL_ICONS: Record<string, string> = {
 
 interface Props {
   toolCall: ToolCallInfo;
+  subAgentBuffer?: string;
 }
 
-export function ToolCallCard({ toolCall }: Props) {
+export function ToolCallCard({ toolCall, subAgentBuffer }: Props) {
   const [expanded, setExpanded] = useState(false);
   const icon = TOOL_ICONS[toolCall.name] || "\u{1F527}";
 
@@ -70,6 +71,15 @@ export function ToolCallCard({ toolCall }: Props) {
               </pre>
             )}
           </div>
+          {isTask && subAgentBuffer && (
+            <div>
+              <div className="text-slate-400 mb-1">子 Agent 输出中...</div>
+              <div className="bg-slate-950 rounded p-2 overflow-x-auto text-slate-300 max-h-40 overflow-y-auto prose prose-invert prose-xs">
+                <ReactMarkdown>{subAgentBuffer}</ReactMarkdown>
+                <span className="animate-pulse text-blue-400">|</span>
+              </div>
+            </div>
+          )}
           {toolCall.output && (
             <div>
               <div className="text-slate-400 mb-1">{isTask ? "子 Agent 回复:" : "结果:"}</div>
