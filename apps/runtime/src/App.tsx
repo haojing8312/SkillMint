@@ -126,6 +126,27 @@ export default function App() {
     }
   }
 
+  // 安装 Skill 后自动切换并创建新会话
+  async function handleInstalled(skillId: string) {
+    try {
+      await loadSkills();
+      setSelectedSkillId(skillId);
+
+      // 自动创建新会话
+      const modelId = models[0]?.id;
+      if (modelId) {
+        const sessionId = await invoke<string>("create_session", {
+          skillId,
+          modelId,
+        });
+        setSelectedSessionId(sessionId);
+        await loadSessions(skillId);
+      }
+    } catch (e) {
+      console.error("安装后自动创建会话失败:", e);
+    }
+  }
+
   const handleSessionRefresh = useCallback(() => {
     if (selectedSkillId) loadSessions(selectedSkillId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +207,7 @@ export default function App() {
         )}
       </div>
       {showInstall && (
-        <InstallDialog onInstalled={loadSkills} onClose={() => setShowInstall(false)} />
+        <InstallDialog onInstalled={handleInstalled} onClose={() => setShowInstall(false)} />
       )}
     </div>
   );

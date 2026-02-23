@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { SkillManifest } from "../types";
 
 type InstallMode = "skillpack" | "local";
 
 interface Props {
-  onInstalled: () => void;
+  onInstalled: (skillId: string) => void;
   onClose: () => void;
 }
 
@@ -40,22 +41,23 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
     setLoading(true);
 
     try {
+      let manifest: SkillManifest;
       if (mode === "skillpack") {
         if (!packPath || !username.trim()) {
           setError("请选择文件并填写用户名");
           setLoading(false);
           return;
         }
-        await invoke("install_skill", { packPath, username });
+        manifest = await invoke<SkillManifest>("install_skill", { packPath, username });
       } else {
         if (!localDir) {
           setError("请选择包含 SKILL.md 的目录");
           setLoading(false);
           return;
         }
-        await invoke("import_local_skill", { dirPath: localDir });
+        manifest = await invoke<SkillManifest>("import_local_skill", { dirPath: localDir });
       }
-      onInstalled();
+      onInstalled(manifest.id);
       onClose();
     } catch (e: unknown) {
       setError(String(e));
