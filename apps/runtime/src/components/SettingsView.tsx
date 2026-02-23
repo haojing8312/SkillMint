@@ -37,8 +37,9 @@ export function SettingsView({ onClose }: Props) {
   // MCP 服务器管理
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [mcpServers, setMcpServers] = useState<any[]>([]);
-  const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "" });
+  const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", env: "" });
   const [mcpError, setMcpError] = useState("");
+  const [activeTab, setActiveTab] = useState<"models" | "mcp">("models");
 
   useEffect(() => { loadModels(); loadMcpServers(); }, []);
 
@@ -126,13 +127,22 @@ export function SettingsView({ onClose }: Props) {
     setMcpError("");
     try {
       const args = mcpForm.args.split(/\s+/).filter(Boolean);
+      let env: Record<string, string> = {};
+      if (mcpForm.env.trim()) {
+        try {
+          env = JSON.parse(mcpForm.env.trim());
+        } catch {
+          setMcpError("环境变量 JSON 格式错误");
+          return;
+        }
+      }
       await invoke("add_mcp_server", {
         name: mcpForm.name,
         command: mcpForm.command,
         args,
-        env: {},
+        env,
       });
-      setMcpForm({ name: "", command: "", args: "" });
+      setMcpForm({ name: "", command: "", args: "", env: "" });
       loadMcpServers();
     } catch (e) {
       setMcpError(String(e));
@@ -150,12 +160,28 @@ export function SettingsView({ onClose }: Props) {
   return (
     <div className="flex flex-col h-full p-6 overflow-y-auto">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-lg font-semibold">模型配置</h2>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setActiveTab("models")}
+            className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
+              (activeTab === "models" ? "text-white border-blue-500" : "text-slate-400 border-transparent hover:text-slate-200")}
+          >
+            模型配置
+          </button>
+          <button
+            onClick={() => setActiveTab("mcp")}
+            className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
+              (activeTab === "mcp" ? "text-white border-blue-500" : "text-slate-400 border-transparent hover:text-slate-200")}
+          >
+            MCP 服务器
+          </button>
+        </div>
         <button onClick={onClose} className="text-slate-400 hover:text-white text-sm">
           返回
         </button>
       </div>
 
+      {activeTab === "models" && (<>
       {models.length > 0 && (
         <div className="mb-6 space-y-2">
           <div className="text-xs text-slate-400 mb-2">已配置模型</div>
@@ -239,9 +265,11 @@ export function SettingsView({ onClose }: Props) {
           </button>
         </div>
       </div>
+      </>)}
 
+      {activeTab === "mcp" && (<>
       {/* MCP 服务器管理 */}
-      <div className="bg-slate-800 rounded-lg p-4 space-y-3 mt-6">
+      <div className="bg-slate-800 rounded-lg p-4 space-y-3">
         <div className="text-xs font-medium text-slate-400 mb-2">MCP 服务器</div>
 
         {mcpServers.length > 0 && (
@@ -272,6 +300,10 @@ export function SettingsView({ onClose }: Props) {
           <label className={labelCls}>参数（空格分隔）</label>
           <input className={inputCls} placeholder="例: @anthropic/mcp-server-filesystem /tmp" value={mcpForm.args} onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })} />
         </div>
+        <div>
+          <label className={labelCls}>环境变量（JSON 格式，可选）</label>
+          <input className={inputCls} placeholder='例: {"API_KEY": "xxx"}' value={mcpForm.env} onChange={(e) => setMcpForm({ ...mcpForm, env: e.target.value })} />
+        </div>
         {mcpError && <div className="text-red-400 text-xs">{mcpError}</div>}
         <button
           onClick={handleAddMcp}
@@ -281,6 +313,7 @@ export function SettingsView({ onClose }: Props) {
           添加 MCP 服务器
         </button>
       </div>
+      </>)}
     </div>
   );
 }
