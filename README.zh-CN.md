@@ -6,89 +6,141 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-orange.svg)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://reactjs.org/)
 
-**SkillMint** 是一个开源的 AI Skill 打包与桌面应用发布平台。将你的 Skill 快速转化为加密的、可分发的桌面应用程序。
+**SkillMint** = Agent 运行时 + 加密技能系统
+
+一个开源平台，用于**打包、加密和分发 AI 技能**，以安全的桌面应用形式交付。创建一次，随处分发。
 
 ## 什么是 SkillMint？
 
-SkillMint 帮助 Skill 创作者：
-- **打包**：编写或导入现有 Skill，加密打包成 `.skillpack` 文件
-- **保护**：AES-256-GCM 加密保护你的知识产权
-- **分发**：用户通过统一的 Runtime 客户端安装 Skill
-- **变现**：控制你的优质 Skill 的访问权限和分发渠道
+SkillMint 帮助 AI 技能创作者：
+- **打包**：将技能（包含提示词/示例的 Markdown）转换为加密的 `.skillpack` 文件
+- **保护**：军事级加密保护你的知识产权
+- **分发**：用户在安全的本地沙箱环境中运行技能
+- **变现**：控制你的高级技能的访问和分发
 
-就像 **"将你的 Skill 铸造成可分发的资产"** —— 正如铸币厂将原材料转化为有价值的货币。
+**对于创作者**：安全地打包和销售你的技能
+**对于用户**：在本地运行强大的 AI 技能，无需暴露敏感数据
 
 ## 架构
 
-SkillMint 由两个独立的桌面应用组成：
+SkillMint 由两个独立的应用组成：
 
-### Studio（创作者端）
-- 导入现有 Skill 目录或从零编写
-- Monaco 编辑器，支持 Markdown
-- 内置对话测试界面
-- 一键加密打包为 `.skillpack`
-- 多模型测试（Claude、GPT、MiniMax、DeepSeek、Qwen 等）
+### Runtime（用户应用）
+核心 Agent 执行环境，用户在此安装和运行加密技能：
 
-### Runtime（用户端）
-- 通过拖拽安装 `.skillpack` 文件
-- 简洁的对话界面，支持 Markdown 渲染
-- 会话历史和管理
-- 模型选择和 API Key 管理
-- 无需命令行，无需技术知识
+**核心 Agent 能力**：
+- ✅ **文件操作**：带权限控制的读取、写入、编辑文件
+- ✅ **代码执行**：跨平台 Bash/PowerShell 命令执行
+- ✅ **浏览器自动化**：Playwright 集成，用于网页抓取和自动化（通过 Sidecar）
+- ✅ **MCP 集成**：模型上下文协议服务器支持，扩展能力
+- ✅ **多 Agent 系统**：子 Agent 任务分发，独立上下文隔离
+- ✅ **内存管理**：TodoWrite 任务跟踪，上下文压缩
+- ✅ **网页搜索**：DuckDuckGo 集成，获取实时信息
+- ✅ **权限系统**：多层安全验证
+
+**用户功能**：
+- 通过拖放或文件选择器安装 `.skillpack` 文件
+- 简洁的聊天界面，实时流式响应
+- 会话历史，可搜索的对话存档
+- 多模型支持（Claude 4.6、GPT-4、MiniMax M2.5、GLM-4、DeepSeek）
+- 本地安全工作区文件夹配置
+- 无需命令行操作
+
+### Studio（创作者应用）
+**状态**：计划于里程碑 3 实现
+专业技能创作环境：
+- Monaco 编辑器，支持 Markdown 语法高亮
+- 可视化技能结构编辑器（SKILL.md + templates/ + examples/）
+- 集成测试聊天，由 Claude Code 驱动
+- 一键打包加密
+- 版本控制和发布工作流
+
+**注意**：对于 MVP 阶段，创作者可以使用 **Claude Code** 或 **VS Code** 开发技能，然后通过 CLI 工具打包。
 
 ## 核心特性
 
-- **知识产权保护**：Skill 内容使用 AES-256-GCM 加密
-- **多模型支持**：Anthropic Messages API + OpenAI 兼容 API
-- **轻量级**：~30MB Runtime，~50MB Studio（基于 Tauri）
-- **跨平台**：Windows、macOS、Linux
-- **安全**：API Key 存储在系统密钥链中
-- **开源**：Apache 2.0 许可证
+### 安全与隐私
+- **军事级加密**：AES-256-GCM，基于用户名的确定性密钥推导
+- **安全工作区**：为文件操作配置可信任的本地文件夹
+- **权限控制**：敏感操作的多层验证
+- **无云依赖**：所有处理均在本地进行
+
+### Agent 能力
+- **ReAct 循环引擎**：高级推理和行动规划
+- **子 Agent 系统**：并行任务执行，独立上下文隔离
+- **上下文压缩**：智能截断以保持在 token 限制内
+- **工具注册表**：动态工具注册，包括 MCP 服务器
+- **内存持久化**：TodoWrite 跨会话任务跟踪
+
+### 开发者体验
+- **多模型支持**：9 个提供商的 15+ 模型
+- **热重载**：开发期间实时技能更新
+- **全面日志**：工具调用追踪和错误诊断
+- **跨平台**：支持 Windows、macOS、Linux
 
 ## 技术栈
 
-- **桌面框架**：Tauri 2.0
-- **前端**：React 18 + TypeScript + shadcn/ui + Tailwind CSS
-- **编辑器**：Monaco Editor
-- **后端**：Rust
-- **数据库**：SQLite
-- **加密**：AES-256-GCM（Rust `aes-gcm` + `ring`）
+### Runtime 后端
+- **框架**：Tauri 2.0 (Rust)
+- **数据库**：SQLite (sqlx)
+- **加密**：AES-256-GCM (aes-gcm + ring crates)
+- **HTTP 客户端**：reqwest（用于 LLM API）
+- **Sidecar**：Node.js 20+（Playwright、MCP）
+
+### Runtime 前端
+- **UI**：React 18 + TypeScript
+- **组件**：shadcn/ui + Tailwind CSS
+- **Markdown**：react-markdown + 语法高亮
+- **状态**：React hooks (useState, useEffect)
+
+### 共享包
+- **skillpack-rs**：加密、打包/解包 (Rust)
+- **model-adapters**：LLM API 适配器（未来 TS 包）
 
 ## 支持的模型
 
-### Anthropic Messages API
+### 最新尖端模型（2026）
+
+**Anthropic Claude**：
+- Claude 4.6 Sonnet（最新，最佳推理）
 - Claude 3.5 Sonnet
 - Claude 3.5 Haiku
-- Claude 3 Opus
 
-### OpenAI 兼容 API
-通过配置不同的 Base URL 支持：
-- OpenAI GPT-4、GPT-3.5
-- MiniMax M2.5（SWE-Bench 80.2%）
-- DeepSeek
-- Qwen / 通义千问（阿里云）
-- Moonshot Kimi
-- GLM / 智谱清言
-- 自定义端点
+**OpenAI**：
+- o1（最新推理模型）
+- GPT-5.3-Codex（最新编程模型，2026）
+- GPT-4 Turbo
+
+**国产领先模型**：
+- **MiniMax M2.5**（SWE-Bench 80.2%，代码生成）
+- **GLM-4**（智谱 AI，强中文理解）
+- **DeepSeek V3**（数学和推理）
+- **Qwen 2.5**（阿里云，多语言）
+- **Moonshot Kimi**（长上下文）
+
+**自定义端点**：任何 OpenAI 兼容 API
 
 ## 项目结构
 
 ```
 skillhub/
 ├── apps/
-│   ├── studio/           # 创作者端桌面应用
-│   │   ├── src/          # React 前端
-│   │   └── src-tauri/    # Rust 后端
-│   └── runtime/          # 用户端桌面应用
-│       ├── src/          # React 前端
-│       └── src-tauri/    # Rust 后端
+│   ├── runtime/               # 用户端应用
+│   │   ├── src/              # React 前端
+│   │   ├── src-tauri/        # Rust 后端
+│   │   │   ├── src/
+│   │   │   │   ├── agent/    # Agent 系统（executor, tools, registry）
+│   │   │   │   ├── adapters/ # LLM 适配器（Anthropic, OpenAI）
+│   │   │   │   ├── commands/ # Tauri 命令（skills, chat, models, mcp）
+│   │   │   │   └── db.rs     # SQLite schema
+│   │   │   └── tests/        # 集成测试
+│   │   └── sidecar/          # Node.js sidecar（Playwright, MCP）
+│   └── studio/               # 创作者应用（未来）
 ├── packages/
-│   ├── ui/               # 共享 UI 组件
-│   ├── skill-core/       # Skill 解析/验证（TypeScript）
-│   ├── model-adapters/   # 模型适配器（TypeScript）
-│   └── skillpack-rs/     # SkillPack 格式与加密（Rust）
-├── docs/                 # 文档
-└── examples/             # 示例 Skill
+│   └── skillpack-rs/         # 加密库 (Rust)
+├── docs/                     # 文档
+├── reference/                # 开源项目分析
+└── examples/                 # 示例技能
 ```
 
 ## 快速开始
@@ -105,58 +157,204 @@ skillhub/
 # 安装依赖
 pnpm install
 
-# 以开发模式运行 Studio
-pnpm --filter @skillmint/studio tauri dev
-
 # 以开发模式运行 Runtime
-pnpm --filter @skillmint/runtime tauri dev
+pnpm runtime
 
-# 生产构建
-pnpm build
+# 构建生产版本
+pnpm build:runtime
+
+# 运行测试
+cd apps/runtime/src-tauri
+cargo test
 ```
+
+### 安装技能
+
+1. 打开 Runtime 应用
+2. 点击"安装技能"或拖动 `.skillpack` 文件到窗口
+3. 输入用户名（用于密钥推导）
+4. 根据需要配置 API 密钥
+5. 开始聊天！
 
 ## 路线图
 
-### 里程碑 1：核心 MVP
-- [x] Monorepo 脚手架
-- [x] skillpack-rs Rust crate（加密/解密）
-- [ ] Studio：导入现有 Skill 目录
-- [ ] Studio：Skill 编辑器（Monaco）+ Front Matter 表单
-- [ ] Studio：内嵌对话测试
-- [ ] Studio：一键打包为 `.skillpack`
-- [ ] Runtime：安装 `.skillpack` 文件
-- [ ] Runtime：基础对话 UI 和流式输出
-- [ ] Runtime：会话历史持久化
-- [ ] 模型适配器：Anthropic + OpenAI 兼容
+### 里程碑 1：Agent Runtime MVP ✨（当前专注）
 
-### 里程碑 2：体验完善
-- [ ] Studio：内置 Skill 模板
-- [ ] Studio：版本管理
-- [ ] Runtime：文件上传支持
-- [ ] Runtime：多会话管理
-- [ ] 自动更新机制
-- [ ] 安装包（Windows NSIS、macOS DMG）
+**核心 Agent 能力**（80% 完成）：
+- [x] ReAct 循环执行器，Tool trait 抽象
+- [x] 文件操作：Read、Write、Glob、Grep、Edit
+- [x] Bash/PowerShell 执行，跨平台支持
+- [x] 子 Agent 系统（Task 工具）用于并行任务分发
+- [x] TodoWrite 任务管理和内存
+- [x] 上下文压缩（token 预算管理）
+- [x] 网页搜索（DuckDuckGo）
+- [x] WebFetch 用于 URL 内容获取
+- [x] AskUser 用于交互式用户输入
+- [x] 工具输出截断（30k 字符限制）
+- [x] 权限系统（计划中，多层验证）
+- [ ] 本地安全工作区文件夹配置
+- [ ] MCP 服务器动态注册 UI（70% - 后端已完成）
 
-### 里程碑 3：生态建设
-- [ ] 官方 Skill 市场
-- [ ] Studio：发布到市场
-- [ ] Runtime：从市场安装
-- [ ] AI 辅助生成 Skill
-- [ ] Linux AppImage
+**技能系统**：
+- [x] 技能 YAML frontmatter 解析
+- [x] .skillpack 加密/解密 (Rust)
+- [x] 安装、列出、删除技能命令
+- [x] 从 `.claude/skills/` 目录动态加载技能
+- [x] 基于技能的系统提示词注入
+- [ ] 开发期间热重载
 
-## 为什么叫 "SkillMint"？
+**Sidecar 集成**：
+- [x] Node.js sidecar 管理器（生命周期控制）
+- [x] Hono HTTP 服务器（localhost:8765）
+- [ ] Playwright 浏览器自动化（15+ 工具）
+- [x] MCP 客户端集成（连接、列出工具、调用）
+- [ ] 带归一化坐标的浏览器控制器
 
-**Mint** 有双重含义：
-1. **Mint（名词）**：铸币厂 —— 将原材料转化为有价值的货币
-2. **Mint（动词）**：铸造/发行（NFT 文化中流行的术语 —— "铸造"数字资产）
+**多模型支持**：
+- [x] Anthropic Messages API 适配器（Claude 模型）
+- [x] OpenAI 兼容适配器（GPT、MiniMax、DeepSeek 等）
+- [x] 推理内容过滤（DeepSeek、MiniMax）
+- [x] 模型配置 UI（API 密钥、基础 URL、模型名称）
+- [x] 9 个提供商预设（Claude、OpenAI、MiniMax、DeepSeek、Qwen、Moonshot、GLM、Yi、自定义）
 
-SkillMint 将你的 Skill（原始知识产权）转化为可分发、可变现的桌面应用（有价值的资产）。
+**用户界面**：
+- [x] 带流式消息的聊天视图
+- [x] Markdown 渲染，语法高亮
+- [x] 工具调用可视化卡片
+- [x] 子 Agent 嵌套显示
+- [x] 会话历史侧边栏
+- [x] 设置视图（模型、MCP 服务器）
+- [x] AskUser 交互式输入卡片
+- [ ] 文件上传支持
+- [ ] 安全工作区配置 UI
+
+**预计完成时间**：4-6 周
+
+### 里程碑 2：分发与更新 🚀
+
+**自动更新**：
+- [ ] 应用自动更新机制（Tauri updater）
+- [ ] 更新服务器基础设施
+- [ ] 版本检查和通知
+- [ ] 后台下载和安装
+
+**技能版本控制**：
+- [ ] 技能版本系统（semver）
+- [ ] 升级/降级能力
+- [ ] 依赖解析
+- [ ] 破坏性变更检测
+
+**打包与安装程序**：
+- [ ] Windows：NSIS 安装程序 + 代码签名
+- [ ] macOS：DMG + 公证
+- [ ] Linux：AppImage + deb/rpm 包
+
+**分发**：
+- [ ] 官方下载服务器
+- [ ] 镜像 CDN 设置
+- [ ] 更新通道（stable、beta、dev）
+
+**预计完成时间**：2-3 周
+
+### 里程碑 3：生态与企业版 🏢
+
+**创作者工具（Studio 应用）**：
+- [ ] Monaco 编辑器集成
+- [ ] 技能结构可视化编辑器
+- [ ] 嵌入式测试聊天（Claude Code 集成）
+- [ ] 一键打包 UI
+- [ ] 模板库
+- [ ] 发布工作流
+
+**市场**：
+- [ ] 基于 Web 的技能市场
+- [ ] 搜索和浏览功能
+- [ ] 用户评价和评分
+- [ ] 支付集成（Stripe/支付宝）
+- [ ] 创作者分析仪表板
+
+**企业功能**（参考企业 Agent 架构）：
+- [ ] 用户注册和认证（JWT）
+- [ ] 多租户支持（团队工作区）
+- [ ] 统一模型配置管理
+- [ ] 使用配额和计费
+- [ ] 管理员仪表板和分析
+- [ ] SSO 集成（LDAP、OAuth）
+- [ ] 审计日志和合规性
+- [ ] 私有技能仓库
+- [ ] 基于角色的访问控制（RBAC）
+- [ ] 资源使用监控
+
+**参考**：详细企业架构请参见 `E:\code\work\公众号文章\20260129-桌面智能体架构设计\最终稿-桌面智能体架构设计.md`。
+
+**预计完成时间**：8-12 周
+
+### 里程碑 4：Agent 进化与生态集成 🧬
+
+**EvoMap 集成**（Agent 自进化）：
+- [ ] GEP（基因组进化协议）支持
+- [ ] Gene 和 Capsule 数据结构
+- [ ] 六步进化循环（扫描 → 信号 → 意图 → 变异 → 验证 → 固化）
+- [ ] A2A（Agent-to-Agent）协议客户端
+- [ ] 从全球基因池自动继承能力
+- [ ] 本地进化历史和审计日志
+- [ ] 70/30 资源分配（修复 vs 探索）
+
+**OpenClaw 生态集成**：
+- [ ] ClawHub 技能市场浏览器
+- [ ] 从 ClawHub 一键导入技能
+- [ ] 技能质量评分和安全扫描
+- [ ] 社区技能发现和安装
+
+**IM 远程调用**（即时通讯集成）：
+- [ ] 企业微信 / 钉钉机器人适配器
+- [ ] 带身份验证的安全命令中继
+- [ ] 移动端到桌面端技能执行
+- [ ] 任务状态通知和流式结果推送
+- [ ] 多用户权限隔离
+
+**预计完成时间**：10-14 周
+
+## 为什么叫"SkillMint"？
+
+**Skill**：AI 能力的核心单元 - 一个打包好的、可重用的指令集
+**Mint**：铸造、创建并分发（类似铸币或 NFT）
+
+可以理解为 **"铸造 AI 技能"** - 像 npm 包一样轻松创建、打包和分发技能。
 
 ## 灵感来源
 
-类似 [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) 帮助创作者自动化视频变现，SkillMint 帮助 Skill 创作者自动化 AI 应用分发和变现。
+正如 Cursor 和 Claude Code 使 AI 辅助编码民主化一样，SkillMint 旨在使 AI 技能分发民主化。打包一次你的专业知识，安全地分发给成千上万的人。
 
-## 开源协议
+## 参考项目
+
+SkillMint 站在巨人的肩膀上。详细分析请参见 [reference/README.md](reference/README.md)：
+
+**生产级应用**：
+- [WorkAny](reference/docs/workany.md) - Tauri + Claude Code Agent SDK
+- [Gemini CLI](reference/docs/gemini-cli.md) - Google 官方 Agent Runtime
+- [OpenClaw](reference/docs/openclaw.md) - 多渠道 AI 网关
+- [MiniMax Agent](reference/docs/minimax.md) - BrowserView 自动化
+
+**Cowork 逆向工程与实现**：
+- [Claude Code Reverse](reference/docs/claude-code-reverse.md) - LLM 交互分析
+- [Learn Claude Code](reference/docs/learn-claude-code.md) - 11 个渐进式 Agent 课程
+- [Open Claude Cowork](reference/docs/open-claude-cowork.md) - 500+ 工具集成
+
+关键学习点：
+- 来自 Claude Code Reverse 的 **子 Agent 隔离**
+- 来自 Learn Claude Code 的 **技能按需加载**
+- **三层上下文压缩** 用于 token 优化
+- 用于企业集成的 **Composio Tool Router**
+- 来自 EvoMap 生态的 **Agent 自进化（GEP 协议）**
+
+**未来集成路线图**：
+详细分析请参见 [公众号文章/20260221-ClawHub与EvoMap进化论/终稿.md](E:\code\work\公众号文章\20260221-ClawHub与EvoMap进化论\终稿.md)：
+- EvoMap 的 GEP（基因组进化协议）和 A2A 通信
+- ClawHub 市场集成策略
+- Agent 能力继承和进化机制
+
+## 许可证
 
 Apache 2.0 - 详见 [LICENSE](LICENSE)
 
@@ -166,10 +364,11 @@ Apache 2.0 - 详见 [LICENSE](LICENSE)
 
 ## 社区
 
-- GitHub Issues：Bug 报告和功能请求
+- GitHub Issues：错误报告和功能请求
 - 文档：[docs/](docs/)
 - 示例：[examples/](examples/)
+- 参考：[reference/](reference/) - 开源项目分析
 
 ---
 
-**使用 Tauri、React 和 Rust 构建**
+**使用 Tauri、React 和 Rust 构建** | 灵感来自 Claude Code、Gemini CLI 和开源 Agent 社区
