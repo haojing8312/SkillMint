@@ -46,3 +46,25 @@ fn test_bash_safe_command_not_blocked() {
     assert!(!result.contains("危险命令"));
     assert!(result.contains("safe"));
 }
+
+#[test]
+fn test_bash_timeout() {
+    let tool = BashTool::new();
+    let command = if cfg!(target_os = "windows") {
+        "ping -n 10 127.0.0.1"
+    } else {
+        "sleep 10"
+    };
+    let input = json!({"command": command, "timeout_ms": 1000});
+    let result = tool.execute(input).unwrap();
+    assert!(result.contains("超时"));
+}
+
+#[test]
+fn test_bash_no_timeout_fast_command() {
+    let tool = BashTool::new();
+    let input = json!({"command": "echo fast", "timeout_ms": 5000});
+    let result = tool.execute(input).unwrap();
+    assert!(result.contains("fast"));
+    assert!(!result.contains("超时"));
+}

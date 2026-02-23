@@ -1,7 +1,10 @@
 use crate::agent::types::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::io::Read;
 use std::process::{Command, Stdio};
+use std::time::Duration;
+use wait_timeout::ChildExt;
 
 pub struct BashTool;
 
@@ -41,7 +44,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "执行 shell 命令。Windows 使用 PowerShell，Unix 使用 bash。"
+        "执行 shell 命令。Windows 使用 cmd，Unix 使用 bash。"
     }
 
     fn input_schema(&self) -> Value {
@@ -54,7 +57,7 @@ impl Tool for BashTool {
                 },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": "超时时间（毫秒，可选，默认 30000）"
+                    "description": "超时时间（毫秒，可选，默认 120000）"
                 }
             },
             "required": ["command"]
@@ -71,26 +74,49 @@ impl Tool for BashTool {
             return Ok("错误: 危险命令已被拦截。此命令可能造成不可逆损害。".to_string());
         }
 
+        // 提取超时参数，默认 120 秒
+        let timeout_ms = input["timeout_ms"].as_u64().unwrap_or(120_000);
+        let timeout = Duration::from_millis(timeout_ms);
+
         let (shell, flag) = Self::get_shell();
 
-        let output = Command::new(shell)
+        // 使用 spawn 启动子进程，以便后续进行超时控制
+        let mut child = Command::new(shell)
             .arg(flag)
             .arg(command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()?;
+            .spawn()?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        // 等待子进程完成或超时
+        match child.wait_timeout(timeout)? {
+            Some(status) => {
+                // 子进程已正常退出，读取输出
+                let mut stdout_str = String::new();
+                let mut stderr_str = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    out.read_to_string(&mut stdout_str).ok();
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    err.read_to_string(&mut stderr_str).ok();
+                }
 
-        if !output.status.success() {
-            Ok(format!(
-                "命令执行失败（退出码 {}）\nstderr:\n{}",
-                output.status.code().unwrap_or(-1),
-                stderr
-            ))
-        } else {
-            Ok(format!("stdout:\n{}\nstderr:\n{}", stdout, stderr))
+                if !status.success() {
+                    Ok(format!(
+                        "命令执行失败（退出码 {}）\nstderr:\n{}",
+                        status.code().unwrap_or(-1),
+                        stderr_str
+                    ))
+                } else {
+                    Ok(format!("stdout:\n{}\nstderr:\n{}", stdout_str, stderr_str))
+                }
+            }
+            None => {
+                // 超时：终止子进程
+                let _ = child.kill();
+                let _ = child.wait();
+                Ok(format!("命令执行超时（{}ms），已终止", timeout_ms))
+            }
         }
     }
 }

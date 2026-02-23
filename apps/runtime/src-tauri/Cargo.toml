@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 glob = "0.3"
 regex = "1"
+wait-timeout = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
