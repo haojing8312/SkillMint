@@ -88,5 +88,10 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         .execute(&pool)
         .await;
 
+    // Migration: add source_type column to installed_skills（区分加密 vs 本地 Skill）
+    let _ = sqlx::query("ALTER TABLE installed_skills ADD COLUMN source_type TEXT NOT NULL DEFAULT 'encrypted'")
+        .execute(&pool)
+        .await;
+
     Ok(pool)
 }

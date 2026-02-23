@@ -19,7 +19,7 @@ pub async fn install_skill(
 
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT OR REPLACE INTO installed_skills (id, manifest, installed_at, username, pack_path) VALUES (?, ?, ?, ?, ?)"
+        "INSERT OR REPLACE INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type) VALUES (?, ?, ?, ?, ?, 'encrypted')"
     )
     .bind(&unpacked.manifest.id)
     .bind(&manifest_json)
@@ -31,6 +31,122 @@ pub async fn install_skill(
     .map_err(|e| e.to_string())?;
 
     Ok(unpacked.manifest)
+}
+
+/// 导入本地 Skill 目录（读取 SKILL.md 解析 frontmatter）
+#[tauri::command]
+pub async fn import_local_skill(
+    dir_path: String,
+    db: State<'_, DbState>,
+) -> Result<SkillManifest, String> {
+    // 读取 SKILL.md
+    let skill_md_path = std::path::Path::new(&dir_path).join("SKILL.md");
+    let content = std::fs::read_to_string(&skill_md_path)
+        .map_err(|e| format!("无法读取 SKILL.md: {}", e))?;
+
+    // 解析 frontmatter
+    let config = crate::agent::skill_config::SkillConfig::parse(&content);
+
+    // 构造 manifest
+    let name = config.name.clone().unwrap_or_else(|| {
+        // 使用目录名作为 fallback
+        std::path::Path::new(&dir_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed-skill".to_string())
+    });
+    let skill_id = format!("local-{}", name);
+
+    let manifest = SkillManifest {
+        id: skill_id.clone(),
+        name: name.clone(),
+        description: config.description.unwrap_or_default(),
+        version: "local".to_string(),
+        author: String::new(),
+        recommended_model: config.model.unwrap_or_default(),
+        tags: Vec::new(),
+        created_at: Utc::now(),
+        username_hint: None,
+        encrypted_verify: String::new(),
+    };
+
+    let manifest_json = serde_json::to_string(&manifest)
+        .map_err(|e| e.to_string())?;
+
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT OR REPLACE INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type) VALUES (?, ?, ?, ?, ?, 'local')"
+    )
+    .bind(&skill_id)
+    .bind(&manifest_json)
+    .bind(&now)
+    .bind("")  // 本地 Skill 无需 username
+    .bind(&dir_path)
+    .execute(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(manifest)
+}
+
+/// 刷新本地 Skill（重新读取 SKILL.md 更新 manifest）
+#[tauri::command]
+pub async fn refresh_local_skill(
+    skill_id: String,
+    db: State<'_, DbState>,
+) -> Result<SkillManifest, String> {
+    // 从 DB 获取 pack_path（即目录路径）
+    let (pack_path, source_type): (String, String) = sqlx::query_as(
+        "SELECT pack_path, COALESCE(source_type, 'encrypted') FROM installed_skills WHERE id = ?"
+    )
+    .bind(&skill_id)
+    .fetch_one(&db.0)
+    .await
+    .map_err(|e| format!("Skill 不存在 (skill_id={}): {}", skill_id, e))?;
+
+    if source_type != "local" {
+        return Err(format!("Skill {} 不是本地 Skill，无法刷新", skill_id));
+    }
+
+    // 重新读取 SKILL.md
+    let skill_md_path = std::path::Path::new(&pack_path).join("SKILL.md");
+    let content = std::fs::read_to_string(&skill_md_path)
+        .map_err(|e| format!("无法读取 SKILL.md: {}", e))?;
+
+    let config = crate::agent::skill_config::SkillConfig::parse(&content);
+
+    let name = config.name.clone().unwrap_or_else(|| {
+        std::path::Path::new(&pack_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed-skill".to_string())
+    });
+
+    let manifest = SkillManifest {
+        id: skill_id.clone(),
+        name,
+        description: config.description.unwrap_or_default(),
+        version: "local".to_string(),
+        author: String::new(),
+        recommended_model: config.model.unwrap_or_default(),
+        tags: Vec::new(),
+        created_at: Utc::now(),
+        username_hint: None,
+        encrypted_verify: String::new(),
+    };
+
+    let manifest_json = serde_json::to_string(&manifest)
+        .map_err(|e| e.to_string())?;
+
+    // 更新 DB 中的 manifest
+    sqlx::query("UPDATE installed_skills SET manifest = ? WHERE id = ?")
+        .bind(&manifest_json)
+        .bind(&skill_id)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(manifest)
 }
 
 #[tauri::command]

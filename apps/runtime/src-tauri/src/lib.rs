@@ -97,6 +97,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::skills::install_skill,
+            commands::skills::import_local_skill,
+            commands::skills::refresh_local_skill,
             commands::skills::list_skills,
             commands::skills::delete_skill,
             commands::models::save_model_config,

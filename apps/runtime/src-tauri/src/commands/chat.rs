@@ -105,27 +105,40 @@ pub async fn send_message(
         _ => PermissionMode::Default,
     };
 
-    // 加载 Skill 信息（含 pack_path 用于重新解包）
-    let (manifest_json, username, pack_path) = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT manifest, username, pack_path FROM installed_skills WHERE id = ?"
+    // 加载 Skill 信息（含 pack_path 和 source_type，用 COALESCE 兼容旧数据）
+    let (manifest_json, username, pack_path, source_type) = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT manifest, username, pack_path, COALESCE(source_type, 'encrypted') FROM installed_skills WHERE id = ?"
     )
     .bind(&skill_id)
     .fetch_one(&db.0)
     .await
     .map_err(|e| format!("Skill 不存在 (skill_id={skill_id}): {e}"))?;
 
-    // 重新解包获取 SKILL.md 内容作为原始 prompt
-    let raw_prompt = match skillpack_rs::verify_and_unpack(&pack_path, &username) {
-        Ok(unpacked) => {
-            String::from_utf8_lossy(
-                unpacked.files.get("SKILL.md").map(|v| v.as_slice()).unwrap_or_default()
-            ).to_string()
-        }
-        Err(_) => {
-            // 解包失败时回退到 manifest 描述
-            let manifest: skillpack_rs::SkillManifest = serde_json::from_str(&manifest_json)
-                .map_err(|e| e.to_string())?;
-            manifest.description
+    // 根据 source_type 决定如何读取 SKILL.md 内容
+    let raw_prompt = if source_type == "local" {
+        // 本地 Skill：直接从目录读取 SKILL.md
+        let skill_md_path = std::path::Path::new(&pack_path).join("SKILL.md");
+        std::fs::read_to_string(&skill_md_path)
+            .unwrap_or_else(|_| {
+                // 读取失败时回退到 manifest 描述
+                serde_json::from_str::<skillpack_rs::SkillManifest>(&manifest_json)
+                    .map(|m| m.description)
+                    .unwrap_or_default()
+            })
+    } else {
+        // 加密 Skill：重新解包获取 SKILL.md
+        match skillpack_rs::verify_and_unpack(&pack_path, &username) {
+            Ok(unpacked) => {
+                String::from_utf8_lossy(
+                    unpacked.files.get("SKILL.md").map(|v| v.as_slice()).unwrap_or_default()
+                ).to_string()
+            }
+            Err(_) => {
+                // 解包失败时回退到 manifest 描述
+                let manifest: skillpack_rs::SkillManifest = serde_json::from_str(&manifest_json)
+                    .map_err(|e| e.to_string())?;
+                manifest.description
+            }
         }
     };
 

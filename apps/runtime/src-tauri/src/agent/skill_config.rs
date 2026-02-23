@@ -1,5 +1,27 @@
 use serde::Deserialize;
 
+/// allowed_tools 支持两种 YAML 格式：逗号分隔字符串或数组
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)]
+enum AllowedToolsValue {
+    /// YAML 数组格式: ["Bash", "Read"]
+    Array(Vec<String>),
+    /// 逗号分隔字符串格式: "Bash, Read, Glob"
+    CommaSeparated(String),
+}
+
+impl AllowedToolsValue {
+    /// 转换为统一的 Vec<String>
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            AllowedToolsValue::Array(v) => v,
+            AllowedToolsValue::CommaSeparated(s) => {
+                s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+            }
+        }
+    }
+}
+
 /// 从 SKILL.md 解析出的 Skill 配置
 #[derive(Debug, Clone, Default)]
 pub struct SkillConfig {
@@ -8,6 +30,16 @@ pub struct SkillConfig {
     pub allowed_tools: Option<Vec<String>>,
     pub model: Option<String>,
     pub max_iterations: Option<usize>,
+    /// Claude Code 兼容: 参数提示文本
+    pub argument_hint: Option<String>,
+    /// Claude Code 兼容: 禁止 Skill 自行调用 LLM（默认 false）
+    pub disable_model_invocation: bool,
+    /// Claude Code 兼容: 用户可主动触发（默认 true）
+    pub user_invocable: bool,
+    /// Claude Code 兼容: 上下文模式，如 "fork" 表示独立上下文
+    pub context: Option<String>,
+    /// Claude Code 兼容: 指定运行的 Agent，如 "Explore", "Plan"
+    pub agent: Option<String>,
     pub system_prompt: String,
 }
 
@@ -16,9 +48,27 @@ pub struct SkillConfig {
 struct FrontMatter {
     name: Option<String>,
     description: Option<String>,
-    allowed_tools: Option<Vec<String>>,
+    allowed_tools: Option<AllowedToolsValue>,
     model: Option<String>,
     max_iterations: Option<usize>,
+    /// Claude Code 兼容字段（YAML alias: argument-hint）
+    #[serde(alias = "argument-hint")]
+    argument_hint: Option<String>,
+    /// Claude Code 兼容字段（YAML alias: disable-model-invocation）
+    #[serde(alias = "disable-model-invocation", default)]
+    disable_model_invocation: bool,
+    /// Claude Code 兼容字段（YAML alias: user-invocable）
+    #[serde(alias = "user-invocable", default = "default_true")]
+    user_invocable: bool,
+    /// Claude Code 兼容: 上下文模式
+    context: Option<String>,
+    /// Claude Code 兼容: 指定 Agent
+    agent: Option<String>,
+}
+
+/// serde 默认值函数：返回 true
+fn default_true() -> bool {
+    true
 }
 
 impl SkillConfig {
@@ -59,10 +109,48 @@ impl SkillConfig {
         Self {
             name: fm.name,
             description: fm.description,
-            allowed_tools: fm.allowed_tools,
+            allowed_tools: fm.allowed_tools.map(|v| v.into_vec()),
             model: fm.model,
             max_iterations: fm.max_iterations,
+            argument_hint: fm.argument_hint,
+            disable_model_invocation: fm.disable_model_invocation,
+            user_invocable: fm.user_invocable,
+            context: fm.context,
+            agent: fm.agent,
             system_prompt,
         }
+    }
+
+    /// 在 system_prompt 中替换参数占位符
+    ///
+    /// 支持的占位符：
+    /// - `$ARGUMENTS` → 全部参数空格拼接
+    /// - `$ARGUMENTS[N]` → 第 N 个参数（0-indexed）
+    /// - `$N` → `$ARGUMENTS[N]` 的简写
+    /// - `${CLAUDE_SESSION_ID}` → 当前会话 ID
+    pub fn substitute_arguments(&mut self, args: &[&str], session_id: &str) {
+        let all_args = args.join(" ");
+        let mut result = self.system_prompt.clone();
+
+        // 先替换 $ARGUMENTS[N] 格式（避免被 $ARGUMENTS 先匹配）
+        // 使用简单的循环替换，支持 $ARGUMENTS[0] ~ $ARGUMENTS[99]
+        for i in (0..args.len()).rev() {
+            let placeholder = format!("$ARGUMENTS[{}]", i);
+            result = result.replace(&placeholder, args[i]);
+        }
+
+        // 替换 $N 简写格式（从大到小避免 $1 匹配到 $10 的前缀）
+        for i in (0..args.len()).rev() {
+            let placeholder = format!("${}", i);
+            result = result.replace(&placeholder, args[i]);
+        }
+
+        // 替换 $ARGUMENTS（全部参数）
+        result = result.replace("$ARGUMENTS", &all_args);
+
+        // 替换 ${CLAUDE_SESSION_ID}
+        result = result.replace("${CLAUDE_SESSION_ID}", session_id);
+
+        self.system_prompt = result;
     }
 }
