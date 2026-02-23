@@ -2,6 +2,15 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ModelConfig } from "../types";
 
+const MCP_PRESETS = [
+  { label: "— 快速选择 —", value: "", name: "", command: "", args: "", env: "" },
+  { label: "Filesystem", value: "filesystem", name: "filesystem", command: "npx", args: "-y @anthropic/mcp-server-filesystem /tmp", env: "" },
+  { label: "Brave Search", value: "brave-search", name: "brave-search", command: "npx", args: "-y @anthropic/mcp-server-brave-search", env: '{"BRAVE_API_KEY": ""}' },
+  { label: "Memory", value: "memory", name: "memory", command: "npx", args: "-y @anthropic/mcp-server-memory", env: "" },
+  { label: "Puppeteer", value: "puppeteer", name: "puppeteer", command: "npx", args: "-y @anthropic/mcp-server-puppeteer", env: "" },
+  { label: "Fetch", value: "fetch", name: "fetch", command: "npx", args: "-y @anthropic/mcp-server-fetch", env: "" },
+];
+
 const PROVIDER_PRESETS = [
   { label: "— 快速选择 —", value: "", models: [] as string[] },
   { label: "OpenAI", value: "openai", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"] },
@@ -106,6 +115,17 @@ export function SettingsView({ onClose }: Props) {
       model_name: preset.model_name!,
     }));
     setModelSuggestions(preset.models);
+  }
+
+  function applyMcpPreset(value: string) {
+    const preset = MCP_PRESETS.find((p) => p.value === value);
+    if (!preset || !preset.value) return;
+    setMcpForm({
+      name: preset.name,
+      command: preset.command,
+      args: preset.args,
+      env: preset.env,
+    });
   }
 
   async function handleDelete(id: string) {
@@ -288,6 +308,18 @@ export function SettingsView({ onClose }: Props) {
           </div>
         )}
 
+        <div>
+          <label className={labelCls}>快速选择 MCP 服务器</label>
+          <select
+            className={inputCls}
+            defaultValue=""
+            onChange={(e) => applyMcpPreset(e.target.value)}
+          >
+            {MCP_PRESETS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
         <div>
           <label className={labelCls}>名称</label>
           <input className={inputCls} placeholder="例: filesystem" value={mcpForm.name} onChange={(e) => setMcpForm({ ...mcpForm, name: e.target.value })} />
