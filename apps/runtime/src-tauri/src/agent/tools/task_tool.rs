@@ -1,5 +1,5 @@
 use crate::agent::permissions::PermissionMode;
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use crate::agent::{AgentExecutor, ToolRegistry};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -96,7 +96,7 @@ impl Tool for TaskTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let prompt = input["prompt"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 prompt 参数"))?
@@ -182,6 +182,7 @@ impl Tool for TaskTool {
                         allowed_tools.as_deref(),
                         PermissionMode::Unrestricted, // 子 Agent 不需要权限确认
                         None,                         // 无确认通道
+                        None,                         // work_dir: 子 Agent 继承主 Agent 设置
                     )
                     .await
             })

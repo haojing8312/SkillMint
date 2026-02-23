@@ -1,9 +1,10 @@
 use super::permissions::PermissionMode;
 use super::registry::ToolRegistry;
-use super::types::{LLMResponse, ToolResult};
+use super::types::{LLMResponse, ToolContext, ToolResult};
 use crate::adapters;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -235,7 +236,11 @@ impl AgentExecutor {
         allowed_tools: Option<&[String]>,
         permission_mode: PermissionMode,
         tool_confirm_tx: Option<std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>>,
+        work_dir: Option<String>,
     ) -> Result<Vec<Value>> {
+        let tool_ctx = ToolContext {
+            work_dir: work_dir.map(PathBuf::from),
+        };
         let mut iteration = 0;
 
         loop {
@@ -448,13 +453,13 @@ impl AgentExecutor {
                                     if !whitelist.iter().any(|w| w == &call.name) {
                                         format!("此 Skill 不允许使用工具: {}", call.name)
                                     } else {
-                                        match tool.execute(call.input.clone()) {
+                                        match tool.execute(call.input.clone(), &tool_ctx) {
                                             Ok(output) => output,
                                             Err(e) => format!("工具执行错误: {}", e),
                                         }
                                     }
                                 } else {
-                                    match tool.execute(call.input.clone()) {
+                                    match tool.execute(call.input.clone(), &tool_ctx) {
                                         Ok(output) => output,
                                         Err(e) => format!("工具执行错误: {}", e),
                                     }

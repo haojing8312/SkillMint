@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -65,7 +65,7 @@ impl Tool for SidecarBridgeTool {
         self.schema.clone()
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let client = reqwest::blocking::Client::new();
         let url = format!("{}{}", self.sidecar_url, self.endpoint);
 

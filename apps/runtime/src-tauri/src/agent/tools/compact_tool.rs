@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::Result;
 use serde_json::{json, Value};
 
@@ -17,12 +17,13 @@ use serde_json::{json, Value};
 /// let tool = CompactTool::new();
 /// assert_eq!(tool.name(), "compact");
 ///
+/// let ctx = ToolContext::default();
 /// // 不带重点方向调用
-/// let result = tool.execute(json!({})).unwrap();
+/// let result = tool.execute(json!({}), &ctx).unwrap();
 /// assert!(result.contains("下一轮迭代"));
 ///
 /// // 带重点方向调用
-/// let result = tool.execute(json!({"focus": "TypeScript 相关变更"})).unwrap();
+/// let result = tool.execute(json!({"focus": "TypeScript 相关变更"}), &ctx).unwrap();
 /// assert!(result.contains("TypeScript 相关变更"));
 /// ```
 pub struct CompactTool;
@@ -60,7 +61,7 @@ impl Tool for CompactTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let focus = input["focus"].as_str().unwrap_or("");
         if focus.is_empty() {
             Ok("已请求上下文压缩。将在下一轮迭代执行。".to_string())
@@ -96,7 +97,7 @@ mod tests {
     #[test]
     fn test_execute_without_focus() {
         let tool = CompactTool::new();
-        let result = tool.execute(json!({})).unwrap();
+        let result = tool.execute(json!({}), &ToolContext::default()).unwrap();
         assert!(result.contains("下一轮迭代"));
         assert!(!result.contains("重点"));
     }
@@ -104,7 +105,7 @@ mod tests {
     #[test]
     fn test_execute_with_focus() {
         let tool = CompactTool::new();
-        let result = tool.execute(json!({"focus": "TypeScript 相关变更"})).unwrap();
+        let result = tool.execute(json!({"focus": "TypeScript 相关变更"}), &ToolContext::default()).unwrap();
         assert!(result.contains("TypeScript 相关变更"));
         assert!(result.contains("下一轮迭代"));
     }
@@ -113,7 +114,7 @@ mod tests {
     fn test_execute_with_empty_focus() {
         let tool = CompactTool::new();
         // 空字符串 focus 等同于未提供
-        let result = tool.execute(json!({"focus": ""})).unwrap();
+        let result = tool.execute(json!({"focus": ""}), &ToolContext::default()).unwrap();
         assert!(!result.contains("重点"));
     }
 

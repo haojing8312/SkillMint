@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -40,7 +40,7 @@ impl Tool for WebSearchTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let query = input["query"]
             .as_str()
             .ok_or(anyhow!("缺少 query 参数"))?;

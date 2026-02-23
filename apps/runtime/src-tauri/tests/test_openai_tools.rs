@@ -28,6 +28,7 @@ async fn test_openai_tool_calling_executor_branch() {
             None,
             PermissionMode::Unrestricted,
             None,
+            None,
         )
         .await;
 
@@ -66,6 +67,7 @@ async fn test_openai_tool_calling_real() {
             None,
             None,
             PermissionMode::Unrestricted,
+            None,
             None,
         )
         .await;

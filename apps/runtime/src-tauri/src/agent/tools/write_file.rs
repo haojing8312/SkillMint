@@ -1,7 +1,6 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::path::Path;
 
 pub struct WriteFileTool;
 
@@ -31,7 +30,7 @@ impl Tool for WriteFileTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, ctx: &ToolContext) -> Result<String> {
         let path = input["path"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 path 参数"))?;
@@ -39,12 +38,14 @@ impl Tool for WriteFileTool {
             .as_str()
             .ok_or_else(|| anyhow!("缺少 content 参数"))?;
 
+        let checked = ctx.check_path(path)?;
+
         // 确保父目录存在
-        if let Some(parent) = Path::new(path).parent() {
+        if let Some(parent) = checked.parent() {
             std::fs::create_dir_all(parent).map_err(|e| anyhow!("创建目录失败: {}", e))?;
         }
 
-        std::fs::write(path, content).map_err(|e| anyhow!("写入文件失败: {}", e))?;
+        std::fs::write(&checked, content).map_err(|e| anyhow!("写入文件失败: {}", e))?;
 
         Ok(format!("成功写入 {} 字节到 {}", content.len(), path))
     }

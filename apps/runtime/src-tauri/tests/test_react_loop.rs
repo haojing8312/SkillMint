@@ -33,6 +33,7 @@ async fn test_react_loop_max_iterations_error() {
             None,
             PermissionMode::Unrestricted,
             None,
+            None,
         )
         .await;
 
@@ -63,6 +64,7 @@ async fn test_react_loop_openai_format_network_error() {
             None,
             None,
             PermissionMode::Unrestricted,
+            None,
             None,
         )
         .await;

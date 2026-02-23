@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -26,13 +26,14 @@ impl Tool for ReadFileTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, ctx: &ToolContext) -> Result<String> {
         let path = input["path"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 path 参数"))?;
 
+        let checked = ctx.check_path(path)?;
         let content =
-            std::fs::read_to_string(path).map_err(|e| anyhow!("读取文件失败: {}", e))?;
+            std::fs::read_to_string(&checked).map_err(|e| anyhow!("读取文件失败: {}", e))?;
 
         Ok(content)
     }

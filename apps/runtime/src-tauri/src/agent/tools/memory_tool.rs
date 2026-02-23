@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 
 /// 持久内存工具 - 跨会话的知识存储
 ///
@@ -19,11 +19,12 @@ use crate::agent::types::Tool;
 /// use serde_json::json;
 ///
 /// let tool = MemoryTool::new(PathBuf::from("/tmp/memory"));
+/// let ctx = ToolContext::default();
 /// let result = tool.execute(json!({
 ///     "action": "write",
 ///     "key": "greeting",
 ///     "content": "你好，世界！"
-/// })).unwrap();
+/// }), &ctx).unwrap();
 /// assert!(result.contains("已写入"));
 /// ```
 pub struct MemoryTool {
@@ -71,7 +72,7 @@ impl Tool for MemoryTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let action = input["action"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 action 参数"))?;

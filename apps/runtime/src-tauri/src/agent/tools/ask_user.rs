@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, mpsc};
@@ -66,7 +66,7 @@ impl Tool for AskUserTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let question = input["question"]
             .as_str()
             .ok_or(anyhow!("缺少 question 参数"))?

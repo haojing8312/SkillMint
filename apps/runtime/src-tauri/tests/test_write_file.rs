@@ -1,10 +1,11 @@
-use runtime_lib::agent::{Tool, WriteFileTool};
+use runtime_lib::agent::{Tool, ToolContext, WriteFileTool};
 use serde_json::json;
 use std::fs;
 
 #[test]
 fn test_write_file_success() {
     let tool = WriteFileTool;
+    let ctx = ToolContext::default();
     let test_path = "test_write_output.txt";
 
     let input = json!({
@@ -12,7 +13,7 @@ fn test_write_file_success() {
         "content": "Test content"
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("成功写入"));
     assert!(result.contains(test_path));
 
@@ -27,6 +28,7 @@ fn test_write_file_success() {
 #[test]
 fn test_write_file_creates_parent_dirs() {
     let tool = WriteFileTool;
+    let ctx = ToolContext::default();
     let test_path = "test_write_dir/nested/file.txt";
 
     let input = json!({
@@ -34,7 +36,7 @@ fn test_write_file_creates_parent_dirs() {
         "content": "Nested content"
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("成功写入"));
 
     // Verify file was written
@@ -48,9 +50,10 @@ fn test_write_file_creates_parent_dirs() {
 #[test]
 fn test_write_file_missing_params() {
     let tool = WriteFileTool;
+    let ctx = ToolContext::default();
 
     let input = json!({"path": "test.txt"});
-    let result = tool.execute(input);
+    let result = tool.execute(input, &ctx);
     assert!(result.is_err());
     assert!(result
         .unwrap_err()

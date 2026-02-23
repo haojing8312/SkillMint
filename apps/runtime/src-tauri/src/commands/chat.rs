@@ -288,6 +288,7 @@ pub async fn send_message(
             allowed_tools.as_deref(),
             permission_mode,
             Some(tool_confirm_responder.clone()),
+            None, // work_dir: 由后续 Task 6 通过 session 的 work_dir 字段传入
         )
         .await
         .map_err(|e| e.to_string())?;

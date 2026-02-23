@@ -1,4 +1,4 @@
-use runtime_lib::agent::{GrepTool, Tool};
+use runtime_lib::agent::{GrepTool, Tool, ToolContext};
 use serde_json::json;
 use std::fs;
 
@@ -12,12 +12,13 @@ fn test_grep_find_matches() {
     .unwrap();
 
     let tool = GrepTool;
+    let ctx = ToolContext::default();
     let input = json!({
         "pattern": "hello",
         "path": test_file
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("找到 2 处匹配"));
     assert!(result.contains("1:line 1: hello"));
     assert!(result.contains("3:line 3: hello world"));
@@ -31,13 +32,14 @@ fn test_grep_case_insensitive() {
     fs::write(test_file, "Hello\nHELLO\nhello\n").unwrap();
 
     let tool = GrepTool;
+    let ctx = ToolContext::default();
     let input = json!({
         "pattern": "hello",
         "path": test_file,
         "case_insensitive": true
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("找到 3 处匹配"));
 
     fs::remove_file(test_file).unwrap();
@@ -49,12 +51,13 @@ fn test_grep_no_matches() {
     fs::write(test_file, "foo\nbar\nbaz\n").unwrap();
 
     let tool = GrepTool;
+    let ctx = ToolContext::default();
     let input = json!({
         "pattern": "notfound",
         "path": test_file
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("找到 0 处匹配"));
 
     fs::remove_file(test_file).unwrap();

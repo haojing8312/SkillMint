@@ -1,4 +1,4 @@
-use runtime_lib::agent::{EditTool, Tool, ToolRegistry};
+use runtime_lib::agent::{EditTool, Tool, ToolContext, ToolRegistry};
 use serde_json::json;
 use std::fs;
 use std::sync::Arc;
@@ -6,11 +6,12 @@ use std::sync::Arc;
 #[test]
 fn test_edit_replace_single() {
     let tool = EditTool;
+    let ctx = ToolContext::default();
     let path = "test_edit_single.txt";
     fs::write(path, "Hello, World!\nGoodbye, World!").unwrap();
 
     let input = json!({"path": path, "old_string": "Hello", "new_string": "Hi"});
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("成功替换"));
 
     let content = fs::read_to_string(path).unwrap();
@@ -21,11 +22,12 @@ fn test_edit_replace_single() {
 #[test]
 fn test_edit_not_found() {
     let tool = EditTool;
+    let ctx = ToolContext::default();
     let path = "test_edit_notfound.txt";
     fs::write(path, "Hello, World!").unwrap();
 
     let input = json!({"path": path, "old_string": "NONEXISTENT", "new_string": "replacement"});
-    let result = tool.execute(input);
+    let result = tool.execute(input, &ctx);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("未找到"));
     fs::remove_file(path).unwrap();
@@ -34,11 +36,12 @@ fn test_edit_not_found() {
 #[test]
 fn test_edit_not_unique() {
     let tool = EditTool;
+    let ctx = ToolContext::default();
     let path = "test_edit_notunique.txt";
     fs::write(path, "aaa bbb aaa").unwrap();
 
     let input = json!({"path": path, "old_string": "aaa", "new_string": "ccc"});
-    let result = tool.execute(input);
+    let result = tool.execute(input, &ctx);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("不唯一"));
     fs::remove_file(path).unwrap();
@@ -47,11 +50,12 @@ fn test_edit_not_unique() {
 #[test]
 fn test_edit_replace_all() {
     let tool = EditTool;
+    let ctx = ToolContext::default();
     let path = "test_edit_replaceall.txt";
     fs::write(path, "aaa bbb aaa").unwrap();
 
     let input = json!({"path": path, "old_string": "aaa", "new_string": "ccc", "replace_all": true});
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("2"));
 
     let content = fs::read_to_string(path).unwrap();
@@ -62,7 +66,8 @@ fn test_edit_replace_all() {
 #[test]
 fn test_edit_missing_params() {
     let tool = EditTool;
-    let result = tool.execute(json!({}));
+    let ctx = ToolContext::default();
+    let result = tool.execute(json!({}), &ctx);
     assert!(result.is_err());
 }
 

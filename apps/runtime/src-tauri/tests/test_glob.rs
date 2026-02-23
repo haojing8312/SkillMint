@@ -1,4 +1,4 @@
-use runtime_lib::agent::{GlobTool, Tool};
+use runtime_lib::agent::{GlobTool, Tool, ToolContext};
 use serde_json::json;
 use std::fs;
 
@@ -12,12 +12,13 @@ fn test_glob_find_files() {
     fs::write("test_glob_dir/file.rs", "").unwrap();
 
     let tool = GlobTool;
+    let ctx = ToolContext::default();
     let input = json!({
         "pattern": "**/*.txt",
         "base_dir": "test_glob_dir"
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("找到 3 个文件"));
     assert!(result.contains("file1.txt"));
     assert!(result.contains("file2.txt"));
@@ -31,10 +32,11 @@ fn test_glob_find_files() {
 #[test]
 fn test_glob_no_matches() {
     let tool = GlobTool;
+    let ctx = ToolContext::default();
     let input = json!({
         "pattern": "**/*.nonexistent_ext_xyz"
     });
 
-    let result = tool.execute(input).unwrap();
+    let result = tool.execute(input, &ctx).unwrap();
     assert!(result.contains("找到 0 个文件"));
 }

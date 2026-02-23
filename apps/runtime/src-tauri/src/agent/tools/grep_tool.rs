@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use regex::RegexBuilder;
 use serde_json::{json, Value};
@@ -35,7 +35,7 @@ impl Tool for GrepTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, ctx: &ToolContext) -> Result<String> {
         let pattern = input["pattern"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 pattern 参数"))?;
@@ -44,12 +44,14 @@ impl Tool for GrepTool {
             .ok_or_else(|| anyhow!("缺少 path 参数"))?;
         let case_insensitive = input["case_insensitive"].as_bool().unwrap_or(false);
 
+        let checked = ctx.check_path(path)?;
+
         let re = RegexBuilder::new(pattern)
             .case_insensitive(case_insensitive)
             .build()
             .map_err(|e| anyhow!("正则表达式错误: {}", e))?;
 
-        let content = std::fs::read_to_string(path).map_err(|e| anyhow!("读取文件失败: {}", e))?;
+        let content = std::fs::read_to_string(&checked).map_err(|e| anyhow!("读取文件失败: {}", e))?;
 
         let matches: Vec<String> = content
             .lines()

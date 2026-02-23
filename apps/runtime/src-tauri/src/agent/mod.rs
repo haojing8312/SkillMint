@@ -9,4 +9,4 @@ pub mod types;
 pub use executor::AgentExecutor;
 pub use registry::ToolRegistry;
 pub use tools::*;
-pub use types::{AgentState, LLMResponse, Tool, ToolCall, ToolResult};
+pub use types::{AgentState, LLMResponse, Tool, ToolCall, ToolContext, ToolResult};

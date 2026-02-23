@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -23,18 +23,27 @@ impl Tool for GlobTool {
                 },
                 "base_dir": {
                     "type": "string",
-                    "description": "搜索的基础目录（可选，默认为当前目录）"
+                    "description": "搜索的基础目录（可选，默认为当前目录或工作目录）"
                 }
             },
             "required": ["pattern"]
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, ctx: &ToolContext) -> Result<String> {
         let pattern = input["pattern"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 pattern 参数"))?;
-        let base_dir = input["base_dir"].as_str().unwrap_or(".");
+
+        // 优先使用用户指定的 base_dir，其次使用 ToolContext 的 work_dir，最后回退到 "."
+        let base_dir = match input["base_dir"].as_str() {
+            Some(dir) => dir.to_string(),
+            None => ctx
+                .work_dir
+                .as_ref()
+                .map(|wd| wd.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string()),
+        };
 
         let full_pattern = format!("{}/{}", base_dir, pattern);
         let paths: Vec<String> = glob::glob(&full_pattern)

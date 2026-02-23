@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::RwLock;
@@ -67,7 +67,7 @@ impl Tool for TodoWriteTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let action = input["action"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 action 参数"))?;
@@ -157,7 +157,7 @@ mod tests {
         let tool = TodoWriteTool::new();
 
         // 列表为空时返回"暂无任务"
-        let result = tool.execute(json!({"action": "list"})).unwrap();
+        let result = tool.execute(json!({"action": "list"}), &ToolContext::default()).unwrap();
         assert_eq!(result, "暂无任务");
 
         // 创建任务
@@ -166,12 +166,12 @@ mod tests {
                 "action": "create",
                 "subject": "实现 Edit 工具",
                 "description": "精确替换文本"
-            }))
+            }), &ToolContext::default())
             .unwrap();
         assert!(result.contains("已创建任务 ID:"));
 
         // 列表应包含新任务
-        let list = tool.execute(json!({"action": "list"})).unwrap();
+        let list = tool.execute(json!({"action": "list"}), &ToolContext::default()).unwrap();
         assert!(list.contains("实现 Edit 工具"));
         assert!(list.contains("pending"));
         assert!(list.contains("精确替换文本"));
@@ -182,17 +182,17 @@ mod tests {
         let tool = TodoWriteTool::new();
 
         let create_result = tool
-            .execute(json!({"action": "create", "subject": "Test task"}))
+            .execute(json!({"action": "create", "subject": "Test task"}), &ToolContext::default())
             .unwrap();
         let id = create_result.split("ID: ").nth(1).unwrap().trim();
 
         // 更新状态
         let update_result = tool
-            .execute(json!({"action": "update", "id": id, "status": "in_progress"}))
+            .execute(json!({"action": "update", "id": id, "status": "in_progress"}), &ToolContext::default())
             .unwrap();
         assert!(update_result.contains("已更新任务"));
 
-        let list = tool.execute(json!({"action": "list"})).unwrap();
+        let list = tool.execute(json!({"action": "list"}), &ToolContext::default()).unwrap();
         assert!(list.contains("in_progress"));
     }
 
@@ -201,23 +201,23 @@ mod tests {
         let tool = TodoWriteTool::new();
 
         let create_result = tool
-            .execute(json!({"action": "create", "subject": "Will delete"}))
+            .execute(json!({"action": "create", "subject": "Will delete"}), &ToolContext::default())
             .unwrap();
         let id = create_result.split("ID: ").nth(1).unwrap().trim();
 
         let delete_result = tool
-            .execute(json!({"action": "delete", "id": id}))
+            .execute(json!({"action": "delete", "id": id}), &ToolContext::default())
             .unwrap();
         assert!(delete_result.contains("已删除任务"));
 
-        let list = tool.execute(json!({"action": "list"})).unwrap();
+        let list = tool.execute(json!({"action": "list"}), &ToolContext::default()).unwrap();
         assert!(!list.contains("Will delete"));
     }
 
     #[test]
     fn test_delete_nonexistent() {
         let tool = TodoWriteTool::new();
-        let result = tool.execute(json!({"action": "delete", "id": "fake-id"}));
+        let result = tool.execute(json!({"action": "delete", "id": "fake-id"}), &ToolContext::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("任务不存在"));
     }
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn test_update_nonexistent() {
         let tool = TodoWriteTool::new();
-        let result = tool.execute(json!({"action": "update", "id": "fake-id", "status": "completed"}));
+        let result = tool.execute(json!({"action": "update", "id": "fake-id", "status": "completed"}), &ToolContext::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("任务不存在"));
     }
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn test_missing_action() {
         let tool = TodoWriteTool::new();
-        let result = tool.execute(json!({}));
+        let result = tool.execute(json!({}), &ToolContext::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("缺少 action 参数"));
     }
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn test_unknown_action() {
         let tool = TodoWriteTool::new();
-        let result = tool.execute(json!({"action": "unknown"}));
+        let result = tool.execute(json!({"action": "unknown"}), &ToolContext::default());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("未知操作"));
     }

@@ -1,5 +1,5 @@
 use runtime_lib::agent::tools::WebSearchTool;
-use runtime_lib::agent::Tool;
+use runtime_lib::agent::{Tool, ToolContext};
 use serde_json::json;
 
 #[test]
@@ -16,7 +16,8 @@ fn test_web_search_tool_metadata() {
 #[test]
 fn test_web_search_missing_query() {
     let tool = WebSearchTool::new("http://localhost:8765".to_string());
-    let result = tool.execute(json!({}));
+    let ctx = ToolContext::default();
+    let result = tool.execute(json!({}), &ctx);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("query"));
 }
@@ -24,7 +25,8 @@ fn test_web_search_missing_query() {
 #[test]
 fn test_web_search_empty_query() {
     let tool = WebSearchTool::new("http://localhost:8765".to_string());
-    let result = tool.execute(json!({"query": "  "}));
+    let ctx = ToolContext::default();
+    let result = tool.execute(json!({"query": "  "}), &ctx);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("不能为空"));
 }
@@ -35,7 +37,8 @@ fn test_web_search_empty_query() {
 #[ignore]
 fn test_web_search_integration() {
     let tool = WebSearchTool::new("http://localhost:8765".to_string());
-    let result = tool.execute(json!({"query": "Rust programming language", "count": 3}));
+    let ctx = ToolContext::default();
+    let result = tool.execute(json!({"query": "Rust programming language", "count": 3}), &ctx);
     assert!(result.is_ok(), "搜索失败: {:?}", result);
     let output = result.unwrap();
     assert!(!output.is_empty());

@@ -1,4 +1,4 @@
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::io::Read;
@@ -64,7 +64,7 @@ impl Tool for BashTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, ctx: &ToolContext) -> Result<String> {
         let command = input["command"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 command 参数"))?;
@@ -81,12 +81,18 @@ impl Tool for BashTool {
         let (shell, flag) = Self::get_shell();
 
         // 使用 spawn 启动子进程，以便后续进行超时控制
-        let mut child = Command::new(shell)
-            .arg(flag)
+        let mut cmd = Command::new(shell);
+        cmd.arg(flag)
             .arg(command)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+
+        // 如果 ToolContext 指定了工作目录，设置子进程的 cwd
+        if let Some(ref wd) = ctx.work_dir {
+            cmd.current_dir(wd);
+        }
+
+        let mut child = cmd.spawn()?;
 
         // 等待子进程完成或超时
         match child.wait_timeout(timeout)? {

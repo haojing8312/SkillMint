@@ -1,4 +1,4 @@
-use runtime_lib::agent::{ReadFileTool, Tool, ToolRegistry};
+use runtime_lib::agent::{ReadFileTool, Tool, ToolContext, ToolRegistry};
 use serde_json::json;
 use std::fs;
 use std::sync::Arc;
@@ -17,7 +17,8 @@ fn test_read_file_success() {
 
     // Execute tool
     let input = json!({"path": test_path});
-    let result = tool.unwrap().execute(input).unwrap();
+    let ctx = ToolContext::default();
+    let result = tool.unwrap().execute(input, &ctx).unwrap();
 
     assert_eq!(result, "Hello, World!");
 
@@ -28,8 +29,9 @@ fn test_read_file_success() {
 #[test]
 fn test_read_file_missing_path() {
     let tool = ReadFileTool;
+    let ctx = ToolContext::default();
     let input = json!({});
-    let result = tool.execute(input);
+    let result = tool.execute(input, &ctx);
     assert!(result.is_err());
     assert!(result
         .unwrap_err()
@@ -40,8 +42,9 @@ fn test_read_file_missing_path() {
 #[test]
 fn test_read_file_not_found() {
     let tool = ReadFileTool;
+    let ctx = ToolContext::default();
     let input = json!({"path": "nonexistent_file_xyz.txt"});
-    let result = tool.execute(input);
+    let result = tool.execute(input, &ctx);
     assert!(result.is_err());
     assert!(result
         .unwrap_err()

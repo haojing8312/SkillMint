@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
 use crate::agent::executor::truncate_tool_output;
-use crate::agent::types::Tool;
+use crate::agent::types::{Tool, ToolContext};
 
 /// 获取指定 URL 的内容，自动清洗 HTML 标签
 pub struct WebFetchTool;
@@ -29,7 +29,7 @@ impl Tool for WebFetchTool {
         })
     }
 
-    fn execute(&self, input: Value) -> Result<String> {
+    fn execute(&self, input: Value, _ctx: &ToolContext) -> Result<String> {
         let url = input["url"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 url 参数"))?;

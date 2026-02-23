@@ -1,6 +1,6 @@
 use runtime_lib::agent::tools::TaskTool;
 use runtime_lib::agent::ToolRegistry;
-use runtime_lib::agent::types::Tool;
+use runtime_lib::agent::types::{Tool, ToolContext};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -50,7 +50,8 @@ fn test_task_tool_missing_prompt() {
         "key".to_string(),
         "model".to_string(),
     );
-    let result = tool.execute(json!({}));
+    let ctx = ToolContext::default();
+    let result = tool.execute(json!({}), &ctx);
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("prompt"));
 }
