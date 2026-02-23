@@ -5,6 +5,8 @@ mod commands;
 mod db;
 
 use agent::{AgentExecutor, ToolRegistry};
+use agent::tools::new_responder;
+use commands::chat::{AskUserState, ToolConfirmState, ToolConfirmResponder};
 use commands::skills::DbState;
 use std::sync::Arc;
 use tauri::Manager;
@@ -25,6 +27,13 @@ pub fn run() {
             let agent_executor = Arc::new(AgentExecutor::new(Arc::clone(&registry)));
             app.manage(agent_executor);
             app.manage(Arc::clone(&registry));
+
+            // 创建全局的 AskUser 和 ToolConfirm 响应通道（只创建一次）
+            let ask_user_responder = new_responder();
+            app.manage(AskUserState(ask_user_responder));
+            let tool_confirm_responder: ToolConfirmResponder =
+                std::sync::Arc::new(std::sync::Mutex::new(None));
+            app.manage(ToolConfirmState(tool_confirm_responder));
 
             // 恢复已保存的 MCP 服务器连接
             let registry_for_mcp = Arc::clone(&registry);
@@ -105,6 +114,9 @@ pub fn run() {
             commands::models::list_model_configs,
             commands::models::delete_model_config,
             commands::models::test_connection_cmd,
+            commands::models::list_search_configs,
+            commands::models::test_search_connection,
+            commands::models::set_default_search,
             commands::chat::create_session,
             commands::chat::send_message,
             commands::chat::get_messages,
