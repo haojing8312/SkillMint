@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { InstallDialog } from "./components/InstallDialog";
@@ -60,10 +60,16 @@ export default function App() {
   async function handleCreateSession() {
     const modelId = models[0]?.id;
     if (!selectedSkillId || !modelId) return;
+
+    // 弹出目录选择器
+    const dir = await open({ directory: true, title: "选择工作目录" });
+    if (!dir || typeof dir !== "string") return; // 用户取消
+
     try {
       const id = await invoke<string>("create_session", {
         skillId: selectedSkillId,
         modelId,
+        workDir: dir,
       });
       setSelectedSessionId(id);
       if (selectedSkillId) await loadSessions(selectedSkillId);
@@ -128,22 +134,24 @@ export default function App() {
 
   // 安装 Skill 后自动切换并创建新会话
   async function handleInstalled(skillId: string) {
-    try {
-      await loadSkills();
-      setSelectedSkillId(skillId);
-
-      // 自动创建新会话
-      const modelId = models[0]?.id;
-      if (modelId) {
+    await loadSkills();
+    setSelectedSkillId(skillId);
+    const modelId = models[0]?.id;
+    if (modelId) {
+      const dir = await open({ directory: true, title: "选择工作目录" });
+      if (!dir || typeof dir !== "string") return;
+      try {
         const sessionId = await invoke<string>("create_session", {
           skillId,
           modelId,
+          workDir: dir,
         });
+        const sessions = await invoke<SessionInfo[]>("get_sessions", { skillId });
+        setSessions(sessions);
         setSelectedSessionId(sessionId);
-        await loadSessions(skillId);
+      } catch (e) {
+        console.error("自动创建会话失败:", e);
       }
-    } catch (e) {
-      console.error("安装后自动创建会话失败:", e);
     }
   }
 
@@ -153,6 +161,7 @@ export default function App() {
   }, [selectedSkillId]);
 
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
+  const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
   return (
     <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden">
@@ -185,6 +194,7 @@ export default function App() {
             skill={selectedSkill}
             models={models}
             sessionId={selectedSessionId}
+            workDir={selectedSession?.work_dir}
             onSessionUpdate={handleSessionRefresh}
           />
         ) : selectedSkill && models.length > 0 ? (

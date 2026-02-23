@@ -39,4 +39,5 @@ export interface SessionInfo {
   title: string;
   created_at: string;
   model_id: string;
+  work_dir?: string;
 }

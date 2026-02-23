@@ -11,10 +11,11 @@ interface Props {
   skill: SkillManifest;
   models: ModelConfig[];
   sessionId: string;
+  workDir?: string;
   onSessionUpdate?: () => void;
 }
 
-export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
+export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -310,9 +311,14 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     <div className="flex flex-col h-full">
       {/* 头部：简化，仅显示 skill 名称和模型信息 */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-800">
-        <div>
+        <div className="flex items-center">
           <span className="font-medium">{skill.name}</span>
           <span className="text-xs text-slate-400 ml-2">v{skill.version}</span>
+          {workDir && (
+            <span className="text-xs text-slate-500 ml-3 truncate max-w-[200px]" title={workDir}>
+              {workDir.split(/[/\\]/).pop()}
+            </span>
+          )}
         </div>
         {currentModel && (
           <span className="text-xs text-slate-400">{currentModel.name}</span>

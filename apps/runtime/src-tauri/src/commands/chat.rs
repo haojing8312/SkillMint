@@ -30,18 +30,20 @@ struct StreamToken {
 pub async fn create_session(
     skill_id: String,
     model_id: String,
+    work_dir: String,
     db: State<'_, DbState>,
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO sessions (id, skill_id, title, created_at, model_id) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, work_dir) VALUES (?, ?, ?, ?, ?, ?)"
     )
     .bind(&session_id)
     .bind(&skill_id)
     .bind("New Chat")
     .bind(&now)
     .bind(&model_id)
+    .bind(&work_dir)
     .execute(&db.0)
     .await
     .map_err(|e| e.to_string())?;
@@ -90,9 +92,9 @@ pub async fn send_message(
             .map_err(|e| e.to_string())?;
     }
 
-    // 加载会话信息（含权限模式）
-    let (skill_id, model_id, perm_str) = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT skill_id, model_id, permission_mode FROM sessions WHERE id = ?"
+    // 加载会话信息（含权限模式和工作目录）
+    let (skill_id, model_id, perm_str, work_dir) = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT skill_id, model_id, permission_mode, COALESCE(work_dir, '') FROM sessions WHERE id = ?"
     )
     .bind(&session_id)
     .fetch_one(&db.0)
@@ -199,13 +201,17 @@ pub async fn send_message(
     let max_iter = skill_config.max_iterations.unwrap_or(10);
 
     // 构建完整 system prompt（含运行环境信息）
-    let system_prompt = format!(
-        "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
-        skill_config.system_prompt,
-        tool_names,
-        model_name,
-        max_iter,
-    );
+    let system_prompt = if work_dir.is_empty() {
+        format!(
+            "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
+            skill_config.system_prompt, tool_names, model_name, max_iter,
+        )
+    } else {
+        format!(
+            "{}\n\n---\n运行环境:\n- 工作目录: {}\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}\n\n注意: 所有文件操作必须限制在工作目录范围内。",
+            skill_config.system_prompt, work_dir, tool_names, model_name, max_iter,
+        )
+    };
 
     // 动态注册运行时工具
     let task_tool = TaskTool::new(
@@ -288,7 +294,7 @@ pub async fn send_message(
             allowed_tools.as_deref(),
             permission_mode,
             Some(tool_confirm_responder.clone()),
-            None, // work_dir: 由后续 Task 6 通过 session 的 work_dir 字段传入
+            if work_dir.is_empty() { None } else { Some(work_dir.clone()) },
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -395,20 +401,21 @@ pub async fn get_sessions(
     skill_id: String,
     db: State<'_, DbState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT id, title, created_at, model_id FROM sessions WHERE skill_id = ? ORDER BY created_at DESC"
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT id, title, created_at, model_id, COALESCE(work_dir, '') FROM sessions WHERE skill_id = ? ORDER BY created_at DESC"
     )
     .bind(&skill_id)
     .fetch_all(&db.0)
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|(id, title, created_at, model_id)| {
+    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir)| {
         json!({
             "id": id,
             "title": title,
             "created_at": created_at,
             "model_id": model_id,
+            "work_dir": work_dir,
         })
     }).collect())
 }
@@ -443,8 +450,8 @@ pub async fn search_sessions(
     db: State<'_, DbState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let pattern = format!("%{}%", query);
-    let rows = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT DISTINCT s.id, s.title, s.created_at, s.model_id
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT DISTINCT s.id, s.title, s.created_at, s.model_id, COALESCE(s.work_dir, '')
          FROM sessions s
          LEFT JOIN messages m ON m.session_id = s.id
          WHERE s.skill_id = ? AND (s.title LIKE ? OR m.content LIKE ?)
@@ -457,8 +464,8 @@ pub async fn search_sessions(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|(id, title, created_at, model_id)| {
-        json!({"id": id, "title": title, "created_at": created_at, "model_id": model_id})
+    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir)| {
+        json!({"id": id, "title": title, "created_at": created_at, "model_id": model_id, "work_dir": work_dir})
     }).collect())
 }
 
