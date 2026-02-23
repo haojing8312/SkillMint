@@ -11,21 +11,38 @@ pub struct SkillDirInfo {
     pub front_matter: FrontMatter,
 }
 
+/// 判断目录项是否应被排除（隐藏文件/目录、node_modules、__pycache__）
+fn is_hidden_or_excluded(entry: &walkdir::DirEntry) -> bool {
+    entry
+        .file_name()
+        .to_str()
+        .map(|name| name.starts_with('.') || name == "node_modules" || name == "__pycache__")
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn read_skill_dir(dir_path: String) -> Result<SkillDirInfo, String> {
     let skill_dir = Path::new(&dir_path);
     let skill_md_path = skill_dir.join("SKILL.md");
 
     if !skill_md_path.exists() {
-        return Err("SKILL.md not found in selected directory".to_string());
+        return Err("所选目录中未找到 SKILL.md 文件".to_string());
     }
 
     let skill_md_content = fs::read_to_string(&skill_md_path)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("读取 SKILL.md 失败: {}", e))?;
     let front_matter = parse_front_matter(&skill_md_content);
 
+    // 过滤隐藏文件/目录、node_modules、__pycache__
     let files: Vec<String> = WalkDir::new(skill_dir)
         .into_iter()
+        .filter_entry(|e| {
+            // 根目录自身始终保留
+            if e.path() == skill_dir {
+                return true;
+            }
+            !is_hidden_or_excluded(e)
+        })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| {
@@ -61,5 +78,5 @@ pub async fn pack_skill(
         recommended_model,
         output_path,
     };
-    pack(&config).map_err(|e| e.to_string())
+    pack(&config).map_err(|e| format!("打包失败: {}", e))
 }

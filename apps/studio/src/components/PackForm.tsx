@@ -12,9 +12,10 @@ interface FrontMatter {
 interface PackFormProps {
   dirPath: string;
   frontMatter: FrontMatter;
+  fileCount: number;
 }
 
-export function PackForm({ dirPath, frontMatter }: PackFormProps) {
+export function PackForm({ dirPath, frontMatter, fileCount }: PackFormProps) {
   const [name, setName] = useState(frontMatter.name ?? "");
   const [description, setDescription] = useState(frontMatter.description ?? "");
   const [version, setVersion] = useState(frontMatter.version ?? "1.0.0");
@@ -34,6 +35,11 @@ export function PackForm({ dirPath, frontMatter }: PackFormProps) {
     }
     if (!name.trim()) {
       setErrorMsg("请填写 Skill 名称");
+      setStatus("error");
+      return;
+    }
+    if (!/^\d+\.\d+\.\d+/.test(version.trim())) {
+      setErrorMsg("版本号格式不正确，请使用 semver 格式（如 1.0.0）");
       setStatus("error");
       return;
     }
@@ -131,8 +137,13 @@ export function PackForm({ dirPath, frontMatter }: PackFormProps) {
         </div>
       )}
       {status === "done" && (
-        <div className="text-green-400 text-sm bg-green-950/50 border border-green-800/50 rounded-md p-3">
-          打包成功！.skillpack 文件已保存。
+        <div className="text-green-400 text-sm bg-green-950/50 border border-green-800/50 rounded-md p-3 space-y-1">
+          <div className="font-medium">打包成功！</div>
+          <div className="text-xs text-green-300/80 space-y-0.5">
+            <div>Skill 名称：{name}</div>
+            <div>版本：{version}</div>
+            <div>文件数：{fileCount}</div>
+          </div>
         </div>
       )}
 

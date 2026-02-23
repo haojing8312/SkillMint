@@ -94,7 +94,7 @@ export default function App() {
               打包配置
             </div>
             <div className="p-5">
-              <PackForm dirPath={dirPath!} frontMatter={skillInfo.front_matter} />
+              <PackForm dirPath={dirPath!} frontMatter={skillInfo.front_matter} fileCount={skillInfo.files.length} />
             </div>
           </div>
         </div>
