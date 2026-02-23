@@ -10,6 +10,9 @@
 
 An open-source platform to **package, encrypt, and distribute AI Skills** as secure desktop applications. Create once, distribute anywhere.
 
+> **🧪 AI-Powered Development Experiment**
+> This project is an experimental demonstration of **100% AI-driven development** - the entire codebase is designed and implemented by AI (Claude Code, GPT-5.3-Codex) without manual code inspection by the developer. This serves as a real-world test of AI's capability to build production-grade software autonomously.
+
 ## What is SkillMint?
 
 SkillMint helps AI Skill creators:
@@ -322,6 +325,27 @@ Similar to how Cursor and Claude Code democratized AI-assisted coding, SkillMint
 **Ecosystem Integration**:
 - ClawHub marketplace integration strategies
 - Community Skill discovery and distribution
+
+## ⚠️ Security Disclaimer
+
+**IMPORTANT - READ BEFORE USE**
+
+Desktop Agents have powerful capabilities including file system access and command execution. This creates inherent security risks:
+
+- **Malicious Skills**: Third parties may distribute `.skillpack` files containing harmful code
+- **System Access**: Installed Skills can read, modify, or delete files on your computer
+- **Command Execution**: Skills can execute arbitrary shell commands with your user permissions
+- **Data Exposure**: Skills may access sensitive data in your workspace folders
+
+**By downloading, installing, or running this software, you acknowledge:**
+1. You understand the security risks associated with desktop AI Agents
+2. You will only install Skills from trusted sources
+3. You will review and configure workspace permissions carefully
+4. **The developers assume NO LIABILITY for any damages, data loss, or security breaches** resulting from the use of this software or any Skills installed through it
+
+**If you do not agree to these terms, DO NOT download, install, or run this software.**
+
+For security best practices, see [SECURITY.md](SECURITY.md).
 
 ## License
 
