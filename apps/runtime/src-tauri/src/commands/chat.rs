@@ -7,7 +7,7 @@ use super::skills::DbState;
 use crate::agent::AgentExecutor;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
-    TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder, new_responder,
+    CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder, new_responder,
 };
 
 /// 全局 AskUser 响应通道（用于 answer_user_question command）
@@ -22,6 +22,8 @@ struct StreamToken {
     session_id: String,
     token: String,
     done: bool,
+    #[serde(default)]
+    sub_agent: bool,
 }
 
 #[tauri::command]
@@ -189,7 +191,8 @@ pub async fn send_message(
         base_url.clone(),
         api_key.clone(),
         model_name.clone(),
-    );
+    )
+    .with_app_handle(app.clone(), session_id.clone());
     agent_executor.registry().register(Arc::new(task_tool));
 
     // 注册 WebSearch 工具（通过 Sidecar 代理）
@@ -201,6 +204,10 @@ pub async fn send_message(
     let memory_dir = app_data_dir.join("memory").join(&skill_id);
     let memory_tool = MemoryTool::new(memory_dir.clone());
     agent_executor.registry().register(Arc::new(memory_tool));
+
+    // 注册 Compact 工具（手动触发上下文压缩）
+    let compact_tool = CompactTool::new();
+    agent_executor.registry().register(Arc::new(compact_tool));
 
     // 注册 AskUser 工具（交互式问答）
     let ask_user_responder = new_responder();
@@ -250,6 +257,7 @@ pub async fn send_message(
                     session_id: session_id_clone.clone(),
                     token,
                     done: false,
+                    sub_agent: false,
                 });
             },
             Some(&app),
@@ -266,6 +274,7 @@ pub async fn send_message(
         session_id: session_id.clone(),
         token: String::new(),
         done: true,
+        sub_agent: false,
     });
 
     // 从新消息中提取最终文本和 tool_calls，只保存一条 assistant 消息

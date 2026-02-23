@@ -4,6 +4,7 @@ use crate::agent::{AgentExecutor, ToolRegistry};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tauri::Emitter;
 
 /// 子 Agent 分发工具
 ///
@@ -18,6 +19,8 @@ pub struct TaskTool {
     base_url: String,
     api_key: String,
     model: String,
+    app_handle: Option<tauri::AppHandle>,
+    session_id: Option<String>,
 }
 
 impl TaskTool {
@@ -34,7 +37,16 @@ impl TaskTool {
             base_url,
             api_key,
             model,
+            app_handle: None,
+            session_id: None,
         }
+    }
+
+    /// 设置 AppHandle 和 session_id，启用子 Agent 流式输出转发
+    pub fn with_app_handle(mut self, app: tauri::AppHandle, session_id: String) -> Self {
+        self.app_handle = Some(app);
+        self.session_id = Some(session_id);
+        self
     }
 
     /// explore 类型：只读工具列表
@@ -110,6 +122,10 @@ impl Tool for TaskTool {
         let api_key = self.api_key.clone();
         let model = self.model.clone();
 
+        // 在线程 spawn 前克隆，避免所有权冲突
+        let sub_app_handle = self.app_handle.clone();
+        let sub_session_id = self.session_id.clone();
+
         // 必须在新线程中创建新的 tokio runtime，否则会死锁
         // （Tool::execute 是同步的，但被 async 上下文调用，不能用 block_on）
         let handle = std::thread::spawn(move || {
@@ -126,6 +142,32 @@ impl Tool for TaskTool {
 
                 let messages = vec![json!({"role": "user", "content": prompt})];
 
+                // 根据是否配置了 AppHandle 决定是否将 token 转发到前端。
+                // execute_turn 要求 impl Fn(String) + Send + Clone。
+                // 用 Arc<dyn Fn + Send + Sync> 包装回调，再用外层闭包按值捕获 Arc（Arc: Clone）
+                // 从而满足 Clone 约束。
+                let on_token_arc: Arc<dyn Fn(String) + Send + Sync> =
+                    match (&sub_app_handle, &sub_session_id) {
+                        (Some(app), Some(sid)) => {
+                            let app = app.clone();
+                            let sid = sid.clone();
+                            Arc::new(move |token: String| {
+                                let _ = app.emit(
+                                    "stream-token",
+                                    json!({
+                                        "session_id": sid,
+                                        "token": token,
+                                        "done": false,
+                                        "sub_agent": true,
+                                    }),
+                                );
+                            })
+                        }
+                        _ => Arc::new(|_| {}),
+                    };
+                // 将 Arc 包装成满足 Clone 的普通闭包
+                let on_token = move |token: String| on_token_arc(token);
+
                 sub_executor
                     .execute_turn(
                         &api_format,
@@ -134,9 +176,9 @@ impl Tool for TaskTool {
                         &model,
                         &system_prompt,
                         messages,
-                        |_| {}, // 子 agent 不需要流式输出到前端
-                        None,   // 无 app_handle
-                        None,   // 无 session_id
+                        on_token,
+                        sub_app_handle.as_ref(),
+                        sub_session_id.as_deref(),
                         allowed_tools.as_deref(),
                         PermissionMode::Unrestricted, // 子 Agent 不需要权限确认
                         None,                         // 无确认通道
