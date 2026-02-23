@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { SkillManifest, ModelConfig, Message, ToolCallInfo } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
 
@@ -282,6 +284,28 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
   // 从 models 查找当前会话的模型名称（用于头部展示）
   const currentModel = models[0];
 
+  // Markdown 代码块语法高亮配置
+  const markdownComponents = {
+    code({ className, children, ...props }: any) {
+      const match = /language-(\w+)/.exec(className || "");
+      const codeString = String(children).replace(/\n$/, "");
+      return match ? (
+        <SyntaxHighlighter
+          style={oneDark}
+          language={match[1]}
+          PreTag="div"
+          customStyle={{ margin: 0, borderRadius: "0.375rem", fontSize: "0.8125rem" }}
+        >
+          {codeString}
+        </SyntaxHighlighter>
+      ) : (
+        <code className={"bg-slate-600/50 px-1.5 py-0.5 rounded text-sm " + (className || "")} {...props}>
+          {children}
+        </code>
+      );
+    },
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* 头部：简化，仅显示 skill 名称和模型信息 */}
@@ -326,7 +350,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
                 </div>
               )}
               {m.role === "assistant" ? (
-                <ReactMarkdown>{m.content}</ReactMarkdown>
+                <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
               ) : (
                 m.content
               )}
@@ -344,7 +368,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
                   subAgentBuffer={tc.name === "task" && tc.status === "running" ? subAgentBuffer : undefined}
                 />
               ))}
-              {streamBuffer && <ReactMarkdown>{streamBuffer}</ReactMarkdown>}
+              {streamBuffer && <ReactMarkdown components={markdownComponents}>{streamBuffer}</ReactMarkdown>}
               <span className="animate-pulse">|</span>
             </div>
           </div>
