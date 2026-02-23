@@ -83,5 +83,10 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         .execute(&pool)
         .await;
 
+    // Migration: add permission_mode column to sessions
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'default'")
+        .execute(&pool)
+        .await;
+
     Ok(pool)
 }
