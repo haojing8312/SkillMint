@@ -424,6 +424,67 @@ pub async fn delete_session(
     Ok(())
 }
 
+/// 搜索会话标题和消息内容
+#[tauri::command]
+pub async fn search_sessions(
+    skill_id: String,
+    query: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let pattern = format!("%{}%", query);
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT DISTINCT s.id, s.title, s.created_at, s.model_id
+         FROM sessions s
+         LEFT JOIN messages m ON m.session_id = s.id
+         WHERE s.skill_id = ? AND (s.title LIKE ? OR m.content LIKE ?)
+         ORDER BY s.created_at DESC"
+    )
+    .bind(&skill_id)
+    .bind(&pattern)
+    .bind(&pattern)
+    .fetch_all(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows.iter().map(|(id, title, created_at, model_id)| {
+        json!({"id": id, "title": title, "created_at": created_at, "model_id": model_id})
+    }).collect())
+}
+
+/// 将会话消息导出为 Markdown 字符串
+#[tauri::command]
+pub async fn export_session(
+    session_id: String,
+    db: State<'_, DbState>,
+) -> Result<String, String> {
+    let (title,): (String,) = sqlx::query_as("SELECT title FROM sessions WHERE id = ?")
+        .bind(&session_id)
+        .fetch_one(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let messages = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC"
+    )
+    .bind(&session_id)
+    .fetch_all(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut md = format!("# {}\n\n", title);
+    for (role, content, created_at) in &messages {
+        let label = if role == "user" { "用户" } else { "助手" };
+        md.push_str(&format!("## {} ({})\n\n{}\n\n---\n\n", label, created_at, content));
+    }
+    Ok(md)
+}
+
+/// 写入导出文件
+#[tauri::command]
+pub async fn write_export_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content).map_err(|e| format!("写入失败: {}", e))
+}
+
 /// 用户回答 AskUser 工具的问题
 #[tauri::command]
 pub async fn answer_user_question(

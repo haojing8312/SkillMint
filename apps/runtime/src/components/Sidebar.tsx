@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { SkillManifest, SessionInfo } from "../types";
 
 interface Props {
@@ -11,6 +12,9 @@ interface Props {
   onDeleteSession: (id: string) => void;
   onInstall: () => void;
   onSettings: () => void;
+  onSearchSessions: (query: string) => void;
+  onExportSession: (sessionId: string) => void;
+  onCollapse: () => void;
 }
 
 export function Sidebar({
@@ -24,12 +28,29 @@ export function Sidebar({
   onDeleteSession,
   onInstall,
   onSettings,
+  onSearchSessions,
+  onExportSession,
+  onCollapse,
 }: Props) {
+  const [searchQuery, setSearchQuery] = useState("");
+
+  function handleSearchChange(value: string) {
+    setSearchQuery(value);
+    onSearchSessions(value);
+  }
+
   return (
     <div className="w-56 bg-slate-800 flex flex-col h-full border-r border-slate-700">
-      {/* Skill 列表区域 */}
-      <div className="px-4 py-3 text-xs font-medium text-slate-400 border-b border-slate-700">
-        已安装 Skill
+      {/* 标题栏 + 折叠按钮 */}
+      <div className="px-4 py-3 text-xs font-medium text-slate-400 border-b border-slate-700 flex items-center justify-between">
+        <span>已安装 Skill</span>
+        <button
+          onClick={onCollapse}
+          className="text-slate-400 hover:text-slate-200 text-sm transition-colors"
+          title="折叠侧边栏"
+        >
+          ◀
+        </button>
       </div>
       <div className="overflow-y-auto py-1" style={{ maxHeight: "30%" }}>
         {skills.length === 0 && (
@@ -71,9 +92,21 @@ export function Sidebar({
               + 新建
             </button>
           </div>
+          {/* 搜索框 */}
+          <div className="px-3 py-2 border-b border-slate-700">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="搜索会话..."
+              className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
           <div className="flex-1 overflow-y-auto py-1">
             {sessions.length === 0 && (
-              <div className="px-4 py-3 text-xs text-slate-500">暂无会话</div>
+              <div className="px-4 py-3 text-xs text-slate-500">
+                {searchQuery ? "未找到匹配会话" : "暂无会话"}
+              </div>
             )}
             {sessions.map((s) => (
               <div
@@ -89,6 +122,16 @@ export function Sidebar({
                 <div className="flex-1 min-w-0">
                   <div className="truncate text-xs">{s.title || "New Chat"}</div>
                 </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExportSession(s.id);
+                  }}
+                  className="hidden group-hover:block text-slate-400 hover:text-slate-200 text-xs ml-1 flex-shrink-0"
+                  title="导出会话"
+                >
+                  ↓
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

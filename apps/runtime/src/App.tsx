@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { InstallDialog } from "./components/InstallDialog";
@@ -14,6 +15,8 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [showInstall, setShowInstall] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadSkills();
@@ -79,6 +82,50 @@ export default function App() {
     }
   }
 
+  // 搜索会话（300ms debounce）
+  function handleSearchSessions(query: string) {
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+    if (!selectedSkillId) return;
+
+    if (!query.trim()) {
+      // 搜索词为空时恢复完整会话列表
+      searchTimerRef.current = setTimeout(() => {
+        loadSessions(selectedSkillId!);
+      }, 100);
+      return;
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const results = await invoke<SessionInfo[]>("search_sessions", {
+          skillId: selectedSkillId,
+          query: query.trim(),
+        });
+        setSessions(results);
+      } catch (e) {
+        console.error("搜索会话失败:", e);
+      }
+    }, 300);
+  }
+
+  // 导出会话为 Markdown 文件
+  async function handleExportSession(sessionId: string) {
+    try {
+      const md = await invoke<string>("export_session", { sessionId });
+      const filePath = await save({
+        defaultPath: "session-export.md",
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (filePath) {
+        await invoke("write_export_file", { path: filePath, content: md });
+      }
+    } catch (e) {
+      console.error("导出会话失败:", e);
+    }
+  }
+
   const handleSessionRefresh = useCallback(() => {
     if (selectedSkillId) loadSessions(selectedSkillId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,18 +135,33 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden">
-      <Sidebar
-        skills={skills}
-        selectedSkillId={selectedSkillId}
-        onSelectSkill={setSelectedSkillId}
-        sessions={sessions}
-        selectedSessionId={selectedSessionId}
-        onSelectSession={setSelectedSessionId}
-        onNewSession={handleCreateSession}
-        onDeleteSession={handleDeleteSession}
-        onInstall={() => setShowInstall(true)}
-        onSettings={() => setShowSettings(true)}
-      />
+      {/* 折叠状态下的展开按钮 */}
+      {sidebarCollapsed && (
+        <button
+          onClick={() => setSidebarCollapsed(false)}
+          className="absolute top-3 left-3 z-20 bg-slate-700 hover:bg-slate-600 text-slate-200 w-8 h-8 rounded flex items-center justify-center text-sm transition-colors"
+          title="展开侧边栏"
+        >
+          ☰
+        </button>
+      )}
+      {!sidebarCollapsed && (
+        <Sidebar
+          skills={skills}
+          selectedSkillId={selectedSkillId}
+          onSelectSkill={setSelectedSkillId}
+          sessions={sessions}
+          selectedSessionId={selectedSessionId}
+          onSelectSession={setSelectedSessionId}
+          onNewSession={handleCreateSession}
+          onDeleteSession={handleDeleteSession}
+          onInstall={() => setShowInstall(true)}
+          onSettings={() => setShowSettings(true)}
+          onSearchSessions={handleSearchSessions}
+          onExportSession={handleExportSession}
+          onCollapse={() => setSidebarCollapsed(true)}
+        />
+      )}
       <div className="flex-1 overflow-hidden">
         {showSettings ? (
           <SettingsView

@@ -336,7 +336,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
             <div
               className={
-                "max-w-2xl rounded-lg px-4 py-2 text-sm " +
+                "max-w-[80%] rounded-lg px-4 py-2 text-sm " +
                 (m.role === "user"
                   ? "bg-blue-600 text-white"
                   : "bg-slate-700 text-slate-100")
@@ -360,7 +360,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
         {/* 流式输出区域 */}
         {(currentToolCalls.length > 0 || streamBuffer) && (
           <div className="flex justify-start">
-            <div className="max-w-2xl bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
+            <div className="max-w-[80%] bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
               {currentToolCalls.map((tc) => (
                 <ToolCallCard
                   key={tc.id}
@@ -376,7 +376,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
         {/* AskUser 问答卡片 */}
         {askUserQuestion && (
           <div className="flex justify-start">
-            <div className="max-w-2xl bg-amber-900/40 border border-amber-600/50 rounded-lg px-4 py-3 text-sm">
+            <div className="max-w-[80%] bg-amber-900/40 border border-amber-600/50 rounded-lg px-4 py-3 text-sm">
               <div className="font-medium text-amber-200 mb-2">{askUserQuestion}</div>
               {askUserOptions.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
@@ -418,7 +418,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
         {/* 工具确认卡片 */}
         {toolConfirm && (
           <div className="flex justify-start">
-            <div className="max-w-2xl bg-orange-900/40 border border-orange-600/50 rounded-lg px-4 py-3 text-sm">
+            <div className="max-w-[80%] bg-orange-900/40 border border-orange-600/50 rounded-lg px-4 py-3 text-sm">
               <div className="font-medium text-orange-200 mb-2">需要确认</div>
               <div className="text-slate-300 mb-1">
                 工具: <span className="text-orange-100 font-mono">{toolConfirm.toolName}</span>
