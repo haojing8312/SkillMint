@@ -9,7 +9,6 @@ use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
     CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder,
 };
-use crate::agent::tools::search_providers::{cache::SearchCache, duckduckgo::DuckDuckGoSearch};
 
 /// 全局 AskUser 响应通道（用于 answer_user_question command）
 pub struct AskUserState(pub AskUserResponder);
@@ -225,14 +224,33 @@ pub async fn send_message(
     .with_app_handle(app.clone(), session_id.clone());
     agent_executor.registry().register(Arc::new(task_tool));
 
-    // 注册 WebSearch 工具（使用 DuckDuckGo 作为内置默认 Provider，无需 API Key）
-    // TODO(Task 12)：从数据库加载 search provider 配置，替换默认 Provider
-    let search_cache = Arc::new(SearchCache::new(
-        std::time::Duration::from_secs(300), // 缓存 5 分钟
-        50,                                   // 最多 50 条缓存
-    ));
-    let web_search = WebSearchTool::with_provider(Box::new(DuckDuckGoSearch::new()), search_cache);
-    agent_executor.registry().register(Arc::new(web_search));
+    // 注册 WebSearch 工具（从 DB 加载搜索 Provider 配置）
+    {
+        use crate::agent::tools::search_providers::{cache::SearchCache, create_provider};
+        use std::time::Duration;
+
+        let search_cache = Arc::new(SearchCache::new(Duration::from_secs(900), 100));
+
+        let search_config = sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT api_format, base_url, api_key, model_name FROM model_configs WHERE api_format LIKE 'search_%' AND is_default = 1 LIMIT 1"
+        )
+        .fetch_optional(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some((search_api_format, search_base_url, search_api_key, search_model_name)) = search_config {
+            match create_provider(&search_api_format, &search_base_url, &search_api_key, &search_model_name) {
+                Ok(provider) => {
+                    let web_search = WebSearchTool::with_provider(provider, search_cache);
+                    agent_executor.registry().register(Arc::new(web_search));
+                }
+                Err(e) => {
+                    eprintln!("[search] 创建搜索 Provider 失败: {}", e);
+                }
+            }
+        }
+        // 无搜索配置时不注册 web_search 工具，Agent 不调用搜索
+    }
 
     // 注册 Memory 工具（基于 Skill ID 的持久存储）
     let app_data_dir = app.path().app_data_dir().unwrap_or_default();
