@@ -38,7 +38,8 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             title TEXT,
             created_at TEXT NOT NULL,
             model_id TEXT NOT NULL,
-            permission_mode TEXT NOT NULL DEFAULT 'default'
+            permission_mode TEXT NOT NULL DEFAULT 'default',
+            work_dir TEXT NOT NULL DEFAULT ''
         )",
     )
     .execute(&pool)

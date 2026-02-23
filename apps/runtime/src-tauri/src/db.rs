@@ -93,6 +93,11 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         .execute(&pool)
         .await;
 
+    // Migration: add work_dir column to sessions（每会话独立工作目录）
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
+
     // 内置通用 Skill：始终存在，无需用户安装
     let builtin_manifest = serde_json::json!({
         "id": "builtin-general",
