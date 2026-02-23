@@ -1,3 +1,4 @@
+use runtime_lib::agent::permissions::PermissionMode;
 use runtime_lib::agent::{AgentExecutor, ToolRegistry};
 use serde_json::json;
 use std::sync::Arc;
@@ -24,6 +25,8 @@ async fn test_anthropic_tool_parsing() {
             None,
             None,
             None,
+            PermissionMode::Unrestricted,
+            None,
         )
         .await;
 
@@ -49,6 +52,8 @@ async fn test_anthropic_tool_parsing_network_error() {
             |_token| {},
             None,
             None,
+            None,
+            PermissionMode::Unrestricted,
             None,
         )
         .await;

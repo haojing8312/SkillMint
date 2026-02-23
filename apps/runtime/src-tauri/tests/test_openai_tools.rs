@@ -1,3 +1,4 @@
+use runtime_lib::agent::permissions::PermissionMode;
 use runtime_lib::agent::{AgentExecutor, ToolRegistry};
 use serde_json::json;
 use std::sync::Arc;
@@ -24,6 +25,8 @@ async fn test_openai_tool_calling_executor_branch() {
             |_| {},
             None,
             None,
+            None,
+            PermissionMode::Unrestricted,
             None,
         )
         .await;
@@ -61,6 +64,8 @@ async fn test_openai_tool_calling_real() {
             },
             None,
             None,
+            None,
+            PermissionMode::Unrestricted,
             None,
         )
         .await;

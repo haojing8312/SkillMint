@@ -5,12 +5,17 @@ use chrono::Utc;
 use std::sync::Arc;
 use super::skills::DbState;
 use crate::agent::AgentExecutor;
+use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
     TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder, new_responder,
 };
 
 /// 全局 AskUser 响应通道（用于 answer_user_question command）
 pub struct AskUserState(pub AskUserResponder);
+
+/// 工具确认通道（用于 confirm_tool_execution command）
+pub type ToolConfirmResponder = std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>;
+pub struct ToolConfirmState(pub ToolConfirmResponder);
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -83,14 +88,20 @@ pub async fn send_message(
             .map_err(|e| e.to_string())?;
     }
 
-    // 加载会话信息
-    let (skill_id, model_id) = sqlx::query_as::<_, (String, String)>(
-        "SELECT skill_id, model_id FROM sessions WHERE id = ?"
+    // 加载会话信息（含权限模式）
+    let (skill_id, model_id, perm_str) = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT skill_id, model_id, permission_mode FROM sessions WHERE id = ?"
     )
     .bind(&session_id)
     .fetch_one(&db.0)
     .await
     .map_err(|e| format!("会话不存在 (session_id={session_id}): {e}"))?;
+
+    let permission_mode = match perm_str.as_str() {
+        "accept_edits" => PermissionMode::AcceptEdits,
+        "unrestricted" => PermissionMode::Unrestricted,
+        _ => PermissionMode::Default,
+    };
 
     // 加载 Skill 信息（含 pack_path 用于重新解包）
     let (manifest_json, username, pack_path) = sqlx::query_as::<_, (String, String, String)>(
@@ -218,6 +229,11 @@ pub async fn send_message(
         format!("{}\n\n---\n持久内存:\n{}", system_prompt, memory_content)
     };
 
+    // 创建工具确认通道，存入全局状态供 confirm_tool_execution command 使用
+    let tool_confirm_responder: ToolConfirmResponder =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    app.manage(ToolConfirmState(tool_confirm_responder.clone()));
+
     // 始终走 Agent 模式
     let app_clone = app.clone();
     let session_id_clone = session_id.clone();
@@ -239,6 +255,8 @@ pub async fn send_message(
             Some(&app),
             Some(&session_id),
             allowed_tools.as_deref(),
+            permission_mode,
+            Some(tool_confirm_responder.clone()),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -402,5 +420,25 @@ pub async fn answer_user_question(
         Ok(())
     } else {
         Err("没有等待中的用户问题".to_string())
+    }
+}
+
+/// 用户确认或拒绝工具执行
+#[tauri::command]
+pub async fn confirm_tool_execution(
+    confirmed: bool,
+    tool_confirm_state: State<'_, ToolConfirmState>,
+) -> Result<(), String> {
+    let guard = tool_confirm_state
+        .0
+        .lock()
+        .map_err(|e| format!("锁获取失败: {}", e))?;
+    if let Some(sender) = guard.as_ref() {
+        sender
+            .send(confirmed)
+            .map_err(|e| format!("发送确认失败: {}", e))?;
+        Ok(())
+    } else {
+        Err("没有等待中的工具确认请求".to_string())
     }
 }

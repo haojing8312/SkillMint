@@ -1,3 +1,4 @@
+use crate::agent::permissions::PermissionMode;
 use crate::agent::types::Tool;
 use crate::agent::{AgentExecutor, ToolRegistry};
 use anyhow::{anyhow, Result};
@@ -137,6 +138,8 @@ impl Tool for TaskTool {
                         None,   // 无 app_handle
                         None,   // 无 session_id
                         allowed_tools.as_deref(),
+                        PermissionMode::Unrestricted, // 子 Agent 不需要权限确认
+                        None,                         // 无确认通道
                     )
                     .await
             })

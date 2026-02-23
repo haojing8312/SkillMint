@@ -1,3 +1,4 @@
+use runtime_lib::agent::permissions::PermissionMode;
 use runtime_lib::agent::{AgentExecutor, ToolRegistry};
 use serde_json::json;
 use std::sync::Arc;
@@ -30,6 +31,8 @@ async fn test_react_loop_max_iterations_error() {
             None,
             None,
             None,
+            PermissionMode::Unrestricted,
+            None,
         )
         .await;
 
@@ -58,6 +61,8 @@ async fn test_react_loop_openai_format_network_error() {
             |_token| {},
             None,
             None,
+            None,
+            PermissionMode::Unrestricted,
             None,
         )
         .await;

@@ -1,3 +1,4 @@
+use super::permissions::PermissionMode;
 use super::registry::ToolRegistry;
 use super::types::{LLMResponse, ToolResult};
 use crate::adapters;
@@ -158,6 +159,8 @@ impl AgentExecutor {
         app_handle: Option<&AppHandle>,
         session_id: Option<&str>,
         allowed_tools: Option<&[String]>,
+        permission_mode: PermissionMode,
+        tool_confirm_tx: Option<std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>>,
     ) -> Result<Vec<Value>> {
         let mut iteration = 0;
 
@@ -273,6 +276,54 @@ impl AgentExecutor {
                                 tool_output: None,
                                 status: "started".to_string(),
                             });
+                        }
+
+                        // 权限确认检查：在执行工具前判断是否需要用户确认
+                        if permission_mode.needs_confirmation(&call.name) {
+                            if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                                // 发射确认请求事件，前端弹出确认对话框
+                                let _ = app.emit("tool-confirm-event", serde_json::json!({
+                                    "session_id": sid,
+                                    "tool_name": call.name,
+                                    "tool_input": call.input,
+                                }));
+
+                                // 创建一次性通道并将发送端存入全局状态
+                                let (tx, rx) = std::sync::mpsc::channel::<bool>();
+                                if let Some(ref confirm_state) = tool_confirm_tx {
+                                    if let Ok(mut guard) = confirm_state.lock() {
+                                        *guard = Some(tx);
+                                    }
+                                }
+
+                                // 阻塞等待用户确认（最多 300 秒），超时视为拒绝
+                                let confirmed = rx
+                                    .recv_timeout(std::time::Duration::from_secs(300))
+                                    .unwrap_or(false);
+
+                                // 清理发送端，避免下次误用
+                                if let Some(ref confirm_state) = tool_confirm_tx {
+                                    if let Ok(mut guard) = confirm_state.lock() {
+                                        *guard = None;
+                                    }
+                                }
+
+                                if !confirmed {
+                                    // 用户拒绝 — 记录拒绝事件并跳过此工具
+                                    let _ = app.emit("tool-call-event", ToolCallEvent {
+                                        session_id: sid.to_string(),
+                                        tool_name: call.name.clone(),
+                                        tool_input: call.input.clone(),
+                                        tool_output: Some("用户拒绝了此操作".to_string()),
+                                        status: "error".to_string(),
+                                    });
+                                    tool_results.push(ToolResult {
+                                        tool_use_id: call.id.clone(),
+                                        content: "用户拒绝了此操作".to_string(),
+                                    });
+                                    continue;
+                                }
+                            }
                         }
 
                         let result = match self.registry.get(&call.name) {
