@@ -1,5 +1,6 @@
 mod ask_user;
 mod bash;
+mod compact_tool;
 mod edit_tool;
 mod glob_tool;
 mod grep_tool;
@@ -14,6 +15,7 @@ mod write_file;
 
 pub use ask_user::{AskUserTool, AskUserResponder, new_responder};
 pub use bash::BashTool;
+pub use compact_tool::CompactTool;
 pub use edit_tool::EditTool;
 pub use glob_tool::GlobTool;
 pub use grep_tool::GrepTool;
