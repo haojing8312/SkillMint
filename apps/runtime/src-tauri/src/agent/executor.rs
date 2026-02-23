@@ -107,6 +107,17 @@ pub struct ToolCallEvent {
     pub status: String, // "started" | "completed" | "error"
 }
 
+/// Agent 状态事件，用于前端展示当前执行阶段
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct AgentStateEvent {
+    pub session_id: String,
+    /// 状态类型: "thinking" | "tool_calling" | "finished" | "error"
+    pub state: String,
+    /// 工具名列表（tool_calling 时）或错误信息（error 时）
+    pub detail: Option<String>,
+    pub iteration: usize,
+}
+
 pub struct AgentExecutor {
     registry: Arc<ToolRegistry>,
     max_iterations: usize,
@@ -152,11 +163,30 @@ impl AgentExecutor {
 
         loop {
             if iteration >= self.max_iterations {
+                // 发射 error 状态事件
+                if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                    let _ = app.emit("agent-state-event", AgentStateEvent {
+                        session_id: sid.to_string(),
+                        state: "error".to_string(),
+                        detail: Some(format!("达到最大迭代次数 {}", self.max_iterations)),
+                        iteration,
+                    });
+                }
                 return Err(anyhow!("达到最大迭代次数 {}", self.max_iterations));
             }
             iteration += 1;
 
             eprintln!("[agent] Iteration {}/{}", iteration, self.max_iterations);
+
+            // 发射 thinking 状态事件
+            if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                let _ = app.emit("agent-state-event", AgentStateEvent {
+                    session_id: sid.to_string(),
+                    state: "thinking".to_string(),
+                    detail: None,
+                    iteration,
+                });
+            }
 
             // 根据白名单过滤工具定义
             let tools = match allowed_tools {
@@ -202,10 +232,32 @@ impl AgentExecutor {
                         "content": content
                     }));
                     eprintln!("[agent] Finished with text response");
+
+                    // 发射 finished 状态事件
+                    if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                        let _ = app.emit("agent-state-event", AgentStateEvent {
+                            session_id: sid.to_string(),
+                            state: "finished".to_string(),
+                            detail: None,
+                            iteration,
+                        });
+                    }
+
                     return Ok(messages);
                 }
                 LLMResponse::ToolCalls(tool_calls) => {
                     eprintln!("[agent] Executing {} tool calls", tool_calls.len());
+
+                    // 发射 tool_calling 状态事件
+                    if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                        let tool_names: Vec<&str> = tool_calls.iter().map(|tc| tc.name.as_str()).collect();
+                        let _ = app.emit("agent-state-event", AgentStateEvent {
+                            session_id: sid.to_string(),
+                            state: "tool_calling".to_string(),
+                            detail: Some(tool_names.join(", ")),
+                            iteration,
+                        });
+                    }
 
                     // 执行所有工具调用
                     let mut tool_results = vec![];
