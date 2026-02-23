@@ -46,7 +46,14 @@ export function Sidebar({
                 : "text-slate-300 hover:bg-slate-700")
             }
           >
-            <div className="font-medium truncate">{s.name}</div>
+            <div className="font-medium truncate flex items-center gap-1">
+              {s.name}
+              {s.id.startsWith("local-") && (
+                <span className="text-[10px] bg-green-800/60 text-green-300 px-1 py-0.5 rounded">
+                  本地
+                </span>
+              )}
+            </div>
             <div className="text-xs text-slate-500 truncate">{s.version}</div>
           </button>
         ))}
