@@ -21,6 +21,11 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
   const [askUserQuestion, setAskUserQuestion] = useState<string | null>(null);
   const [askUserOptions, setAskUserOptions] = useState<string[]>([]);
   const [askUserAnswer, setAskUserAnswer] = useState("");
+  const [agentState, setAgentState] = useState<{
+    state: string;
+    detail?: string;
+    iteration: number;
+  } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
   const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
@@ -37,6 +42,7 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     setAskUserQuestion(null);
     setAskUserOptions([]);
     setAskUserAnswer("");
+    setAgentState(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -95,6 +101,30 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
       if (payload.session_id !== sessionId) return;
       setAskUserQuestion(payload.question);
       setAskUserOptions(payload.options);
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn());
+    };
+  }, [sessionId]);
+
+  // agent-state-event 事件监听
+  useEffect(() => {
+    const unlistenPromise = listen<{
+      session_id: string;
+      state: string;
+      detail: string | null;
+      iteration: number;
+    }>("agent-state-event", ({ payload }) => {
+      if (payload.session_id !== sessionId) return;
+      if (payload.state === "finished") {
+        setAgentState(null);
+      } else {
+        setAgentState({
+          state: payload.state,
+          detail: payload.detail ?? undefined,
+          iteration: payload.iteration,
+        });
+      }
     });
     return () => {
       unlistenPromise.then((fn) => fn());
@@ -218,6 +248,17 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {agentState && (
+          <div className="sticky top-0 z-10 flex items-center gap-2 bg-slate-800/90 backdrop-blur px-4 py-2 rounded-lg text-xs text-slate-300 border border-slate-700">
+            <span className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full" />
+            {agentState.state === "thinking" && "思考中..."}
+            {agentState.state === "tool_calling" && `执行工具: ${agentState.detail}`}
+            {agentState.state === "error" && (
+              <span className="text-red-400">错误: {agentState.detail}</span>
+            )}
+            <span className="text-slate-500 ml-auto">迭代 {agentState.iteration}</span>
+          </div>
+        )}
         {messages.map((m, i) => (
           <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
             <div
