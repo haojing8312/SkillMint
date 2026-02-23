@@ -26,6 +26,10 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     detail?: string;
     iteration: number;
   } | null>(null);
+  const [toolConfirm, setToolConfirm] = useState<{
+    toolName: string;
+    toolInput: Record<string, unknown>;
+  } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
   const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
@@ -43,12 +47,13 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     setAskUserOptions([]);
     setAskUserAnswer("");
     setAgentState(null);
+    setToolConfirm(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamBuffer, askUserQuestion]);
+  }, [messages, streamBuffer, askUserQuestion, toolConfirm]);
 
   // stream-token 事件监听（依赖 sessionId prop）
   useEffect(() => {
@@ -125,6 +130,24 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
           iteration: payload.iteration,
         });
       }
+    });
+    return () => {
+      unlistenPromise.then((fn) => fn());
+    };
+  }, [sessionId]);
+
+  // tool-confirm-event 事件监听（权限确认）
+  useEffect(() => {
+    const unlistenPromise = listen<{
+      session_id: string;
+      tool_name: string;
+      tool_input: Record<string, unknown>;
+    }>("tool-confirm-event", ({ payload }) => {
+      if (payload.session_id !== sessionId) return;
+      setToolConfirm({
+        toolName: payload.tool_name,
+        toolInput: payload.tool_input,
+      });
     });
     return () => {
       unlistenPromise.then((fn) => fn());
@@ -230,6 +253,15 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
     setAskUserAnswer("");
   }
 
+  async function handleToolConfirm(confirmed: boolean) {
+    try {
+      await invoke("confirm_tool_execution", { confirmed });
+    } catch (e) {
+      console.error("工具确认失败:", e);
+    }
+    setToolConfirm(null);
+  }
+
   // 从 models 查找当前会话的模型名称（用于头部展示）
   const currentModel = models[0];
 
@@ -333,6 +365,34 @@ export function ChatView({ skill, models, sessionId, onSessionUpdate }: Props) {
                   className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-600 px-3 py-1 rounded text-xs transition-colors"
                 >
                   回答
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* 工具确认卡片 */}
+        {toolConfirm && (
+          <div className="flex justify-start">
+            <div className="max-w-2xl bg-orange-900/40 border border-orange-600/50 rounded-lg px-4 py-3 text-sm">
+              <div className="font-medium text-orange-200 mb-2">需要确认</div>
+              <div className="text-slate-300 mb-1">
+                工具: <span className="text-orange-100 font-mono">{toolConfirm.toolName}</span>
+              </div>
+              <pre className="bg-slate-800/60 rounded p-2 text-xs text-slate-300 mb-3 overflow-x-auto max-h-40 overflow-y-auto">
+                {JSON.stringify(toolConfirm.toolInput, null, 2)}
+              </pre>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleToolConfirm(true)}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-1 rounded text-xs font-medium transition-colors"
+                >
+                  允许
+                </button>
+                <button
+                  onClick={() => handleToolConfirm(false)}
+                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-1 rounded text-xs font-medium transition-colors"
+                >
+                  拒绝
                 </button>
               </div>
             </div>
