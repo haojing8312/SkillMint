@@ -7,8 +7,9 @@ use super::skills::DbState;
 use crate::agent::AgentExecutor;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
-    CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder, new_responder,
+    CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder,
 };
+use crate::agent::tools::search_providers::{cache::SearchCache, duckduckgo::DuckDuckGoSearch};
 
 /// 全局 AskUser 响应通道（用于 answer_user_question command）
 pub struct AskUserState(pub AskUserResponder);
@@ -224,8 +225,13 @@ pub async fn send_message(
     .with_app_handle(app.clone(), session_id.clone());
     agent_executor.registry().register(Arc::new(task_tool));
 
-    // 注册 WebSearch 工具（通过 Sidecar 代理）
-    let web_search = WebSearchTool::new("http://localhost:8765".to_string());
+    // 注册 WebSearch 工具（使用 DuckDuckGo 作为内置默认 Provider，无需 API Key）
+    // TODO(Task 12)：从数据库加载 search provider 配置，替换默认 Provider
+    let search_cache = Arc::new(SearchCache::new(
+        std::time::Duration::from_secs(300), // 缓存 5 分钟
+        50,                                   // 最多 50 条缓存
+    ));
+    let web_search = WebSearchTool::with_provider(Box::new(DuckDuckGoSearch::new()), search_cache);
     agent_executor.registry().register(Arc::new(web_search));
 
     // 注册 Memory 工具（基于 Skill ID 的持久存储）
@@ -238,17 +244,14 @@ pub async fn send_message(
     let compact_tool = CompactTool::new();
     agent_executor.registry().register(Arc::new(compact_tool));
 
-    // 注册 AskUser 工具（交互式问答）
-    let ask_user_responder = new_responder();
+    // 注册 AskUser 工具（使用全局响应通道，在 lib.rs 中创建）
+    let ask_user_responder = app.state::<AskUserState>().0.clone();
     let ask_user_tool = AskUserTool::new(
         app.clone(),
         session_id.clone(),
-        ask_user_responder.clone(),
+        ask_user_responder,
     );
     agent_executor.registry().register(Arc::new(ask_user_tool));
-
-    // 将 responder 存入全局状态，供 answer_user_question command 使用
-    app.manage(AskUserState(ask_user_responder));
 
     // 如果存在 MEMORY.md，注入到 system prompt
     let memory_content = {
@@ -265,10 +268,8 @@ pub async fn send_message(
         format!("{}\n\n---\n持久内存:\n{}", system_prompt, memory_content)
     };
 
-    // 创建工具确认通道，存入全局状态供 confirm_tool_execution command 使用
-    let tool_confirm_responder: ToolConfirmResponder =
-        std::sync::Arc::new(std::sync::Mutex::new(None));
-    app.manage(ToolConfirmState(tool_confirm_responder.clone()));
+    // 使用全局工具确认通道（在 lib.rs 中创建）
+    let tool_confirm_responder = app.state::<ToolConfirmState>().0.clone();
 
     // 始终走 Agent 模式
     let app_clone = app.clone();
@@ -295,6 +296,7 @@ pub async fn send_message(
             permission_mode,
             Some(tool_confirm_responder.clone()),
             if work_dir.is_empty() { None } else { Some(work_dir.clone()) },
+            skill_config.max_iterations,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -307,35 +309,102 @@ pub async fn send_message(
         sub_agent: false,
     });
 
-    // 从新消息中提取最终文本和 tool_calls，只保存一条 assistant 消息
+    // 从新消息中按顺序提取有序项（文字和工具调用交替排列）
     let new_messages: Vec<&Value> = final_messages.iter().skip(history.len()).collect();
 
-    // 收集所有 tool_calls（来自 tool_use、tool_result、tool 角色的消息）
-    let mut tool_calls: Vec<Value> = Vec::new();
+    let mut ordered_items: Vec<Value> = Vec::new();
     let mut final_text = String::new();
 
     for msg in &new_messages {
         let role = msg["role"].as_str().unwrap_or("");
-        match role {
-            "tool_use" | "tool_result" | "tool" => {
-                // 中间工具消息：收集工具调用信息
-                tool_calls.push((*msg).clone());
-            }
-            "assistant" => {
-                // 取最后一条 assistant 纯文本消息
-                if let Some(text) = msg["content"].as_str() {
-                    final_text = text.to_string();
+
+        if role == "assistant" {
+            // Anthropic 格式：content 数组含 tool_use blocks
+            if let Some(content_arr) = msg["content"].as_array() {
+                for block in content_arr {
+                    if block["type"].as_str() == Some("tool_use") {
+                        ordered_items.push(json!({
+                            "type": "tool_call",
+                            "id": block["id"],
+                            "name": block["name"],
+                            "input": block["input"],
+                            "status": "completed"
+                        }));
+                    }
                 }
             }
-            _ => {}
+            // Anthropic 格式：纯文本 content
+            else if let Some(text) = msg["content"].as_str() {
+                if !text.is_empty() {
+                    final_text = text.to_string();
+                    ordered_items.push(json!({
+                        "type": "text",
+                        "content": text
+                    }));
+                }
+            }
+            // OpenAI 格式：assistant 含 tool_calls 数组
+            if let Some(tool_calls_arr) = msg["tool_calls"].as_array() {
+                for tc in tool_calls_arr {
+                    let func = &tc["function"];
+                    let input_val = serde_json::from_str::<Value>(
+                        func["arguments"].as_str().unwrap_or("{}")
+                    ).unwrap_or(json!({}));
+                    ordered_items.push(json!({
+                        "type": "tool_call",
+                        "id": tc["id"],
+                        "name": func["name"],
+                        "input": input_val,
+                        "status": "completed"
+                    }));
+                }
+            }
+        }
+
+        // Anthropic 格式：user 消息含 tool_result blocks → 匹配对应的工具调用
+        if role == "user" {
+            if let Some(content_arr) = msg["content"].as_array() {
+                for block in content_arr {
+                    if block["type"].as_str() == Some("tool_result") {
+                        let tool_use_id = block["tool_use_id"].as_str().unwrap_or("");
+                        let output = block["content"].as_str().unwrap_or("");
+                        // 反向查找匹配的 tool_call 并填充 output
+                        for item in ordered_items.iter_mut().rev() {
+                            if item["type"].as_str() == Some("tool_call")
+                                && item["id"].as_str() == Some(tool_use_id)
+                                && item.get("output").map_or(true, |v| v.is_null())
+                            {
+                                item["output"] = Value::String(output.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // OpenAI 格式：tool 角色消息 → 匹配对应的工具调用
+        if role == "tool" {
+            let tool_call_id = msg["tool_call_id"].as_str().unwrap_or("");
+            let output = msg["content"].as_str().unwrap_or("");
+            for item in ordered_items.iter_mut().rev() {
+                if item["type"].as_str() == Some("tool_call")
+                    && item["id"].as_str() == Some(tool_call_id)
+                    && item.get("output").map_or(true, |v| v.is_null())
+                {
+                    item["output"] = Value::String(output.to_string());
+                    break;
+                }
+            }
         }
     }
 
-    // 组装最终 content：有 tool_calls 时包裹为 JSON 对象，否则纯文本
-    let content = if !tool_calls.is_empty() {
+    // 组装最终 content：包含有序 items 列表
+    let has_tool_calls = ordered_items.iter().any(|i| i["type"].as_str() == Some("tool_call"));
+    let content = if has_tool_calls {
         serde_json::to_string(&json!({
             "text": final_text,
-            "tool_calls": tool_calls,
+            "items": ordered_items,
         }))
         .unwrap_or(final_text.clone())
     } else {
@@ -343,7 +412,7 @@ pub async fn send_message(
     };
 
     // 只有存在 assistant 回复时才保存
-    if !final_text.is_empty() || !tool_calls.is_empty() {
+    if !final_text.is_empty() || has_tool_calls {
         let msg_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         sqlx::query(
@@ -380,7 +449,16 @@ pub async fn get_messages(
         if role == "assistant" {
             if let Ok(parsed) = serde_json::from_str::<Value>(content) {
                 if let Some(text) = parsed.get("text") {
-                    // 包含 text 字段，说明是带 tool_calls 的结构化消息
+                    // 新格式：包含有序 items 列表
+                    if let Some(items) = parsed.get("items") {
+                        return json!({
+                            "role": role,
+                            "content": text,
+                            "created_at": created_at,
+                            "streamItems": items,
+                        });
+                    }
+                    // 旧格式：包含 tool_calls 列表（向后兼容）
                     let tool_calls = parsed.get("tool_calls").cloned().unwrap_or(Value::Null);
                     return json!({
                         "role": role,

@@ -1,9 +1,11 @@
 /// 多 Provider 网络搜索模块
 ///
 /// 提供统一的 SearchProvider trait，支持 Brave、Tavily、秘塔、博查、SerpApi 等搜索引擎。
+/// 内置 DuckDuckGo Provider 作为无需 API Key 的默认选项。
 pub mod bocha;
 pub mod brave;
 pub mod cache;
+pub mod duckduckgo;
 pub mod metaso;
 pub mod serpapi;
 pub mod tavily;
@@ -74,6 +76,8 @@ pub fn create_provider(
         "search_serpapi" => Ok(Box::new(serpapi::SerpApiSearch::new(
             base_url, api_key, model_name,
         ))),
+        // DuckDuckGo 无需 API Key，作为内置默认 Provider
+        "search_duckduckgo" => Ok(Box::new(duckduckgo::DuckDuckGoSearch::new())),
         _ => anyhow::bail!("未知的搜索 Provider: {}", api_format),
     }
 }

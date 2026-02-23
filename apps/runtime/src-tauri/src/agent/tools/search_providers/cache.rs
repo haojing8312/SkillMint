@@ -3,7 +3,9 @@
 /// 缓存键格式：`"{provider}:{query_lowercase}:{count}"`
 /// - TTL 到期的条目在下次访问时被清除
 /// - 超出 max_size 时按插入顺序（最旧的）淘汰
+/// - 使用内部 Mutex 实现线程安全，支持 Arc<SearchCache> 共享
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::SearchItem;
@@ -18,16 +20,22 @@ struct CacheEntry {
     seq: u64,
 }
 
-/// 搜索结果缓存
-pub struct SearchCache {
+/// 缓存内部可变状态
+struct CacheState {
     /// 缓存存储
     store: HashMap<String, CacheEntry>,
+    /// 全局自增插入序号
+    seq_counter: u64,
+}
+
+/// 搜索结果缓存（线程安全，支持 Arc 共享）
+pub struct SearchCache {
+    /// 内部可变状态，通过 Mutex 保证线程安全
+    state: Mutex<CacheState>,
     /// 缓存有效期
     ttl: Duration,
     /// 最大缓存条目数
     max_size: usize,
-    /// 全局自增插入序号
-    seq_counter: u64,
 }
 
 impl SearchCache {
@@ -38,10 +46,12 @@ impl SearchCache {
     /// - `max_size`：最大缓存条目数（超出时淘汰最旧条目）
     pub fn new(ttl: Duration, max_size: usize) -> Self {
         Self {
-            store: HashMap::new(),
+            state: Mutex::new(CacheState {
+                store: HashMap::new(),
+                seq_counter: 0,
+            }),
             ttl,
             max_size,
-            seq_counter: 0,
         }
     }
 
@@ -51,44 +61,47 @@ impl SearchCache {
     }
 
     /// 查询缓存，未命中或已过期则返回 None
-    pub fn get(&mut self, provider: &str, query: &str, count: usize) -> Option<Vec<SearchItem>> {
+    pub fn get(&self, provider: &str, query: &str, count: usize) -> Option<Vec<SearchItem>> {
         let key = Self::make_key(provider, query, count);
-        if let Some(entry) = self.store.get(&key) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.store.get(&key) {
             if entry.created_at.elapsed() < self.ttl {
                 return Some(entry.items.clone());
             }
             // TTL 过期，移除条目
-            self.store.remove(&key);
+            state.store.remove(&key);
         }
         None
     }
 
     /// 写入缓存，若超出 max_size 则淘汰最旧条目
-    pub fn put(&mut self, provider: &str, query: &str, count: usize, items: Vec<SearchItem>) {
+    pub fn put(&self, provider: &str, query: &str, count: usize, items: Vec<SearchItem>) {
         let key = Self::make_key(provider, query, count);
+        let mut state = self.state.lock().unwrap();
 
         // 若 key 已存在则先移除（后面重新插入以刷新 seq）
-        self.store.remove(&key);
+        state.store.remove(&key);
 
         // 超出容量时淘汰插入序号最小（最旧）的条目
-        if self.store.len() >= self.max_size {
-            if let Some(oldest_key) = self
+        if state.store.len() >= self.max_size {
+            if let Some(oldest_key) = state
                 .store
                 .iter()
                 .min_by_key(|(_, e)| e.seq)
                 .map(|(k, _)| k.clone())
             {
-                self.store.remove(&oldest_key);
+                state.store.remove(&oldest_key);
             }
         }
 
-        self.seq_counter += 1;
-        self.store.insert(
+        state.seq_counter += 1;
+        let seq = state.seq_counter;
+        state.store.insert(
             key,
             CacheEntry {
                 items,
                 created_at: Instant::now(),
-                seq: self.seq_counter,
+                seq,
             },
         );
     }
@@ -96,13 +109,13 @@ impl SearchCache {
     /// 返回当前缓存条目数
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
-        self.store.len()
+        self.state.lock().unwrap().store.len()
     }
 
     /// 是否为空
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.store.is_empty()
+        self.state.lock().unwrap().store.is_empty()
     }
 }
 
@@ -124,7 +137,7 @@ mod tests {
     #[test]
     fn test_cache_hit() {
         // 写入后立即读取应命中缓存
-        let mut cache = SearchCache::new(Duration::from_secs(60), 100);
+        let cache = SearchCache::new(Duration::from_secs(60), 100);
         let items = make_items(3);
         cache.put("brave", "rust language", 5, items.clone());
 
@@ -138,7 +151,7 @@ mod tests {
     #[test]
     fn test_miss_different_query() {
         // 查询词不同，不应命中缓存
-        let mut cache = SearchCache::new(Duration::from_secs(60), 100);
+        let cache = SearchCache::new(Duration::from_secs(60), 100);
         cache.put("brave", "rust language", 5, make_items(3));
 
         let result = cache.get("brave", "python language", 5);
@@ -148,7 +161,7 @@ mod tests {
     #[test]
     fn test_miss_different_provider() {
         // Provider 不同，不应命中缓存
-        let mut cache = SearchCache::new(Duration::from_secs(60), 100);
+        let cache = SearchCache::new(Duration::from_secs(60), 100);
         cache.put("brave", "rust language", 5, make_items(3));
 
         let result = cache.get("tavily", "rust language", 5);
@@ -158,7 +171,7 @@ mod tests {
     #[test]
     fn test_expiry() {
         // TTL 为 1 纳秒，写入后应立即过期
-        let mut cache = SearchCache::new(Duration::from_nanos(1), 100);
+        let cache = SearchCache::new(Duration::from_nanos(1), 100);
         cache.put("brave", "rust language", 5, make_items(2));
 
         // 等待缓存过期
@@ -174,7 +187,7 @@ mod tests {
     #[test]
     fn test_max_size_eviction() {
         // 容量为 2，第 3 次写入应淘汰最旧条目
-        let mut cache = SearchCache::new(Duration::from_secs(60), 2);
+        let cache = SearchCache::new(Duration::from_secs(60), 2);
 
         cache.put("brave", "query_a", 5, make_items(1));
         cache.put("brave", "query_b", 5, make_items(1));
@@ -204,7 +217,7 @@ mod tests {
     #[test]
     fn test_case_insensitive() {
         // 查询词大小写不敏感
-        let mut cache = SearchCache::new(Duration::from_secs(60), 100);
+        let cache = SearchCache::new(Duration::from_secs(60), 100);
         cache.put("brave", "Rust Language", 5, make_items(2));
 
         // 小写查询应命中
