@@ -19,6 +19,20 @@ impl BashTool {
     fn get_shell() -> (&'static str, &'static str) {
         ("bash", "-c")
     }
+
+    /// 检查命令是否包含危险操作模式
+    fn is_dangerous(command: &str) -> bool {
+        let lower = command.to_lowercase();
+        let patterns = [
+            "rm -rf /", "rm -rf /*", "rm -rf ~",
+            "format c:", "format d:",
+            "shutdown", "reboot",
+            "> /dev/sda", "dd if=/dev/zero",
+            ":(){ :|:& };:",
+            "mkfs.", "wipefs",
+        ];
+        patterns.iter().any(|p| lower.contains(p))
+    }
 }
 
 impl Tool for BashTool {
@@ -51,6 +65,11 @@ impl Tool for BashTool {
         let command = input["command"]
             .as_str()
             .ok_or_else(|| anyhow!("缺少 command 参数"))?;
+
+        // 危险命令检查
+        if Self::is_dangerous(command) {
+            return Ok("错误: 危险命令已被拦截。此命令可能造成不可逆损害。".to_string());
+        }
 
         let (shell, flag) = Self::get_shell();
 
