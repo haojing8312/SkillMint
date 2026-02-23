@@ -6,7 +6,8 @@ mod db;
 
 use agent::{AgentExecutor, ToolRegistry};
 use agent::tools::new_responder;
-use commands::chat::{AskUserState, ToolConfirmState, ToolConfirmResponder};
+use agent::tools::search_providers::cache::SearchCache;
+use commands::chat::{AskUserState, ToolConfirmState, ToolConfirmResponder, SearchCacheState};
 use commands::skills::DbState;
 use std::sync::Arc;
 use tauri::Manager;
@@ -34,6 +35,13 @@ pub fn run() {
             let tool_confirm_responder: ToolConfirmResponder =
                 std::sync::Arc::new(std::sync::Mutex::new(None));
             app.manage(ToolConfirmState(tool_confirm_responder));
+
+            // 创建全局搜索缓存（15 分钟 TTL，最多 100 条）
+            let search_cache = Arc::new(SearchCache::new(
+                std::time::Duration::from_secs(900),
+                100,
+            ));
+            app.manage(SearchCacheState(search_cache));
 
             // 恢复已保存的 MCP 服务器连接
             let registry_for_mcp = Arc::clone(&registry);

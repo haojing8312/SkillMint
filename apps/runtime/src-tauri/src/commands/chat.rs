@@ -9,6 +9,7 @@ use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
     CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder,
 };
+use crate::agent::tools::search_providers::cache::SearchCache;
 
 /// 全局 AskUser 响应通道（用于 answer_user_question command）
 pub struct AskUserState(pub AskUserResponder);
@@ -16,6 +17,9 @@ pub struct AskUserState(pub AskUserResponder);
 /// 工具确认通道（用于 confirm_tool_execution command）
 pub type ToolConfirmResponder = std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>;
 pub struct ToolConfirmState(pub ToolConfirmResponder);
+
+/// 全局搜索缓存（跨会话共享，在 lib.rs 中创建）
+pub struct SearchCacheState(pub Arc<SearchCache>);
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -224,12 +228,11 @@ pub async fn send_message(
     .with_app_handle(app.clone(), session_id.clone());
     agent_executor.registry().register(Arc::new(task_tool));
 
-    // 注册 WebSearch 工具（从 DB 加载搜索 Provider 配置）
+    // 注册 WebSearch 工具（从 DB 加载搜索 Provider 配置，使用全局缓存）
     {
-        use crate::agent::tools::search_providers::{cache::SearchCache, create_provider};
-        use std::time::Duration;
+        use crate::agent::tools::search_providers::create_provider;
 
-        let search_cache = Arc::new(SearchCache::new(Duration::from_secs(900), 100));
+        let search_cache = app.state::<SearchCacheState>().0.clone();
 
         let search_config = sqlx::query_as::<_, (String, String, String, String)>(
             "SELECT api_format, base_url, api_key, model_name FROM model_configs WHERE api_format LIKE 'search_%' AND is_default = 1 LIMIT 1"
