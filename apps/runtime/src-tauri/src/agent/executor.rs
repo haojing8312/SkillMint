@@ -48,6 +48,80 @@ fn estimate_tokens(messages: &[Value]) -> usize {
     total_chars / CHARS_PER_TOKEN
 }
 
+/// Layer 1 微压缩：替换旧的 tool_result 内容为占位符
+///
+/// 保留最近 `keep_recent` 条 tool_result 的完整内容，
+/// 将更早的替换为 "[已执行]" 占位符。
+/// 仅修改发送给 LLM 的副本，不影响原始数据。
+///
+/// 同时支持两种格式：
+/// - Anthropic：`content` 数组中 `type == "tool_result"` 的条目
+/// - OpenAI：`role == "tool"` 的消息
+pub fn micro_compact(messages: &[Value], keep_recent: usize) -> Vec<Value> {
+    // 找出所有包含 tool_result 的消息索引
+    let tool_result_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            // Anthropic: content 是数组且包含 tool_result
+            m["content"].as_array().map_or(false, |arr| {
+                arr.iter().any(|v| v["type"].as_str() == Some("tool_result"))
+            })
+            // OpenAI: role == "tool"
+            || m["role"].as_str() == Some("tool")
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    if tool_result_indices.len() <= keep_recent {
+        return messages.to_vec();
+    }
+
+    let cutoff = tool_result_indices.len() - keep_recent;
+    let old_indices: std::collections::HashSet<usize> =
+        tool_result_indices[..cutoff].iter().copied().collect();
+
+    messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if old_indices.contains(&i) {
+                if m["role"].as_str() == Some("tool") {
+                    // OpenAI 格式
+                    json!({
+                        "role": "tool",
+                        "tool_call_id": m["tool_call_id"],
+                        "content": "[已执行]"
+                    })
+                } else {
+                    // Anthropic 格式：替换 content 数组中的 tool_result 条目
+                    let replaced = m["content"].as_array().map(|arr| {
+                        arr.iter()
+                            .map(|v| {
+                                if v["type"].as_str() == Some("tool_result") {
+                                    json!({
+                                        "type": "tool_result",
+                                        "tool_use_id": v["tool_use_id"],
+                                        "content": "[已执行]"
+                                    })
+                                } else {
+                                    v.clone()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    match replaced {
+                        Some(arr) => json!({"role": "user", "content": arr}),
+                        None => m.clone(),
+                    }
+                }
+            } else {
+                m.clone()
+            }
+        })
+        .collect()
+}
+
 /// 裁剪消息列表到 token 预算内
 /// 保留第一条消息和最后的消息，从第二条开始裁剪中间的
 pub fn trim_messages(messages: &[Value], token_budget: usize) -> Vec<Value> {
@@ -197,8 +271,9 @@ impl AgentExecutor {
                 None => self.registry.get_tool_definitions(),
             };
 
-            // 上下文裁剪：将传给 LLM 的消息裁剪到 token 预算内
-            let trimmed = trim_messages(&messages, DEFAULT_TOKEN_BUDGET);
+            // 上下文压缩：Layer 1 微压缩 + token 预算裁剪
+            let compacted = micro_compact(&messages, 3);
+            let trimmed = trim_messages(&compacted, DEFAULT_TOKEN_BUDGET);
 
             // 调用 LLM
             let response = if api_format == "anthropic" {

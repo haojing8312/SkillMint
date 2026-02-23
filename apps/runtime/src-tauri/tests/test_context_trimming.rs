@@ -1,4 +1,4 @@
-use runtime_lib::agent::executor::trim_messages;
+use runtime_lib::agent::executor::{micro_compact, trim_messages};
 use serde_json::json;
 
 #[test]
@@ -61,4 +61,55 @@ fn test_trim_two_messages_never_trimmed() {
     // 即使超预算，只有 2 条消息也不裁剪
     let trimmed = trim_messages(&messages, 100);
     assert_eq!(trimmed.len(), 2);
+}
+
+#[test]
+fn test_micro_compact_replaces_old_tool_results() {
+    let messages = vec![
+        json!({"role": "user", "content": "start"}),
+        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "1", "content": "long output 1 long output 1 long output 1"}]}),
+        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "2", "content": "long output 2 long output 2 long output 2"}]}),
+        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "3", "content": "long output 3"}]}),
+        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "4", "content": "long output 4"}]}),
+        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "5", "content": "recent output"}]}),
+        json!({"role": "assistant", "content": "done"}),
+    ];
+
+    let result = micro_compact(&messages, 3);
+    // 旧的 tool_result（id 1、2）应替换为 [已执行]
+    let r1 = serde_json::to_string(&result[1]).unwrap();
+    assert!(r1.contains("[已执行]"), "Old tool result 1 should be replaced");
+    let r2 = serde_json::to_string(&result[2]).unwrap();
+    assert!(r2.contains("[已执行]"), "Old tool result 2 should be replaced");
+    // 近期的（id 3、4、5）应保留原始内容
+    let r5 = serde_json::to_string(&result[5]).unwrap();
+    assert!(r5.contains("recent output"), "Recent tool result should be preserved");
+}
+
+#[test]
+fn test_micro_compact_few_messages_no_change() {
+    let messages = vec![
+        json!({"role": "user", "content": "hello"}),
+        json!({"role": "assistant", "content": "hi"}),
+    ];
+    let result = micro_compact(&messages, 3);
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0]["content"].as_str().unwrap(), "hello");
+}
+
+#[test]
+fn test_micro_compact_openai_tool_role() {
+    let messages = vec![
+        json!({"role": "user", "content": "start"}),
+        json!({"role": "tool", "tool_call_id": "c1", "content": "old output 1"}),
+        json!({"role": "tool", "tool_call_id": "c2", "content": "old output 2"}),
+        json!({"role": "tool", "tool_call_id": "c3", "content": "recent output"}),
+        json!({"role": "assistant", "content": "done"}),
+    ];
+
+    let result = micro_compact(&messages, 1);
+    // 只保留最后 1 条 tool result（c3），其余替换为 [已执行]
+    assert_eq!(result[1]["content"].as_str().unwrap(), "[已执行]");
+    assert_eq!(result[2]["content"].as_str().unwrap(), "[已执行]");
+    assert_eq!(result[3]["content"].as_str().unwrap(), "recent output");
 }
