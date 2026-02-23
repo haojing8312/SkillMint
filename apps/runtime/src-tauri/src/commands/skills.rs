@@ -5,6 +5,13 @@ use chrono::Utc;
 
 pub struct DbState(pub SqlitePool);
 
+/// 本地 Skill 导入结果，包含 manifest 和缺失的 MCP 服务器列表
+#[derive(serde::Serialize)]
+pub struct ImportResult {
+    pub manifest: skillpack_rs::SkillManifest,
+    pub missing_mcp: Vec<String>,
+}
+
 #[tauri::command]
 pub async fn install_skill(
     pack_path: String,
@@ -38,7 +45,7 @@ pub async fn install_skill(
 pub async fn import_local_skill(
     dir_path: String,
     db: State<'_, DbState>,
-) -> Result<SkillManifest, String> {
+) -> Result<ImportResult, String> {
     // 读取 SKILL.md
     let skill_md_path = std::path::Path::new(&dir_path).join("SKILL.md");
     let content = std::fs::read_to_string(&skill_md_path)
@@ -86,7 +93,23 @@ pub async fn import_local_skill(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(manifest)
+    // 检查 MCP 依赖：哪些声明的 MCP 服务器尚未在数据库中配置
+    let mut missing_mcp = Vec::new();
+    for dep in &config.mcp_servers {
+        let exists: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM mcp_servers WHERE name = ?"
+        )
+        .bind(&dep.name)
+        .fetch_optional(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if exists.is_none() {
+            missing_mcp.push(dep.name.clone());
+        }
+    }
+
+    Ok(ImportResult { manifest, missing_mcp })
 }
 
 /// 刷新本地 Skill（重新读取 SKILL.md 更新 manifest）

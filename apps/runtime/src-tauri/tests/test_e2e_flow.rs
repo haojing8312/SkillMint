@@ -417,7 +417,33 @@ async fn test_mcp_server_crud() {
 }
 
 // ============================================================
-// 测试 5: 完整 Claude Code 格式 SKILL.md 解析（含参数替换）
+// 测试 5: SKILL.md MCP 服务器依赖解析
+// ============================================================
+
+#[tokio::test]
+async fn test_skill_config_mcp_dependency() {
+    let content = r#"---
+name: test-mcp-skill
+description: Test MCP dependency
+mcp-servers:
+  - name: brave-search
+    command: npx
+    args: ["@anthropic/mcp-server-brave-search"]
+    env: ["BRAVE_API_KEY"]
+  - name: memory
+---
+Test skill with MCP dependencies."#;
+
+    let config = runtime_lib::agent::skill_config::SkillConfig::parse(content);
+    assert_eq!(config.mcp_servers.len(), 2);
+    assert_eq!(config.mcp_servers[0].name, "brave-search");
+    assert_eq!(config.mcp_servers[0].env, Some(vec!["BRAVE_API_KEY".to_string()]));
+    assert_eq!(config.mcp_servers[1].name, "memory");
+    assert_eq!(config.mcp_servers[1].command, None);
+}
+
+// ============================================================
+// 测试 6: 完整 Claude Code 格式 SKILL.md 解析（含参数替换）
 // ============================================================
 
 #[tokio::test]

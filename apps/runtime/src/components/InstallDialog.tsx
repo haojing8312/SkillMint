@@ -17,6 +17,7 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
   const [localDir, setLocalDir] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mcpWarning, setMcpWarning] = useState<string[]>([]);
 
   // 选择 .skillpack 文件
   async function pickFile() {
@@ -30,35 +31,47 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
     if (d && typeof d === "string") setLocalDir(d);
   }
 
-  // 切换模式时清除错误
+  // 切换模式时清除错误和警告
   function switchMode(m: InstallMode) {
     setMode(m);
     setError("");
+    setMcpWarning([]);
   }
 
   async function handleInstall() {
     setError("");
+    setMcpWarning([]);
     setLoading(true);
 
     try {
-      let manifest: SkillManifest;
       if (mode === "skillpack") {
         if (!packPath || !username.trim()) {
           setError("请选择文件并填写用户名");
           setLoading(false);
           return;
         }
-        manifest = await invoke<SkillManifest>("install_skill", { packPath, username });
+        const manifest = await invoke<SkillManifest>("install_skill", { packPath, username });
+        onInstalled(manifest.id);
+        onClose();
       } else {
         if (!localDir) {
           setError("请选择包含 SKILL.md 的目录");
           setLoading(false);
           return;
         }
-        manifest = await invoke<SkillManifest>("import_local_skill", { dirPath: localDir });
+        const result = await invoke<{ manifest: { id: string }; missing_mcp: string[] }>("import_local_skill", { dirPath: localDir });
+
+        if (result.missing_mcp.length > 0) {
+          setMcpWarning(result.missing_mcp);
+          // Skill 已安装成功，通知父组件切换
+          onInstalled(result.manifest.id);
+          // 保持对话框打开以展示 MCP 警告
+          return;
+        }
+
+        onInstalled(result.manifest.id);
+        onClose();
       }
-      onInstalled(manifest.id);
-      onClose();
     } catch (e: unknown) {
       setError(String(e));
     } finally {
@@ -141,6 +154,18 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
         )}
 
         {error && <div className="text-red-400 text-sm">{error}</div>}
+
+        {mcpWarning.length > 0 && (
+          <div className="text-amber-400 text-sm">
+            <div className="font-medium mb-1">此 Skill 需要以下 MCP 服务器：</div>
+            <ul className="list-disc list-inside">
+              {mcpWarning.map((name) => (
+                <li key={name} className="text-xs">{name}</li>
+              ))}
+            </ul>
+            <div className="text-xs text-slate-400 mt-1">请在设置 → MCP 服务器中配置</div>
+          </div>
+        )}
 
         <div className="flex gap-2">
           <button

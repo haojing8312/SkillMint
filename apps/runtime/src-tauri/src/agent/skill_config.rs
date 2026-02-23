@@ -1,5 +1,18 @@
 use serde::Deserialize;
 
+/// SKILL.md 中声明的 MCP 服务器依赖
+#[derive(Deserialize, Debug, Clone, serde::Serialize)]
+pub struct McpServerDep {
+    pub name: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    /// 需要的环境变量名称列表
+    #[serde(default)]
+    pub env: Option<Vec<String>>,
+}
+
 /// allowed_tools 支持两种 YAML 格式：逗号分隔字符串或数组
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -40,6 +53,8 @@ pub struct SkillConfig {
     pub context: Option<String>,
     /// Claude Code 兼容: 指定运行的 Agent，如 "Explore", "Plan"
     pub agent: Option<String>,
+    /// MCP 服务器依赖列表
+    pub mcp_servers: Vec<McpServerDep>,
     pub system_prompt: String,
 }
 
@@ -64,6 +79,9 @@ struct FrontMatter {
     context: Option<String>,
     /// Claude Code 兼容: 指定 Agent
     agent: Option<String>,
+    /// MCP 服务器依赖（YAML alias: mcp-servers）
+    #[serde(alias = "mcp-servers", default)]
+    mcp_servers: Vec<McpServerDep>,
 }
 
 /// serde 默认值函数：返回 true
@@ -117,6 +135,7 @@ impl SkillConfig {
             user_invocable: fm.user_invocable,
             context: fm.context,
             agent: fm.agent,
+            mcp_servers: fm.mcp_servers,
             system_prompt,
         }
     }
