@@ -135,33 +135,22 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden">
-      {/* 折叠状态下的展开按钮 */}
-      {sidebarCollapsed && (
-        <button
-          onClick={() => setSidebarCollapsed(false)}
-          className="absolute top-3 left-3 z-20 bg-slate-700 hover:bg-slate-600 text-slate-200 w-8 h-8 rounded flex items-center justify-center text-sm transition-colors"
-          title="展开侧边栏"
-        >
-          ☰
-        </button>
-      )}
-      {!sidebarCollapsed && (
-        <Sidebar
-          skills={skills}
-          selectedSkillId={selectedSkillId}
-          onSelectSkill={setSelectedSkillId}
-          sessions={sessions}
-          selectedSessionId={selectedSessionId}
-          onSelectSession={setSelectedSessionId}
-          onNewSession={handleCreateSession}
-          onDeleteSession={handleDeleteSession}
-          onInstall={() => setShowInstall(true)}
-          onSettings={() => setShowSettings(true)}
-          onSearchSessions={handleSearchSessions}
-          onExportSession={handleExportSession}
-          onCollapse={() => setSidebarCollapsed(true)}
-        />
-      )}
+      <Sidebar
+        skills={skills}
+        selectedSkillId={selectedSkillId}
+        onSelectSkill={setSelectedSkillId}
+        sessions={sessions}
+        selectedSessionId={selectedSessionId}
+        onSelectSession={setSelectedSessionId}
+        onNewSession={handleCreateSession}
+        onDeleteSession={handleDeleteSession}
+        onInstall={() => setShowInstall(true)}
+        onSettings={() => setShowSettings(true)}
+        onSearchSessions={handleSearchSessions}
+        onExportSession={handleExportSession}
+        onCollapse={() => setSidebarCollapsed((prev) => !prev)}
+        collapsed={sidebarCollapsed}
+      />
       <div className="flex-1 overflow-hidden">
         {showSettings ? (
           <SettingsView

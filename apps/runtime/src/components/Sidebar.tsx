@@ -15,6 +15,7 @@ interface Props {
   onSearchSessions: (query: string) => void;
   onExportSession: (sessionId: string) => void;
   onCollapse: () => void;
+  collapsed: boolean;
 }
 
 export function Sidebar({
@@ -31,6 +32,7 @@ export function Sidebar({
   onSearchSessions,
   onExportSession,
   onCollapse,
+  collapsed,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -39,8 +41,40 @@ export function Sidebar({
     onSearchSessions(value);
   }
 
+  // 折叠模式：窄侧边栏，仅显示图标按钮
+  if (collapsed) {
+    return (
+      <div className="w-12 bg-slate-800 flex flex-col h-full border-r border-slate-700 items-center py-3 gap-3 flex-shrink-0">
+        <button
+          onClick={onCollapse}
+          className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors"
+          title="展开侧边栏"
+          aria-label="展开侧边栏"
+        >
+          ▶
+        </button>
+        <button
+          onClick={onInstall}
+          className="w-8 h-8 flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-slate-700 rounded transition-colors"
+          title="安装 Skill"
+          aria-label="安装 Skill"
+        >
+          +
+        </button>
+        <button
+          onClick={onSettings}
+          className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded transition-colors mt-auto"
+          title="设置"
+          aria-label="设置"
+        >
+          ⚙
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-56 bg-slate-800 flex flex-col h-full border-r border-slate-700">
+    <div className="w-56 bg-slate-800 flex flex-col h-full border-r border-slate-700 flex-shrink-0">
       {/* 标题栏 + 折叠按钮 */}
       <div className="px-4 py-3 text-xs font-medium text-slate-400 border-b border-slate-700 flex items-center justify-between">
         <span>已安装 Skill</span>
