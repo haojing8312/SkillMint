@@ -103,13 +103,10 @@ Professional Skill authoring environment:
 
 **Anthropic Claude**:
 - Claude 4.6 Sonnet (latest, best reasoning)
-- Claude 3.5 Sonnet
-- Claude 3.5 Haiku
 
 **OpenAI**:
 - o1 (latest reasoning model)
 - GPT-5.3-Codex (latest coding model, 2026)
-- GPT-4 Turbo
 
 **Chinese Leading Models**:
 - **MiniMax M2.5** (SWE-Bench 80.2%, code generation)
@@ -228,8 +225,6 @@ cargo test
 - [ ] File upload support
 - [ ] Secure workspace configuration UI
 
-**Estimated Completion**: 4-6 weeks
-
 ### Milestone 2: Distribution & Updates 🚀
 
 **Auto-Update**:
@@ -253,8 +248,6 @@ cargo test
 - [ ] Official download server
 - [ ] Mirror CDN setup
 - [ ] Update channels (stable, beta, dev)
-
-**Estimated Completion**: 2-3 weeks
 
 ### Milestone 3: Ecosystem & Enterprise 🏢
 
@@ -285,10 +278,6 @@ cargo test
 - [ ] Role-based access control (RBAC)
 - [ ] Resource usage monitoring
 
-**Reference**: See `E:\code\work\公众号文章\20260129-桌面智能体架构设计\最终稿-桌面智能体架构设计.md` for detailed enterprise architecture.
-
-**Estimated Completion**: 8-12 weeks
-
 ### Milestone 4: Agent Evolution & Ecosystem Integration 🧬
 
 **EvoMap Integration** (Agent Self-Evolution):
@@ -313,8 +302,6 @@ cargo test
 - [ ] Task status notification and streaming results
 - [ ] Multi-user permission isolation
 
-**Estimated Completion**: 10-14 weeks
-
 ## Why "SkillMint"?
 
 **Skill**: The core unit of AI capability - a packaged, reusable instruction set
@@ -326,33 +313,15 @@ Think of it as **"Minting AI Skills"** - create, package, and distribute Skills 
 
 Similar to how Cursor and Claude Code democratized AI-assisted coding, SkillMint aims to democratize AI Skill distribution. Package your expertise once, distribute securely to thousands.
 
-## Reference Projects
+## Future Integration Roadmap
 
-SkillMint stands on the shoulders of giants. See [reference/README.md](reference/README.md) for detailed analysis of:
-
-**Production-Grade Applications**:
-- [WorkAny](reference/docs/workany.md) - Tauri + Claude Code Agent SDK
-- [Gemini CLI](reference/docs/gemini-cli.md) - Google's official Agent Runtime
-- [OpenClaw](reference/docs/openclaw.md) - Multi-channel AI gateway
-- [MiniMax Agent](reference/docs/minimax.md) - BrowserView automation
-
-**Cowork Reverse Engineering & Implementations**:
-- [Claude Code Reverse](reference/docs/claude-code-reverse.md) - LLM interaction analysis
-- [Learn Claude Code](reference/docs/learn-claude-code.md) - 11 progressive Agent lessons
-- [Open Claude Cowork](reference/docs/open-claude-cowork.md) - 500+ tool integrations
-
-Key learnings:
-- **Sub-Agent isolation** from Claude Code Reverse
-- **Skill on-demand loading** from Learn Claude Code
-- **Three-layer context compression** for token optimization
-- **Composio Tool Router** for enterprise integrations
-- **Agent self-evolution (GEP protocol)** from EvoMap ecosystem
-
-**Future Integration Roadmap**:
-See [公众号文章/20260221-ClawHub与EvoMap进化论/终稿.md](E:\code\work\公众号文章\20260221-ClawHub与EvoMap进化论\终稿.md) for detailed analysis of:
+**Agent Evolution**:
 - EvoMap's GEP (Genome Evolution Protocol) and A2A communication
-- ClawHub marketplace integration strategies
 - Agent capability inheritance and evolution mechanisms
+
+**Ecosystem Integration**:
+- ClawHub marketplace integration strategies
+- Community Skill discovery and distribution
 
 ## License
 
