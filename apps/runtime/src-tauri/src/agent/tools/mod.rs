@@ -1,3 +1,5 @@
+pub mod search_providers;
+
 mod ask_user;
 mod bash;
 mod compact_tool;
