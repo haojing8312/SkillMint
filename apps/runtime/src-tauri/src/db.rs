@@ -93,5 +93,28 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         .execute(&pool)
         .await;
 
+    // 内置通用 Skill：始终存在，无需用户安装
+    let builtin_manifest = serde_json::json!({
+        "id": "builtin-general",
+        "name": "通用助手",
+        "description": "通用 AI 助手，可以读写文件、执行命令、搜索代码、搜索网页",
+        "version": "1.0.0",
+        "author": "SkillHub",
+        "recommended_model": "",
+        "tags": [],
+        "created_at": "2026-01-01T00:00:00Z",
+        "username_hint": null,
+        "encrypted_verify": ""
+    });
+    let builtin_json = builtin_manifest.to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = sqlx::query(
+        "INSERT OR IGNORE INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type) VALUES ('builtin-general', ?, ?, '', '', 'builtin')"
+    )
+    .bind(&builtin_json)
+    .bind(&now)
+    .execute(&pool)
+    .await;
+
     Ok(pool)
 }

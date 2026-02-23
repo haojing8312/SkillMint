@@ -90,7 +90,11 @@ export function Sidebar({
         {skills.length === 0 && (
           <div className="px-4 py-3 text-xs text-slate-500">暂无已安装 Skill</div>
         )}
-        {skills.map((s) => (
+        {[...skills].sort((a, b) => {
+          if (a.id === "builtin-general") return -1;
+          if (b.id === "builtin-general") return 1;
+          return 0;
+        }).map((s) => (
           <button
             key={s.id}
             onClick={() => onSelectSkill(s.id)}
@@ -103,6 +107,11 @@ export function Sidebar({
           >
             <div className="font-medium truncate flex items-center gap-1">
               {s.name}
+              {s.id === "builtin-general" && (
+                <span className="text-[10px] bg-blue-800/60 text-blue-300 px-1 py-0.5 rounded">
+                  内置
+                </span>
+              )}
               {s.id.startsWith("local-") && (
                 <span className="text-[10px] bg-green-800/60 text-green-300 px-1 py-0.5 rounded">
                   本地

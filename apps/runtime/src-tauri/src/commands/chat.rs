@@ -115,7 +115,17 @@ pub async fn send_message(
     .map_err(|e| format!("Skill 不存在 (skill_id={skill_id}): {e}"))?;
 
     // 根据 source_type 决定如何读取 SKILL.md 内容
-    let raw_prompt = if source_type == "local" {
+    let raw_prompt = if source_type == "builtin" {
+        // 内置 Skill：使用硬编码的 system prompt
+        "你是一个通用 AI 助手。你可以：\n\
+        - 读取和编写文件\n\
+        - 在终端中执行命令\n\
+        - 搜索文件和代码\n\
+        - 搜索网页获取信息\n\
+        - 管理记忆和上下文\n\n\
+        请根据用户的需求，自主分析、规划和执行任务。\n\
+        工作目录为用户指定的目录，所有文件操作限制在该目录范围内。".to_string()
+    } else if source_type == "local" {
         // 本地 Skill：直接从目录读取 SKILL.md
         let skill_md_path = std::path::Path::new(&pack_path).join("SKILL.md");
         std::fs::read_to_string(&skill_md_path)
