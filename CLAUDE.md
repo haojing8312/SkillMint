@@ -288,7 +288,7 @@ strip = true
 | **浏览器自动化** | MiniMax | [reference/docs/minimax.md#1-browserview-浏览器控制](reference/docs/minimax.md) |
 | **反检测技术** | MiniMax | [reference/docs/minimax.md#2-反检测技术-stealthjs](reference/docs/minimax.md) |
 
-### 四个参考项目概览
+### 生产级应用参考
 
 1. **[WorkAny](reference/docs/workany.md)** (811 ⭐) - 桌面 AI Agent，Tauri + Claude Code
    - ✅ 与 SkillHub 架构最相似（Tauri + React + Rust）
@@ -310,34 +310,133 @@ strip = true
    - ✅ 反检测技术（stealth.js 18种方法）
    - ✅ Electron 主进程代码可直接复用
 
+### Cowork 逆向与开源实现（⭐ 核心参考）
+
+5. **[Claude Code Reverse](reference/docs/claude-code-reverse.md)** - LLM 交互可视化逆向工具
+   - ⭐⭐⭐ Monkey Patch 拦截 API，提取实战 Prompt 和 Tools
+   - ⭐⭐⭐ Sub Agent 设计模式（隔离"脏上下文"）
+   - ⭐⭐⭐ TodoWrite 短时记忆管理机制
+   - ⭐⭐ Context 压缩策略（手动/自动触发）
+   - ⭐⭐ 多模型分工（Haiku 3.5 vs Sonnet 4）
+
+6. **[Learn Claude Code](reference/docs/learn-claude-code.md)** - Agent 构建教程（11 课程）
+   - ⭐⭐⭐ Agent 核心循环模式（所有 Agent 的基础）
+   - ⭐⭐⭐ Skill 按需加载机制（s05 - 避免预装到 system prompt）
+   - ⭐⭐⭐ Sub Agent 上下文隔离（s04 - 独立 messages[]）
+   - ⭐⭐⭐ 三层 Context 压缩（s06 - 删除工具调用 + LLM 总结 + 保留最近）
+   - ⭐⭐ TodoWrite 任务管理（s03 - 先计划再行动）
+   - ⭐⭐ 任务持久化 + 依赖图（s07 - 状态在压缩后存活）
+   - ⭐⭐ 后台任务执行（s08 - 守护线程 + 通知队列）
+   - ⭐ Agent 团队协作（s09-s11 - JSONL 邮箱 + 自治认领）
+
+7. **[Open Claude Cowork](reference/docs/open-claude-cowork.md)** - 开源 Cowork 实现
+   - ⭐⭐⭐ Composio Tool Router 集成（500+ 应用）
+   - ⭐⭐⭐ Skills 扩展系统（.claude/skills/ 文件结构）
+   - ⭐⭐ 实时流式输出（SSE 技术方案）
+   - ⭐⭐ 工具调用可视化（Sidebar 展示输入/输出）
+   - ⭐⭐ 双 Provider 架构（Claude SDK / Opencode SDK）
+   - ⭐ Clawdbot 多平台适配器（WhatsApp/Telegram/Signal/iMessage）
+
 ### 使用示例
 
-**场景 1：实现 MCP 服务器管理 UI**
+**场景 1：实现 Agent 核心循环（⭐ 高优先级）**
 ```bash
-# 1. 查看 Gemini CLI 的 MCP 集成章节
-cat reference/docs/gemini-cli.md | grep -A 20 "MCP 集成"
+# 1. 学习基础循环模式
+cat reference/docs/learn-claude-code.md | grep -A 30 "核心模式"
 
-# 2. 查看源码实现
-cd reference/gemini-cli
-grep -r "mcpServers" packages/cli/src/mcp/
+# 2. 运行示例代码
+cd reference/learn-claude-code
+python agents/s01_agent_loop.py
+
+# 3. 对比 SkillHub 的 executor.rs
+cat apps/runtime/src-tauri/src/agent/executor.rs
 ```
 
-**场景 2：优化 Sidecar 打包**
+**场景 2：实现 Skill 按需加载（⭐ 高优先级）**
 ```bash
-# 1. 查看 WorkAny 的 externalBin 配置
-cat reference/docs/workany.md | grep -A 20 "externalBin"
+# 1. 查看按需加载设计
+cat reference/docs/learn-claude-code.md | grep -A 50 "Skill 按需加载"
 
-# 2. 查看源码
-cat reference/workany/src-tauri/tauri.conf.json
+# 2. 运行示例代码
+python reference/learn-claude-code/agents/s05_skill_loading.py
+
+# 3. 参考 Skill 文件格式
+cat reference/learn-claude-code/skills/weather.md
 ```
 
-**场景 3：添加首次运行向导**
+**场景 3：实现 Sub Agent 任务隔离（⭐ 高优先级）**
 ```bash
-# 1. 查看 OpenClaw 的 Onboard Wizard
-cat reference/docs/openclaw.md | grep -A 30 "向导式安装"
+# 1. 理解上下文隔离设计
+cat reference/docs/learn-claude-code.md | grep -A 50 "Sub Agent 上下文隔离"
+cat reference/docs/claude-code-reverse.md | grep -A 30 "Sub Agent 设计模式"
+
+# 2. 查看 Task Tool 定义
+cat reference/claude-code-reverse/results/tools/Task.tool.yaml
+
+# 3. 在 SkillHub 中实现
+# → apps/runtime/src-tauri/src/agent/tools/ 添加 task_agent.rs
+```
+
+**场景 4：实现 Context 压缩（⭐ 高优先级）**
+```bash
+# 1. 学习三层压缩策略
+cat reference/docs/learn-claude-code.md | grep -A 50 "三层上下文压缩"
+
+# 2. 查看 Claude Code 的压缩 Prompt
+cat reference/claude-code-reverse/results/prompts/system-compact.prompt.md
+cat reference/claude-code-reverse/results/prompts/compact.prompt.md
+
+# 3. 运行示例
+python reference/learn-claude-code/agents/s06_context_compact.py
+```
+
+**场景 5：实现 TodoWrite 任务管理**
+```bash
+# 1. 查看 TodoWrite 机制
+cat reference/docs/claude-code-reverse.md | grep -A 20 "TodoWrite 短时记忆管理"
+cat reference/docs/learn-claude-code.md | grep -A 30 "TodoWrite 与任务管理"
+
+# 2. 运行示例
+python reference/learn-claude-code/agents/s03_todo_write.py
+
+# 3. 在 SkillHub 中添加 TodoWrite 工具
+# → apps/runtime/src-tauri/src/agent/tools/todo_write.rs
+```
+
+**场景 6：集成 Composio 500+ 工具**
+```bash
+# 1. 查看 Composio 集成方式
+cat reference/docs/open-claude-cowork.md | grep -A 30 "Composio Tool Router"
 
 # 2. 查看源码实现
-cd reference/openclaw && cat src/cli/commands/onboard.ts
+cat reference/open-claude-cowork/server/providers/claude-provider.js | grep -A 20 "Composio"
+
+# 3. 在 SkillHub Sidecar 中集成
+# → apps/runtime/sidecar/src/composio.ts
+```
+
+**场景 7：优化流式输出 UI**
+```bash
+# 1. 查看 SSE 实现
+cat reference/docs/open-claude-cowork.md | grep -A 30 "实时流式输出"
+
+# 2. 查看前端代码
+cat reference/open-claude-cowork/renderer/chat.js
+
+# 3. 对比 SkillHub 的实现
+cat apps/runtime/src/components/ChatView.tsx
+```
+
+**场景 8：参考实战 Prompt 工程**
+```bash
+# 1. 查看核心 workflow prompt
+cat reference/claude-code-reverse/results/prompts/system-workflow.prompt.md
+
+# 2. 查看 reminder prompts
+cat reference/claude-code-reverse/results/prompts/system-reminder-start.prompt.md
+cat reference/claude-code-reverse/results/prompts/system-reminder-end.prompt.md
+
+# 3. 应用到 SkillHub Skill 的 SKILL.md 设计
 ```
 
 ## 文档阅读顺序
