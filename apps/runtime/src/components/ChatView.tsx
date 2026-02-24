@@ -397,9 +397,11 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       {/* 头部 */}
       <div className="flex items-center justify-between px-6 py-3.5 border-b border-gray-200 bg-white/70 backdrop-blur-sm">
         <span className="font-semibold text-gray-900">{skill.name}</span>
-        {currentModel && (
-          <span className="text-xs text-gray-400">{currentModel.name}</span>
-        )}
+        <div className="flex items-center gap-3">
+          {currentModel && (
+            <span className="text-xs text-gray-400">{currentModel.name}</span>
+          )}
+        </div>
       </div>
 
       {/* 消息列表 */}

@@ -159,6 +159,7 @@ export function Sidebar({
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -20, height: 0 }}
+                  whileHover={{ scale: 1.01 }}
                   transition={{ duration: 0.2 }}
                   className={
                     "group flex items-center px-4 py-2 text-sm cursor-pointer transition-colors " +
@@ -201,13 +202,13 @@ export function Sidebar({
       <div className="p-3 space-y-2 border-t border-gray-200">
         <button
           onClick={onInstall}
-          className="w-full bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded transition-colors"
+          className="w-full bg-blue-500 hover:bg-blue-600 active:scale-[0.97] text-white text-sm py-1.5 rounded-lg transition-all"
         >
           + 安装 Skill
         </button>
         <button
           onClick={onSettings}
-          className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm py-1.5 rounded transition-colors"
+          className="w-full bg-gray-100 hover:bg-gray-200 active:scale-[0.97] text-gray-700 text-sm py-1.5 rounded-lg transition-all"
         >
           设置
         </button>

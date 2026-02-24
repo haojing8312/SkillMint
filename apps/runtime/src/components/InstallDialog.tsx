@@ -170,14 +170,14 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
         <div className="flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded text-sm transition-colors"
+            className="flex-1 bg-gray-100 hover:bg-gray-200 active:scale-[0.97] text-gray-700 py-2 rounded-lg text-sm transition-all"
           >
             取消
           </button>
           <button
             onClick={handleInstall}
             disabled={loading}
-            className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white py-2 rounded text-sm transition-colors"
+            className="flex-1 bg-blue-500 hover:bg-blue-600 active:scale-[0.97] disabled:bg-gray-200 disabled:text-gray-400 text-white py-2 rounded-lg text-sm transition-all"
           >
             {loading ? "安装中..." : "安装"}
           </button>

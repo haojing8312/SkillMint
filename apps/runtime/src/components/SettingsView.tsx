@@ -372,13 +372,13 @@ export function SettingsView({ onClose }: Props) {
           <button
             onClick={handleTest}
             disabled={testing}
-            className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded transition-colors"
+            className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
             {testing ? "测试中..." : "测试连接"}
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded transition-colors"
+            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
             保存
           </button>
@@ -439,7 +439,7 @@ export function SettingsView({ onClose }: Props) {
         <button
           onClick={handleAddMcp}
           disabled={!mcpForm.name || !mcpForm.command}
-          className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm py-1.5 rounded transition-colors"
+          className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
         >
           添加 MCP 服务器
         </button>
@@ -512,14 +512,14 @@ export function SettingsView({ onClose }: Props) {
             <button
               onClick={handleTestSearch}
               disabled={searchTesting || !searchForm.api_format}
-              className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded transition-colors"
+              className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
             >
               {searchTesting ? "测试中..." : "测试连接"}
             </button>
             <button
               onClick={handleSaveSearch}
               disabled={!searchForm.name || !searchForm.api_format || !searchForm.api_key}
-              className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded transition-colors"
+              className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
             >
               保存
             </button>
