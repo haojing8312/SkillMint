@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use super::skills::DbState;
 use crate::agent::AgentExecutor;
 use crate::agent::permissions::PermissionMode;
@@ -20,6 +21,9 @@ pub struct ToolConfirmState(pub ToolConfirmResponder);
 
 /// 全局搜索缓存（跨会话共享，在 lib.rs 中创建）
 pub struct SearchCacheState(pub Arc<SearchCache>);
+
+/// Agent 取消标志（用于 cancel_agent command 停止正在执行的 Agent）
+pub struct CancelFlagState(pub Arc<AtomicBool>);
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -61,7 +65,12 @@ pub async fn send_message(
     user_message: String,
     db: State<'_, DbState>,
     agent_executor: State<'_, Arc<AgentExecutor>>,
+    cancel_flag: State<'_, CancelFlagState>,
 ) -> Result<(), String> {
+    // 重置取消标志
+    cancel_flag.0.store(false, Ordering::SeqCst);
+    let cancel_flag_clone = cancel_flag.0.clone();
+
     // 保存用户消息
     let msg_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -123,12 +132,20 @@ pub async fn send_message(
     // 根据 source_type 决定如何读取 SKILL.md 内容
     let raw_prompt = if source_type == "builtin" {
         // 内置 Skill：使用硬编码的 system prompt
-        "你是一个通用 AI 助手。你可以：\n\
-        - 读取和编写文件\n\
-        - 在终端中执行命令\n\
-        - 搜索文件和代码\n\
-        - 搜索网页获取信息\n\
-        - 管理记忆和上下文\n\n\
+        "你是一个智能 AI 助手，运行在 SkillHub 平台上。\n\n\
+        ## 可用工具\n\
+        - `read_file` - 读取文件内容\n\
+        - `write_file` - 写入或创建文件\n\
+        - `edit` - 精确替换文件中的文本片段\n\
+        - `glob` - 按模式搜索文件（如 **/*.py）\n\
+        - `grep` - 在文件或目录中搜索文本（正则表达式）\n\
+        - `bash` - 执行 shell 命令（Windows 使用 cmd，Unix 使用 bash）\n\
+        - `todo_write` - 管理任务列表，跟踪多步骤任务进度\n\
+        - `web_search` - 搜索网页获取信息（优先使用此工具搜索）\n\
+        - `web_fetch` - 获取指定 URL 的网页内容\n\
+        - `memory` - 持久化记忆存储，跨会话保留重要信息\n\
+        - `ask_user` - 向用户提问以获取澄清或确认\n\n\
+        ## 工作原则\n\
         请根据用户的需求，自主分析、规划和执行任务。\n\
         工作目录为用户指定的目录，所有文件操作限制在该目录范围内。".to_string()
     } else if source_type == "local" {
@@ -167,11 +184,7 @@ pub async fn send_message(
     .await
     .map_err(|e| e.to_string())?;
 
-    let messages: Vec<Value> = history.iter()
-        .map(|(role, content)| json!({"role": role, "content": content}))
-        .collect();
-
-    // 加载模型配置（含 api_key）
+    // 加载模型配置（含 api_key）— 提前加载以获取 api_format
     let (api_format, base_url, model_name, api_key) = sqlx::query_as::<_, (String, String, String, String)>(
         "SELECT api_format, base_url, model_name, api_key FROM model_configs WHERE id = ?"
     )
@@ -184,40 +197,30 @@ pub async fn send_message(
         return Err(format!("模型 API Key 为空，请在设置中重新配置 (model_id={model_id})"));
     }
 
+    // 重建 LLM 历史消息：将 JSON 包装的 assistant content 还原为 tool_use/tool_result 消息对
+    let messages: Vec<Value> = history
+        .iter()
+        .flat_map(|(role, content)| {
+            if role == "assistant" {
+                if let Ok(parsed) = serde_json::from_str::<Value>(content) {
+                    if parsed.get("text").is_some() && parsed.get("items").is_some() {
+                        return reconstruct_llm_messages(&parsed, &api_format);
+                    }
+                }
+            }
+            vec![json!({"role": role, "content": content})]
+        })
+        .collect();
+
     // 解析 Skill 元数据（frontmatter + system prompt）
     let skill_config = crate::agent::skill_config::SkillConfig::parse(&raw_prompt);
 
     // 确定工具白名单
     let allowed_tools = skill_config.allowed_tools.clone();
 
-    // 获取工具名称列表用于模板渲染
-    let tool_names = match &allowed_tools {
-        Some(whitelist) => whitelist.join(", "),
-        None => agent_executor
-            .registry()
-            .get_tool_definitions()
-            .iter()
-            .filter_map(|t| t["name"].as_str().map(String::from))
-            .collect::<Vec<_>>()
-            .join(", "),
-    };
-
     let max_iter = skill_config.max_iterations.unwrap_or(10);
 
-    // 构建完整 system prompt（含运行环境信息）
-    let system_prompt = if work_dir.is_empty() {
-        format!(
-            "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
-            skill_config.system_prompt, tool_names, model_name, max_iter,
-        )
-    } else {
-        format!(
-            "{}\n\n---\n运行环境:\n- 工作目录: {}\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}\n\n注意: 所有文件操作必须限制在工作目录范围内。",
-            skill_config.system_prompt, work_dir, tool_names, model_name, max_iter,
-        )
-    };
-
-    // 动态注册运行时工具
+    // 动态注册运行时工具（在计算 tool_names 之前完成，确保列表完整）
     let task_tool = TaskTool::new(
         agent_executor.registry_arc(),
         api_format.clone(),
@@ -274,6 +277,31 @@ pub async fn send_message(
     );
     agent_executor.registry().register(Arc::new(ask_user_tool));
 
+    // 获取工具名称列表（在所有工具注册完成后计算，确保列表完整）
+    let tool_names = match &allowed_tools {
+        Some(whitelist) => whitelist.join(", "),
+        None => agent_executor
+            .registry()
+            .get_tool_definitions()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+
+    // 构建完整 system prompt（含运行环境信息）
+    let system_prompt = if work_dir.is_empty() {
+        format!(
+            "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
+            skill_config.system_prompt, tool_names, model_name, max_iter,
+        )
+    } else {
+        format!(
+            "{}\n\n---\n运行环境:\n- 工作目录: {}\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}\n\n注意: 所有文件操作必须限制在工作目录范围内。",
+            skill_config.system_prompt, work_dir, tool_names, model_name, max_iter,
+        )
+    };
+
     // 如果存在 MEMORY.md，注入到 system prompt
     let memory_content = {
         let memory_file = memory_dir.join("MEMORY.md");
@@ -318,6 +346,7 @@ pub async fn send_message(
             Some(tool_confirm_responder.clone()),
             if work_dir.is_empty() { None } else { Some(work_dir.clone()) },
             skill_config.max_iterations,
+            Some(cancel_flag_clone),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -340,17 +369,30 @@ pub async fn send_message(
         let role = msg["role"].as_str().unwrap_or("");
 
         if role == "assistant" {
-            // Anthropic 格式：content 数组含 tool_use blocks
+            // Anthropic 格式：content 数组含 text blocks 和 tool_use blocks
             if let Some(content_arr) = msg["content"].as_array() {
                 for block in content_arr {
-                    if block["type"].as_str() == Some("tool_use") {
-                        ordered_items.push(json!({
-                            "type": "tool_call",
-                            "id": block["id"],
-                            "name": block["name"],
-                            "input": block["input"],
-                            "status": "completed"
-                        }));
+                    match block["type"].as_str() {
+                        Some("text") => {
+                            // 捕获 Anthropic assistant content 中的伴随文本
+                            let text = block["text"].as_str().unwrap_or("");
+                            if !text.is_empty() {
+                                ordered_items.push(json!({"type": "text", "content": text}));
+                            }
+                        }
+                        Some("tool_use") => {
+                            // 使用前端期望的嵌套 toolCall 格式
+                            ordered_items.push(json!({
+                                "type": "tool_call",
+                                "toolCall": {
+                                    "id": block["id"],
+                                    "name": block["name"],
+                                    "input": block["input"],
+                                    "status": "completed"
+                                }
+                            }));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -366,6 +408,12 @@ pub async fn send_message(
             }
             // OpenAI 格式：assistant 含 tool_calls 数组
             if let Some(tool_calls_arr) = msg["tool_calls"].as_array() {
+                // 捕获 OpenAI 伴随文本
+                if let Some(text) = msg["content"].as_str() {
+                    if !text.is_empty() {
+                        ordered_items.push(json!({"type": "text", "content": text}));
+                    }
+                }
                 for tc in tool_calls_arr {
                     let func = &tc["function"];
                     let input_val = serde_json::from_str::<Value>(
@@ -373,10 +421,12 @@ pub async fn send_message(
                     ).unwrap_or(json!({}));
                     ordered_items.push(json!({
                         "type": "tool_call",
-                        "id": tc["id"],
-                        "name": func["name"],
-                        "input": input_val,
-                        "status": "completed"
+                        "toolCall": {
+                            "id": tc["id"],
+                            "name": func["name"],
+                            "input": input_val,
+                            "status": "completed"
+                        }
                     }));
                 }
             }
@@ -391,12 +441,14 @@ pub async fn send_message(
                         let output = block["content"].as_str().unwrap_or("");
                         // 反向查找匹配的 tool_call 并填充 output
                         for item in ordered_items.iter_mut().rev() {
-                            if item["type"].as_str() == Some("tool_call")
-                                && item["id"].as_str() == Some(tool_use_id)
-                                && item.get("output").map_or(true, |v| v.is_null())
-                            {
-                                item["output"] = Value::String(output.to_string());
-                                break;
+                            if item["type"].as_str() == Some("tool_call") {
+                                let tc = &item["toolCall"];
+                                if tc["id"].as_str() == Some(tool_use_id)
+                                    && tc.get("output").map_or(true, |v| v.is_null())
+                                {
+                                    item["toolCall"]["output"] = Value::String(output.to_string());
+                                    break;
+                                }
                             }
                         }
                     }
@@ -409,12 +461,14 @@ pub async fn send_message(
             let tool_call_id = msg["tool_call_id"].as_str().unwrap_or("");
             let output = msg["content"].as_str().unwrap_or("");
             for item in ordered_items.iter_mut().rev() {
-                if item["type"].as_str() == Some("tool_call")
-                    && item["id"].as_str() == Some(tool_call_id)
-                    && item.get("output").map_or(true, |v| v.is_null())
-                {
-                    item["output"] = Value::String(output.to_string());
-                    break;
+                if item["type"].as_str() == Some("tool_call") {
+                    let tc = &item["toolCall"];
+                    if tc["id"].as_str() == Some(tool_call_id)
+                        && tc.get("output").map_or(true, |v| v.is_null())
+                    {
+                        item["toolCall"]["output"] = Value::String(output.to_string());
+                        break;
+                    }
                 }
             }
         }
@@ -452,6 +506,156 @@ pub async fn send_message(
     Ok(())
 }
 
+/// 从 JSON 包装的 assistant content 重建 LLM 可理解的消息序列
+///
+/// 将 `{"text":"最终回复","items":[...]}` 格式还原为：
+/// 1. assistant 消息（含 tool_use blocks + 伴随文本）
+/// 2. user 消息（含 tool_result blocks）
+/// 3. assistant 消息（最终文本回复）
+fn reconstruct_llm_messages(parsed: &Value, api_format: &str) -> Vec<Value> {
+    let final_text = parsed["text"].as_str().unwrap_or("");
+    let items = match parsed["items"].as_array() {
+        Some(arr) => arr,
+        None => return vec![json!({"role": "assistant", "content": final_text})],
+    };
+
+    let mut result = Vec::new();
+
+    // 收集工具调用及其结果
+    let mut tool_calls: Vec<(&Value, Option<&str>)> = Vec::new(); // (item, output)
+    let mut companion_texts: Vec<String> = Vec::new();
+
+    for item in items {
+        match item["type"].as_str() {
+            Some("text") => {
+                let text = item["content"].as_str().unwrap_or("");
+                if !text.is_empty() {
+                    companion_texts.push(text.to_string());
+                }
+            }
+            Some("tool_call") => {
+                // 兼容新旧格式：嵌套 toolCall 或扁平结构
+                let tc = if item.get("toolCall").is_some() {
+                    &item["toolCall"]
+                } else {
+                    item
+                };
+                let output = tc["output"].as_str();
+                tool_calls.push((tc, output));
+            }
+            _ => {}
+        }
+    }
+
+    if !tool_calls.is_empty() {
+        if api_format == "anthropic" {
+            // 构建 assistant 消息：text blocks + tool_use blocks
+            let mut content_blocks: Vec<Value> = Vec::new();
+            for text in &companion_texts {
+                content_blocks.push(json!({"type": "text", "text": text}));
+            }
+            for (tc, _) in &tool_calls {
+                content_blocks.push(json!({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": tc["input"],
+                }));
+            }
+            result.push(json!({"role": "assistant", "content": content_blocks}));
+
+            // 构建 user 消息：tool_result blocks
+            let tool_results: Vec<Value> = tool_calls
+                .iter()
+                .map(|(tc, output)| {
+                    json!({
+                        "type": "tool_result",
+                        "tool_use_id": tc["id"],
+                        "content": output.unwrap_or("[已执行]"),
+                    })
+                })
+                .collect();
+            result.push(json!({"role": "user", "content": tool_results}));
+        } else {
+            // OpenAI 格式：assistant 消息含 tool_calls 数组
+            let companion = companion_texts.join("\n");
+            let content_val = if companion.is_empty() {
+                Value::Null
+            } else {
+                Value::String(companion)
+            };
+            let tc_arr: Vec<Value> = tool_calls
+                .iter()
+                .map(|(tc, _)| {
+                    json!({
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": serde_json::to_string(&tc["input"]).unwrap_or_default(),
+                        }
+                    })
+                })
+                .collect();
+            result.push(json!({"role": "assistant", "content": content_val, "tool_calls": tc_arr}));
+
+            // 每个工具结果独立的 tool 消息
+            for (tc, output) in &tool_calls {
+                result.push(json!({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": output.unwrap_or("[已执行]"),
+                }));
+            }
+        }
+    }
+
+    // 最终文本回复
+    if !final_text.is_empty() {
+        result.push(json!({"role": "assistant", "content": final_text}));
+    }
+
+    // 如果没有任何有效内容，返回空消息避免丢失
+    if result.is_empty() {
+        result.push(json!({"role": "assistant", "content": ""}));
+    }
+
+    result
+}
+
+/// 将旧格式扁平 tool_call items 转换为前端期望的嵌套 toolCall 格式
+///
+/// 旧格式：`{"type":"tool_call","id":"...","name":"...","input":{...},"output":"...","status":"completed"}`
+/// 新格式：`{"type":"tool_call","toolCall":{"id":"...","name":"...","input":{...},"output":"...","status":"completed"}}`
+fn normalize_stream_items(items: &Value) -> Value {
+    if let Some(arr) = items.as_array() {
+        Value::Array(
+            arr.iter()
+                .map(|item| {
+                    if item["type"].as_str() == Some("tool_call") && item.get("toolCall").is_none()
+                    {
+                        // 旧格式：扁平结构 → 包装为嵌套格式
+                        json!({
+                            "type": "tool_call",
+                            "toolCall": {
+                                "id": item["id"],
+                                "name": item["name"],
+                                "input": item["input"],
+                                "output": item["output"],
+                                "status": item["status"]
+                            }
+                        })
+                    } else {
+                        item.clone()
+                    }
+                })
+                .collect(),
+        )
+    } else {
+        items.clone()
+    }
+}
+
 #[tauri::command]
 pub async fn get_messages(
     session_id: String,
@@ -470,13 +674,15 @@ pub async fn get_messages(
         if role == "assistant" {
             if let Ok(parsed) = serde_json::from_str::<Value>(content) {
                 if let Some(text) = parsed.get("text") {
-                    // 新格式：包含有序 items 列表
+                    // 包含有序 items 列表
                     if let Some(items) = parsed.get("items") {
+                        // 向后兼容：将旧格式扁平 tool_call 转换为嵌套 toolCall 格式
+                        let normalized = normalize_stream_items(items);
                         return json!({
                             "role": role,
                             "content": text,
                             "created_at": created_at,
-                            "streamItems": items,
+                            "streamItems": normalized,
                         });
                     }
                     // 旧格式：包含 tool_calls 列表（向后兼容）
@@ -641,4 +847,14 @@ pub async fn confirm_tool_execution(
     } else {
         Err("没有等待中的工具确认请求".to_string())
     }
+}
+
+/// 取消正在执行的 Agent
+#[tauri::command]
+pub async fn cancel_agent(
+    cancel_flag: State<'_, CancelFlagState>,
+) -> Result<(), String> {
+    cancel_flag.0.store(true, Ordering::SeqCst);
+    eprintln!("[agent] 收到取消信号");
+    Ok(())
 }

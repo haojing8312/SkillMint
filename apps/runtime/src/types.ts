@@ -19,11 +19,20 @@ export interface ModelConfig {
   is_default: boolean;
 }
 
+/// 有序的流式输出项：文字和工具调用按发生顺序排列
+export interface StreamItem {
+  type: "text" | "tool_call";
+  content?: string;          // type === "text" 时的文字内容
+  toolCall?: ToolCallInfo;   // type === "tool_call" 时的工具信息
+}
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
   created_at: string;
   toolCalls?: ToolCallInfo[];
+  /// 有序的展示项（新格式），优先使用此字段渲染
+  streamItems?: StreamItem[];
 }
 
 export interface ToolCallInfo {

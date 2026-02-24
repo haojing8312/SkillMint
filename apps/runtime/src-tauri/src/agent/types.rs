@@ -74,6 +74,8 @@ pub struct ToolResult {
 pub enum LLMResponse {
     Text(String),
     ToolCalls(Vec<ToolCall>),
+    /// LLM 返回工具调用时附带的伴随文本（如"让我搜索一下…"）
+    TextWithToolCalls(String, Vec<ToolCall>),
 }
 
 #[derive(Debug)]

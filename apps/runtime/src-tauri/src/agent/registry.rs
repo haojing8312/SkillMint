@@ -1,5 +1,6 @@
 use super::tools::{
-    EditTool, GlobTool, GrepTool, ReadFileTool, TodoWriteTool, WebFetchTool, WriteFileTool,
+    BashTool, EditTool, GlobTool, GrepTool, ReadFileTool, TodoWriteTool, WebFetchTool,
+    WriteFileTool,
 };
 use super::types::Tool;
 use serde_json::{json, Value};
@@ -26,6 +27,7 @@ impl ToolRegistry {
         registry.register(Arc::new(EditTool));
         registry.register(Arc::new(TodoWriteTool::new()));
         registry.register(Arc::new(WebFetchTool));
+        registry.register(Arc::new(BashTool));
         registry
     }
 

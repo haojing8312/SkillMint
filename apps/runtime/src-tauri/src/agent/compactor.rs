@@ -125,6 +125,7 @@ pub async fn auto_compact(
 
     let summary = match response {
         super::types::LLMResponse::Text(text) => text,
+        super::types::LLMResponse::TextWithToolCalls(text, _) => text,
         // 摘要请求不应返回工具调用；如果出现则退化为错误提示
         super::types::LLMResponse::ToolCalls(_) => "摘要生成失败：LLM 返回了工具调用".to_string(),
     };

@@ -108,9 +108,9 @@ impl Tool for TaskTool {
 
         // 根据类型确定工具白名单和迭代限制
         let (allowed_tools, max_iter): (Option<Vec<String>>, usize) = match agent_type.as_str() {
-            "explore" => (Some(Self::get_explore_tools()), 5),
-            "plan" => (Some(Self::get_plan_tools()), 10),
-            _ => (None, 10), // general-purpose: 全部工具
+            "explore" => (Some(Self::get_explore_tools()), 15),
+            "plan" => (Some(Self::get_plan_tools()), 20),
+            _ => (None, 30), // general-purpose: 全部工具
         };
 
         // 在闭包外保留副本，用于之后的格式化输出
@@ -183,6 +183,8 @@ impl Tool for TaskTool {
                         PermissionMode::Unrestricted, // 子 Agent 不需要权限确认
                         None,                         // 无确认通道
                         None,                         // work_dir: 子 Agent 继承主 Agent 设置
+                        None,                         // 使用 sub_executor 默认迭代限制
+                        None,                         // 子 Agent 无取消标志
                     )
                     .await
             })

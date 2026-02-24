@@ -11,7 +11,8 @@ fn test_registry_with_file_tools() {
     assert!(registry.get("edit").is_some());
     assert!(registry.get("todo_write").is_some());
     assert!(registry.get("web_fetch").is_some());
+    assert!(registry.get("bash").is_some());
 
     let defs = registry.get_tool_definitions();
-    assert_eq!(defs.len(), 7);
+    assert_eq!(defs.len(), 8);
 }

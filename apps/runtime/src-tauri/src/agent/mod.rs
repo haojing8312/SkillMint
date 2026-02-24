@@ -3,6 +3,7 @@ pub mod executor;
 pub mod permissions;
 pub mod registry;
 pub mod skill_config;
+pub mod system_prompts;
 pub mod tools;
 pub mod types;
 

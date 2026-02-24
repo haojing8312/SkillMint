@@ -7,7 +7,7 @@ mod db;
 use agent::{AgentExecutor, ToolRegistry};
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
-use commands::chat::{AskUserState, ToolConfirmState, ToolConfirmResponder, SearchCacheState};
+use commands::chat::{AskUserState, CancelFlagState, ToolConfirmState, ToolConfirmResponder, SearchCacheState};
 use commands::skills::DbState;
 use std::sync::Arc;
 use tauri::Manager;
@@ -35,6 +35,10 @@ pub fn run() {
             let tool_confirm_responder: ToolConfirmResponder =
                 std::sync::Arc::new(std::sync::Mutex::new(None));
             app.manage(ToolConfirmState(tool_confirm_responder));
+
+            // 创建全局取消标志
+            let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            app.manage(CancelFlagState(cancel_flag));
 
             // 创建全局搜索缓存（15 分钟 TTL，最多 100 条）
             let search_cache = Arc::new(SearchCache::new(
@@ -135,6 +139,7 @@ pub fn run() {
             commands::chat::write_export_file,
             commands::chat::answer_user_question,
             commands::chat::confirm_tool_execution,
+            commands::chat::cancel_agent,
             commands::mcp::add_mcp_server,
             commands::mcp::list_mcp_servers,
             commands::mcp::remove_mcp_server,

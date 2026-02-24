@@ -198,7 +198,11 @@ pub async fn chat_stream_with_tools(
             })
             .collect();
 
-        Ok(LLMResponse::ToolCalls(tool_calls))
+        if !text_content.is_empty() {
+            Ok(LLMResponse::TextWithToolCalls(text_content, tool_calls))
+        } else {
+            Ok(LLMResponse::ToolCalls(tool_calls))
+        }
     } else {
         Ok(LLMResponse::Text(text_content))
     }
