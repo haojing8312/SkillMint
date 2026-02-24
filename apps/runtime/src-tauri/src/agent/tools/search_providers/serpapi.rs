@@ -89,7 +89,14 @@ impl SearchProvider for SerpApiSearch {
         }
 
         let resp_body: Value = response.json()?;
+
+        // 调试日志：打印实际响应格式
+        eprintln!("[serpapi] 响应体: {}", serde_json::to_string_pretty(&resp_body).unwrap_or_else(|_| "无法序列化".to_string()));
+
         let items = parse_serpapi_response(&resp_body);
+
+        // 调试日志：打印解析结果数量
+        eprintln!("[serpapi] 解析到 {} 条搜索结果", items.len());
 
         Ok(SearchResponse {
             query: params.query.clone(),
