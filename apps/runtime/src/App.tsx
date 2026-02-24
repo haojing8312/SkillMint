@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { InstallDialog } from "./components/InstallDialog";
@@ -164,7 +165,7 @@ export default function App() {
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
   return (
-    <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden">
+    <div className="flex h-screen bg-gray-50 text-gray-800 overflow-hidden">
       <Sidebar
         skills={skills}
         selectedSkillId={selectedSkillId}
@@ -182,39 +183,66 @@ export default function App() {
         collapsed={sidebarCollapsed}
       />
       <div className="flex-1 overflow-hidden">
-        {showSettings ? (
-          <SettingsView
-            onClose={async () => {
-              await loadModels();
-              setShowSettings(false);
-            }}
-          />
-        ) : selectedSkill && models.length > 0 && selectedSessionId ? (
-          <ChatView
-            skill={selectedSkill}
-            models={models}
-            sessionId={selectedSessionId}
-            workDir={selectedSession?.work_dir}
-            onSessionUpdate={handleSessionRefresh}
-          />
-        ) : selectedSkill && models.length > 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-            <button
-              onClick={handleCreateSession}
-              className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white text-sm"
+        <AnimatePresence mode="wait">
+          {showSettings ? (
+            <motion.div
+              key="settings"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="h-full"
             >
-              新建会话
-            </button>
-          </div>
-        ) : selectedSkill && models.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-            请先在设置中配置模型和 API Key
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-            从左侧选择一个 Skill 开始对话
-          </div>
-        )}
+              <SettingsView
+                onClose={async () => {
+                  await loadModels();
+                  setShowSettings(false);
+                }}
+              />
+            </motion.div>
+          ) : selectedSkill && models.length > 0 && selectedSessionId ? (
+            <motion.div
+              key="chat"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="h-full"
+            >
+              <ChatView
+                skill={selectedSkill}
+                models={models}
+                sessionId={selectedSessionId}
+                workDir={selectedSession?.work_dir}
+                onSessionUpdate={handleSessionRefresh}
+              />
+            </motion.div>
+          ) : selectedSkill && models.length > 0 ? (
+            <motion.div
+              key="new-session"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center justify-center h-full text-gray-400 text-sm"
+            >
+              <button
+                onClick={handleCreateSession}
+                className="bg-blue-500 hover:bg-blue-600 active:scale-[0.97] px-4 py-2 rounded-lg text-white text-sm transition-all"
+              >
+                新建会话
+              </button>
+            </motion.div>
+          ) : selectedSkill && models.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+              请先在设置中配置模型和 API Key
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+              从左侧选择一个 Skill 开始对话
+            </div>
+          )}
+        </AnimatePresence>
       </div>
       {showInstall && (
         <InstallDialog onInstalled={handleInstalled} onClose={() => setShowInstall(false)} />

@@ -266,8 +266,8 @@ export function SettingsView({ onClose }: Props) {
     loadSearchConfigs();
   }
 
-  const inputCls = "w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500";
-  const labelCls = "block text-xs text-slate-400 mb-1";
+  const inputCls = "w-full bg-gray-50 border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400";
+  const labelCls = "block text-xs text-gray-500 mb-1";
 
   return (
     <div className="flex flex-col h-full p-6 overflow-y-auto">
@@ -276,26 +276,26 @@ export function SettingsView({ onClose }: Props) {
           <button
             onClick={() => setActiveTab("models")}
             className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
-              (activeTab === "models" ? "text-white border-blue-500" : "text-slate-400 border-transparent hover:text-slate-200")}
+              (activeTab === "models" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
           >
             模型配置
           </button>
           <button
             onClick={() => setActiveTab("mcp")}
             className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
-              (activeTab === "mcp" ? "text-white border-blue-500" : "text-slate-400 border-transparent hover:text-slate-200")}
+              (activeTab === "mcp" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
           >
             MCP 服务器
           </button>
           <button
             onClick={() => setActiveTab("search")}
             className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
-              (activeTab === "search" ? "text-white border-blue-500" : "text-slate-400 border-transparent hover:text-slate-200")}
+              (activeTab === "search" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
           >
             搜索引擎
           </button>
         </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-white text-sm">
+        <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-sm">
           返回
         </button>
       </div>
@@ -303,12 +303,12 @@ export function SettingsView({ onClose }: Props) {
       {activeTab === "models" && (<>
       {models.length > 0 && (
         <div className="mb-6 space-y-2">
-          <div className="text-xs text-slate-400 mb-2">已配置模型</div>
+          <div className="text-xs text-gray-500 mb-2">已配置模型</div>
           {models.map((m) => (
-            <div key={m.id} className="flex items-center justify-between bg-slate-800 rounded px-3 py-2 text-sm">
+            <div key={m.id} className="flex items-center justify-between bg-white rounded px-3 py-2 text-sm">
               <div>
                 <span className="font-medium">{m.name}</span>
-                <span className="text-slate-400 ml-2">{m.model_name}</span>
+                <span className="text-gray-500 ml-2">{m.model_name}</span>
               </div>
               <button onClick={() => handleDelete(m.id)} className="text-red-400 hover:text-red-300 text-xs">
                 删除
@@ -318,8 +318,8 @@ export function SettingsView({ onClose }: Props) {
         </div>
       )}
 
-      <div className="bg-slate-800 rounded-lg p-4 space-y-3">
-        <div className="text-xs font-medium text-slate-400 mb-2">添加模型</div>
+      <div className="bg-white rounded-lg p-4 space-y-3">
+        <div className="text-xs font-medium text-gray-500 mb-2">添加模型</div>
         <div>
           <label className={labelCls}>快速选择 Provider</label>
           <select
@@ -362,9 +362,9 @@ export function SettingsView({ onClose }: Props) {
           <label className={labelCls}>API Key</label>
           <input className={inputCls} type="password" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })} />
         </div>
-        {error && <div className="text-red-400 text-xs">{error}</div>}
+        {error && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{error}</div>}
         {testResult !== null && (
-          <div className={"text-xs " + (testResult ? "text-green-400" : "text-red-400")}>
+          <div className={"text-xs " + (testResult ? "bg-green-50 text-green-600 px-2 py-1 rounded" : "bg-red-50 text-red-600 px-2 py-1 rounded")}>
             {testResult ? "连接成功" : "连接失败，请检查配置"}
           </div>
         )}
@@ -372,13 +372,13 @@ export function SettingsView({ onClose }: Props) {
           <button
             onClick={handleTest}
             disabled={testing}
-            className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-sm py-1.5 rounded transition-colors"
+            className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
             {testing ? "测试中..." : "测试连接"}
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-sm py-1.5 rounded transition-colors"
+            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
             保存
           </button>
@@ -388,16 +388,16 @@ export function SettingsView({ onClose }: Props) {
 
       {activeTab === "mcp" && (<>
       {/* MCP 服务器管理 */}
-      <div className="bg-slate-800 rounded-lg p-4 space-y-3">
-        <div className="text-xs font-medium text-slate-400 mb-2">MCP 服务器</div>
+      <div className="bg-white rounded-lg p-4 space-y-3">
+        <div className="text-xs font-medium text-gray-500 mb-2">MCP 服务器</div>
 
         {mcpServers.length > 0 && (
           <div className="space-y-2 mb-3">
             {mcpServers.map((s) => (
-              <div key={s.id} className="flex items-center justify-between bg-slate-700 rounded px-3 py-2 text-sm">
+              <div key={s.id} className="flex items-center justify-between bg-gray-100 rounded px-3 py-2 text-sm">
                 <div>
                   <span className="font-medium">{s.name}</span>
-                  <span className="text-slate-400 ml-2 text-xs">{s.command} {s.args?.join(" ")}</span>
+                  <span className="text-gray-500 ml-2 text-xs">{s.command} {s.args?.join(" ")}</span>
                 </div>
                 <button onClick={() => handleRemoveMcp(s.id)} className="text-red-400 hover:text-red-300 text-xs">
                   删除
@@ -435,11 +435,11 @@ export function SettingsView({ onClose }: Props) {
           <label className={labelCls}>环境变量（JSON 格式，可选）</label>
           <input className={inputCls} placeholder='例: {"API_KEY": "xxx"}' value={mcpForm.env} onChange={(e) => setMcpForm({ ...mcpForm, env: e.target.value })} />
         </div>
-        {mcpError && <div className="text-red-400 text-xs">{mcpError}</div>}
+        {mcpError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{mcpError}</div>}
         <button
           onClick={handleAddMcp}
           disabled={!mcpForm.name || !mcpForm.command}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-sm py-1.5 rounded transition-colors"
+          className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
         >
           添加 MCP 服务器
         </button>
@@ -449,14 +449,14 @@ export function SettingsView({ onClose }: Props) {
       {activeTab === "search" && (<>
         {searchConfigs.length > 0 && (
           <div className="mb-6 space-y-2">
-            <div className="text-xs text-slate-400 mb-2">已配置搜索引擎</div>
+            <div className="text-xs text-gray-500 mb-2">已配置搜索引擎</div>
             {searchConfigs.map((s) => (
-              <div key={s.id} className="flex items-center justify-between bg-slate-800 rounded px-3 py-2 text-sm">
+              <div key={s.id} className="flex items-center justify-between bg-white rounded px-3 py-2 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{s.name}</span>
-                  <span className="text-slate-400 text-xs">{s.api_format.replace("search_", "")}</span>
+                  <span className="text-gray-500 text-xs">{s.api_format.replace("search_", "")}</span>
                   {s.is_default && (
-                    <span className="text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded">默认</span>
+                    <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded">默认</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -474,8 +474,8 @@ export function SettingsView({ onClose }: Props) {
           </div>
         )}
 
-        <div className="bg-slate-800 rounded-lg p-4 space-y-3">
-          <div className="text-xs font-medium text-slate-400 mb-2">添加搜索引擎</div>
+        <div className="bg-white rounded-lg p-4 space-y-3">
+          <div className="text-xs font-medium text-gray-500 mb-2">添加搜索引擎</div>
           <div>
             <label className={labelCls}>快速选择搜索引擎</label>
             <select className={inputCls} defaultValue="" onChange={(e) => applySearchPreset(e.target.value)}>
@@ -502,9 +502,9 @@ export function SettingsView({ onClose }: Props) {
               <input className={inputCls} value={searchForm.model_name} onChange={(e) => setSearchForm({ ...searchForm, model_name: e.target.value })} />
             </div>
           )}
-          {searchError && <div className="text-red-400 text-xs">{searchError}</div>}
+          {searchError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{searchError}</div>}
           {searchTestResult !== null && (
-            <div className={"text-xs " + (searchTestResult ? "text-green-400" : "text-red-400")}>
+            <div className={"text-xs px-2 py-1 rounded " + (searchTestResult ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600")}>
               {searchTestResult ? "连接成功" : "连接失败，请检查配置"}
             </div>
           )}
@@ -512,14 +512,14 @@ export function SettingsView({ onClose }: Props) {
             <button
               onClick={handleTestSearch}
               disabled={searchTesting || !searchForm.api_format}
-              className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-sm py-1.5 rounded transition-colors"
+              className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
             >
               {searchTesting ? "测试中..." : "测试连接"}
             </button>
             <button
               onClick={handleSaveSearch}
               disabled={!searchForm.name || !searchForm.api_format || !searchForm.api_key}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-sm py-1.5 rounded transition-colors"
+              className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
             >
               保存
             </button>

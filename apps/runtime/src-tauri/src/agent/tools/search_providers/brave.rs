@@ -84,7 +84,14 @@ impl SearchProvider for BraveSearch {
         }
 
         let body: Value = response.json()?;
+
+        // 调试日志：打印实际响应格式
+        eprintln!("[brave] 响应体: {}", serde_json::to_string_pretty(&body).unwrap_or_else(|_| "无法序列化".to_string()));
+
         let items = parse_brave_response(&body);
+
+        // 调试日志：打印解析结果数量
+        eprintln!("[brave] 解析到 {} 条搜索结果", items.len());
 
         Ok(SearchResponse {
             query: params.query.clone(),

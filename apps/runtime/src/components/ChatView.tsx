@@ -5,7 +5,8 @@ import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { SkillManifest, ModelConfig, Message, StreamItem } from "../types";
-import { ToolCallCard } from "./ToolCallCard";
+import { motion, AnimatePresence } from "framer-motion";
+import { ToolIsland } from "./ToolIsland";
 
 interface Props {
   skill: SkillManifest;
@@ -36,6 +37,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   } | null>(null);
   const [subAgentBuffer, setSubAgentBuffer] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
 
   // sessionId 变化时加载历史消息
@@ -343,123 +345,149 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
           {codeString}
         </SyntaxHighlighter>
       ) : (
-        <code className={"bg-slate-600/50 px-1.5 py-0.5 rounded text-sm " + (className || "")} {...props}>
+        <code className={"bg-gray-200/60 px-1.5 py-0.5 rounded text-sm text-gray-800 " + (className || "")} {...props}>
           {children}
         </code>
       );
     },
   };
 
-  /** 渲染有序的 StreamItem 列表（文字和工具调用交替） */
+  /** 渲染有序的 StreamItem 列表（将连续的工具调用合并到一个 ToolIsland） */
   function renderStreamItems(items: StreamItem[], isStreaming: boolean) {
-    return items.map((item, i) => {
-      if (item.type === "tool_call" && item.toolCall) {
+    const groups: { type: "text" | "tools"; items: StreamItem[] }[] = [];
+    for (const item of items) {
+      if (item.type === "tool_call") {
+        const last = groups[groups.length - 1];
+        if (last && last.type === "tools") {
+          last.items.push(item);
+        } else {
+          groups.push({ type: "tools", items: [item] });
+        }
+      } else {
+        groups.push({ type: "text", items: [item] });
+      }
+    }
+
+    return groups.map((g, i) => {
+      if (g.type === "tools") {
+        const toolCalls = g.items
+          .filter((it) => it.toolCall)
+          .map((it) => it.toolCall!);
+        const hasRunning = toolCalls.some((tc) => tc.status === "running");
         return (
-          <ToolCallCard
-            key={`tc-${item.toolCall.id}`}
-            toolCall={item.toolCall}
-            subAgentBuffer={
-              item.toolCall.name === "task" && item.toolCall.status === "running"
-                ? subAgentBuffer
-                : undefined
-            }
+          <ToolIsland
+            key={`island-${i}`}
+            toolCalls={toolCalls}
+            isRunning={hasRunning}
+            subAgentBuffer={hasRunning ? subAgentBuffer : undefined}
           />
         );
       }
-      if (item.type === "text" && item.content) {
-        return (
-          <div key={`txt-${i}`}>
-            <ReactMarkdown components={markdownComponents}>{item.content}</ReactMarkdown>
-          </div>
-        );
-      }
-      return null;
+      const text = g.items.map((it) => it.content || "").join("");
+      if (!text) return null;
+      return (
+        <div key={`txt-${i}`}>
+          <ReactMarkdown components={markdownComponents}>{text}</ReactMarkdown>
+        </div>
+      );
     });
   }
 
   return (
     <div className="flex flex-col h-full">
       {/* 头部 */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-800">
-        <div className="flex items-center">
-          <span className="font-medium">{skill.name}</span>
-          <span className="text-xs text-slate-400 ml-2">v{skill.version}</span>
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white/70 backdrop-blur-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="font-semibold text-gray-900 flex-shrink-0">{skill.name}</span>
           {workDir && (
-            <span className="text-xs text-slate-500 ml-3 truncate max-w-[200px]" title={workDir}>
-              {workDir.split(/[/\\]/).pop()}
+            <span
+              className="text-xs text-gray-400 truncate max-w-[260px]"
+              title={workDir}
+            >
+              {workDir}
             </span>
           )}
         </div>
-        {currentModel && (
-          <span className="text-xs text-slate-400">{currentModel.name}</span>
-        )}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {currentModel && (
+            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+              {currentModel.name}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {agentState && (
-          <div className="sticky top-0 z-10 flex items-center gap-2 bg-slate-800/90 backdrop-blur px-4 py-2 rounded-lg text-xs text-slate-300 border border-slate-700">
+          <div className="sticky top-0 z-10 flex items-center gap-2 bg-white/80 backdrop-blur-lg px-4 py-2 rounded-xl text-xs text-gray-600 border border-gray-200 shadow-sm mx-4 mt-2">
             <span className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full" />
             {agentState.state === "thinking" && "思考中..."}
             {agentState.state === "tool_calling" && `执行工具: ${agentState.detail}`}
             {agentState.state === "error" && (
               <span className="text-red-400">错误: {agentState.detail}</span>
             )}
-            <span className="text-slate-500 ml-auto">迭代 {agentState.iteration}</span>
           </div>
         )}
-        {messages.map((m, i) => (
-          <div key={i} className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}>
-            <div
-              className={
-                "max-w-[80%] rounded-lg px-4 py-2 text-sm " +
-                (m.role === "user"
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-700 text-slate-100")
-              }
+        {messages.map((m, i) => {
+          const isLatest = i === messages.length - 1;
+          return (
+            <motion.div
+              key={i}
+              initial={isLatest ? { opacity: 0, x: m.role === "user" ? 20 : -20 } : false}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 24 }}
+              className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}
             >
-              {m.role === "assistant" && m.streamItems ? (
-                // 新格式：有序渲染
-                renderStreamItems(m.streamItems, false)
-              ) : m.role === "assistant" && m.toolCalls ? (
-                // 旧格式兼容：工具在前，文字在后
-                <>
-                  <div className="mb-2">
-                    {m.toolCalls.map((tc) => (
-                      <ToolCallCard key={tc.id} toolCall={tc} />
-                    ))}
-                  </div>
+              <div
+                className={
+                  "max-w-[80%] rounded-2xl px-5 py-3 text-sm " +
+                  (m.role === "user"
+                    ? "bg-blue-500 text-white"
+                    : "bg-white text-gray-800 shadow-sm border border-gray-100")
+                }
+              >
+                {m.role === "assistant" && m.streamItems ? (
+                  renderStreamItems(m.streamItems, false)
+                ) : m.role === "assistant" && m.toolCalls ? (
+                  <>
+                    <ToolIsland toolCalls={m.toolCalls} isRunning={false} />
+                    <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
+                  </>
+                ) : m.role === "assistant" ? (
                   <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
-                </>
-              ) : m.role === "assistant" ? (
-                <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
-              ) : (
-                m.content
-              )}
-            </div>
-          </div>
-        ))}
+                ) : (
+                  m.content
+                )}
+              </div>
+            </motion.div>
+          );
+        })}
         {/* 流式输出区域：按时间顺序渲染 */}
         {streamItems.length > 0 && (
-          <div className="flex justify-start">
-            <div className="max-w-[80%] bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="flex justify-start"
+          >
+            <div className="max-w-[80%] bg-white rounded-2xl px-5 py-3 text-sm text-gray-800 shadow-sm border border-gray-100">
               {renderStreamItems(streamItems, true)}
-              <span className="animate-pulse">|</span>
+              <span className="animate-pulse text-blue-400">|</span>
             </div>
-          </div>
+          </motion.div>
         )}
         {/* AskUser 问答卡片 */}
         {askUserQuestion && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] bg-amber-900/40 border border-amber-600/50 rounded-lg px-4 py-3 text-sm">
-              <div className="font-medium text-amber-200 mb-2">{askUserQuestion}</div>
+            <div className="max-w-[80%] bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm">
+              <div className="font-medium text-amber-700 mb-2">{askUserQuestion}</div>
               {askUserOptions.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
                   {askUserOptions.map((opt, i) => (
                     <button
                       key={i}
                       onClick={() => handleAnswerUser(opt)}
-                      className="bg-amber-700/50 hover:bg-amber-600/50 text-amber-100 px-3 py-1 rounded text-xs transition-colors"
+                      className="bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-1 rounded text-xs transition-colors"
                     >
                       {opt}
                     </button>
@@ -477,12 +505,12 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
                     }
                   }}
                   placeholder="输入回答..."
-                  className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-500"
+                  className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-500"
                 />
                 <button
                   onClick={() => handleAnswerUser(askUserAnswer)}
                   disabled={!askUserAnswer.trim()}
-                  className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-600 px-3 py-1 rounded text-xs transition-colors"
+                  className="bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 px-3 py-1 rounded text-xs transition-colors"
                 >
                   回答
                 </button>
@@ -493,12 +521,12 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
         {/* 工具确认卡片 */}
         {toolConfirm && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] bg-orange-900/40 border border-orange-600/50 rounded-lg px-4 py-3 text-sm">
-              <div className="font-medium text-orange-200 mb-2">需要确认</div>
-              <div className="text-slate-300 mb-1">
-                工具: <span className="text-orange-100 font-mono">{toolConfirm.toolName}</span>
+            <div className="max-w-[80%] bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 text-sm">
+              <div className="font-medium text-orange-700 mb-2">需要确认</div>
+              <div className="text-gray-600 mb-1">
+                工具: <span className="text-orange-600 font-mono">{toolConfirm.toolName}</span>
               </div>
-              <pre className="bg-slate-800/60 rounded p-2 text-xs text-slate-300 mb-3 overflow-x-auto max-h-40 overflow-y-auto">
+              <pre className="bg-gray-50 rounded-xl p-2.5 text-xs text-gray-600 mb-3 overflow-x-auto max-h-40 overflow-y-auto">
                 {JSON.stringify(toolConfirm.toolInput, null, 2)}
               </pre>
               <div className="flex gap-2">
@@ -522,37 +550,63 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       </div>
 
       {/* 输入区域 */}
-      <div className="px-6 py-4 border-t border-slate-700 bg-slate-800">
-        <div className="flex gap-2">
+      <div className="px-6 py-3 bg-gray-50/80">
+        <div className="max-w-3xl mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+          {/* 输入框主体 */}
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              // auto-expand
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = Math.min(el.scrollHeight, 200) + "px";
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
               }
             }}
-            placeholder=""
-            rows={1}
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-500"
+            placeholder="输入消息，Shift+Enter 换行..."
+            rows={3}
+            className="w-full bg-transparent pl-4 pr-4 pt-3 pb-2 text-sm resize-none focus:outline-none placeholder-gray-400 min-h-[80px] max-h-[200px]"
           />
-          {streaming ? (
-            <button
-              onClick={handleCancel}
-              className="bg-red-600 hover:bg-red-700 px-4 rounded text-sm font-medium transition-colors"
-            >
-              停止
-            </button>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!input.trim()}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 px-4 rounded text-sm font-medium transition-colors"
-            >
-              发送
-            </button>
-          )}
+          {/* 底部工具栏 */}
+          <div className="flex items-center justify-between px-3 pb-2.5">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              {skill.description && (
+                <span className="truncate max-w-[300px]" title={skill.description}>
+                  {skill.description}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {streaming ? (
+                <button
+                  onClick={handleCancel}
+                  className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-red-500 hover:bg-red-600 active:scale-[0.97] text-white text-xs font-medium transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                  停止
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim()}
+                  className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 active:scale-[0.97] disabled:bg-gray-100 disabled:text-gray-400 text-white text-xs font-medium transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                  发送
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
