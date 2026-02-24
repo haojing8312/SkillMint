@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -20,14 +20,14 @@ pub struct ProcessOutput {
 struct BackgroundProcess {
     /// 启动时的命令（用于 list 展示）
     command: String,
+    /// 操作系统层面的进程 ID，用于 kill
+    pid: u32,
     /// stdout 缓冲区（后台线程持续追加）
     stdout_buf: Arc<Mutex<Vec<String>>>,
     /// stderr 缓冲区（后台线程持续追加）
     stderr_buf: Arc<Mutex<Vec<String>>>,
     /// 进程退出状态（None = 仍在运行）
     exit_status: Arc<Mutex<Option<i32>>>,
-    /// 子进程句柄，用于 kill
-    child: Arc<Mutex<Option<Child>>>,
 }
 
 /// 每个缓冲区最多保留的行数
@@ -75,6 +75,7 @@ impl ProcessManager {
         }
 
         let mut child = cmd.spawn()?;
+        let pid = child.id();
 
         let stdout_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let stderr_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -126,30 +127,25 @@ impl ProcessManager {
         });
 
         // 在后台线程中等待子进程退出，更新退出状态
+        // 注意：child 的所有权移入此线程，不需要 Mutex
         let exit_status_clone = Arc::clone(&exit_status);
-        let child_arc = Arc::new(Mutex::new(Some(child)));
-        let child_arc_clone = Arc::clone(&child_arc);
         thread::spawn(move || {
-            // 从 Arc<Mutex> 中取出 Child 来 wait
-            let mut guard = child_arc_clone.lock().unwrap();
-            if let Some(ref mut c) = *guard {
-                match c.wait() {
-                    Ok(status) => {
-                        *exit_status_clone.lock().unwrap() = Some(status.code().unwrap_or(-1));
-                    }
-                    Err(_) => {
-                        *exit_status_clone.lock().unwrap() = Some(-1);
-                    }
+            match child.wait() {
+                Ok(status) => {
+                    *exit_status_clone.lock().unwrap() = Some(status.code().unwrap_or(-1));
+                }
+                Err(_) => {
+                    *exit_status_clone.lock().unwrap() = Some(-1);
                 }
             }
         });
 
         let bg_process = BackgroundProcess {
             command: command.to_string(),
+            pid,
             stdout_buf,
             stderr_buf,
             exit_status,
-            child: child_arc,
         };
 
         self.processes.lock().unwrap().insert(id.clone(), bg_process);
@@ -161,34 +157,34 @@ impl ProcessManager {
     /// - `block=true` 时轮询等待直到进程退出
     /// - `block=false` 时立即返回当前可用输出
     pub fn get_output(&self, id: &str, block: bool) -> Result<ProcessOutput> {
-        // 先检查进程是否存在
+        // 先检查进程是否存在，并获取需要的 Arc 引用
+        let exit_status_arc;
+        let stdout_buf_arc;
+        let stderr_buf_arc;
         {
             let procs = self.processes.lock().unwrap();
-            if !procs.contains_key(id) {
-                return Err(anyhow!("进程 {} 不存在", id));
-            }
+            let proc = procs
+                .get(id)
+                .ok_or_else(|| anyhow!("进程 {} 不存在", id))?;
+            exit_status_arc = Arc::clone(&proc.exit_status);
+            stdout_buf_arc = Arc::clone(&proc.stdout_buf);
+            stderr_buf_arc = Arc::clone(&proc.stderr_buf);
         }
 
         if block {
-            // 轮询等待进程退出
+            // 轮询等待进程退出（不持有 processes 锁）
             loop {
-                let procs = self.processes.lock().unwrap();
-                let proc = procs.get(id).unwrap();
-                let exited = proc.exit_status.lock().unwrap().is_some();
+                let exited = exit_status_arc.lock().unwrap().is_some();
                 if exited {
                     break;
                 }
-                drop(procs);
                 thread::sleep(Duration::from_millis(100));
             }
         }
 
-        let procs = self.processes.lock().unwrap();
-        let proc = procs.get(id).unwrap();
-
-        let stdout = proc.stdout_buf.lock().unwrap().join("\n");
-        let stderr = proc.stderr_buf.lock().unwrap().join("\n");
-        let exit_status = *proc.exit_status.lock().unwrap();
+        let stdout = stdout_buf_arc.lock().unwrap().join("\n");
+        let stderr = stderr_buf_arc.lock().unwrap().join("\n");
+        let exit_status = *exit_status_arc.lock().unwrap();
         let exited = exit_status.is_some();
 
         Ok(ProcessOutput {
@@ -200,19 +196,47 @@ impl ProcessManager {
     }
 
     /// 终止指定进程
+    ///
+    /// 通过操作系统 PID 终止。Windows 上使用 taskkill /T /F 终止进程树，
+    /// Unix 上使用 kill 信号。
     pub fn kill(&self, id: &str) -> Result<()> {
-        let procs = self.processes.lock().unwrap();
-        let proc = procs
-            .get(id)
-            .ok_or_else(|| anyhow!("进程 {} 不存在", id))?;
-
-        // 尝试 kill 子进程
-        let mut child_guard = proc.child.lock().unwrap();
-        if let Some(ref mut child) = *child_guard {
-            child.kill().ok(); // 忽略已退出时的 kill 错误
+        let pid;
+        {
+            let procs = self.processes.lock().unwrap();
+            let proc = procs
+                .get(id)
+                .ok_or_else(|| anyhow!("进程 {} 不存在", id))?;
+            pid = proc.pid;
         }
-        drop(child_guard);
+
+        // 通过 PID 直接杀掉进程，无需持有任何锁
+        Self::kill_process_by_pid(pid)?;
         Ok(())
+    }
+
+    /// 通过 PID 终止进程（跨平台实现）
+    #[cfg(target_os = "windows")]
+    fn kill_process_by_pid(pid: u32) -> Result<()> {
+        // Windows 上使用 taskkill /T 终止整个进程树
+        let output = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .output();
+        match output {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow!("终止进程 {} 失败: {}", pid, e)),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn kill_process_by_pid(pid: u32) -> Result<()> {
+        // Unix 上使用 kill -9 终止进程
+        let output = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+        match output {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow!("终止进程 {} 失败: {}", pid, e)),
+        }
     }
 
     /// 列出所有进程: (id, command, exited)
