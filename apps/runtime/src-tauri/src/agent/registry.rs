@@ -34,7 +34,7 @@ impl ToolRegistry {
         registry.register(Arc::new(FileCopyTool));
         registry.register(Arc::new(TodoWriteTool::new()));
         registry.register(Arc::new(WebFetchTool));
-        registry.register(Arc::new(BashTool));
+        registry.register(Arc::new(BashTool::new()));
         registry
     }
 

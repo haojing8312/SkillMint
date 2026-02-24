@@ -1,7 +1,11 @@
+pub mod browser_tools;
+pub mod process_manager;
 pub mod search_providers;
 
 mod ask_user;
 mod bash;
+mod bash_kill;
+mod bash_output;
 mod compact_tool;
 mod edit_tool;
 mod file_copy;
@@ -22,6 +26,8 @@ mod write_file;
 
 pub use ask_user::{AskUserTool, AskUserResponder, new_responder};
 pub use bash::BashTool;
+pub use bash_kill::BashKillTool;
+pub use bash_output::BashOutputTool;
 pub use compact_tool::CompactTool;
 pub use edit_tool::EditTool;
 pub use file_copy::FileCopyTool;
@@ -32,6 +38,7 @@ pub use glob_tool::GlobTool;
 pub use grep_tool::GrepTool;
 pub use list_dir::ListDirTool;
 pub use memory_tool::MemoryTool;
+pub use process_manager::ProcessManager;
 pub use read_file::ReadFileTool;
 pub use sidecar_bridge::SidecarBridgeTool;
 pub use task_tool::TaskTool;

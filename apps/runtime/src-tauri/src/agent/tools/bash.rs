@@ -1,16 +1,31 @@
+use crate::agent::tools::process_manager::ProcessManager;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
-pub struct BashTool;
+/// Shell 命令执行工具，支持同步执行和后台模式
+pub struct BashTool {
+    /// 后台进程管理器（可选）。设置后支持 background 模式
+    process_manager: Option<Arc<ProcessManager>>,
+}
 
 impl BashTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            process_manager: None,
+        }
+    }
+
+    /// 创建带有 ProcessManager 的 BashTool，支持后台模式
+    pub fn with_process_manager(pm: Arc<ProcessManager>) -> Self {
+        Self {
+            process_manager: Some(pm),
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -58,6 +73,10 @@ impl Tool for BashTool {
                 "timeout_ms": {
                     "type": "integer",
                     "description": "超时时间（毫秒，可选，默认 120000）"
+                },
+                "background": {
+                    "type": "boolean",
+                    "description": "是否在后台运行（可选，默认 false）。后台模式下返回 process_id，可用 bash_output 获取输出"
                 }
             },
             "required": ["command"]
@@ -74,6 +93,19 @@ impl Tool for BashTool {
             return Ok("错误: 危险命令已被拦截。此命令可能造成不可逆损害。".to_string());
         }
 
+        // 后台模式：通过 ProcessManager 启动进程
+        let background = input["background"].as_bool().unwrap_or(false);
+        if background {
+            if let Some(ref pm) = self.process_manager {
+                let work_dir = ctx.work_dir.as_deref();
+                let id = pm.spawn(command, work_dir)?;
+                return Ok(format!("后台进程已启动，process_id: {}", id));
+            } else {
+                return Err(anyhow!("后台模式不可用：未配置 ProcessManager"));
+            }
+        }
+
+        // 同步模式（原有逻辑）
         // 提取超时参数，默认 120 秒
         let timeout_ms = input["timeout_ms"].as_u64().unwrap_or(120_000);
         let timeout = Duration::from_millis(timeout_ms);
