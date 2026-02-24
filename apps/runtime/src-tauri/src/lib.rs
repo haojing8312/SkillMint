@@ -124,6 +124,7 @@ pub fn run() {
             commands::skills::delete_skill,
             commands::models::save_model_config,
             commands::models::list_model_configs,
+            commands::models::get_model_api_key,
             commands::models::delete_model_config,
             commands::models::test_connection_cmd,
             commands::models::list_search_configs,

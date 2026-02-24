@@ -52,6 +52,10 @@ export function SettingsView({ onClose }: Props) {
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
 
+  // 编辑状态 + API Key 可见性
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
+
   // MCP 服务器管理
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [mcpServers, setMcpServers] = useState<any[]>([]);
@@ -65,6 +69,10 @@ export function SettingsView({ onClose }: Props) {
   const [searchError, setSearchError] = useState("");
   const [searchTesting, setSearchTesting] = useState(false);
   const [searchTestResult, setSearchTestResult] = useState<boolean | null>(null);
+
+  // 搜索引擎编辑状态 + API Key 可见性
+  const [editingSearchId, setEditingSearchId] = useState<string | null>(null);
+  const [showSearchApiKey, setShowSearchApiKey] = useState(false);
 
   useEffect(() => { loadModels(); loadMcpServers(); loadSearchConfigs(); }, []);
 
@@ -82,21 +90,68 @@ export function SettingsView({ onClose }: Props) {
     }
   }
 
+  // 加载已保存的模型配置到表单（用于编辑）
+  async function handleEditModel(m: ModelConfig) {
+    try {
+      const apiKey = await invoke<string>("get_model_api_key", { modelId: m.id });
+      setForm({
+        name: m.name,
+        api_format: m.api_format,
+        base_url: m.base_url,
+        model_name: m.model_name,
+        api_key: apiKey,
+      });
+      setEditingModelId(m.id);
+      setShowApiKey(false);
+      setError("");
+      setTestResult(null);
+      // 更新模型建议列表
+      const preset = PROVIDER_PRESETS.find((p) => p.api_format === m.api_format && p.base_url === m.base_url);
+      setModelSuggestions(preset?.models || []);
+    } catch (e) {
+      setError("加载配置失败: " + String(e));
+    }
+  }
+
+  // 加载已保存的搜索配置到表单（用于编辑）
+  async function handleEditSearch(s: ModelConfig) {
+    try {
+      const apiKey = await invoke<string>("get_model_api_key", { modelId: s.id });
+      setSearchForm({
+        name: s.name,
+        api_format: s.api_format,
+        base_url: s.base_url,
+        model_name: s.model_name,
+        api_key: apiKey,
+      });
+      setEditingSearchId(s.id);
+      setShowSearchApiKey(false);
+      setSearchError("");
+      setSearchTestResult(null);
+    } catch (e) {
+      setSearchError("加载配置失败: " + String(e));
+    }
+  }
+
   async function handleSave() {
     setError("");
     try {
       await invoke("save_model_config", {
         config: {
-          id: "",
+          id: editingModelId || "",
           name: form.name,
           api_format: form.api_format,
           base_url: form.base_url,
           model_name: form.model_name,
-          is_default: models.length === 0,
+          is_default: editingModelId
+            ? models.find((m) => m.id === editingModelId)?.is_default ?? false
+            : models.length === 0,
         },
         apiKey: form.api_key,
       });
       setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
+      setEditingModelId(null);
+      setShowApiKey(false);
       loadModels();
     } catch (e: unknown) {
       setError(String(e));
@@ -167,6 +222,14 @@ export function SettingsView({ onClose }: Props) {
 
   async function handleDelete(id: string) {
     await invoke("delete_model_config", { modelId: id });
+    // 若删除的是当前编辑项，重置表单
+    if (editingModelId === id) {
+      setEditingModelId(null);
+      setShowApiKey(false);
+      setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
+      setError("");
+      setTestResult(null);
+    }
     loadModels();
   }
 
@@ -216,16 +279,20 @@ export function SettingsView({ onClose }: Props) {
     try {
       await invoke("save_model_config", {
         config: {
-          id: "",
+          id: editingSearchId || "",
           name: searchForm.name,
           api_format: searchForm.api_format,
           base_url: searchForm.base_url,
           model_name: searchForm.model_name,
-          is_default: searchConfigs.length === 0,
+          is_default: editingSearchId
+            ? searchConfigs.find((s) => s.id === editingSearchId)?.is_default ?? false
+            : searchConfigs.length === 0,
         },
         apiKey: searchForm.api_key,
       });
       setSearchForm({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+      setEditingSearchId(null);
+      setShowSearchApiKey(false);
       loadSearchConfigs();
     } catch (e) {
       setSearchError(String(e));
@@ -263,11 +330,38 @@ export function SettingsView({ onClose }: Props) {
 
   async function handleDeleteSearch(id: string) {
     await invoke("delete_model_config", { modelId: id });
+    // 若删除的是当前编辑项，重置表单
+    if (editingSearchId === id) {
+      setEditingSearchId(null);
+      setShowSearchApiKey(false);
+      setSearchForm({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+      setSearchError("");
+      setSearchTestResult(null);
+    }
     loadSearchConfigs();
   }
 
   const inputCls = "w-full bg-gray-50 border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400";
   const labelCls = "block text-xs text-gray-500 mb-1";
+
+  // 眼睛图标：显示状态（可见）
+  function EyeOpenIcon() {
+    return (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    );
+  }
+
+  // 眼睛图标：隐藏状态（划线）
+  function EyeSlashIcon() {
+    return (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+      </svg>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full p-6 overflow-y-auto">
@@ -305,21 +399,63 @@ export function SettingsView({ onClose }: Props) {
         <div className="mb-6 space-y-2">
           <div className="text-xs text-gray-500 mb-2">已配置模型</div>
           {models.map((m) => (
-            <div key={m.id} className="flex items-center justify-between bg-white rounded px-3 py-2 text-sm">
-              <div>
-                <span className="font-medium">{m.name}</span>
-                <span className="text-gray-500 ml-2">{m.model_name}</span>
+            <div
+              key={m.id}
+              className={
+                "flex items-center justify-between bg-white rounded-lg px-4 py-2.5 text-sm border transition-colors " +
+                (editingModelId === m.id ? "border-blue-400 ring-1 ring-blue-400" : "border-transparent hover:border-gray-200")
+              }
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-800">{m.name}</span>
+                  {m.is_default && (
+                    <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded">默认</span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5 truncate">
+                  {m.model_name} · {m.api_format === "anthropic" ? "Anthropic" : "OpenAI 兼容"} · {m.base_url}
+                </div>
               </div>
-              <button onClick={() => handleDelete(m.id)} className="text-red-400 hover:text-red-300 text-xs">
-                删除
-              </button>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                <button
+                  onClick={() => handleEditModel(m)}
+                  className="text-blue-500 hover:text-blue-600 text-xs"
+                >
+                  编辑
+                </button>
+                <button
+                  onClick={() => handleDelete(m.id)}
+                  className="text-red-400 hover:text-red-500 text-xs"
+                >
+                  删除
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
       <div className="bg-white rounded-lg p-4 space-y-3">
-        <div className="text-xs font-medium text-gray-500 mb-2">添加模型</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-medium text-gray-500">
+            {editingModelId ? "编辑模型" : "添加模型"}
+          </div>
+          {editingModelId && (
+            <button
+              onClick={() => {
+                setEditingModelId(null);
+                setShowApiKey(false);
+                setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
+                setError("");
+                setTestResult(null);
+              }}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              取消编辑
+            </button>
+          )}
+        </div>
         <div>
           <label className={labelCls}>快速选择 Provider</label>
           <select
@@ -360,7 +496,22 @@ export function SettingsView({ onClose }: Props) {
         </div>
         <div>
           <label className={labelCls}>API Key</label>
-          <input className={inputCls} type="password" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })} />
+          <div className="relative">
+            <input
+              className={inputCls + " pr-10"}
+              type={showApiKey ? "text" : "password"}
+              value={form.api_key}
+              onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey(!showApiKey)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+              title={showApiKey ? "隐藏" : "显示"}
+            >
+              {showApiKey ? <EyeSlashIcon /> : <EyeOpenIcon />}
+            </button>
+          </div>
         </div>
         {error && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{error}</div>}
         {testResult !== null && (
@@ -380,7 +531,7 @@ export function SettingsView({ onClose }: Props) {
             onClick={handleSave}
             className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
-            保存
+            {editingModelId ? "保存修改" : "保存"}
           </button>
         </div>
       </div>
@@ -451,21 +602,34 @@ export function SettingsView({ onClose }: Props) {
           <div className="mb-6 space-y-2">
             <div className="text-xs text-gray-500 mb-2">已配置搜索引擎</div>
             {searchConfigs.map((s) => (
-              <div key={s.id} className="flex items-center justify-between bg-white rounded px-3 py-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{s.name}</span>
-                  <span className="text-gray-500 text-xs">{s.api_format.replace("search_", "")}</span>
-                  {s.is_default && (
-                    <span className="text-xs bg-blue-500 text-white px-1.5 py-0.5 rounded">默认</span>
-                  )}
+              <div
+                key={s.id}
+                className={
+                  "flex items-center justify-between bg-white rounded-lg px-4 py-2.5 text-sm border transition-colors " +
+                  (editingSearchId === s.id ? "border-blue-400 ring-1 ring-blue-400" : "border-transparent hover:border-gray-200")
+                }
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-800">{s.name}</span>
+                    {s.is_default && (
+                      <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded">默认</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5 truncate">
+                    {s.api_format.replace("search_", "")} · {s.base_url}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                   {!s.is_default && (
-                    <button onClick={() => handleSetDefaultSearch(s.id)} className="text-blue-400 hover:text-blue-300 text-xs">
+                    <button onClick={() => handleSetDefaultSearch(s.id)} className="text-blue-400 hover:text-blue-500 text-xs">
                       设为默认
                     </button>
                   )}
-                  <button onClick={() => handleDeleteSearch(s.id)} className="text-red-400 hover:text-red-300 text-xs">
+                  <button onClick={() => handleEditSearch(s)} className="text-blue-500 hover:text-blue-600 text-xs">
+                    编辑
+                  </button>
+                  <button onClick={() => handleDeleteSearch(s.id)} className="text-red-400 hover:text-red-500 text-xs">
                     删除
                   </button>
                 </div>
@@ -475,7 +639,25 @@ export function SettingsView({ onClose }: Props) {
         )}
 
         <div className="bg-white rounded-lg p-4 space-y-3">
-          <div className="text-xs font-medium text-gray-500 mb-2">添加搜索引擎</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-medium text-gray-500">
+              {editingSearchId ? "编辑搜索引擎" : "添加搜索引擎"}
+            </div>
+            {editingSearchId && (
+              <button
+                onClick={() => {
+                  setEditingSearchId(null);
+                  setShowSearchApiKey(false);
+                  setSearchForm({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+                  setSearchError("");
+                  setSearchTestResult(null);
+                }}
+                className="text-xs text-gray-400 hover:text-gray-600"
+              >
+                取消编辑
+              </button>
+            )}
+          </div>
           <div>
             <label className={labelCls}>快速选择搜索引擎</label>
             <select className={inputCls} defaultValue="" onChange={(e) => applySearchPreset(e.target.value)}>
@@ -490,7 +672,22 @@ export function SettingsView({ onClose }: Props) {
           </div>
           <div>
             <label className={labelCls}>API Key</label>
-            <input className={inputCls} type="password" value={searchForm.api_key} onChange={(e) => setSearchForm({ ...searchForm, api_key: e.target.value })} />
+            <div className="relative">
+              <input
+                className={inputCls + " pr-10"}
+                type={showSearchApiKey ? "text" : "password"}
+                value={searchForm.api_key}
+                onChange={(e) => setSearchForm({ ...searchForm, api_key: e.target.value })}
+              />
+              <button
+                type="button"
+                onClick={() => setShowSearchApiKey(!showSearchApiKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                title={showSearchApiKey ? "隐藏" : "显示"}
+              >
+                {showSearchApiKey ? <EyeSlashIcon /> : <EyeOpenIcon />}
+              </button>
+            </div>
           </div>
           <div>
             <label className={labelCls}>Base URL（可选自定义）</label>
@@ -521,7 +718,7 @@ export function SettingsView({ onClose }: Props) {
               disabled={!searchForm.name || !searchForm.api_format || !searchForm.api_key}
               className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
             >
-              保存
+              {editingSearchId ? "保存修改" : "保存"}
             </button>
           </div>
         </div>

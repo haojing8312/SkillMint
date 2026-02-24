@@ -61,6 +61,23 @@ pub async fn list_model_configs(db: State<'_, DbState>) -> Result<Vec<ModelConfi
     }).collect())
 }
 
+/// 获取指定配置的 API Key（编辑时用）
+#[tauri::command]
+pub async fn get_model_api_key(model_id: String, db: State<'_, DbState>) -> Result<String, String> {
+    let row = sqlx::query_as::<_, (String,)>(
+        "SELECT api_key FROM model_configs WHERE id = ?"
+    )
+    .bind(&model_id)
+    .fetch_optional(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match row {
+        Some((key,)) => Ok(key),
+        None => Err("配置不存在".to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn delete_model_config(model_id: String, db: State<'_, DbState>) -> Result<(), String> {
     sqlx::query("DELETE FROM model_configs WHERE id = ?")
