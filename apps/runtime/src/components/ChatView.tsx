@@ -280,7 +280,8 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     } catch (e) {
       console.error("取消任务失败:", e);
     }
-    // 即时清除顶部状态指示器（不等待后端 finished 事件）
+    // 即时清除状态，不等待后端返回
+    setStreaming(false);
     setAgentState(null);
     // 将所有 running 状态的工具标记为 error，避免永远转圈
     const items = streamItemsRef.current.map((item) => {
