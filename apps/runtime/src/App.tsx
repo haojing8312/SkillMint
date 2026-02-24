@@ -164,7 +164,7 @@ export default function App() {
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
   return (
-    <div className="flex h-screen bg-slate-900 text-slate-100 overflow-hidden">
+    <div className="flex h-screen bg-gray-50 text-gray-800 overflow-hidden">
       <Sidebar
         skills={skills}
         selectedSkillId={selectedSkillId}
@@ -198,20 +198,20 @@ export default function App() {
             onSessionUpdate={handleSessionRefresh}
           />
         ) : selectedSkill && models.length > 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             <button
               onClick={handleCreateSession}
-              className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white text-sm"
+              className="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded text-white text-sm"
             >
               新建会话
             </button>
           </div>
         ) : selectedSkill && models.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             请先在设置中配置模型和 API Key
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             从左侧选择一个 Skill 开始对话
           </div>
         )}

@@ -3,9 +3,9 @@
 @tailwind utilities;
 
 body {
-  font-family: system-ui, sans-serif;
-  background: #0f172a;
-  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  background: #f9fafb;
+  color: #1f2937;
   margin: 0;
   height: 100vh;
   overflow: hidden;
