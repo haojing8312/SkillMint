@@ -15,7 +15,20 @@ app.get('/health', (c) => {
   return c.json({ status: 'ok', uptime: process.uptime() });
 });
 
-// Browser endpoints
+// ─── 浏览器自动化端点 ──────────────────────────────────────────────
+
+// 启动浏览器（支持 headless 和 viewport 选项）
+app.post('/api/browser/launch', async (c) => {
+  try {
+    const body = await c.req.json();
+    const result = await browser.launch(body);
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 导航到指定 URL
 app.post('/api/browser/navigate', async (c) => {
   try {
     const { url } = await c.req.json();
@@ -26,6 +39,7 @@ app.post('/api/browser/navigate', async (c) => {
   }
 });
 
+// 点击元素
 app.post('/api/browser/click', async (c) => {
   try {
     const { selector } = await c.req.json();
@@ -36,6 +50,113 @@ app.post('/api/browser/click', async (c) => {
   }
 });
 
+// 在元素中输入文本
+app.post('/api/browser/type', async (c) => {
+  try {
+    const { selector, text, delay } = await c.req.json();
+    const result = await browser.type(selector, text, delay);
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 滚动页面（up / down / to_top / to_bottom）
+app.post('/api/browser/scroll', async (c) => {
+  try {
+    const { direction, amount } = await c.req.json();
+    const result = await browser.scroll(direction, amount);
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 悬停在元素上
+app.post('/api/browser/hover', async (c) => {
+  try {
+    const { selector } = await c.req.json();
+    const result = await browser.hover(selector);
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 按下键盘按键（支持修饰键组合）
+app.post('/api/browser/press_key', async (c) => {
+  try {
+    const { key, modifiers } = await c.req.json();
+    const result = await browser.pressKey(key, modifiers);
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 获取简化 DOM 结构
+app.post('/api/browser/get_dom', async (c) => {
+  try {
+    const { selector, max_depth } = await c.req.json();
+    const result = await browser.getDOM(selector, max_depth);
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 等待条件满足（selector 或 JS 条件表达式）
+app.post('/api/browser/wait_for', async (c) => {
+  try {
+    const { selector, condition, timeout } = await c.req.json();
+    const result = await browser.waitFor({ selector, condition, timeout });
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 后退
+app.post('/api/browser/go_back', async (c) => {
+  try {
+    const result = await browser.goBack();
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 前进
+app.post('/api/browser/go_forward', async (c) => {
+  try {
+    const result = await browser.goForward();
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 刷新页面
+app.post('/api/browser/reload', async (c) => {
+  try {
+    const result = await browser.reload();
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 获取浏览器状态（URL、标题、是否运行中）
+app.post('/api/browser/get_state', async (c) => {
+  try {
+    const result = await browser.getState();
+    return c.json({ output: result } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+// 截取页面截图
 app.post('/api/browser/screenshot', async (c) => {
   try {
     const { path } = await c.req.json();
@@ -46,6 +167,7 @@ app.post('/api/browser/screenshot', async (c) => {
   }
 });
 
+// 在页面中执行 JavaScript
 app.post('/api/browser/evaluate', async (c) => {
   try {
     const { script } = await c.req.json();
@@ -56,6 +178,7 @@ app.post('/api/browser/evaluate', async (c) => {
   }
 });
 
+// 获取页面 HTML 内容
 app.post('/api/browser/content', async (c) => {
   try {
     const result = await browser.getContent();
@@ -65,6 +188,7 @@ app.post('/api/browser/content', async (c) => {
   }
 });
 
+// 关闭浏览器
 app.post('/api/browser/close', async (c) => {
   try {
     await browser.close();
