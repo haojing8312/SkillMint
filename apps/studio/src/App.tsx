@@ -42,7 +42,7 @@ export default function App() {
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/60 bg-slate-800/80">
         <div className="flex items-center gap-2">
-          <span className="text-blue-400 font-bold text-base">SkillHub</span>
+          <span className="text-blue-400 font-bold text-base">SkillMint</span>
           <span className="text-slate-500 text-sm font-light">Studio</span>
         </div>
         <button

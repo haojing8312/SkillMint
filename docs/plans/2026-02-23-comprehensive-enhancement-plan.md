@@ -1,4 +1,4 @@
-# SkillHub 全面增强实施计划
+# SkillMint 全面增强实施计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -1634,11 +1634,11 @@ git commit -m "test: E2E 集成测试 — Skill 导入、会话生命周期、�
 **Step 1: 检查 Runtime tauri.conf.json**
 
 确认以下字段正确：
-- `productName`: "SkillHub Runtime"
+- `productName`: "SkillMint Runtime"
 - `version`: 与 Cargo.toml 一致
 - `bundle.targets`: 包含 `"nsis"` (Windows)
 - `bundle.icon`: 指向有效图标文件
-- `bundle.identifier`: "dev.skillhub.runtime"
+- `bundle.identifier`: "dev.skillmint.runtime"
 
 **Step 2: 检查 Studio tauri.conf.json**
 

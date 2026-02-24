@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SkillHub Studio",
+  "productName": "SkillMint Studio",
   "version": "0.1.0",
-  "identifier": "dev.skillhub.studio",
+  "identifier": "dev.skillmint.studio",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "SkillHub Studio",
+        "title": "SkillMint Studio",
         "width": 1000,
         "height": 700,
         "resizable": true

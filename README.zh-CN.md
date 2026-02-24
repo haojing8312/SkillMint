@@ -145,7 +145,7 @@ SkillMint 由两个独立的应用组成：
 ## 项目结构
 
 ```
-skillhub/
+skillmint/
 ├── apps/
 │   ├── runtime/               # 用户端应用
 │   │   ├── src/              # React 前端

@@ -132,7 +132,7 @@ pub async fn send_message(
     // 根据 source_type 决定如何读取 SKILL.md 内容
     let raw_prompt = if source_type == "builtin" {
         // 内置 Skill：使用硬编码的 system prompt
-        "你是一个智能 AI 助手，运行在 SkillHub 平台上。\n\n\
+        "你是一个智能 AI 助手，运行在 SkillMint 平台上。\n\n\
         ## 可用工具\n\
         - `read_file` - 读取文件内容\n\
         - `write_file` - 写入或创建文件\n\

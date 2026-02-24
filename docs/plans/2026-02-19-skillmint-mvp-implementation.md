@@ -1,8 +1,8 @@
-# SkillHub MVP Implementation Plan
+# SkillMint MVP Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build SkillHub MVP — Studio（Skill 打包工具）and Runtime（Skill 运行客户端）as two Tauri 2.0 desktop apps sharing a common Rust encryption crate.
+**Goal:** Build SkillMint MVP — Studio（Skill 打包工具）and Runtime（Skill 运行客户端）as two Tauri 2.0 desktop apps sharing a common Rust encryption crate.
 
 **Architecture:** Monorepo (pnpm + Turborepo) with two Tauri apps (`apps/studio`, `apps/runtime`) sharing a Rust crate `packages/skillpack-rs` for AES-256-GCM encryption/decryption. Studio packs `.skillpack` files encrypted with a username-derived key; Runtime installs and runs them after the user enters their username.
 
@@ -32,7 +32,7 @@
 
 ```json
 {
-  "name": "skillhub",
+  "name": "skillmint",
   "private": true,
   "scripts": {
     "studio": "pnpm --filter studio tauri dev",
@@ -192,7 +192,7 @@ use sha2::Sha256;
 use anyhow::{Result, anyhow};
 
 const PBKDF2_ITERATIONS: u32 = 100_000;
-const VERIFY_PLAINTEXT: &[u8] = b"SKILLHUB_OK";
+const VERIFY_PLAINTEXT: &[u8] = b"SKILLMINT_OK";
 
 pub fn derive_key(username: &str, skill_id: &str, skill_name: &str) -> [u8; 32] {
     // salt = SHA256(skill_id + skill_name) — deterministic, no random
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let key = derive_key("alice", "skill-id-123", "test");
-        let plaintext = b"Hello, SkillHub!";
+        let plaintext = b"Hello, SkillMint!";
         let encrypted = encrypt(plaintext, &key).unwrap();
         let decrypted = decrypt(&encrypted, &key).unwrap();
         assert_eq!(decrypted, plaintext);
@@ -629,10 +629,10 @@ git commit -m "feat: skillpack-rs crate with AES-256-GCM crypto, pack, and unpac
 
 ```bash
 cd apps
-cargo tauri init --app-name "SkillHub Studio" --window-title "SkillHub Studio" --frontend-dist ../dist --dev-url http://localhost:5173 --before-dev-command "pnpm dev" --before-build-command "pnpm build"
+cargo tauri init --app-name "SkillMint Studio" --window-title "SkillMint Studio" --frontend-dist ../dist --dev-url http://localhost:5173 --before-dev-command "pnpm dev" --before-build-command "pnpm build"
 ```
 
-When prompted for the app identifier: `dev.skillhub.studio`
+When prompted for the app identifier: `dev.skillmint.studio`
 
 This creates `apps/studio/src-tauri/`. Move if needed so structure is `apps/studio/src-tauri/`.
 
@@ -840,7 +840,7 @@ git commit -m "feat: studio tauri commands for read_skill_dir and pack_skill"
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SkillHub Studio</title>
+    <title>SkillMint Studio</title>
   </head>
   <body>
     <div id="root"></div>
@@ -1101,7 +1101,7 @@ export default function App() {
     <div className="flex flex-col h-screen bg-slate-900 text-slate-100">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-800">
-        <h1 className="font-semibold text-lg">SkillHub Studio</h1>
+        <h1 className="font-semibold text-lg">SkillMint Studio</h1>
         <button
           onClick={handleSelectDir}
           className="bg-slate-700 hover:bg-slate-600 text-sm px-4 py-1.5 rounded transition-colors"
@@ -1179,10 +1179,10 @@ git commit -m "feat: studio frontend — file tree + pack form"
 
 ```bash
 cd apps
-cargo tauri init --app-name "SkillHub Runtime" --window-title "SkillHub Runtime" --frontend-dist ../dist --dev-url http://localhost:5174
+cargo tauri init --app-name "SkillMint Runtime" --window-title "SkillMint Runtime" --frontend-dist ../dist --dev-url http://localhost:5174
 ```
 
-Identifier: `dev.skillhub.runtime`
+Identifier: `dev.skillmint.runtime`
 
 **Step 2: Create apps/runtime/package.json**
 
@@ -1262,7 +1262,7 @@ use anyhow::Result;
 pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     let app_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
-    let db_path = app_dir.join("skillhub.db");
+    let db_path = app_dir.join("skillmint.db");
     let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
 
     let pool = SqlitePoolOptions::new()
@@ -1451,7 +1451,7 @@ pub struct ModelConfig {
 }
 
 fn keyring_entry(model_id: &str) -> keyring::Result<Entry> {
-    Entry::new("skillhub-runtime", &format!("model-{}", model_id))
+    Entry::new("skillmint-runtime", &format!("model-{}", model_id))
 }
 
 #[tauri::command]

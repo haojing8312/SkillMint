@@ -1,5 +1,5 @@
 {
-  "name": "skillhub",
+  "name": "skillmint",
   "private": true,
   "scripts": {
     "studio": "pnpm --filter studio tauri dev",

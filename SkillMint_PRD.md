@@ -1,4 +1,4 @@
-# SkillHub PRD
+# SkillMint PRD
 ## 产品需求文档 v1.0
 
 **文档状态**：草稿
@@ -26,11 +26,11 @@
 
 ### 1.1 一句话定义
 
-SkillHub 是一个开源的 **AI Skill 打包与桌面应用发布平台**：用户在平台上编写或导入已有 Skill，加密打包后发布成可安装的桌面插件，终端用户通过统一的 Runtime 客户端安装使用。
+SkillMint 是一个开源的 **AI Skill 打包与桌面应用发布平台**：用户在平台上编写或导入已有 Skill，加密打包后发布成可安装的桌面插件，终端用户通过统一的 Runtime 客户端安装使用。
 
 ### 1.2 类比定位
 
-| 类比对象 | 他们做什么 | SkillHub 的差异 |
+| 类比对象 | 他们做什么 | SkillMint 的差异 |
 |---------|-----------|----------------|
 | Dify | 编排 LLM 工作流 → 发布成 Web 应用 | 编写 Skill → 发布成**桌面应用** |
 | n8n | 可视化节点编排 → 自动化流程 | 文本 Skill → **AI 对话桌面应用** |
@@ -44,10 +44,10 @@ SkillHub 是一个开源的 **AI Skill 打包与桌面应用发布平台**：用
 
 ### 1.4 与 Claude Code Skill 的关系
 
-SkillHub 不替代 Claude Code Skill 生态，而是其**商业化发布层**：
+SkillMint 不替代 Claude Code Skill 生态，而是其**商业化发布层**：
 
 ```
-[Claude Code Skill 生态]          [SkillHub Studio]        [桌面用户]
+[Claude Code Skill 生态]          [SkillMint Studio]        [桌面用户]
   创作、调试、验证 Skill    ──→   导入/编写 → 加密打包   ──→  Runtime 安装使用
   .claude/skills/目录下的         .skillpack 分发文件
   完整 Skill 目录
@@ -88,7 +88,7 @@ SkillHub 不替代 Claude Code Skill 生态，而是其**商业化发布层**：
 
 ### 2.3 平台管理员（开源自部署场景）
 
-企业或团队自部署 SkillHub，管理内部 Skill 资产，供内部员工使用。
+企业或团队自部署 SkillMint，管理内部 Skill 资产，供内部员工使用。
 
 ---
 
@@ -153,14 +153,14 @@ my-skill/
 └── assets/
 ```
 
-### 3.3 SkillHub Studio（创作者端）
+### 3.3 SkillMint Studio（创作者端）
 
 创作者用来**导入/编写、测试、打包、发布** Skill 的桌面应用。支持两种工作模式：
 
 - **导入模式**：选择本地已有的 Skill 目录（如 `.claude/skills/my-skill/`），Studio 自动识别结构，预览后一键打包
 - **编辑器模式**：从零在 Studio 内新建 Skill，Monaco 编辑器 + 测试台一体化
 
-### 3.4 SkillHub Runtime（用户端）
+### 3.4 SkillMint Runtime（用户端）
 
 终端用户用来**安装、管理、运行** SkillPack 的桌面应用。
 
@@ -181,7 +181,7 @@ Runtime 中负责对接不同 AI 模型的抽象层，支持创作者指定推�
           └──────────┬─────────┘
                      ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    SkillHub 生态系统                          │
+│                    SkillMint 生态系统                          │
 │                                                             │
 │  ┌───────────────────────┐    ┌──────────────────────────┐  │
 │  │   Studio（创作者）     │    │    Runtime（终端用户）     │  │
@@ -213,7 +213,7 @@ Runtime 中负责对接不同 AI 模型的抽象层，支持创作者指定推�
 
 ### 4.2 两个独立应用
 
-SkillHub 由两个独立的桌面应用组成，分别服务不同角色：
+SkillMint 由两个独立的桌面应用组成，分别服务不同角色：
 
 | | Studio | Runtime |
 |---|---|---|
@@ -272,7 +272,7 @@ SkillHub 由两个独立的桌面应用组成，分别服务不同角色：
 | 一键打包为 .skillpack | P0 | 加密 Skill 内容，生成签名，打包元数据 |
 | 加密强度选择 | P1 | 基础加密（Fernet）/ 强加密（AES-256-GCM） |
 | 版本管理 | P1 | 自动版本号递增，维护版本历史 |
-| 发布到 SkillHub 市场 | P2 | 未来支持官方市场发布 |
+| 发布到 SkillMint 市场 | P2 | 未来支持官方市场发布 |
 
 #### 5.1.4 模型配置
 
@@ -510,7 +510,7 @@ API Key **不存储在明文配置文件**中。
 ### 6.5 项目仓库结构
 
 ```
-skillhub/
+skillmint/
 ├── apps/
 │   ├── studio/           # Studio 桌面应用
 │   │   ├── src/          # React 前端
@@ -623,8 +623,8 @@ CREATE TABLE model_configs (
 
 ### 8.3 项目名称
 
-**建议名称**：`SkillHub`（暂定）
-**GitHub 组织**：`skillhub-dev`（待定）
+**建议名称**：`SkillMint`（暂定）
+**GitHub 组织**：`skillmint-dev`（待定）
 **文档站**：基于 Docusaurus 构建
 
 ---
@@ -716,7 +716,7 @@ CREATE TABLE model_configs (
 | Dify | Web 应用 | 是（Apache） | 有 | 是 |
 | n8n | Web 应用 | 是（可持续许可） | 有 | 有限 |
 | Claude Code Skill | 本地文件 | 是 | 无 | 否 |
-| **SkillHub** | **桌面应用** | **是（Apache）** | **AES-256** | **是** |
+| **SkillMint** | **桌面应用** | **是（Apache）** | **AES-256** | **是** |
 
 ### B. 关键技术风险
 

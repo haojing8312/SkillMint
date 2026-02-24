@@ -145,7 +145,7 @@ Professional Skill authoring environment:
 ## Project Structure
 
 ```
-skillhub/
+skillmint/
 ├── apps/
 │   ├── runtime/               # User-facing application
 │   │   ├── src/              # React frontend

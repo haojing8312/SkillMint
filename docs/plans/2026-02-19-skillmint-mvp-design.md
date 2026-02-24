@@ -1,4 +1,4 @@
-# SkillHub MVP 设计文档
+# SkillMint MVP 设计文档
 
 **日期**：2026-02-19
 **范围**：MVP — Studio（打包工具）+ Runtime（运行客户端）
@@ -30,7 +30,7 @@
 ## 2. 项目结构
 
 ```
-skillhub/
+skillmint/
 ├── apps/
 │   ├── studio/               # Studio 桌面应用（创作者）
 │   │   ├── src/              # React + TypeScript 前端
@@ -103,7 +103,7 @@ myskill.skillpack（zip 包）
 }
 ```
 
-**`encrypted_verify`**：用派生密钥加密固定字符串 `"SKILLHUB_OK"`，Runtime 解密此字段验证用户名是否正确，给出友好报错而非乱码。
+**`encrypted_verify`**：用派生密钥加密固定字符串 `"SKILLMINT_OK"`，Runtime 解密此字段验证用户名是否正确，给出友好报错而非乱码。
 
 ### 3.4 crypto.rs 接口设计
 
@@ -149,7 +149,7 @@ async fn pack_skill(config: PackConfig) -> Result<()>;
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  SkillHub Studio                          [− □ ×]   │
+│  SkillMint Studio                          [− □ ×]   │
 ├─────────────────────────────────────────────────────┤
 │  [选择 Skill 目录]  已选择：/skills/contract-review  │
 │                                                     │

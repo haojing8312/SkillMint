@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 /// # 示例
 ///
 /// ```rust
-/// use skillhub_runtime::agent::tools::CompactTool;
-/// use skillhub_runtime::agent::types::Tool;
+/// use skillmint_runtime::agent::tools::CompactTool;
+/// use skillmint_runtime::agent::types::Tool;
 /// use serde_json::json;
 ///
 /// let tool = CompactTool::new();

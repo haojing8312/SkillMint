@@ -8,7 +8,7 @@ use sha2::Sha256;
 use anyhow::{Result, anyhow};
 
 const PBKDF2_ITERATIONS: u32 = 100_000;
-const VERIFY_PLAINTEXT: &[u8] = b"SKILLHUB_OK";
+const VERIFY_PLAINTEXT: &[u8] = b"SKILLMINT_OK";
 
 pub fn derive_key(username: &str, skill_id: &str, skill_name: &str) -> [u8; 32] {
     use sha2::Digest;
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let key = derive_key("alice", "skill-id-123", "test");
-        let plaintext = b"Hello, SkillHub!";
+        let plaintext = b"Hello, SkillMint!";
         let encrypted = encrypt(plaintext, &key).unwrap();
         let decrypted = decrypt(&encrypted, &key).unwrap();
         assert_eq!(decrypted, plaintext);

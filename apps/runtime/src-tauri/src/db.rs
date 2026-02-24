@@ -5,7 +5,7 @@ use anyhow::Result;
 pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     let app_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
-    let db_path = app_dir.join("skillhub.db");
+    let db_path = app_dir.join("skillmint.db");
     let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
 
     let pool = SqlitePoolOptions::new()
@@ -104,7 +104,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         "name": "通用助手",
         "description": "通用 AI 助手，可以读写文件、执行命令、搜索代码、搜索网页",
         "version": "1.0.0",
-        "author": "SkillHub",
+        "author": "SkillMint",
         "recommended_model": "",
         "tags": [],
         "created_at": "2026-01-01T00:00:00Z",

@@ -22,7 +22,7 @@ export class MCPManager {
 
     const client = new Client(
       {
-        name: 'skillhub-runtime',
+        name: 'skillmint-runtime',
         version: '1.0.0',
       },
       {

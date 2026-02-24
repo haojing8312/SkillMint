@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SkillHub Runtime",
+  "productName": "SkillMint Runtime",
   "version": "0.1.0",
-  "identifier": "dev.skillhub.runtime",
+  "identifier": "dev.skillmint.runtime",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "SkillHub Runtime",
+        "title": "SkillMint Runtime",
         "width": 1200,
         "height": 750,
         "resizable": true
