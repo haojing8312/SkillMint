@@ -37,6 +37,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   } | null>(null);
   const [subAgentBuffer, setSubAgentBuffer] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
 
   // sessionId 变化时加载历史消息
@@ -395,11 +396,23 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   return (
     <div className="flex flex-col h-full">
       {/* 头部 */}
-      <div className="flex items-center justify-between px-6 py-3.5 border-b border-gray-200 bg-white/70 backdrop-blur-sm">
-        <span className="font-semibold text-gray-900">{skill.name}</span>
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white/70 backdrop-blur-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="font-semibold text-gray-900 flex-shrink-0">{skill.name}</span>
+          {workDir && (
+            <span
+              className="text-xs text-gray-400 truncate max-w-[260px]"
+              title={workDir}
+            >
+              {workDir}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
           {currentModel && (
-            <span className="text-xs text-gray-400">{currentModel.name}</span>
+            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+              {currentModel.name}
+            </span>
           )}
         </div>
       </div>
@@ -537,42 +550,62 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       </div>
 
       {/* 输入区域 */}
-      <div className="px-6 py-4 bg-gray-50">
-        <div className="relative max-w-3xl mx-auto">
+      <div className="px-6 py-3 bg-gray-50/80">
+        <div className="max-w-3xl mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+          {/* 输入框主体 */}
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              // auto-expand
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = Math.min(el.scrollHeight, 200) + "px";
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
               }
             }}
-            placeholder="输入消息..."
-            rows={1}
-            className="w-full bg-white border border-gray-200 rounded-xl pl-4 pr-12 py-3 text-sm resize-none focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 shadow-sm placeholder-gray-400"
+            placeholder="输入消息，Shift+Enter 换行..."
+            rows={3}
+            className="w-full bg-transparent pl-4 pr-4 pt-3 pb-2 text-sm resize-none focus:outline-none placeholder-gray-400 min-h-[80px] max-h-[200px]"
           />
-          <div className="absolute right-2 top-1/2 -translate-y-1/2">
-            {streaming ? (
-              <button
-                onClick={handleCancel}
-                className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
-              </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={!input.trim()}
-                className="w-8 h-8 flex items-center justify-center rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
-              </button>
-            )}
+          {/* 底部工具栏 */}
+          <div className="flex items-center justify-between px-3 pb-2.5">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              {skill.description && (
+                <span className="truncate max-w-[300px]" title={skill.description}>
+                  {skill.description}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {streaming ? (
+                <button
+                  onClick={handleCancel}
+                  className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-red-500 hover:bg-red-600 active:scale-[0.97] text-white text-xs font-medium transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                  停止
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim()}
+                  className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 active:scale-[0.97] disabled:bg-gray-100 disabled:text-gray-400 text-white text-xs font-medium transition-all"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                  发送
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
