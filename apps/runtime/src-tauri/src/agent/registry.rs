@@ -1,7 +1,7 @@
 use super::tools::{
     BashTool, EditTool, FileCopyTool, FileDeleteTool, FileMoveTool, FileStatTool,
-    GlobTool, GrepTool, ListDirTool, ReadFileTool, TodoWriteTool, WebFetchTool,
-    WriteFileTool,
+    GlobTool, GrepTool, ListDirTool, OpenInFolderTool, ReadFileTool, ScreenshotTool,
+    TodoWriteTool, WebFetchTool, WriteFileTool,
 };
 use super::types::Tool;
 use serde_json::{json, Value};
@@ -35,6 +35,9 @@ impl ToolRegistry {
         registry.register(Arc::new(TodoWriteTool::new()));
         registry.register(Arc::new(WebFetchTool));
         registry.register(Arc::new(BashTool::new()));
+        // L5 新增系统工具
+        registry.register(Arc::new(ScreenshotTool));
+        registry.register(Arc::new(OpenInFolderTool));
         registry
     }
 

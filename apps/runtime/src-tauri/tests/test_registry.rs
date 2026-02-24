@@ -19,7 +19,10 @@ fn test_registry_with_file_tools() {
     assert!(registry.get("file_delete").is_some());
     assert!(registry.get("file_move").is_some());
     assert!(registry.get("file_copy").is_some());
+    // L5 新增 2 个系统工具
+    assert!(registry.get("screenshot").is_some());
+    assert!(registry.get("open_in_folder").is_some());
 
     let defs = registry.get_tool_definitions();
-    assert_eq!(defs.len(), 13);
+    assert_eq!(defs.len(), 15);
 }
