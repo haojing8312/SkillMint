@@ -23,8 +23,8 @@ pub fn run() {
             let pool_for_mcp = pool.clone();
             app.manage(DbState(pool));
 
-            // 初始化 AgentExecutor（包含文件工具）
-            let registry = Arc::new(ToolRegistry::with_file_tools());
+            // 初始化 AgentExecutor（包含标准工具集）
+            let registry = Arc::new(ToolRegistry::with_standard_tools());
             let agent_executor = Arc::new(AgentExecutor::new(Arc::clone(&registry)));
             app.manage(agent_executor);
             app.manage(Arc::clone(&registry));

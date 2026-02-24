@@ -1,8 +1,8 @@
 use runtime_lib::agent::ToolRegistry;
 
 #[test]
-fn test_registry_with_file_tools() {
-    let registry = ToolRegistry::with_file_tools();
+fn test_registry_with_standard_tools() {
+    let registry = ToolRegistry::with_standard_tools();
 
     // 原有 8 个基础工具
     assert!(registry.get("read_file").is_some());

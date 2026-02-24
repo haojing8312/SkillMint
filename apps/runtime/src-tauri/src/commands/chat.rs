@@ -9,6 +9,8 @@ use crate::agent::AgentExecutor;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
     CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder,
+    BashTool, BashOutputTool, BashKillTool, ProcessManager,
+    browser_tools::register_browser_tools,
 };
 use crate::agent::tools::search_providers::cache::SearchCache;
 
@@ -221,6 +223,18 @@ pub async fn send_message(
     let max_iter = skill_config.max_iterations.unwrap_or(10);
 
     // 动态注册运行时工具（在计算 tool_names 之前完成，确保列表完整）
+
+    // L3: 注册后台进程管理工具
+    let process_manager = Arc::new(ProcessManager::new());
+    agent_executor.registry().register(Arc::new(BashOutputTool::new(Arc::clone(&process_manager))));
+    agent_executor.registry().register(Arc::new(BashKillTool::new(Arc::clone(&process_manager))));
+    // 替换默认 bash 工具为支持后台模式的版本
+    agent_executor.registry().unregister("bash");
+    agent_executor.registry().register(Arc::new(BashTool::with_process_manager(Arc::clone(&process_manager))));
+
+    // L4: 注册浏览器自动化工具（通过 Sidecar 桥接）
+    register_browser_tools(agent_executor.registry(), "http://localhost:8765");
+
     let task_tool = TaskTool::new(
         agent_executor.registry_arc(),
         api_format.clone(),

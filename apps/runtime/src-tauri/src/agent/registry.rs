@@ -19,7 +19,8 @@ impl ToolRegistry {
         }
     }
 
-    pub fn with_file_tools() -> Self {
+    /// 基础工具集：文件操作 + Shell + 信息获取 + 系统工具
+    pub fn with_standard_tools() -> Self {
         let registry = Self::new();
         registry.register(Arc::new(ReadFileTool));
         registry.register(Arc::new(WriteFileTool));
@@ -83,6 +84,11 @@ impl ToolRegistry {
                 })
             })
             .collect()
+    }
+
+    /// 向后兼容别名
+    pub fn with_file_tools() -> Self {
+        Self::with_standard_tools()
     }
 
     /// 返回所有以指定前缀开头的工具名称
