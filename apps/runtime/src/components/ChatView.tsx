@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, ToolCallInfo } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
 
 interface Props {
@@ -19,8 +19,9 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [streamBuffer, setStreamBuffer] = useState("");
-  const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
+  // 有序的流式输出项：文字和工具调用按时间顺序排列
+  const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
+  const streamItemsRef = useRef<StreamItem[]>([]);
   const [askUserQuestion, setAskUserQuestion] = useState<string | null>(null);
   const [askUserOptions, setAskUserOptions] = useState<string[]>([]);
   const [askUserAnswer, setAskUserAnswer] = useState("");
@@ -35,21 +36,17 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   } | null>(null);
   const [subAgentBuffer, setSubAgentBuffer] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
-  const streamBufferRef = useRef("");
   const subAgentBufferRef = useRef("");
-  const currentToolCallsRef = useRef<ToolCallInfo[]>([]);
 
   // sessionId 变化时加载历史消息
   useEffect(() => {
     loadMessages(sessionId);
     // 切换会话时重置流式状态
     setStreaming(false);
-    setStreamBuffer("");
-    streamBufferRef.current = "";
+    setStreamItems([]);
+    streamItemsRef.current = [];
     setSubAgentBuffer("");
     subAgentBufferRef.current = "";
-    setCurrentToolCalls([]);
-    currentToolCallsRef.current = [];
     setAskUserQuestion(null);
     setAskUserOptions([]);
     setAskUserAnswer("");
@@ -60,9 +57,9 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamBuffer, askUserQuestion, toolConfirm]);
+  }, [messages, streamItems, askUserQuestion, toolConfirm]);
 
-  // stream-token 事件监听（依赖 sessionId prop）
+  // stream-token 事件监听
   useEffect(() => {
     let currentSessionId: string | null = sessionId;
     const unlistenPromise = listen<{
@@ -75,26 +72,29 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       ({ payload }) => {
         if (payload.session_id !== currentSessionId) return;
         if (payload.done) {
-          const finalContent = streamBufferRef.current;
-          const toolCalls =
-            currentToolCallsRef.current.length > 0
-              ? [...currentToolCallsRef.current]
-              : undefined;
-          if (finalContent || toolCalls) {
+          // 流结束：将 streamItems 转为历史消息
+          const items = streamItemsRef.current;
+          const finalText = items
+            .filter((i) => i.type === "text")
+            .map((i) => i.content || "")
+            .join("");
+          const toolCalls = items
+            .filter((i) => i.type === "tool_call" && i.toolCall)
+            .map((i) => i.toolCall!);
+          if (finalText || toolCalls.length > 0) {
             setMessages((prev) => [
               ...prev,
               {
                 role: "assistant",
-                content: finalContent,
+                content: finalText,
                 created_at: new Date().toISOString(),
-                toolCalls,
+                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                streamItems: items.length > 0 ? [...items] : undefined,
               },
             ]);
           }
-          currentToolCallsRef.current = [];
-          setCurrentToolCalls([]);
-          streamBufferRef.current = "";
-          setStreamBuffer("");
+          streamItemsRef.current = [];
+          setStreamItems([]);
           subAgentBufferRef.current = "";
           setSubAgentBuffer("");
           setStreaming(false);
@@ -103,8 +103,16 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
           subAgentBufferRef.current += payload.token;
           setSubAgentBuffer(subAgentBufferRef.current);
         } else {
-          streamBufferRef.current += payload.token;
-          setStreamBuffer(streamBufferRef.current);
+          // 主 Agent 的文字 token → 追加到最后一个 text 项或新建
+          const items = streamItemsRef.current;
+          const last = items[items.length - 1];
+          if (last && last.type === "text") {
+            last.content = (last.content || "") + payload.token;
+          } else {
+            items.push({ type: "text", content: payload.token });
+          }
+          streamItemsRef.current = items;
+          setStreamItems([...items]);
         }
       }
     );
@@ -172,7 +180,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     };
   }, [sessionId]);
 
-  // tool-call-event 事件监听（依赖 sessionId prop）
+  // tool-call-event 事件监听：按顺序插入到 streamItems
   useEffect(() => {
     const unlistenPromise = listen<{
       session_id: string;
@@ -183,35 +191,42 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     }>("tool-call-event", ({ payload }) => {
       if (payload.session_id !== sessionId) return;
       if (payload.status === "started") {
-        setCurrentToolCalls((prev) => {
-          const next = [
-            ...prev,
-            {
-              id: `${payload.tool_name}-${Date.now()}`,
-              name: payload.tool_name,
-              input: payload.tool_input,
-              status: "running" as const,
-            },
-          ];
-          currentToolCallsRef.current = next;
-          return next;
+        // 新的工具调用 → 直接追加到 streamItems（文字和工具按时间排列）
+        const items = streamItemsRef.current;
+        items.push({
+          type: "tool_call",
+          toolCall: {
+            id: `${payload.tool_name}-${Date.now()}`,
+            name: payload.tool_name,
+            input: payload.tool_input,
+            status: "running" as const,
+          },
         });
+        streamItemsRef.current = items;
+        setStreamItems([...items]);
       } else {
-        setCurrentToolCalls((prev) => {
-          const next = prev.map((tc) =>
-            tc.name === payload.tool_name && tc.status === "running"
-              ? {
-                  ...tc,
-                  output: payload.tool_output ?? undefined,
-                  status: (payload.status === "completed"
-                    ? "completed"
-                    : "error") as "completed" | "error",
-                }
-              : tc
-          );
-          currentToolCallsRef.current = next;
-          return next;
+        // 工具完成/出错 → 更新对应项
+        const items = streamItemsRef.current.map((item) => {
+          if (
+            item.type === "tool_call" &&
+            item.toolCall?.name === payload.tool_name &&
+            item.toolCall?.status === "running"
+          ) {
+            return {
+              ...item,
+              toolCall: {
+                ...item.toolCall,
+                output: payload.tool_output ?? undefined,
+                status: (payload.status === "completed"
+                  ? "completed"
+                  : "error") as "completed" | "error",
+              },
+            };
+          }
+          return item;
         });
+        streamItemsRef.current = items;
+        setStreamItems([...items]);
       }
     });
     return () => {
@@ -238,10 +253,8 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       { role: "user", content: msg, created_at: new Date().toISOString() },
     ]);
     setStreaming(true);
-    currentToolCallsRef.current = [];
-    setCurrentToolCalls([]);
-    streamBufferRef.current = "";
-    setStreamBuffer("");
+    streamItemsRef.current = [];
+    setStreamItems([]);
     subAgentBufferRef.current = "";
     setSubAgentBuffer("");
     try {
@@ -259,6 +272,35 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     } finally {
       setStreaming(false);
     }
+  }
+
+  async function handleCancel() {
+    try {
+      await invoke("cancel_agent");
+    } catch (e) {
+      console.error("取消任务失败:", e);
+    }
+    // 即时清除顶部状态指示器（不等待后端 finished 事件）
+    setAgentState(null);
+    // 将所有 running 状态的工具标记为 error，避免永远转圈
+    const items = streamItemsRef.current.map((item) => {
+      if (
+        item.type === "tool_call" &&
+        item.toolCall?.status === "running"
+      ) {
+        return {
+          ...item,
+          toolCall: {
+            ...item.toolCall,
+            output: "已取消",
+            status: "error" as const,
+          },
+        };
+      }
+      return item;
+    });
+    streamItemsRef.current = items;
+    setStreamItems([...items]);
   }
 
   async function handleAnswerUser(answer: string) {
@@ -282,7 +324,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     setToolConfirm(null);
   }
 
-  // 从 models 查找当前会话的模型名称（用于头部展示）
+  // 从 models 查找当前会话的模型名称
   const currentModel = models[0];
 
   // Markdown 代码块语法高亮配置
@@ -307,9 +349,36 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     },
   };
 
+  /** 渲染有序的 StreamItem 列表（文字和工具调用交替） */
+  function renderStreamItems(items: StreamItem[], isStreaming: boolean) {
+    return items.map((item, i) => {
+      if (item.type === "tool_call" && item.toolCall) {
+        return (
+          <ToolCallCard
+            key={`tc-${item.toolCall.id}`}
+            toolCall={item.toolCall}
+            subAgentBuffer={
+              item.toolCall.name === "task" && item.toolCall.status === "running"
+                ? subAgentBuffer
+                : undefined
+            }
+          />
+        );
+      }
+      if (item.type === "text" && item.content) {
+        return (
+          <div key={`txt-${i}`}>
+            <ReactMarkdown components={markdownComponents}>{item.content}</ReactMarkdown>
+          </div>
+        );
+      }
+      return null;
+    });
+  }
+
   return (
     <div className="flex flex-col h-full">
-      {/* 头部：简化，仅显示 skill 名称和模型信息 */}
+      {/* 头部 */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-800">
         <div className="flex items-center">
           <span className="font-medium">{skill.name}</span>
@@ -348,14 +417,20 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
                   : "bg-slate-700 text-slate-100")
               }
             >
-              {m.role === "assistant" && m.toolCalls && (
-                <div className="mb-2">
-                  {m.toolCalls.map((tc) => (
-                    <ToolCallCard key={tc.id} toolCall={tc} />
-                  ))}
-                </div>
-              )}
-              {m.role === "assistant" ? (
+              {m.role === "assistant" && m.streamItems ? (
+                // 新格式：有序渲染
+                renderStreamItems(m.streamItems, false)
+              ) : m.role === "assistant" && m.toolCalls ? (
+                // 旧格式兼容：工具在前，文字在后
+                <>
+                  <div className="mb-2">
+                    {m.toolCalls.map((tc) => (
+                      <ToolCallCard key={tc.id} toolCall={tc} />
+                    ))}
+                  </div>
+                  <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
+                </>
+              ) : m.role === "assistant" ? (
                 <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
               ) : (
                 m.content
@@ -363,18 +438,11 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
             </div>
           </div>
         ))}
-        {/* 流式输出区域 */}
-        {(currentToolCalls.length > 0 || streamBuffer) && (
+        {/* 流式输出区域：按时间顺序渲染 */}
+        {streamItems.length > 0 && (
           <div className="flex justify-start">
             <div className="max-w-[80%] bg-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100">
-              {currentToolCalls.map((tc) => (
-                <ToolCallCard
-                  key={tc.id}
-                  toolCall={tc}
-                  subAgentBuffer={tc.name === "task" && tc.status === "running" ? subAgentBuffer : undefined}
-                />
-              ))}
-              {streamBuffer && <ReactMarkdown components={markdownComponents}>{streamBuffer}</ReactMarkdown>}
+              {renderStreamItems(streamItems, true)}
               <span className="animate-pulse">|</span>
             </div>
           </div>
@@ -468,13 +536,22 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
             rows={1}
             className="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-500"
           />
-          <button
-            onClick={handleSend}
-            disabled={streaming || !input.trim()}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 px-4 rounded text-sm font-medium transition-colors"
-          >
-            发送
-          </button>
+          {streaming ? (
+            <button
+              onClick={handleCancel}
+              className="bg-red-600 hover:bg-red-700 px-4 rounded text-sm font-medium transition-colors"
+            >
+              停止
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim()}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 px-4 rounded text-sm font-medium transition-colors"
+            >
+              发送
+            </button>
+          )}
         </div>
       </div>
     </div>

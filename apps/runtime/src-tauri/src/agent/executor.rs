@@ -1,10 +1,12 @@
 use super::permissions::PermissionMode;
 use super::registry::ToolRegistry;
+use super::system_prompts::SystemPromptBuilder;
 use super::types::{LLMResponse, ToolContext, ToolResult};
 use crate::adapters;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -197,13 +199,15 @@ pub struct AgentStateEvent {
 pub struct AgentExecutor {
     registry: Arc<ToolRegistry>,
     max_iterations: usize,
+    system_prompt_builder: SystemPromptBuilder,
 }
 
 impl AgentExecutor {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
         Self {
             registry,
-            max_iterations: 10,
+            max_iterations: 50,
+            system_prompt_builder: SystemPromptBuilder::default(),
         }
     }
 
@@ -211,6 +215,7 @@ impl AgentExecutor {
         Self {
             registry,
             max_iterations,
+            system_prompt_builder: SystemPromptBuilder::default(),
         }
     }
 
@@ -222,13 +227,29 @@ impl AgentExecutor {
         Arc::clone(&self.registry)
     }
 
+    /// 轮询 cancel_flag，直到收到取消信号
+    async fn wait_for_cancel(cancel_flag: &Option<Arc<AtomicBool>>) {
+        loop {
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(Ordering::SeqCst) {
+                    return;
+                }
+            } else {
+                // 没有 cancel_flag，永远不会取消
+                std::future::pending::<()>().await;
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     pub async fn execute_turn(
         &self,
         api_format: &str,
         base_url: &str,
         api_key: &str,
         model: &str,
-        system_prompt: &str,
+        skill_system_prompt: &str,
         mut messages: Vec<Value>,
         on_token: impl Fn(String) + Send + Clone,
         app_handle: Option<&AppHandle>,
@@ -237,28 +258,54 @@ impl AgentExecutor {
         permission_mode: PermissionMode,
         tool_confirm_tx: Option<std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>>,
         work_dir: Option<String>,
+        max_iterations_override: Option<usize>,
+        cancel_flag: Option<Arc<AtomicBool>>,
     ) -> Result<Vec<Value>> {
+        // 组合系统级 prompt 和 Skill prompt
+        let system_prompt = self.system_prompt_builder.build(skill_system_prompt);
+
         let tool_ctx = ToolContext {
             work_dir: work_dir.map(PathBuf::from),
         };
+        let max_iterations = max_iterations_override.unwrap_or(self.max_iterations);
         let mut iteration = 0;
 
         loop {
-            if iteration >= self.max_iterations {
+            // 检查取消标志
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(Ordering::SeqCst) {
+                    eprintln!("[agent] 任务被用户取消");
+                    if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                        let _ = app.emit("agent-state-event", AgentStateEvent {
+                            session_id: sid.to_string(),
+                            state: "finished".to_string(),
+                            detail: Some("用户取消".to_string()),
+                            iteration,
+                        });
+                    }
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": "任务已被取消。"
+                    }));
+                    return Ok(messages);
+                }
+            }
+
+            if iteration >= max_iterations {
                 // 发射 error 状态事件
                 if let (Some(app), Some(sid)) = (app_handle, session_id) {
                     let _ = app.emit("agent-state-event", AgentStateEvent {
                         session_id: sid.to_string(),
                         state: "error".to_string(),
-                        detail: Some(format!("达到最大迭代次数 {}", self.max_iterations)),
+                        detail: Some(format!("达到最大迭代次数 {}", max_iterations)),
                         iteration,
                     });
                 }
-                return Err(anyhow!("达到最大迭代次数 {}", self.max_iterations));
+                return Err(anyhow!("达到最大迭代次数 {}", max_iterations));
             }
             iteration += 1;
 
-            eprintln!("[agent] Iteration {}/{}", iteration, self.max_iterations);
+            eprintln!("[agent] Iteration {}/{}", iteration, max_iterations);
 
             // 发射 thinking 状态事件
             if let (Some(app), Some(sid)) = (app_handle, session_id) {
@@ -320,13 +367,13 @@ impl AgentExecutor {
             let compacted = micro_compact(&messages, 3);
             let trimmed = trim_messages(&compacted, DEFAULT_TOKEN_BUDGET);
 
-            // 调用 LLM
+            // 调用 LLM（使用组合后的系统 prompt）
             let response = if api_format == "anthropic" {
                 adapters::anthropic::chat_stream_with_tools(
                     base_url,
                     api_key,
                     model,
-                    system_prompt,
+                    &system_prompt,
                     trimmed.clone(),
                     tools,
                     on_token.clone(),
@@ -338,7 +385,7 @@ impl AgentExecutor {
                     base_url,
                     api_key,
                     model,
-                    system_prompt,
+                    &system_prompt,
                     trimmed.clone(),
                     tools,
                     on_token.clone(),
@@ -368,8 +415,14 @@ impl AgentExecutor {
 
                     return Ok(messages);
                 }
-                LLMResponse::ToolCalls(tool_calls) => {
-                    eprintln!("[agent] Executing {} tool calls", tool_calls.len());
+                tc_response @ (LLMResponse::ToolCalls(_) | LLMResponse::TextWithToolCalls(_, _)) => {
+                    let (companion_text, tool_calls) = match tc_response {
+                        LLMResponse::ToolCalls(tc) => (String::new(), tc),
+                        LLMResponse::TextWithToolCalls(text, tc) => (text, tc),
+                        _ => unreachable!(),
+                    };
+
+                    eprintln!("[agent] Executing {} tool calls (companion_text={})", tool_calls.len(), !companion_text.is_empty());
 
                     // 发射 tool_calling 状态事件
                     if let (Some(app), Some(sid)) = (app_handle, session_id) {
@@ -385,6 +438,27 @@ impl AgentExecutor {
                     // 执行所有工具调用
                     let mut tool_results = vec![];
                     for call in &tool_calls {
+                        // 执行每个工具前检查取消标志
+                        if let Some(ref flag) = cancel_flag {
+                            if flag.load(Ordering::SeqCst) {
+                                eprintln!("[agent] 工具执行中被用户取消");
+                                // 发射 finished 事件，确保前端清除状态指示器
+                                if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                                    let _ = app.emit("agent-state-event", AgentStateEvent {
+                                        session_id: sid.to_string(),
+                                        state: "finished".to_string(),
+                                        detail: Some("用户取消".to_string()),
+                                        iteration,
+                                    });
+                                }
+                                messages.push(json!({
+                                    "role": "assistant",
+                                    "content": "任务已被取消。"
+                                }));
+                                return Ok(messages);
+                            }
+                        }
+
                         eprintln!("[agent] Calling tool: {}", call.name);
 
                         // 发送工具开始事件
@@ -453,19 +527,64 @@ impl AgentExecutor {
                                     if !whitelist.iter().any(|w| w == &call.name) {
                                         format!("此 Skill 不允许使用工具: {}", call.name)
                                     } else {
-                                        match tool.execute(call.input.clone(), &tool_ctx) {
-                                            Ok(output) => output,
-                                            Err(e) => format!("工具执行错误: {}", e),
+                                        // 可取消的工具执行
+                                        let tool_clone = Arc::clone(&tool);
+                                        let input_clone = call.input.clone();
+                                        let ctx_clone = tool_ctx.clone();
+                                        let handle = tokio::task::spawn_blocking(move || {
+                                            tool_clone.execute(input_clone, &ctx_clone)
+                                        });
+                                        // 用 select! 同时等待工具完成或取消信号
+                                        let cancel_flag_ref = cancel_flag.clone();
+                                        tokio::select! {
+                                            res = handle => {
+                                                match res {
+                                                    Ok(Ok(output)) => output,
+                                                    Ok(Err(e)) => format!("工具执行错误: {}", e),
+                                                    Err(e) => format!("工具执行线程异常: {}", e),
+                                                }
+                                            }
+                                            _ = Self::wait_for_cancel(&cancel_flag_ref) => {
+                                                "工具执行被用户取消".to_string()
+                                            }
                                         }
                                     }
                                 } else {
-                                    match tool.execute(call.input.clone(), &tool_ctx) {
-                                        Ok(output) => output,
-                                        Err(e) => format!("工具执行错误: {}", e),
+                                    // 可取消的工具执行
+                                    let tool_clone = Arc::clone(&tool);
+                                    let input_clone = call.input.clone();
+                                    let ctx_clone = tool_ctx.clone();
+                                    let handle = tokio::task::spawn_blocking(move || {
+                                        tool_clone.execute(input_clone, &ctx_clone)
+                                    });
+                                    let cancel_flag_ref = cancel_flag.clone();
+                                    tokio::select! {
+                                        res = handle => {
+                                            match res {
+                                                Ok(Ok(output)) => output,
+                                                Ok(Err(e)) => format!("工具执行错误: {}", e),
+                                                Err(e) => format!("工具执行线程异常: {}", e),
+                                            }
+                                        }
+                                        _ = Self::wait_for_cancel(&cancel_flag_ref) => {
+                                            "工具执行被用户取消".to_string()
+                                        }
                                     }
                                 }
                             }
-                            None => format!("工具不存在: {}", call.name),
+                            None => {
+                                // 列出可用工具，引导 LLM 使用正确的工具
+                                let available: Vec<String> = self.registry
+                                    .get_tool_definitions()
+                                    .iter()
+                                    .filter_map(|t| t["name"].as_str().map(String::from))
+                                    .collect();
+                                format!(
+                                    "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
+                                    call.name,
+                                    available.join(", ")
+                                )
+                            }
                         };
                         // 截断过长的工具输出，防止超出上下文窗口
                         let result = truncate_tool_output(&result, MAX_TOOL_OUTPUT_CHARS);
@@ -487,17 +606,24 @@ impl AgentExecutor {
                         });
                     }
 
-                    // 添加工具调用和结果到消息历史
+                    // 添加工具调用和结果到消息历史（包含伴随文本）
                     if api_format == "anthropic" {
-                        // Anthropic 格式: assistant 消息包含 tool_use blocks
-                        messages.push(json!({
-                            "role": "assistant",
-                            "content": tool_calls.iter().map(|tc| json!({
+                        // Anthropic 格式: assistant 消息包含 text block + tool_use blocks
+                        let mut content_blocks: Vec<Value> = vec![];
+                        if !companion_text.is_empty() {
+                            content_blocks.push(json!({"type": "text", "text": companion_text}));
+                        }
+                        for tc in &tool_calls {
+                            content_blocks.push(json!({
                                 "type": "tool_use",
                                 "id": tc.id,
                                 "name": tc.name,
                                 "input": tc.input,
-                            })).collect::<Vec<_>>()
+                            }));
+                        }
+                        messages.push(json!({
+                            "role": "assistant",
+                            "content": content_blocks
                         }));
 
                         // user 消息包含 tool_result blocks
@@ -510,9 +636,15 @@ impl AgentExecutor {
                             })).collect::<Vec<_>>()
                         }));
                     } else {
-                        // OpenAI 格式
+                        // OpenAI 格式: companion_text 放 content 字段
+                        let content_val = if companion_text.is_empty() {
+                            Value::Null
+                        } else {
+                            Value::String(companion_text.clone())
+                        };
                         messages.push(json!({
                             "role": "assistant",
+                            "content": content_val,
                             "tool_calls": tool_calls.iter().map(|tc| json!({
                                 "id": tc.id,
                                 "type": "function",
