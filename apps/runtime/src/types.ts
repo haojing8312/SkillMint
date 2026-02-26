@@ -50,3 +50,11 @@ export interface SessionInfo {
   model_id: string;
   work_dir?: string;
 }
+
+/// 文件附件（用于 File Upload 功能）
+export interface FileAttachment {
+  name: string;
+  size: number;
+  type: string;
+  content: string; // 文件文本内容或 base64
+}
