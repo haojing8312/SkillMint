@@ -89,9 +89,39 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Secure Workspace: 工作空间状态
+  const [workspace, setWorkspace] = useState<string>("");
+
+  // Secure Workspace: 加载会话的工作空间
+  const loadWorkspace = async (sid: string) => {
+    try {
+      const sessions = await invoke<any[]>("get_sessions", { skillId: skill.id });
+      const current = sessions.find((s: any) => s.id === sid);
+      if (current) {
+        setWorkspace(current.work_dir || "");
+      }
+    } catch (e) {
+      console.error("加载工作空间失败:", e);
+    }
+  };
+
+  // Secure Workspace: 更新会话的工作空间
+  const updateWorkspace = async (newWorkspace: string) => {
+    try {
+      await invoke("update_session_workspace", {
+        sessionId,
+        workspace: newWorkspace,
+      });
+      setWorkspace(newWorkspace);
+    } catch (e) {
+      console.error("更新工作空间失败:", e);
+    }
+  };
+
   // sessionId 变化时加载历史消息
   useEffect(() => {
     loadMessages(sessionId);
+    loadWorkspace(sessionId);
     // 切换会话时重置流式状态
     setStreaming(false);
     setStreamItems([]);
