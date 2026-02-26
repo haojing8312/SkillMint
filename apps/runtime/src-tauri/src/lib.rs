@@ -142,6 +142,7 @@ pub fn run() {
             commands::chat::answer_user_question,
             commands::chat::confirm_tool_execution,
             commands::chat::cancel_agent,
+            commands::chat::compact_context,
             commands::mcp::add_mcp_server,
             commands::mcp::list_mcp_servers,
             commands::mcp::remove_mcp_server,

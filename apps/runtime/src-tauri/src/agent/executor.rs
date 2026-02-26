@@ -33,7 +33,7 @@ const CHARS_PER_TOKEN: usize = 4;
 const DEFAULT_TOKEN_BUDGET: usize = 100_000; // 约 400k 字符
 
 /// 估算消息列表的 token 数（简单估算：字符数 / 4）
-fn estimate_tokens(messages: &[Value]) -> usize {
+pub fn estimate_tokens(messages: &[Value]) -> usize {
     let total_chars: usize = messages
         .iter()
         .map(|m| {

@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use super::skills::DbState;
 use crate::agent::AgentExecutor;
+use crate::agent::compactor;
+use crate::agent::executor::estimate_tokens;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
     CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder,
@@ -886,4 +888,111 @@ pub async fn cancel_agent(
     cancel_flag.0.store(true, Ordering::SeqCst);
     eprintln!("[agent] 收到取消信号");
     Ok(())
+}
+
+/// 压缩结果
+#[derive(serde::Serialize)]
+pub struct CompactionResult {
+    original_tokens: usize,
+    new_tokens: usize,
+    summary: String,
+}
+
+/// 手动触发上下文压缩
+#[tauri::command]
+pub async fn compact_context(
+    session_id: String,
+    db: State<'_, DbState>,
+    app: AppHandle,
+) -> Result<CompactionResult, String> {
+    // 1. 获取会话消息
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&session_id)
+    .fetch_all(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let messages: Vec<Value> = rows
+        .iter()
+        .map(|(role, content)| json!({ "role": role, "content": content }))
+        .collect();
+
+    // 2. 估算原始 token 数
+    let original_tokens = estimate_tokens(&messages);
+
+    // 3. 获取模型配置
+    let (model_id,): (String,) = sqlx::query_as(
+        "SELECT model_id FROM sessions WHERE id = ?",
+    )
+    .bind(&session_id)
+    .fetch_one(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let (api_format, base_url, api_key, model_name) = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT api_format, base_url, api_key, model_name FROM model_configs WHERE id = ?",
+    )
+    .bind(&model_id)
+    .fetch_one(&db.0)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 4. 创建 transcript 目录
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let transcript_dir = app_data_dir.join("transcripts");
+    std::fs::create_dir_all(&transcript_dir).map_err(|e| e.to_string())?;
+
+    // 5. 保存完整记录并压缩
+    let transcript_path = compactor::save_transcript(&transcript_dir, &session_id, &messages)
+        .map_err(|e| e.to_string())?;
+
+    let compacted = compactor::auto_compact(
+        &api_format,
+        &base_url,
+        &api_key,
+        &model_name,
+        &messages,
+        &transcript_path.to_string_lossy(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 6. 更新会话消息（删除旧消息，插入压缩后的消息）
+    sqlx::query("DELETE FROM messages WHERE session_id = ?")
+        .bind(&session_id)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let now = Utc::now().to_rfc3339();
+    for msg in &compacted {
+        sqlx::query(
+            "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&session_id)
+        .bind(msg["role"].as_str().unwrap_or("user"))
+        .bind(msg["content"].as_str().unwrap_or(""))
+        .bind(&now)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    // 7. 返回结果
+    let new_tokens = estimate_tokens(&compacted);
+    let summary = compacted
+        .iter()
+        .find(|m| m["role"] == "user")
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(CompactionResult {
+        original_tokens,
+        new_tokens,
+        summary,
+    })
 }
