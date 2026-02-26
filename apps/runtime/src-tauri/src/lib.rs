@@ -135,6 +135,7 @@ pub fn run() {
             commands::chat::get_messages,
             commands::chat::get_sessions,
             commands::chat::delete_session,
+            commands::chat::update_session_workspace,
             commands::chat::search_sessions,
             commands::chat::export_session,
             commands::chat::write_export_file,

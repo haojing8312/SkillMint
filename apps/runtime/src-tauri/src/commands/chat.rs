@@ -740,6 +740,21 @@ pub async fn get_sessions(
 }
 
 #[tauri::command]
+pub async fn update_session_workspace(
+    session_id: String,
+    workspace: String,
+    db: State<'_, DbState>,
+) -> Result<(), String> {
+    sqlx::query("UPDATE sessions SET work_dir = ? WHERE id = ?")
+        .bind(&workspace)
+        .bind(&session_id)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn delete_session(
     session_id: String,
     db: State<'_, DbState>,
