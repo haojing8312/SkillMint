@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 
@@ -39,6 +39,55 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
+
+  // File Upload: 附件状态
+  const [attachedFiles, setAttachedFiles] = useState<FileAttachment[]>([]);
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const MAX_FILES = 5;
+
+  // File Upload: 读取文件为文本
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  };
+
+  // File Upload: 处理文件选择
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+
+    if (attachedFiles.length + files.length > MAX_FILES) {
+      alert(`最多只能上传 ${MAX_FILES} 个文件`);
+      return;
+    }
+
+    const newFiles: FileAttachment[] = [];
+    for (const file of files) {
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`文件 ${file.name} 超过 5MB 限制`);
+        continue;
+      }
+
+      const content = await readFileAsText(file);
+      newFiles.push({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        content,
+      });
+    }
+
+    setAttachedFiles((prev) => [...prev, ...newFiles]);
+    e.target.value = ""; // 重置 input
+  };
+
+  // File Upload: 删除附件
+  const removeAttachedFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
 
   // sessionId 变化时加载历史消息
   useEffect(() => {
