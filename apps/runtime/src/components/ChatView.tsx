@@ -509,6 +509,27 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
           )}
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Secure Workspace 选择器 */}
+          <button
+            onClick={() => {
+              // 打开目录选择器
+              invoke<string | null>("select_directory", {
+                defaultPath: workspace || undefined,
+              }).then((newDir) => {
+                if (newDir) {
+                  updateWorkspace(newDir);
+                }
+              });
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs text-gray-600 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            <span className="max-w-[150px] truncate">
+              {workspace || "选择工作目录"}
+            </span>
+          </button>
           {currentModel && (
             <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
               {currentModel.name}
