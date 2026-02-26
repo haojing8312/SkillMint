@@ -296,12 +296,33 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   }
 
   async function handleSend() {
-    if (!input.trim() || streaming || !sessionId) return;
+    if (!input.trim() && attachedFiles.length === 0) return;
+    if (streaming || !sessionId) return;
+
+    // 构建消息内容：用户输入 + 附件
     const msg = input.trim();
+    let fullContent = msg;
+
+    if (attachedFiles.length > 0) {
+      const attachmentsText = attachedFiles.map((f) => {
+        const ext = f.name.split(".").pop()?.toLowerCase() || "";
+        const isImage = f.type.startsWith("image/");
+        if (isImage) {
+          return `## ${f.name}\n![${f.name}](${f.content})`;
+        }
+        return `## ${f.name}\n\`\`\`${ext}\n${f.content}\n\`\`\``;
+      }).join("\n\n");
+
+      fullContent = msg
+        ? `${msg}\n\n---\n\n附件文件：\n${attachmentsText}`
+        : `附件文件：\n${attachmentsText}`;
+    }
+
     setInput("");
+    setAttachedFiles([]); // 发送后清空附件
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: msg, created_at: new Date().toISOString() },
+      { role: "user", content: fullContent, created_at: new Date().toISOString() },
     ]);
     setStreaming(true);
     streamItemsRef.current = [];
@@ -309,7 +330,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     subAgentBufferRef.current = "";
     setSubAgentBuffer("");
     try {
-      await invoke("send_message", { sessionId, userMessage: msg });
+      await invoke("send_message", { sessionId, userMessage: fullContent });
       onSessionUpdate?.();
     } catch (e) {
       setMessages((prev) => [
@@ -690,7 +711,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
               ) : (
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && attachedFiles.length === 0}
                   className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 active:scale-[0.97] disabled:bg-gray-100 disabled:text-gray-400 text-white text-xs font-medium transition-all"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
