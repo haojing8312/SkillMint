@@ -601,6 +601,41 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       {/* 输入区域 */}
       <div className="px-6 py-3 bg-gray-50/80">
         <div className="max-w-3xl mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+          {/* 附件列表展示 */}
+          {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-4 pt-3">
+              {attachedFiles.map((file, index) => (
+                <div
+                  key={index}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-full text-xs text-gray-700"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  <span className="max-w-[150px] truncate">{file.name}</span>
+                  <span className="text-gray-400">({(file.size / 1024).toFixed(1)}KB)</span>
+                  <button
+                    onClick={() => removeAttachedFile(index)}
+                    className="ml-1 hover:text-red-500"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 隐藏的文件输入 */}
+          <input
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            id="file-upload"
+          />
+
           {/* 输入框主体 */}
           <textarea
             ref={textareaRef}
@@ -632,6 +667,16 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* 附件按钮 */}
+              <label
+                htmlFor="file-upload"
+                className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 active:scale-[0.97] text-gray-600 text-xs font-medium transition-all cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                附件
+              </label>
               {streaming ? (
                 <button
                   onClick={handleCancel}
