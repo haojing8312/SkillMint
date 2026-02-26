@@ -118,6 +118,40 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     }
   };
 
+  // Manual Compression: 压缩状态
+  const [compacting, setCompacting] = useState(false);
+
+  // Manual Compression: 处理压缩
+  const handleCompact = async () => {
+    if (compacting || !sessionId) return;
+    setCompacting(true);
+    try {
+      const result = await invoke<{
+        original_tokens: number;
+        new_tokens: number;
+        summary: string;
+      }>("compact_context", { sessionId });
+
+      // 显示压缩结果
+      const summaryText = `📦 上下文已压缩：${result.original_tokens} → ${result.new_tokens} tokens`;
+
+      // 添加系统消息
+      setMessages((prev) => [
+        ...prev,
+        { role: "system", content: summaryText, created_at: new Date().toISOString() },
+        { role: "assistant", content: result.summary, created_at: new Date().toISOString() },
+      ]);
+
+      // 刷新消息
+      await loadMessages(sessionId);
+    } catch (e) {
+      console.error("压缩失败:", e);
+      alert("压缩失败: " + String(e));
+    } finally {
+      setCompacting(false);
+    }
+  };
+
   // sessionId 变化时加载历史消息
   useEffect(() => {
     loadMessages(sessionId);
@@ -326,6 +360,13 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   }
 
   async function handleSend() {
+    // 检查是否是 /compact 命令
+    if (input.trim() === "/compact") {
+      setInput("");
+      handleCompact();
+      return;
+    }
+
     if (!input.trim() && attachedFiles.length === 0) return;
     if (streaming || !sessionId) return;
 
@@ -749,6 +790,17 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
                 </svg>
                 附件
               </label>
+              {/* 压缩按钮 */}
+              <button
+                onClick={handleCompact}
+                disabled={compacting}
+                className="h-8 px-3 flex items-center justify-center gap-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 active:scale-[0.97] disabled:opacity-50 text-gray-600 text-xs font-medium transition-all"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+                {compacting ? "压缩中..." : "压缩"}
+              </button>
               {streaming ? (
                 <button
                   onClick={handleCancel}
