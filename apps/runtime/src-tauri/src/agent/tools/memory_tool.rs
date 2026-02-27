@@ -15,7 +15,7 @@ use crate::agent::types::{Tool, ToolContext};
 /// ```rust
 /// use std::path::PathBuf;
 /// use runtime_lib::agent::tools::MemoryTool;
-/// use runtime_lib::agent::types::Tool;
+/// use runtime_lib::agent::types::{Tool, ToolContext};
 /// use serde_json::json;
 ///
 /// let tool = MemoryTool::new(PathBuf::from("/tmp/memory"));

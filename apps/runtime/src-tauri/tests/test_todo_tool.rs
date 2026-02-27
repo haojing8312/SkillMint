@@ -3,22 +3,23 @@ use runtime_lib::agent::types::{Tool, ToolContext};
 use serde_json::json;
 
 #[test]
-fn test_todo_create_and_list() {
+fn test_todo_replace_and_list() {
     let tool = TodoWriteTool::new();
     let ctx = ToolContext::default();
 
     let result = tool
         .execute(json!({
-            "action": "create",
-            "subject": "实现 Edit 工具",
-            "description": "精确替换文本"
+            "todos": [
+                {"id": "t1", "content": "实现 Edit 工具", "status": "pending", "priority": "high"},
+                {"id": "t2", "content": "补充测试", "status": "in_progress", "priority": "medium"}
+            ]
         }), &ctx)
         .unwrap();
-    assert!(result.contains("已创建"));
-
-    let result = tool.execute(json!({"action": "list"}), &ctx).unwrap();
+    assert!(result.contains("共 2 项"));
     assert!(result.contains("实现 Edit 工具"));
+    assert!(result.contains("补充测试"));
     assert!(result.contains("pending"));
+    assert!(result.contains("in_progress"));
 }
 
 #[test]
@@ -26,24 +27,21 @@ fn test_todo_update_status() {
     let tool = TodoWriteTool::new();
     let ctx = ToolContext::default();
 
-    let result = tool
+    tool
         .execute(json!({
-            "action": "create",
-            "subject": "Test task"
+            "todos": [
+                {"id": "task-1", "content": "Test task", "status": "pending", "priority": "medium"}
+            ]
         }), &ctx)
         .unwrap();
-    let id = result.split("ID: ").nth(1).unwrap().trim();
 
     let result = tool
         .execute(json!({
-            "action": "update",
-            "id": id,
-            "status": "in_progress"
+            "todos": [
+                {"id": "task-1", "content": "Test task", "status": "in_progress", "priority": "medium"}
+            ]
         }), &ctx)
         .unwrap();
-    assert!(result.contains("已更新"));
-
-    let result = tool.execute(json!({"action": "list"}), &ctx).unwrap();
     assert!(result.contains("in_progress"));
 }
 
@@ -52,24 +50,20 @@ fn test_todo_delete() {
     let tool = TodoWriteTool::new();
     let ctx = ToolContext::default();
 
-    let result = tool
+    tool
         .execute(json!({
-            "action": "create",
-            "subject": "Will delete"
+            "todos": [
+                {"id": "task-del", "content": "Will delete", "status": "pending", "priority": "low"}
+            ]
         }), &ctx)
         .unwrap();
-    let id = result.split("ID: ").nth(1).unwrap().trim();
 
     let result = tool
         .execute(json!({
-            "action": "delete",
-            "id": id
+            "todos": []
         }), &ctx)
         .unwrap();
-    assert!(result.contains("已删除"));
-
-    let result = tool.execute(json!({"action": "list"}), &ctx).unwrap();
-    assert!(!result.contains("Will delete"));
+    assert!(result.contains("已清空"));
 }
 
 #[test]
@@ -78,21 +72,21 @@ fn test_todo_missing_action() {
     let ctx = ToolContext::default();
     let result = tool.execute(json!({}), &ctx);
     assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("缺少 todos 数组参数"));
 }
 
 #[test]
 fn test_todo_empty_list() {
     let tool = TodoWriteTool::new();
     let ctx = ToolContext::default();
-    let result = tool.execute(json!({"action": "list"}), &ctx).unwrap();
-    assert_eq!(result, "暂无任务");
+    let result = tool.execute(json!({"todos": []}), &ctx).unwrap();
+    assert!(result.contains("已清空"));
 }
 
 #[test]
 fn test_todo_delete_nonexistent() {
     let tool = TodoWriteTool::new();
     let ctx = ToolContext::default();
-    let result = tool.execute(json!({"action": "delete", "id": "fake-id"}), &ctx);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("任务不存在"));
+    let result = tool.execute(json!({"todos": []}), &ctx).unwrap();
+    assert!(result.contains("已清空"));
 }
