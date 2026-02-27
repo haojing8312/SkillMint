@@ -10,3 +10,10 @@ target/
 *.ilk
 reference/
 package-lock.json
+ 
+# local/unwanted artifacts
+AGENTS.md
+nul
+apps/runtime/sidecar/nul
+temp/
+scripts/sync-codex-skills.mjs
