@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Agent 工具执行权限模式
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -28,6 +29,55 @@ impl Default for PermissionMode {
     }
 }
 
+/// 规范化工具名（兼容 ReadFile/read_file/read-file/readfile 等写法）
+pub fn normalize_tool_name(name: &str) -> String {
+    let raw = name.trim().to_ascii_lowercase().replace('-', "_");
+    match raw.as_str() {
+        "readfile" => "read_file".to_string(),
+        "writefile" => "write_file".to_string(),
+        "listdir" => "list_dir".to_string(),
+        "bashoutput" => "bash_output".to_string(),
+        "bashkill" => "bash_kill".to_string(),
+        "websearch" => "web_search".to_string(),
+        "webfetch" => "web_fetch".to_string(),
+        "todowrite" => "todo_write".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 计算子 Skill 可用工具集合：parent_allowed ∩ child_allowed
+///
+/// - 当 child_allowed 为空（未声明）时，沿用 parent_allowed
+/// - 输出按 parent_allowed 顺序稳定返回，避免 UI 抖动
+pub fn narrow_allowed_tools(
+    parent_allowed: Option<&[String]>,
+    child_allowed: Option<&[String]>,
+) -> Vec<String> {
+    let parent_norm: Option<Vec<String>> = parent_allowed.map(|tools| {
+        tools
+            .iter()
+            .map(|t| normalize_tool_name(t))
+            .collect::<Vec<_>>()
+    });
+
+    let child_norm: Option<HashSet<String>> = child_allowed.map(|tools| {
+        tools
+            .iter()
+            .map(|t| normalize_tool_name(t))
+            .collect::<HashSet<_>>()
+    });
+
+    match (parent_norm, child_norm) {
+        (Some(parent), Some(child)) => parent
+            .into_iter()
+            .filter(|t| child.contains(t))
+            .collect(),
+        (Some(parent), None) => parent,
+        (None, Some(child)) => child.into_iter().collect(),
+        (None, None) => vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,5 +86,27 @@ mod tests {
     fn test_default_mode_is_default_variant() {
         // 确认 Default::default() 返回 Default 变体
         assert_eq!(PermissionMode::default(), PermissionMode::Default);
+    }
+
+    #[test]
+    fn test_normalize_tool_name_aliases() {
+        assert_eq!(normalize_tool_name("ReadFile"), "read_file");
+        assert_eq!(normalize_tool_name("read-file"), "read_file");
+        assert_eq!(normalize_tool_name("todoWrite"), "todo_write");
+    }
+
+    #[test]
+    fn test_narrow_allowed_tools_intersection() {
+        let parent = vec!["read_file".to_string(), "glob".to_string(), "bash".to_string()];
+        let child = vec!["ReadFile".to_string(), "web_search".to_string()];
+        let narrowed = narrow_allowed_tools(Some(&parent), Some(&child));
+        assert_eq!(narrowed, vec!["read_file".to_string()]);
+    }
+
+    #[test]
+    fn test_narrow_allowed_tools_child_undefined_inherits_parent() {
+        let parent = vec!["read_file".to_string(), "glob".to_string()];
+        let narrowed = narrow_allowed_tools(Some(&parent), None);
+        assert_eq!(narrowed, parent);
     }
 }

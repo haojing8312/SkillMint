@@ -229,6 +229,20 @@ pub fn build_skill_route_event(
     })
 }
 
+pub fn split_error_code_and_message(text: &str) -> (String, String) {
+    if let Some((code, msg)) = text.split_once(':') {
+        let code = code.trim();
+        if !code.is_empty()
+            && code
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        {
+            return (code.to_string(), msg.trim().to_string());
+        }
+    }
+    ("SKILL_EXECUTION_ERROR".to_string(), text.to_string())
+}
+
 impl AgentExecutor {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
         Self {
@@ -293,6 +307,7 @@ impl AgentExecutor {
 
         let tool_ctx = ToolContext {
             work_dir: work_dir.map(PathBuf::from),
+            allowed_tools: allowed_tools.map(|tools| tools.to_vec()),
         };
         let max_iterations = max_iterations_override.unwrap_or(self.max_iterations);
         let mut iteration = 0;
@@ -687,6 +702,11 @@ impl AgentExecutor {
                         if is_skill_call {
                             if let (Some(app), Some(sid)) = (app_handle, session_id) {
                                 let duration_ms = started_at.elapsed().as_millis() as u64;
+                                let parsed_error = if is_error {
+                                    Some(split_error_code_and_message(&result))
+                                } else {
+                                    None
+                                };
                                 let _ = app.emit(
                                     "skill-route-node-updated",
                                     build_skill_route_event(
@@ -698,8 +718,8 @@ impl AgentExecutor {
                                         1,
                                         if is_error { "failed" } else { "completed" },
                                         Some(duration_ms),
-                                        if is_error { Some("SKILL_EXECUTION_ERROR") } else { None },
-                                        if is_error { Some(result.as_str()) } else { None },
+                                        parsed_error.as_ref().map(|(code, _)| code.as_str()),
+                                        parsed_error.as_ref().map(|(_, msg)| msg.as_str()),
                                     ),
                                 );
                             }

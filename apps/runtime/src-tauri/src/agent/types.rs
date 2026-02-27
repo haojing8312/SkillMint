@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub struct ToolContext {
     /// 工作目录路径，如有值则所有文件操作限制在此目录下
     pub work_dir: Option<PathBuf>,
+    /// 当前回合允许调用的工具集合（已规范化工具名）
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 impl ToolContext {

@@ -1,4 +1,4 @@
-use runtime_lib::agent::executor::build_skill_route_event;
+use runtime_lib::agent::executor::{build_skill_route_event, split_error_code_and_message};
 use runtime_lib::commands::chat::SkillRouteEvent;
 use serde_json::Value;
 
@@ -25,6 +25,17 @@ fn skill_route_event_payload_has_required_fields() {
     assert_eq!(v["skill_name"], "using-superpowers");
     assert_eq!(v["depth"], 1);
     assert_eq!(v["status"], "routing");
+}
+
+#[test]
+fn split_error_code_parses_prefixed_errors() {
+    let (code, msg) = split_error_code_and_message("SKILL_NOT_FOUND: missing child");
+    assert_eq!(code, "SKILL_NOT_FOUND");
+    assert_eq!(msg, "missing child");
+
+    let (code2, msg2) = split_error_code_and_message("plain text error");
+    assert_eq!(code2, "SKILL_EXECUTION_ERROR");
+    assert_eq!(msg2, "plain text error");
 }
 
 #[test]

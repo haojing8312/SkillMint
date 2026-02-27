@@ -17,6 +17,22 @@ interface Props {
 }
 
 export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }: Props) {
+  const routeErrorHint = (code?: string) => {
+    switch (code) {
+      case "SKILL_NOT_FOUND":
+        return "建议：检查 Skill 名称、安装状态和搜索路径。";
+      case "CALL_DEPTH_EXCEEDED":
+        return "建议：减少嵌套调用或调低递归链路复杂度。";
+      case "CALL_CYCLE_DETECTED":
+        return "建议：检查 Skill 互相调用关系，移除循环依赖。";
+      case "PERMISSION_DENIED":
+        return "建议：在父会话允许工具范围内调整子 Skill 声明。";
+      case "TIMEOUT":
+        return "建议：缩小任务范围后重试。";
+      default:
+        return "";
+    }
+  };
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -881,6 +897,9 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
                               {evt.parent_node_id && <div>parent: {evt.parent_node_id}</div>}
                               {typeof evt.duration_ms === "number" && <div>duration: {evt.duration_ms}ms</div>}
                               {evt.error_code && <div className="text-red-500">error: {evt.error_code}</div>}
+                              {evt.error_code && routeErrorHint(evt.error_code) && (
+                                <div className="text-amber-600">{routeErrorHint(evt.error_code)}</div>
+                              )}
                             </div>
                           </div>
                         ))}
