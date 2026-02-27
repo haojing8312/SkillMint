@@ -38,6 +38,24 @@ struct StreamToken {
     sub_agent: bool,
 }
 
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct SkillRouteEvent {
+    pub session_id: String,
+    pub route_run_id: String,
+    pub node_id: String,
+    pub parent_node_id: Option<String>,
+    pub skill_name: String,
+    pub depth: usize,
+    pub status: String,
+    pub duration_ms: Option<u64>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+pub fn emit_skill_route_event(app: &AppHandle, event: SkillRouteEvent) {
+    let _ = app.emit("skill-route-node-updated", event);
+}
+
 #[tauri::command]
 pub async fn create_session(
     skill_id: String,

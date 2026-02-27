@@ -51,6 +51,28 @@ export interface SessionInfo {
   work_dir?: string;
 }
 
+export type SkillRouteNodeStatus =
+  | "routing"
+  | "executing"
+  | "waiting_user"
+  | "confirm_required"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface SkillRouteEvent {
+  session_id: string;
+  route_run_id: string;
+  node_id: string;
+  parent_node_id?: string;
+  skill_name: string;
+  depth: number;
+  status: SkillRouteNodeStatus | string;
+  duration_ms?: number;
+  error_code?: string;
+  error_message?: string;
+}
+
 /// 文件附件（用于 File Upload 功能）
 export interface FileAttachment {
   name: string;

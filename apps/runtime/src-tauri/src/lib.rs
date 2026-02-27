@@ -1,7 +1,7 @@
 pub mod agent;
 pub mod sidecar;
 mod adapters;
-mod commands;
+pub mod commands;
 mod db;
 
 use agent::{AgentExecutor, ToolRegistry};
