@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, SkillRouteEvent } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 
@@ -47,6 +47,8 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
 
   // 右侧面板状态
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const [sidePanelTab, setSidePanelTab] = useState<"assets" | "routing">("assets");
+  const [routeEvents, setRouteEvents] = useState<SkillRouteEvent[]>([]);
 
   // File Upload: 读取文件为文本
   const readFileAsText = (file: File): Promise<string> => {
@@ -170,6 +172,7 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     setAskUserAnswer("");
     setAgentState(null);
     setToolConfirm(null);
+    setRouteEvents([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -236,6 +239,25 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
     );
     return () => {
       currentSessionId = null;
+      unlistenPromise.then((fn) => fn());
+    };
+  }, [sessionId]);
+
+  // skill-route-node-updated 事件监听：自动路由调用链
+  useEffect(() => {
+    const unlistenPromise = listen<SkillRouteEvent>("skill-route-node-updated", ({ payload }) => {
+      if (payload.session_id !== sessionId) return;
+      setRouteEvents((prev) => {
+        const idx = prev.findIndex((e) => e.node_id === payload.node_id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = payload;
+          return next;
+        }
+        return [...prev, payload];
+      });
+    });
+    return () => {
       unlistenPromise.then((fn) => fn());
     };
   }, [sessionId]);
@@ -473,6 +495,9 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
 
   // 从 models 查找当前会话的模型名称
   const currentModel = models[0];
+  const routeCompleted = routeEvents.filter((e) => e.status === "completed").length;
+  const routeFailed = routeEvents.filter((e) => e.status === "failed").length;
+  const routeTotalDuration = routeEvents.reduce((sum, e) => sum + (e.duration_ms || 0), 0);
 
   // Markdown 渲染组件配置
   const markdownComponents = {
@@ -785,7 +810,24 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
             className="h-full bg-gray-50 border-l border-gray-200 overflow-hidden flex flex-col"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white/50">
-              <span className="text-sm font-medium text-gray-700">附件与工具</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSidePanelTab("assets")}
+                  className={`px-2 py-1 rounded text-xs transition-colors ${
+                    sidePanelTab === "assets" ? "bg-blue-100 text-blue-600" : "text-gray-500 hover:bg-gray-100"
+                  }`}
+                >
+                  附件与工具
+                </button>
+                <button
+                  onClick={() => setSidePanelTab("routing")}
+                  className={`px-2 py-1 rounded text-xs transition-colors ${
+                    sidePanelTab === "routing" ? "bg-blue-100 text-blue-600" : "text-gray-500 hover:bg-gray-100"
+                  }`}
+                >
+                  自动路由
+                </button>
+              </div>
               <button
                 onClick={() => setSidePanelOpen(false)}
                 className="p-1 hover:bg-gray-100 rounded"
@@ -796,6 +838,60 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {sidePanelTab === "routing" && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-white rounded-lg border border-gray-200 shadow-sm">
+                    <div className="text-xs text-gray-500 mb-2">概览</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2 rounded bg-gray-50 text-gray-600">总节点: {routeEvents.length}</div>
+                      <div className="p-2 rounded bg-gray-50 text-green-600">成功: {routeCompleted}</div>
+                      <div className="p-2 rounded bg-gray-50 text-red-500">失败: {routeFailed}</div>
+                      <div className="p-2 rounded bg-gray-50 text-gray-600">总耗时: {routeTotalDuration}ms</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 mb-2">调用链</div>
+                    {routeEvents.length === 0 ? (
+                      <div className="text-center text-gray-400 text-sm py-6">暂无路由事件</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {routeEvents.map((evt) => (
+                          <div
+                            key={evt.node_id}
+                            className="p-3 bg-white rounded-lg border border-gray-200 shadow-sm"
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-sm font-medium text-gray-700 font-mono">{evt.skill_name || "(unknown)"}</span>
+                              <span
+                                className={`text-[11px] px-1.5 py-0.5 rounded ${
+                                  evt.status === "completed"
+                                    ? "bg-green-100 text-green-700"
+                                    : evt.status === "failed"
+                                    ? "bg-red-100 text-red-600"
+                                    : "bg-blue-100 text-blue-600"
+                                }`}
+                              >
+                                {evt.status}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-gray-500 space-y-0.5">
+                              <div>depth: {evt.depth}</div>
+                              <div>node: {evt.node_id}</div>
+                              {evt.parent_node_id && <div>parent: {evt.parent_node_id}</div>}
+                              {typeof evt.duration_ms === "number" && <div>duration: {evt.duration_ms}ms</div>}
+                              {evt.error_code && <div className="text-red-500">error: {evt.error_code}</div>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {sidePanelTab === "assets" && (
+                <>
               {/* 附件列表 */}
               {attachedFiles.length > 0 && (
                 <div>
@@ -880,6 +976,8 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
                   暂无附件和工具调用
                 </div>
               )}
+                </>
+              )}
             </div>
           </motion.div>
         )}
@@ -888,6 +986,19 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
 
       {/* 输入区域 */}
       <div className="px-6 py-3 bg-gray-50/80">
+        {routeEvents.length > 0 && (
+          <div className="max-w-3xl mx-auto mb-2">
+            <button
+              onClick={() => {
+                setSidePanelOpen(true);
+                setSidePanelTab("routing");
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl bg-white border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              已自动路由 {routeEvents.length} 个子 Skill · 成功 {routeCompleted} · 失败 {routeFailed} · {routeTotalDuration}ms
+            </button>
+          </div>
+        )}
         <div className="max-w-3xl mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
           {/* 隐藏的文件输入 */}
           <input
