@@ -312,8 +312,8 @@ impl AgentExecutor {
             allowed_tools: allowed_tools.map(|tools| tools.to_vec()),
         };
         let max_iterations = max_iterations_override.unwrap_or(self.max_iterations);
-        let _route_node_timeout_secs = route_node_timeout_secs.unwrap_or(60).clamp(5, 600);
-        let _route_retry_count = route_retry_count.unwrap_or(0).clamp(0, 2);
+        let route_node_timeout_secs = route_node_timeout_secs.unwrap_or(60).clamp(5, 600);
+        let route_retry_count = route_retry_count.unwrap_or(0).clamp(0, 2);
         let mut iteration = 0;
         let route_run_id = Uuid::new_v4().to_string();
 
@@ -616,73 +616,108 @@ impl AgentExecutor {
                             }
                         }
 
-                        let (result, is_error) = match self.registry.get(&call.name) {
-                            Some(tool) => {
-                                // 检查白名单：若设置了白名单但工具不在其中，拒绝执行
-                                if let Some(whitelist) = allowed_tools {
-                                    if !whitelist.iter().any(|w| w == &call.name) {
-                                        (format!("此 Skill 不允许使用工具: {}", call.name), true)
+                        let max_attempts = if is_skill_call { route_retry_count + 1 } else { 1 };
+                        let mut attempt = 0usize;
+                        let (result, is_error) = loop {
+                            attempt += 1;
+                            let (result, is_error) = match self.registry.get(&call.name) {
+                                Some(tool) => {
+                                    // 检查白名单：若设置了白名单但工具不在其中，拒绝执行
+                                    if let Some(whitelist) = allowed_tools {
+                                        if !whitelist.iter().any(|w| w == &call.name) {
+                                            (format!("此 Skill 不允许使用工具: {}", call.name), true)
+                                        } else {
+                                            let tool_clone = Arc::clone(&tool);
+                                            let input_clone = call.input.clone();
+                                            let ctx_clone = tool_ctx.clone();
+                                            let handle = tokio::task::spawn_blocking(move || {
+                                                tool_clone.execute(input_clone, &ctx_clone)
+                                            });
+                                            let cancel_flag_ref = cancel_flag.clone();
+                                            let exec_future = async move {
+                                                tokio::select! {
+                                                    res = handle => {
+                                                        match res {
+                                                            Ok(Ok(output)) => (output, false),
+                                                            Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
+                                                            Err(e) => (format!("工具执行线程异常: {}", e), true),
+                                                        }
+                                                    }
+                                                    _ = Self::wait_for_cancel(&cancel_flag_ref) => {
+                                                        ("工具执行被用户取消".to_string(), true)
+                                                    }
+                                                }
+                                            };
+                                            if is_skill_call {
+                                                match tokio::time::timeout(
+                                                    std::time::Duration::from_secs(route_node_timeout_secs),
+                                                    exec_future,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(v) => v,
+                                                    Err(_) => ("TIMEOUT: 子 Skill 执行超时".to_string(), true),
+                                                }
+                                            } else {
+                                                exec_future.await
+                                            }
+                                        }
                                     } else {
-                                        // 可取消的工具执行
                                         let tool_clone = Arc::clone(&tool);
                                         let input_clone = call.input.clone();
                                         let ctx_clone = tool_ctx.clone();
                                         let handle = tokio::task::spawn_blocking(move || {
                                             tool_clone.execute(input_clone, &ctx_clone)
                                         });
-                                        // 用 select! 同时等待工具完成或取消信号
                                         let cancel_flag_ref = cancel_flag.clone();
-                                        tokio::select! {
-                                            res = handle => {
-                                                match res {
-                                                    Ok(Ok(output)) => (output, false),
-                                                    Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
-                                                    Err(e) => (format!("工具执行线程异常: {}", e), true),
+                                        let exec_future = async move {
+                                            tokio::select! {
+                                                res = handle => {
+                                                    match res {
+                                                        Ok(Ok(output)) => (output, false),
+                                                        Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
+                                                        Err(e) => (format!("工具执行线程异常: {}", e), true),
+                                                    }
+                                                }
+                                                _ = Self::wait_for_cancel(&cancel_flag_ref) => {
+                                                    ("工具执行被用户取消".to_string(), true)
                                                 }
                                             }
-                                            _ = Self::wait_for_cancel(&cancel_flag_ref) => {
-                                                ("工具执行被用户取消".to_string(), true)
+                                        };
+                                        if is_skill_call {
+                                            match tokio::time::timeout(
+                                                std::time::Duration::from_secs(route_node_timeout_secs),
+                                                exec_future,
+                                            )
+                                            .await
+                                            {
+                                                Ok(v) => v,
+                                                Err(_) => ("TIMEOUT: 子 Skill 执行超时".to_string(), true),
                                             }
-                                        }
-                                    }
-                                } else {
-                                    // 可取消的工具执行
-                                    let tool_clone = Arc::clone(&tool);
-                                    let input_clone = call.input.clone();
-                                    let ctx_clone = tool_ctx.clone();
-                                    let handle = tokio::task::spawn_blocking(move || {
-                                        tool_clone.execute(input_clone, &ctx_clone)
-                                    });
-                                    let cancel_flag_ref = cancel_flag.clone();
-                                    tokio::select! {
-                                        res = handle => {
-                                            match res {
-                                                Ok(Ok(output)) => (output, false),
-                                                Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
-                                                Err(e) => (format!("工具执行线程异常: {}", e), true),
-                                            }
-                                        }
-                                        _ = Self::wait_for_cancel(&cancel_flag_ref) => {
-                                            ("工具执行被用户取消".to_string(), true)
+                                        } else {
+                                            exec_future.await
                                         }
                                     }
                                 }
-                            }
-                            None => {
-                                // 列出可用工具，引导 LLM 使用正确的工具
-                                let available: Vec<String> = self.registry
-                                    .get_tool_definitions()
-                                    .iter()
-                                    .filter_map(|t| t["name"].as_str().map(String::from))
-                                    .collect();
-                                (
-                                    format!(
-                                        "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
-                                        call.name,
-                                        available.join(", ")
-                                    ),
-                                    true,
-                                )
+                                None => {
+                                    // 列出可用工具，引导 LLM 使用正确的工具
+                                    let available: Vec<String> = self.registry
+                                        .get_tool_definitions()
+                                        .iter()
+                                        .filter_map(|t| t["name"].as_str().map(String::from))
+                                        .collect();
+                                    (
+                                        format!(
+                                            "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
+                                            call.name,
+                                            available.join(", ")
+                                        ),
+                                        true,
+                                    )
+                                }
+                            };
+                            if !is_error || attempt >= max_attempts {
+                                break (result, is_error);
                             }
                         };
                         // 截断过长的工具输出，防止超出上下文窗口
