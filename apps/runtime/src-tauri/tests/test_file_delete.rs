@@ -24,6 +24,7 @@ fn test_delete_file() {
     let tool = FileDeleteTool;
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
+        allowed_tools: None,
     };
 
     let input = json!({
@@ -49,6 +50,7 @@ fn test_delete_empty_directory() {
     let tool = FileDeleteTool;
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
+        allowed_tools: None,
     };
 
     let input = json!({
@@ -74,6 +76,7 @@ fn test_delete_nonempty_dir_without_recursive() {
     let tool = FileDeleteTool;
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
+        allowed_tools: None,
     };
 
     let input = json!({
@@ -108,6 +111,7 @@ fn test_delete_nonempty_dir_with_recursive() {
     let tool = FileDeleteTool;
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
+        allowed_tools: None,
     };
 
     let input = json!({
@@ -131,6 +135,7 @@ fn test_delete_nonexistent_path() {
     let tool = FileDeleteTool;
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
+        allowed_tools: None,
     };
 
     let input = json!({
