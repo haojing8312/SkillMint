@@ -10,6 +10,8 @@ interface Props {
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
+  newSessionPermissionMode: "default" | "accept_edits" | "unrestricted";
+  onChangeNewSessionPermissionMode: (mode: "default" | "accept_edits" | "unrestricted") => void;
   onDeleteSession: (id: string) => void;
   onInstall: () => void;
   onSettings: () => void;
@@ -27,6 +29,8 @@ export function Sidebar({
   selectedSessionId,
   onSelectSession,
   onNewSession,
+  newSessionPermissionMode,
+  onChangeNewSessionPermissionMode,
   onDeleteSession,
   onInstall,
   onSettings,
@@ -135,6 +139,22 @@ export function Sidebar({
             >
               + 新建
             </button>
+          </div>
+          <div className="px-3 py-2 border-b border-gray-200">
+            <label className="block text-[11px] text-gray-500 mb-1">新会话权限模式</label>
+            <select
+              value={newSessionPermissionMode}
+              onChange={(e) =>
+                onChangeNewSessionPermissionMode(
+                  e.target.value as "default" | "accept_edits" | "unrestricted"
+                )
+              }
+              className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs text-gray-800 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+            >
+              <option value="accept_edits">accept_edits（推荐）</option>
+              <option value="default">default（严格确认）</option>
+              <option value="unrestricted">unrestricted（危险：跳过全部确认）</option>
+            </select>
           </div>
           {/* 搜索框 */}
           <div className="px-3 py-2 border-b border-gray-200">

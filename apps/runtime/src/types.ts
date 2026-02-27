@@ -49,6 +49,7 @@ export interface SessionInfo {
   created_at: string;
   model_id: string;
   work_dir?: string;
+  permission_mode?: "default" | "accept_edits" | "unrestricted";
 }
 
 export type SkillRouteNodeStatus =

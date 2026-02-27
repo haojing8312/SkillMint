@@ -17,6 +17,7 @@ export default function App() {
   const [showInstall, setShowInstall] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [newSessionPermissionMode, setNewSessionPermissionMode] = useState<"default" | "accept_edits" | "unrestricted">("accept_edits");
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -71,6 +72,7 @@ export default function App() {
         skillId: selectedSkillId,
         modelId,
         workDir: dir,
+        permissionMode: newSessionPermissionMode,
       });
       setSelectedSessionId(id);
       if (selectedSkillId) await loadSessions(selectedSkillId);
@@ -146,6 +148,7 @@ export default function App() {
           skillId,
           modelId,
           workDir: dir,
+          permissionMode: newSessionPermissionMode,
         });
         const sessions = await invoke<SessionInfo[]>("get_sessions", { skillId });
         setSessions(sessions);
@@ -174,6 +177,8 @@ export default function App() {
         selectedSessionId={selectedSessionId}
         onSelectSession={setSelectedSessionId}
         onNewSession={handleCreateSession}
+        newSessionPermissionMode={newSessionPermissionMode}
+        onChangeNewSessionPermissionMode={setNewSessionPermissionMode}
         onDeleteSession={handleDeleteSession}
         onInstall={() => setShowInstall(true)}
         onSettings={() => setShowSettings(true)}
