@@ -5,7 +5,8 @@
     "studio": "pnpm --filter studio tauri dev",
     "runtime": "pnpm --filter runtime tauri dev",
     "build:studio": "pnpm --filter studio tauri build",
-    "build:runtime": "pnpm --filter runtime tauri build"
+    "build:runtime": "pnpm --filter runtime tauri build",
+    "sync:codex-skills": "node scripts/sync-codex-skills.mjs"
   },
   "devDependencies": {
     "turbo": "^2.0.0"

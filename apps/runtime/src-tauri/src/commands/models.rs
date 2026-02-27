@@ -50,7 +50,7 @@ pub async fn save_model_config(
 #[tauri::command]
 pub async fn list_model_configs(db: State<'_, DbState>) -> Result<Vec<ModelConfig>, String> {
     let rows = sqlx::query_as::<_, (String, String, String, String, String, bool)>(
-        "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN) FROM model_configs"
+        "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN) FROM model_configs WHERE api_format NOT LIKE 'search_%'"
     )
     .fetch_all(&db.0)
     .await

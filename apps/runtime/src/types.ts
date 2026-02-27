@@ -27,7 +27,7 @@ export interface StreamItem {
 }
 
 export interface Message {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   created_at: string;
   toolCalls?: ToolCallInfo[];

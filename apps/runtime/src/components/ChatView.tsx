@@ -45,6 +45,9 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
   const MAX_FILES = 5;
 
+  // 右侧面板状态
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+
   // File Upload: 读取文件为文本
   const readFileAsText = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -471,8 +474,9 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
   // 从 models 查找当前会话的模型名称
   const currentModel = models[0];
 
-  // Markdown 代码块语法高亮配置
+  // Markdown 渲染组件配置
   const markdownComponents = {
+    // 代码块
     code({ className, children, ...props }: any) {
       const match = /language-(\w+)/.exec(className || "");
       const codeString = String(children).replace(/\n$/, "");
@@ -486,11 +490,61 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
           {codeString}
         </SyntaxHighlighter>
       ) : (
-        <code className={"bg-gray-200/60 px-1.5 py-0.5 rounded text-sm text-gray-800 " + (className || "")} {...props}>
+        <code className={"bg-gray-200/60 px-1.5 py-0.5 rounded text-sm text-gray-800 font-mono " + (className || "")} {...props}>
           {children}
         </code>
       );
     },
+    // 标题
+    h1: ({ children }: any) => <h1 className="text-2xl font-bold text-gray-900 mt-6 mb-3 pb-2 border-b border-gray-200">{children}</h1>,
+    h2: ({ children }: any) => <h2 className="text-xl font-bold text-gray-900 mt-5 mb-2.5 pb-1.5 border-b border-gray-100">{children}</h2>,
+    h3: ({ children }: any) => <h3 className="text-lg font-semibold text-gray-800 mt-4 mb-2">{children}</h3>,
+    h4: ({ children }: any) => <h4 className="text-base font-semibold text-gray-700 mt-3 mb-1.5">{children}</h4>,
+    h5: ({ children }: any) => <h5 className="text-sm font-semibold text-gray-700 mt-2 mb-1">{children}</h5>,
+    h6: ({ children }: any) => <h6 className="text-sm font-medium text-gray-600 mt-2 mb-1">{children}</h6>,
+    // 段落
+    p: ({ children }: any) => <p className="text-sm text-gray-700 leading-relaxed mb-3">{children}</p>,
+    // 列表
+    ul: ({ children }: any) => <ul className="list-disc list-inside space-y-1 mb-3 text-sm text-gray-700">{children}</ul>,
+    ol: ({ children }: any) => <ol className="list-decimal list-inside space-y-1 mb-3 text-sm text-gray-700">{children}</ol>,
+    li: ({ children }: any) => <li className="text-sm text-gray-700">{children}</li>,
+    // 链接
+    a: ({ href, children }: any) => (
+      <a
+        href={href}
+        className="text-blue-500 hover:text-blue-600 underline underline-offset-2 text-sm"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {children}
+      </a>
+    ),
+    // 引用块
+    blockquote: ({ children }: any) => (
+      <blockquote className="border-l-4 border-gray-300 pl-4 py-1 my-3 bg-gray-50 rounded-r-lg">
+        <div className="text-sm text-gray-600 italic">{children}</div>
+      </blockquote>
+    ),
+    // 表格
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto my-3">
+        <table className="min-w-full border border-gray-200 rounded-lg overflow-hidden text-sm">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: any) => <thead className="bg-gray-100">{children}</thead>,
+    tbody: ({ children }: any) => <tbody className="divide-y divide-gray-100">{children}</tbody>,
+    tr: ({ children }: any) => <tr className="hover:bg-gray-50">{children}</tr>,
+    th: ({ children }: any) => (
+      <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider bg-gray-50">
+        {children}
+      </th>
+    ),
+    td: ({ children }: any) => <td className="px-3 py-2 text-sm text-gray-700">{children}</td>,
+    // 水平线
+    hr: () => <hr className="my-6 border-gray-200" />,
+    // 强调
+    strong: ({ children }: any) => <strong className="font-semibold text-gray-900">{children}</strong>,
+    em: ({ children }: any) => <em className="italic text-gray-700">{children}</em>,
   };
 
   /** 渲染有序的 StreamItem 列表（将连续的工具调用合并到一个 ToolIsland） */
@@ -540,16 +594,22 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white/70 backdrop-blur-sm">
         <div className="flex items-center gap-3 min-w-0">
           <span className="font-semibold text-gray-900 flex-shrink-0">{skill.name}</span>
-          {workDir && (
-            <span
-              className="text-xs text-gray-400 truncate max-w-[260px]"
-              title={workDir}
-            >
-              {workDir}
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
+          {/* 右侧面板切换按钮 */}
+          <button
+            onClick={() => setSidePanelOpen(!sidePanelOpen)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition-colors ${
+              sidePanelOpen
+                ? "bg-blue-100 text-blue-600"
+                : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+            </svg>
+            面板
+          </button>
           {/* Secure Workspace 选择器 */}
           <button
             onClick={() => {
@@ -579,8 +639,10 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
         </div>
       </div>
 
-      {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+      {/* 主内容区：消息列表 + 右侧面板 */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* 消息列表 */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {agentState && (
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-white/80 backdrop-blur-lg px-4 py-2 rounded-xl text-xs text-gray-600 border border-gray-200 shadow-sm mx-4 mt-2">
             <span className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full" />
@@ -634,7 +696,8 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
           >
             <div className="max-w-[80%] bg-white rounded-2xl px-5 py-3 text-sm text-gray-800 shadow-sm border border-gray-100">
               {renderStreamItems(streamItems, true)}
-              <span className="animate-pulse text-blue-400">|</span>
+              {/* 光标闪烁效果 */}
+              <span className="inline-block w-0.5 h-4 bg-blue-400 ml-0.5 align-middle animate-[blink_1s_infinite]" />
             </div>
           </motion.div>
         )}
@@ -711,35 +774,121 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
         <div ref={bottomRef} />
       </div>
 
+      {/* 右侧面板 */}
+      <AnimatePresence>
+        {sidePanelOpen && (
+          <motion.div
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 320, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            className="h-full bg-gray-50 border-l border-gray-200 overflow-hidden flex flex-col"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white/50">
+              <span className="text-sm font-medium text-gray-700">附件与工具</span>
+              <button
+                onClick={() => setSidePanelOpen(false)}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* 附件列表 */}
+              {attachedFiles.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-gray-500 mb-2">附件 ({attachedFiles.length})</div>
+                  <div className="space-y-2">
+                    {attachedFiles.map((file, index) => (
+                      <div
+                        key={index}
+                        className="p-3 bg-white rounded-lg border border-gray-200 shadow-sm"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="text-sm font-medium text-gray-700 truncate max-w-[180px]">{file.name}</span>
+                          </div>
+                          <button
+                            onClick={() => removeAttachedFile(index)}
+                            className="p-1 hover:bg-gray-100 rounded"
+                          >
+                            <svg className="w-3.5 h-3.5 text-gray-400 hover:text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        <div className="text-xs text-gray-400">{(file.size / 1024).toFixed(1)} KB</div>
+                        {/* 文件内容预览（只显示前200字符） */}
+                        {file.content.length > 0 && (
+                          <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600 font-mono max-h-24 overflow-y-auto">
+                            {file.content.slice(0, 200)}
+                            {file.content.length > 200 && "..."}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 工具调用历史（从消息中提取） */}
+              {messages.some(m => m.toolCalls && m.toolCalls.length > 0) && (
+                <div>
+                  <div className="text-xs font-medium text-gray-500 mb-2">工具调用</div>
+                  <div className="space-y-2">
+                    {messages.flatMap((m, mi) =>
+                      (m.toolCalls || []).map((tc, ti) => (
+                        <div
+                          key={`${mi}-${ti}`}
+                          className="p-3 bg-white rounded-lg border border-gray-200 shadow-sm"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            {tc.status === "completed" ? (
+                              <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : tc.status === "error" ? (
+                              <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            ) : (
+                              <span className="h-2.5 w-2.5 rounded-full bg-blue-400 animate-pulse" />
+                            )}
+                            <span className="text-sm font-medium text-gray-700 font-mono">{tc.name}</span>
+                          </div>
+                          {tc.output && (
+                            <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600 font-mono max-h-24 overflow-y-auto">
+                              {tc.output.slice(0, 200)}
+                              {tc.output.length > 200 && "..."}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 空状态 */}
+              {attachedFiles.length === 0 && !messages.some(m => m.toolCalls && m.toolCalls.length > 0) && (
+                <div className="text-center text-gray-400 text-sm py-8">
+                  暂无附件和工具调用
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      </div>
+
       {/* 输入区域 */}
       <div className="px-6 py-3 bg-gray-50/80">
         <div className="max-w-3xl mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
-          {/* 附件列表展示 */}
-          {attachedFiles.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-4 pt-3">
-              {attachedFiles.map((file, index) => (
-                <div
-                  key={index}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-full text-xs text-gray-700"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                  </svg>
-                  <span className="max-w-[150px] truncate">{file.name}</span>
-                  <span className="text-gray-400">({(file.size / 1024).toFixed(1)}KB)</span>
-                  <button
-                    onClick={() => removeAttachedFile(index)}
-                    className="ml-1 hover:text-red-500"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
           {/* 隐藏的文件输入 */}
           <input
             type="file"

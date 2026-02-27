@@ -11,7 +11,7 @@ use crate::agent::executor::estimate_tokens;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::tools::{
     CompactTool, TaskTool, MemoryTool, WebSearchTool, AskUserTool, AskUserResponder,
-    BashTool, BashOutputTool, BashKillTool, ProcessManager,
+    BashTool, BashOutputTool, BashKillTool, ProcessManager, SkillInvokeTool,
     browser_tools::register_browser_tools,
 };
 use crate::agent::tools::search_providers::cache::SearchCache;
@@ -280,6 +280,28 @@ pub async fn send_message(
     let memory_tool = MemoryTool::new(memory_dir.clone());
     agent_executor.registry().register(Arc::new(memory_tool));
 
+    // 注册 Skill 调用工具（支持 Skill 之间按需互调）
+    let mut skill_roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(wd) = tool_ctx_from_work_dir(&work_dir) {
+        skill_roots.push(wd.join(".claude").join("skills"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        skill_roots.push(cwd.join(".claude").join("skills"));
+    }
+    if source_type == "local" {
+        let skill_path = std::path::Path::new(&pack_path);
+        if let Some(parent) = skill_path.parent() {
+            skill_roots.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        skill_roots.push(std::path::PathBuf::from(profile).join(".claude").join("skills"));
+    }
+    skill_roots.sort();
+    skill_roots.dedup();
+    let skill_tool = SkillInvokeTool::new(session_id.clone(), skill_roots);
+    agent_executor.registry().register(Arc::new(skill_tool));
+
     // 注册 Compact 工具（手动触发上下文压缩）
     let compact_tool = CompactTool::new();
     agent_executor.registry().register(Arc::new(compact_tool));
@@ -520,6 +542,14 @@ pub async fn send_message(
     }
 
     Ok(())
+}
+
+fn tool_ctx_from_work_dir(work_dir: &str) -> Option<std::path::PathBuf> {
+    if work_dir.trim().is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(work_dir))
+    }
 }
 
 /// 从 JSON 包装的 assistant content 重建 LLM 可理解的消息序列
