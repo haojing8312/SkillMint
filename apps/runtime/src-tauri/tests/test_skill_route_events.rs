@@ -1,3 +1,4 @@
+use runtime_lib::agent::executor::build_skill_route_event;
 use runtime_lib::commands::chat::SkillRouteEvent;
 use serde_json::Value;
 
@@ -24,4 +25,26 @@ fn skill_route_event_payload_has_required_fields() {
     assert_eq!(v["skill_name"], "using-superpowers");
     assert_eq!(v["depth"], 1);
     assert_eq!(v["status"], "routing");
+}
+
+#[test]
+fn skill_route_lifecycle_statuses_are_serialized() {
+    let statuses = ["routing", "executing", "completed", "failed"];
+    for status in statuses {
+        let v = build_skill_route_event(
+            "s1",
+            "r1",
+            "n1",
+            None,
+            "child-skill",
+            1,
+            status,
+            Some(12),
+            None,
+            None,
+        );
+        assert_eq!(v["status"], status);
+        assert_eq!(v["route_run_id"], "r1");
+        assert_eq!(v["skill_name"], "child-skill");
+    }
 }

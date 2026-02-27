@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+use uuid::Uuid;
 
 /// 单次工具输出允许的最大字符数
 const MAX_TOOL_OUTPUT_CHARS: usize = 30_000;
@@ -202,6 +203,32 @@ pub struct AgentExecutor {
     system_prompt_builder: SystemPromptBuilder,
 }
 
+pub fn build_skill_route_event(
+    session_id: &str,
+    route_run_id: &str,
+    node_id: &str,
+    parent_node_id: Option<String>,
+    skill_name: &str,
+    depth: usize,
+    status: &str,
+    duration_ms: Option<u64>,
+    error_code: Option<&str>,
+    error_message: Option<&str>,
+) -> Value {
+    json!({
+        "session_id": session_id,
+        "route_run_id": route_run_id,
+        "node_id": node_id,
+        "parent_node_id": parent_node_id,
+        "skill_name": skill_name,
+        "depth": depth,
+        "status": status,
+        "duration_ms": duration_ms,
+        "error_code": error_code,
+        "error_message": error_message,
+    })
+}
+
 impl AgentExecutor {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
         Self {
@@ -269,6 +296,7 @@ impl AgentExecutor {
         };
         let max_iterations = max_iterations_override.unwrap_or(self.max_iterations);
         let mut iteration = 0;
+        let route_run_id = Uuid::new_v4().to_string();
 
         loop {
             // 检查取消标志
@@ -437,7 +465,36 @@ impl AgentExecutor {
 
                     // 执行所有工具调用
                     let mut tool_results = vec![];
-                    for call in &tool_calls {
+                    for (call_index, call) in tool_calls.iter().enumerate() {
+                        let skill_name = call
+                            .input
+                            .get("skill_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let is_skill_call = call.name == "skill";
+                        let node_id = format!("{}-{}-{}", iteration, call_index, call.id);
+                        let started_at = std::time::Instant::now();
+
+                        if is_skill_call {
+                            if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                                let _ = app.emit(
+                                    "skill-route-node-updated",
+                                    build_skill_route_event(
+                                        sid,
+                                        &route_run_id,
+                                        &node_id,
+                                        None,
+                                        &skill_name,
+                                        1,
+                                        "routing",
+                                        None,
+                                        None,
+                                        None,
+                                    ),
+                                );
+                            }
+                        }
                         // 执行每个工具前检查取消标志
                         if let Some(ref flag) = cancel_flag {
                             if flag.load(Ordering::SeqCst) {
@@ -460,6 +517,26 @@ impl AgentExecutor {
                         }
 
                         eprintln!("[agent] Calling tool: {}", call.name);
+
+                        if is_skill_call {
+                            if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                                let _ = app.emit(
+                                    "skill-route-node-updated",
+                                    build_skill_route_event(
+                                        sid,
+                                        &route_run_id,
+                                        &node_id,
+                                        None,
+                                        &skill_name,
+                                        1,
+                                        "executing",
+                                        None,
+                                        None,
+                                        None,
+                                    ),
+                                );
+                            }
+                        }
 
                         // 发送工具开始事件
                         if let (Some(app), Some(sid)) = (app_handle, session_id) {
@@ -520,12 +597,12 @@ impl AgentExecutor {
                             }
                         }
 
-                        let result = match self.registry.get(&call.name) {
+                        let (result, is_error) = match self.registry.get(&call.name) {
                             Some(tool) => {
                                 // 检查白名单：若设置了白名单但工具不在其中，拒绝执行
                                 if let Some(whitelist) = allowed_tools {
                                     if !whitelist.iter().any(|w| w == &call.name) {
-                                        format!("此 Skill 不允许使用工具: {}", call.name)
+                                        (format!("此 Skill 不允许使用工具: {}", call.name), true)
                                     } else {
                                         // 可取消的工具执行
                                         let tool_clone = Arc::clone(&tool);
@@ -539,13 +616,13 @@ impl AgentExecutor {
                                         tokio::select! {
                                             res = handle => {
                                                 match res {
-                                                    Ok(Ok(output)) => output,
-                                                    Ok(Err(e)) => format!("工具执行错误: {}", e),
-                                                    Err(e) => format!("工具执行线程异常: {}", e),
+                                                    Ok(Ok(output)) => (output, false),
+                                                    Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
+                                                    Err(e) => (format!("工具执行线程异常: {}", e), true),
                                                 }
                                             }
                                             _ = Self::wait_for_cancel(&cancel_flag_ref) => {
-                                                "工具执行被用户取消".to_string()
+                                                ("工具执行被用户取消".to_string(), true)
                                             }
                                         }
                                     }
@@ -561,13 +638,13 @@ impl AgentExecutor {
                                     tokio::select! {
                                         res = handle => {
                                             match res {
-                                                Ok(Ok(output)) => output,
-                                                Ok(Err(e)) => format!("工具执行错误: {}", e),
-                                                Err(e) => format!("工具执行线程异常: {}", e),
+                                                Ok(Ok(output)) => (output, false),
+                                                Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
+                                                Err(e) => (format!("工具执行线程异常: {}", e), true),
                                             }
                                         }
                                         _ = Self::wait_for_cancel(&cancel_flag_ref) => {
-                                            "工具执行被用户取消".to_string()
+                                            ("工具执行被用户取消".to_string(), true)
                                         }
                                     }
                                 }
@@ -579,10 +656,13 @@ impl AgentExecutor {
                                     .iter()
                                     .filter_map(|t| t["name"].as_str().map(String::from))
                                     .collect();
-                                format!(
-                                    "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
-                                    call.name,
-                                    available.join(", ")
+                                (
+                                    format!(
+                                        "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
+                                        call.name,
+                                        available.join(", ")
+                                    ),
+                                    true,
                                 )
                             }
                         };
@@ -596,8 +676,33 @@ impl AgentExecutor {
                                 tool_name: call.name.clone(),
                                 tool_input: call.input.clone(),
                                 tool_output: Some(result.clone()),
-                                status: "completed".to_string(),
+                                status: if is_error {
+                                    "error".to_string()
+                                } else {
+                                    "completed".to_string()
+                                },
                             });
+                        }
+
+                        if is_skill_call {
+                            if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                                let duration_ms = started_at.elapsed().as_millis() as u64;
+                                let _ = app.emit(
+                                    "skill-route-node-updated",
+                                    build_skill_route_event(
+                                        sid,
+                                        &route_run_id,
+                                        &node_id,
+                                        None,
+                                        &skill_name,
+                                        1,
+                                        if is_error { "failed" } else { "completed" },
+                                        Some(duration_ms),
+                                        if is_error { Some("SKILL_EXECUTION_ERROR") } else { None },
+                                        if is_error { Some(result.as_str()) } else { None },
+                                    ),
+                                );
+                            }
                         }
 
                         tool_results.push(ToolResult {
