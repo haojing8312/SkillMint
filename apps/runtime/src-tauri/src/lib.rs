@@ -130,6 +130,8 @@ pub fn run() {
             commands::models::list_search_configs,
             commands::models::test_search_connection,
             commands::models::set_default_search,
+            commands::models::get_routing_settings,
+            commands::models::set_routing_settings,
             commands::chat::create_session,
             commands::chat::send_message,
             commands::chat::get_messages,

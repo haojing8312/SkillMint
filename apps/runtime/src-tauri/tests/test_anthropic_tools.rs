@@ -30,6 +30,8 @@ async fn test_anthropic_tool_parsing() {
             None,
             None,
             None,
+            None,
+            None,
         )
         .await;
 
@@ -57,6 +59,8 @@ async fn test_anthropic_tool_parsing_network_error() {
             None,
             None,
             PermissionMode::Unrestricted,
+            None,
+            None,
             None,
             None,
             None,

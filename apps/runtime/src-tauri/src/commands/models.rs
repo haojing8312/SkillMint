@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 use super::skills::DbState;
+use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
@@ -11,6 +12,80 @@ pub struct ModelConfig {
     pub base_url: String,
     pub model_name: String,
     pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingSettings {
+    pub max_call_depth: usize,
+    pub node_timeout_seconds: u64,
+    pub retry_count: usize,
+}
+
+pub async fn load_routing_settings_from_pool(db: &SqlitePool) -> Result<RoutingSettings, String> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT key, value FROM app_settings WHERE key IN ('route_max_call_depth', 'route_node_timeout_seconds', 'route_retry_count')"
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| format!("读取路由设置失败: {e}"))?;
+
+    let mut max_call_depth = 4usize;
+    let mut node_timeout_seconds = 60u64;
+    let mut retry_count = 0usize;
+
+    for (k, v) in rows {
+        match k.as_str() {
+            "route_max_call_depth" => {
+                max_call_depth = v.parse::<usize>().unwrap_or(4).clamp(2, 8);
+            }
+            "route_node_timeout_seconds" => {
+                node_timeout_seconds = v.parse::<u64>().unwrap_or(60).clamp(5, 600);
+            }
+            "route_retry_count" => {
+                retry_count = v.parse::<usize>().unwrap_or(0).clamp(0, 2);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(RoutingSettings {
+        max_call_depth,
+        node_timeout_seconds,
+        retry_count,
+    })
+}
+
+#[tauri::command]
+pub async fn get_routing_settings(db: State<'_, DbState>) -> Result<RoutingSettings, String> {
+    load_routing_settings_from_pool(&db.0).await
+}
+
+#[tauri::command]
+pub async fn set_routing_settings(
+    settings: RoutingSettings,
+    db: State<'_, DbState>,
+) -> Result<(), String> {
+    let max_call_depth = settings.max_call_depth.clamp(2, 8).to_string();
+    let node_timeout_seconds = settings.node_timeout_seconds.clamp(5, 600).to_string();
+    let retry_count = settings.retry_count.clamp(0, 2).to_string();
+
+    sqlx::query("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('route_max_call_depth', ?)")
+        .bind(&max_call_depth)
+        .execute(&db.0)
+        .await
+        .map_err(|e| format!("保存路由深度设置失败: {e}"))?;
+    sqlx::query("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('route_node_timeout_seconds', ?)")
+        .bind(&node_timeout_seconds)
+        .execute(&db.0)
+        .await
+        .map_err(|e| format!("保存路由超时设置失败: {e}"))?;
+    sqlx::query("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('route_retry_count', ?)")
+        .bind(&retry_count)
+        .execute(&db.0)
+        .await
+        .map_err(|e| format!("保存路由重试设置失败: {e}"))?;
+
+    Ok(())
 }
 
 #[tauri::command]

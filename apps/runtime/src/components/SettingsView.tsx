@@ -38,6 +38,12 @@ interface Props {
   onClose: () => void;
 }
 
+interface RoutingSettings {
+  max_call_depth: number;
+  node_timeout_seconds: number;
+  retry_count: number;
+}
+
 export function SettingsView({ onClose }: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [form, setForm] = useState({
@@ -61,7 +67,7 @@ export function SettingsView({ onClose }: Props) {
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", env: "" });
   const [mcpError, setMcpError] = useState("");
-  const [activeTab, setActiveTab] = useState<"models" | "mcp" | "search">("models");
+  const [activeTab, setActiveTab] = useState<"models" | "mcp" | "search" | "routing">("models");
 
   // 搜索引擎配置
   const [searchConfigs, setSearchConfigs] = useState<ModelConfig[]>([]);
@@ -73,8 +79,15 @@ export function SettingsView({ onClose }: Props) {
   // 搜索引擎编辑状态 + API Key 可见性
   const [editingSearchId, setEditingSearchId] = useState<string | null>(null);
   const [showSearchApiKey, setShowSearchApiKey] = useState(false);
+  const [routeSettings, setRouteSettings] = useState<RoutingSettings>({
+    max_call_depth: 4,
+    node_timeout_seconds: 60,
+    retry_count: 0,
+  });
+  const [routeSaveState, setRouteSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [routeError, setRouteError] = useState("");
 
-  useEffect(() => { loadModels(); loadMcpServers(); loadSearchConfigs(); }, []);
+  useEffect(() => { loadModels(); loadMcpServers(); loadSearchConfigs(); loadRoutingSettings(); }, []);
 
   async function loadModels() {
     const list = await invoke<ModelConfig[]>("list_model_configs");
@@ -87,6 +100,35 @@ export function SettingsView({ onClose }: Props) {
       setSearchConfigs(list);
     } catch (e) {
       console.error("加载搜索配置失败:", e);
+    }
+  }
+
+  async function loadRoutingSettings() {
+    try {
+      const settings = await invoke<RoutingSettings>("get_routing_settings");
+      setRouteSettings(settings);
+    } catch (e) {
+      setRouteError("加载自动路由设置失败: " + String(e));
+      setRouteSaveState("error");
+    }
+  }
+
+  async function handleSaveRoutingSettings() {
+    setRouteSaveState("saving");
+    setRouteError("");
+    try {
+      await invoke("set_routing_settings", {
+        settings: {
+          max_call_depth: Math.max(2, Math.min(8, routeSettings.max_call_depth)),
+          node_timeout_seconds: Math.max(5, Math.min(600, routeSettings.node_timeout_seconds)),
+          retry_count: Math.max(0, Math.min(2, routeSettings.retry_count)),
+        },
+      });
+      setRouteSaveState("saved");
+      setTimeout(() => setRouteSaveState("idle"), 1200);
+    } catch (e) {
+      setRouteError("保存自动路由设置失败: " + String(e));
+      setRouteSaveState("error");
     }
   }
 
@@ -387,6 +429,13 @@ export function SettingsView({ onClose }: Props) {
               (activeTab === "search" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
           >
             搜索引擎
+          </button>
+          <button
+            onClick={() => setActiveTab("routing")}
+            className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
+              (activeTab === "routing" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
+          >
+            自动路由
           </button>
         </div>
         <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-sm">
@@ -723,6 +772,56 @@ export function SettingsView({ onClose }: Props) {
           </div>
         </div>
       </>)}
+
+      {activeTab === "routing" && (
+        <div className="bg-white rounded-lg p-4 space-y-3">
+          <div className="text-xs font-medium text-gray-500 mb-2">子 Skill 自动路由</div>
+          <div>
+            <label className={labelCls}>最大调用深度 (2-8)</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={2}
+              max={8}
+              value={routeSettings.max_call_depth}
+              onChange={(e) => setRouteSettings((s) => ({ ...s, max_call_depth: Number(e.target.value || 4) }))}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>节点超时秒数 (5-600)</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={5}
+              max={600}
+              value={routeSettings.node_timeout_seconds}
+              onChange={(e) => setRouteSettings((s) => ({ ...s, node_timeout_seconds: Number(e.target.value || 60) }))}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>失败重试次数 (0-2)</label>
+            <input
+              className={inputCls}
+              type="number"
+              min={0}
+              max={2}
+              value={routeSettings.retry_count}
+              onChange={(e) => setRouteSettings((s) => ({ ...s, retry_count: Number(e.target.value || 0) }))}
+            />
+          </div>
+          {routeError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{routeError}</div>}
+          {routeSaveState === "saved" && (
+            <div className="bg-green-50 text-green-600 text-xs px-2 py-1 rounded">已保存</div>
+          )}
+          <button
+            onClick={handleSaveRoutingSettings}
+            disabled={routeSaveState === "saving"}
+            className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
+          >
+            {routeSaveState === "saving" ? "保存中..." : "保存自动路由设置"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

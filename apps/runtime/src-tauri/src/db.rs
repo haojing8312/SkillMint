@@ -32,7 +32,9 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             skill_id TEXT NOT NULL,
             title TEXT,
             created_at TEXT NOT NULL,
-            model_id TEXT NOT NULL
+            model_id TEXT NOT NULL,
+            permission_mode TEXT NOT NULL DEFAULT 'accept_edits',
+            work_dir TEXT NOT NULL DEFAULT ''
         )"
     )
     .execute(&pool)
@@ -78,13 +80,22 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )"
+    )
+    .execute(&pool)
+    .await?;
+
     // Migration: add api_key column for databases created before this column existed
     let _ = sqlx::query("ALTER TABLE model_configs ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
         .execute(&pool)
         .await;
 
     // Migration: add permission_mode column to sessions
-    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'default'")
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'accept_edits'")
         .execute(&pool)
         .await;
 
@@ -95,6 +106,17 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
 
     // Migration: add work_dir column to sessions（每会话独立工作目录）
     let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN work_dir TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
+
+    // 默认路由配置
+    let _ = sqlx::query("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('route_max_call_depth', '4')")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('route_node_timeout_seconds', '60')")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('route_retry_count', '0')")
         .execute(&pool)
         .await;
 

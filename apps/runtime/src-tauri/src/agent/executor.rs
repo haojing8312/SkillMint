@@ -301,6 +301,8 @@ impl AgentExecutor {
         work_dir: Option<String>,
         max_iterations_override: Option<usize>,
         cancel_flag: Option<Arc<AtomicBool>>,
+        route_node_timeout_secs: Option<u64>,
+        route_retry_count: Option<usize>,
     ) -> Result<Vec<Value>> {
         // 组合系统级 prompt 和 Skill prompt
         let system_prompt = self.system_prompt_builder.build(skill_system_prompt);
@@ -310,6 +312,8 @@ impl AgentExecutor {
             allowed_tools: allowed_tools.map(|tools| tools.to_vec()),
         };
         let max_iterations = max_iterations_override.unwrap_or(self.max_iterations);
+        let _route_node_timeout_secs = route_node_timeout_secs.unwrap_or(60).clamp(5, 600);
+        let _route_retry_count = route_retry_count.unwrap_or(0).clamp(0, 2);
         let mut iteration = 0;
         let route_run_id = Uuid::new_v4().to_string();
 

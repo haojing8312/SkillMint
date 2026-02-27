@@ -185,6 +185,8 @@ impl Tool for TaskTool {
                         None,                         // work_dir: 子 Agent 继承主 Agent 设置
                         None,                         // 使用 sub_executor 默认迭代限制
                         None,                         // 子 Agent 无取消标志
+                        None,                         // 子 Agent 使用默认节点超时
+                        None,                         // 子 Agent 默认不重试
                     )
                     .await
             })

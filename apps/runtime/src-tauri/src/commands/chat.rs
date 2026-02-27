@@ -4,6 +4,7 @@ use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use super::models::load_routing_settings_from_pool;
 use super::skills::DbState;
 use crate::agent::AgentExecutor;
 use crate::agent::compactor;
@@ -28,6 +29,23 @@ pub struct SearchCacheState(pub Arc<SearchCache>);
 
 /// Agent 取消标志（用于 cancel_agent command 停止正在执行的 Agent）
 pub struct CancelFlagState(pub Arc<AtomicBool>);
+
+fn normalize_permission_mode_for_storage(permission_mode: Option<&str>) -> &'static str {
+    match permission_mode.unwrap_or("").trim() {
+        "default" => "default",
+        "unrestricted" => "unrestricted",
+        "accept_edits" => "accept_edits",
+        _ => "accept_edits",
+    }
+}
+
+fn parse_permission_mode(permission_mode: &str) -> PermissionMode {
+    match permission_mode {
+        "default" => PermissionMode::Default,
+        "unrestricted" => PermissionMode::Unrestricted,
+        _ => PermissionMode::AcceptEdits,
+    }
+}
 
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
@@ -61,18 +79,21 @@ pub async fn create_session(
     skill_id: String,
     model_id: String,
     work_dir: String,
+    permission_mode: Option<String>,
     db: State<'_, DbState>,
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+    let permission_mode = normalize_permission_mode_for_storage(permission_mode.as_deref());
     sqlx::query(
-        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, work_dir) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir) VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&session_id)
     .bind(&skill_id)
     .bind("New Chat")
     .bind(&now)
     .bind(&model_id)
+    .bind(permission_mode)
     .bind(&work_dir)
     .execute(&db.0)
     .await
@@ -136,11 +157,8 @@ pub async fn send_message(
     .await
     .map_err(|e| format!("会话不存在 (session_id={session_id}): {e}"))?;
 
-    let permission_mode = match perm_str.as_str() {
-        "accept_edits" => PermissionMode::AcceptEdits,
-        "unrestricted" => PermissionMode::Unrestricted,
-        _ => PermissionMode::Default,
-    };
+    let permission_mode = parse_permission_mode(&perm_str);
+    let routing_settings = load_routing_settings_from_pool(&db.0).await?;
 
     // 加载 Skill 信息（含 pack_path 和 source_type，用 COALESCE 兼容旧数据）
     let (manifest_json, username, pack_path, source_type) = sqlx::query_as::<_, (String, String, String, String)>(
@@ -317,7 +335,8 @@ pub async fn send_message(
     }
     skill_roots.sort();
     skill_roots.dedup();
-    let skill_tool = SkillInvokeTool::new(session_id.clone(), skill_roots);
+    let skill_tool = SkillInvokeTool::new(session_id.clone(), skill_roots)
+        .with_max_depth(routing_settings.max_call_depth);
     agent_executor.registry().register(Arc::new(skill_tool));
 
     // 注册 Compact 工具（手动触发上下文压缩）
@@ -403,6 +422,8 @@ pub async fn send_message(
             if work_dir.is_empty() { None } else { Some(work_dir.clone()) },
             skill_config.max_iterations,
             Some(cancel_flag_clone),
+            Some(routing_settings.node_timeout_seconds),
+            Some(routing_settings.retry_count),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -770,23 +791,81 @@ pub async fn get_sessions(
     skill_id: String,
     db: State<'_, DbState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
-        "SELECT id, title, created_at, model_id, COALESCE(work_dir, '') FROM sessions WHERE skill_id = ? ORDER BY created_at DESC"
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id, title, created_at, model_id, COALESCE(work_dir, ''), COALESCE(permission_mode, 'accept_edits') FROM sessions WHERE skill_id = ? ORDER BY created_at DESC"
     )
     .bind(&skill_id)
     .fetch_all(&db.0)
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir)| {
+    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir, permission_mode)| {
         json!({
             "id": id,
             "title": title,
             "created_at": created_at,
             "model_id": model_id,
             "work_dir": work_dir,
+            "permission_mode": permission_mode,
         })
     }).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_permission_mode_for_storage, parse_permission_mode};
+    use crate::agent::permissions::PermissionMode;
+
+    #[test]
+    fn normalize_permission_mode_defaults_to_accept_edits() {
+        assert_eq!(
+            normalize_permission_mode_for_storage(None),
+            "accept_edits"
+        );
+        assert_eq!(
+            normalize_permission_mode_for_storage(Some("")),
+            "accept_edits"
+        );
+        assert_eq!(
+            normalize_permission_mode_for_storage(Some("invalid")),
+            "accept_edits"
+        );
+    }
+
+    #[test]
+    fn normalize_permission_mode_keeps_supported_values() {
+        assert_eq!(
+            normalize_permission_mode_for_storage(Some("default")),
+            "default"
+        );
+        assert_eq!(
+            normalize_permission_mode_for_storage(Some("accept_edits")),
+            "accept_edits"
+        );
+        assert_eq!(
+            normalize_permission_mode_for_storage(Some("unrestricted")),
+            "unrestricted"
+        );
+    }
+
+    #[test]
+    fn parse_permission_mode_defaults_to_accept_edits() {
+        assert_eq!(parse_permission_mode(""), PermissionMode::AcceptEdits);
+        assert_eq!(parse_permission_mode("invalid"), PermissionMode::AcceptEdits);
+    }
+
+    #[test]
+    fn parse_permission_mode_keeps_supported_values() {
+        assert_eq!(parse_permission_mode("default"), PermissionMode::Default);
+        assert_eq!(
+            parse_permission_mode("accept_edits"),
+            PermissionMode::AcceptEdits
+        );
+        assert_eq!(
+            parse_permission_mode("unrestricted"),
+            PermissionMode::Unrestricted
+        );
+    }
 }
 
 #[tauri::command]

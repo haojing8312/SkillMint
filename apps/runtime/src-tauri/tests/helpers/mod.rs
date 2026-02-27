@@ -38,7 +38,7 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             title TEXT,
             created_at TEXT NOT NULL,
             model_id TEXT NOT NULL,
-            permission_mode TEXT NOT NULL DEFAULT 'default',
+            permission_mode TEXT NOT NULL DEFAULT 'accept_edits',
             work_dir TEXT NOT NULL DEFAULT ''
         )",
     )
@@ -83,6 +83,16 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             env TEXT NOT NULL DEFAULT '{}',
             enabled INTEGER DEFAULT 1,
             created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         )",
     )
     .execute(&pool)

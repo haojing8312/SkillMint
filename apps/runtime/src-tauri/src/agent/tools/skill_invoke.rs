@@ -29,6 +29,11 @@ impl SkillInvokeTool {
         }
     }
 
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth.max(1);
+        self
+    }
+
     fn normalize_skill_name(raw: &str) -> Result<String> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
