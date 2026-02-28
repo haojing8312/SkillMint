@@ -149,6 +149,8 @@ pub fn run() {
             commands::mcp::list_mcp_servers,
             commands::mcp::remove_mcp_server,
             commands::dialog::select_directory,
+            commands::packaging::read_skill_dir,
+            commands::packaging::pack_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { InstallDialog } from "./components/InstallDialog";
 import { SettingsView } from "./components/SettingsView";
+import { PackagingView } from "./components/packaging/PackagingView";
 import { SkillManifest, ModelConfig, SessionInfo } from "./types";
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [showInstall, setShowInstall] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [activeMainView, setActiveMainView] = useState<"chat" | "packaging">("chat");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [newSessionPermissionMode, setNewSessionPermissionMode] = useState<"default" | "accept_edits" | "unrestricted">("accept_edits");
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -170,6 +172,12 @@ export default function App() {
   return (
     <div className="flex h-screen bg-gray-50 text-gray-800 overflow-hidden">
       <Sidebar
+        activeMainView={activeMainView}
+        onOpenChat={() => setActiveMainView("chat")}
+        onOpenPackaging={() => {
+          setShowSettings(false);
+          setActiveMainView("packaging");
+        }}
         skills={skills}
         selectedSkillId={selectedSkillId}
         onSelectSkill={setSelectedSkillId}
@@ -181,7 +189,10 @@ export default function App() {
         onChangeNewSessionPermissionMode={setNewSessionPermissionMode}
         onDeleteSession={handleDeleteSession}
         onInstall={() => setShowInstall(true)}
-        onSettings={() => setShowSettings(true)}
+        onSettings={() => {
+          setActiveMainView("chat");
+          setShowSettings(true);
+        }}
         onSearchSessions={handleSearchSessions}
         onExportSession={handleExportSession}
         onCollapse={() => setSidebarCollapsed((prev) => !prev)}
@@ -204,6 +215,17 @@ export default function App() {
                   setShowSettings(false);
                 }}
               />
+            </motion.div>
+          ) : activeMainView === "packaging" ? (
+            <motion.div
+              key="packaging"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="h-full"
+            >
+              <PackagingView />
             </motion.div>
           ) : selectedSkill && models.length > 0 && selectedSessionId ? (
             <motion.div

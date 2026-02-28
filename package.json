@@ -2,9 +2,9 @@
   "name": "skillmint",
   "private": true,
   "scripts": {
-    "studio": "pnpm --filter studio tauri dev",
+    "app": "pnpm --filter runtime tauri dev",
     "runtime": "pnpm --filter runtime tauri dev",
-    "build:studio": "pnpm --filter studio tauri build",
+    "build:app": "pnpm --filter runtime tauri build",
     "build:runtime": "pnpm --filter runtime tauri build",
     "sync:codex-skills": "node scripts/sync-codex-skills.mjs"
   },

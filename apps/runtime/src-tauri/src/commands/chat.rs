@@ -47,6 +47,14 @@ fn parse_permission_mode(permission_mode: &str) -> PermissionMode {
     }
 }
 
+fn permission_mode_label_for_display(permission_mode: &str) -> &'static str {
+    match permission_mode {
+        "default" => "谨慎模式",
+        "unrestricted" => "全自动模式（高风险）",
+        _ => "推荐模式",
+    }
+}
+
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
     session_id: String,
@@ -807,13 +815,17 @@ pub async fn get_sessions(
             "model_id": model_id,
             "work_dir": work_dir,
             "permission_mode": permission_mode,
+            "permission_mode_label": permission_mode_label_for_display(permission_mode),
         })
     }).collect())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_permission_mode_for_storage, parse_permission_mode};
+    use super::{
+        normalize_permission_mode_for_storage, parse_permission_mode,
+        permission_mode_label_for_display,
+    };
     use crate::agent::permissions::PermissionMode;
 
     #[test]
@@ -864,6 +876,16 @@ mod tests {
         assert_eq!(
             parse_permission_mode("unrestricted"),
             PermissionMode::Unrestricted
+        );
+    }
+
+    #[test]
+    fn permission_mode_label_is_user_friendly() {
+        assert_eq!(permission_mode_label_for_display("accept_edits"), "推荐模式");
+        assert_eq!(permission_mode_label_for_display("default"), "谨慎模式");
+        assert_eq!(
+            permission_mode_label_for_display("unrestricted"),
+            "全自动模式（高风险）"
         );
     }
 }

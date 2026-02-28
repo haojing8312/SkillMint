@@ -1,6 +1,6 @@
-use skillpack_rs::{pack, PackConfig, FrontMatter};
-use skillpack_rs::pack::parse_front_matter;
 use serde::{Deserialize, Serialize};
+use skillpack_rs::pack::parse_front_matter;
+use skillpack_rs::{pack, FrontMatter, PackConfig};
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -11,7 +11,6 @@ pub struct SkillDirInfo {
     pub front_matter: FrontMatter,
 }
 
-/// 判断目录项是否应被排除（隐藏文件/目录、node_modules、__pycache__）
 fn is_hidden_or_excluded(entry: &walkdir::DirEntry) -> bool {
     entry
         .file_name()
@@ -29,15 +28,13 @@ pub async fn read_skill_dir(dir_path: String) -> Result<SkillDirInfo, String> {
         return Err("所选目录中未找到 SKILL.md 文件".to_string());
     }
 
-    let skill_md_content = fs::read_to_string(&skill_md_path)
-        .map_err(|e| format!("读取 SKILL.md 失败: {}", e))?;
+    let skill_md_content =
+        fs::read_to_string(&skill_md_path).map_err(|e| format!("读取 SKILL.md 失败: {}", e))?;
     let front_matter = parse_front_matter(&skill_md_content);
 
-    // 过滤隐藏文件/目录、node_modules、__pycache__
     let files: Vec<String> = WalkDir::new(skill_dir)
         .into_iter()
         .filter_entry(|e| {
-            // 根目录自身始终保留
             if e.path() == skill_dir {
                 return true;
             }
@@ -48,7 +45,7 @@ pub async fn read_skill_dir(dir_path: String) -> Result<SkillDirInfo, String> {
         .map(|e| {
             e.path()
                 .strip_prefix(skill_dir)
-                .unwrap()
+                .unwrap_or(e.path())
                 .to_string_lossy()
                 .replace('\\', "/")
         })

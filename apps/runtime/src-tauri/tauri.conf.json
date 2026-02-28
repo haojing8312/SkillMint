@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SkillMint Runtime",
+  "productName": "SkillMint",
   "version": "0.1.0",
   "identifier": "dev.skillmint.runtime",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "SkillMint Runtime",
+        "title": "SkillMint",
         "width": 1200,
         "height": 750,
         "resizable": true

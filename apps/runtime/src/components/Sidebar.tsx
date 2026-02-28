@@ -3,6 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { SkillManifest, SessionInfo } from "../types";
 
 interface Props {
+  activeMainView: "chat" | "packaging";
+  onOpenChat: () => void;
+  onOpenPackaging: () => void;
   skills: SkillManifest[];
   selectedSkillId: string | null;
   onSelectSkill: (id: string) => void;
@@ -22,6 +25,9 @@ interface Props {
 }
 
 export function Sidebar({
+  activeMainView,
+  onOpenChat,
+  onOpenPackaging,
   skills,
   selectedSkillId,
   onSelectSkill,
@@ -59,6 +65,14 @@ export function Sidebar({
           ▶
         </button>
         <button
+          onClick={onOpenPackaging}
+          className="w-8 h-8 flex items-center justify-center text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"
+          title="技能打包"
+          aria-label="技能打包"
+        >
+          □
+        </button>
+        <button
           onClick={onInstall}
           className="w-8 h-8 flex items-center justify-center text-blue-500 hover:text-blue-400 hover:bg-blue-50 rounded transition-colors"
           title="安装 Skill"
@@ -82,7 +96,7 @@ export function Sidebar({
     <div className="w-56 bg-white flex flex-col h-full border-r border-gray-200 flex-shrink-0">
       {/* 标题栏 + 折叠按钮 */}
       <div className="px-4 py-3 text-xs font-medium text-gray-500 border-b border-gray-200 flex items-center justify-between">
-        <span>已安装 Skill</span>
+        <span>SkillMint</span>
         <button
           onClick={onCollapse}
           className="text-gray-500 hover:text-gray-600 text-sm transition-colors"
@@ -90,6 +104,32 @@ export function Sidebar({
         >
           ◀
         </button>
+      </div>
+      <div className="px-3 py-2 border-b border-gray-200">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={onOpenChat}
+            className={
+              "text-xs py-1.5 rounded-md transition-colors " +
+              (activeMainView === "chat"
+                ? "bg-blue-500 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+            }
+          >
+            对话
+          </button>
+          <button
+            onClick={onOpenPackaging}
+            className={
+              "text-xs py-1.5 rounded-md transition-colors " +
+              (activeMainView === "packaging"
+                ? "bg-blue-500 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+            }
+          >
+            打包
+          </button>
+        </div>
       </div>
       <div className="overflow-y-auto py-1" style={{ maxHeight: "30%" }}>
         {skills.length === 0 && (
@@ -102,7 +142,10 @@ export function Sidebar({
         }).map((s) => (
           <button
             key={s.id}
-            onClick={() => onSelectSkill(s.id)}
+            onClick={() => {
+              onOpenChat();
+              onSelectSkill(s.id);
+            }}
             className={
               "w-full text-left px-4 py-2 text-sm transition-colors " +
               (selectedSkillId === s.id
@@ -141,7 +184,7 @@ export function Sidebar({
             </button>
           </div>
           <div className="px-3 py-2 border-b border-gray-200">
-            <label className="block text-[11px] text-gray-500 mb-1">新会话权限模式</label>
+            <label className="block text-[11px] text-gray-500 mb-1">操作确认级别</label>
             <select
               value={newSessionPermissionMode}
               onChange={(e) =>
@@ -151,9 +194,9 @@ export function Sidebar({
               }
               className="w-full bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs text-gray-800 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
             >
-              <option value="accept_edits">accept_edits（推荐）</option>
-              <option value="default">default（严格确认）</option>
-              <option value="unrestricted">unrestricted（危险：跳过全部确认）</option>
+              <option value="accept_edits">推荐模式（常见改动自动处理）</option>
+              <option value="default">谨慎模式（关键操作先确认）</option>
+              <option value="unrestricted">全自动模式（高风险）</option>
             </select>
           </div>
           {/* 搜索框 */}
@@ -187,7 +230,10 @@ export function Sidebar({
                       ? "bg-blue-50 text-blue-600"
                       : "text-gray-700 hover:bg-gray-50")
                   }
-                  onClick={() => onSelectSession(s.id)}
+                  onClick={() => {
+                    onOpenChat();
+                    onSelectSession(s.id);
+                  }}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="truncate text-xs">{s.title || "New Chat"}</div>
@@ -225,6 +271,12 @@ export function Sidebar({
           className="w-full bg-blue-500 hover:bg-blue-600 active:scale-[0.97] text-white text-sm py-1.5 rounded-lg transition-all"
         >
           + 安装 Skill
+        </button>
+        <button
+          onClick={onOpenPackaging}
+          className="w-full bg-amber-50 hover:bg-amber-100 active:scale-[0.97] text-amber-700 text-sm py-1.5 rounded-lg transition-all"
+        >
+          打包技能
         </button>
         <button
           onClick={onSettings}

@@ -19,6 +19,18 @@ export interface ModelConfig {
   is_default: boolean;
 }
 
+export interface FrontMatter {
+  name?: string;
+  description?: string;
+  version?: string;
+  model?: string;
+}
+
+export interface SkillDirInfo {
+  files: string[];
+  front_matter: FrontMatter;
+}
+
 /// 有序的流式输出项：文字和工具调用按发生顺序排列
 export interface StreamItem {
   type: "text" | "tool_call";
@@ -50,6 +62,7 @@ export interface SessionInfo {
   model_id: string;
   work_dir?: string;
   permission_mode?: "default" | "accept_edits" | "unrestricted";
+  permission_mode_label?: string;
 }
 
 export type SkillRouteNodeStatus =
