@@ -26,7 +26,7 @@ SkillMint helps AI Skill creators:
 
 ## Architecture
 
-SkillMint consists of two independent applications:
+SkillMint is delivered as a single integrated desktop application:
 
 ### Business Architecture
 
@@ -50,8 +50,8 @@ The technical stack is organized in 6 layers:
 - **Layer 5 - Model Integration**: Anthropic API, OpenAI Compatible, Chinese models (MiniMax, DeepSeek, GLM, Qwen, Moonshot)
 - **Layer 6 - Data Persistence**: SQLite, .skillpack files, Secure workspace folders
 
-### Runtime (User Application)
-The core Agent execution environment where users install and run encrypted Skills:
+### SkillMint Application
+The integrated environment where users can package, install, and run encrypted Skills:
 
 **Core Agent Capabilities**:
 - ✅ **File Operations**: Read, write, edit files with permission control
@@ -71,16 +71,8 @@ The core Agent execution environment where users install and run encrypted Skill
 - Local secure workspace folder configuration
 - No command line required
 
-### Studio (Creator Application)
-**Status**: Planned for Milestone 3
-Professional Skill authoring environment:
-- Monaco Editor with Markdown syntax highlighting
-- Visual Skill structure editor (SKILL.md + templates/ + examples/)
-- Integrated testing chat powered by Claude Code
-- One-click packaging with encryption
-- Version control and publishing workflow
-
-**Note**: For MVP, creators can use **Claude Code** or **VS Code** to develop Skills, then package them via CLI tool.
+### Creator Workflow
+Creators can develop Skills with **Claude Code** or **VS Code**, then package directly inside the SkillMint app (no separate Studio client).
 
 ## Key Features
 
@@ -105,14 +97,14 @@ Professional Skill authoring environment:
 
 ## Tech Stack
 
-### Runtime Backend
+### App Backend
 - **Framework**: Tauri 2.0 (Rust)
 - **Database**: SQLite (sqlx)
 - **Encryption**: AES-256-GCM (aes-gcm + ring crates)
 - **HTTP Client**: reqwest (for LLM APIs)
 - **Sidecar**: Node.js 20+ (Playwright, MCP)
 
-### Runtime Frontend
+### App Frontend
 - **UI**: React 18 + TypeScript
 - **Components**: shadcn/ui + Tailwind CSS
 - **Markdown**: react-markdown + syntax highlighting
@@ -147,17 +139,16 @@ Professional Skill authoring environment:
 ```
 skillmint/
 ├── apps/
-│   ├── runtime/               # User-facing application
-│   │   ├── src/              # React frontend
-│   │   ├── src-tauri/        # Rust backend
-│   │   │   ├── src/
-│   │   │   │   ├── agent/    # Agent system (executor, tools, registry)
-│   │   │   │   ├── adapters/ # LLM adapters (Anthropic, OpenAI)
-│   │   │   │   ├── commands/ # Tauri commands (skills, chat, models, mcp)
-│   │   │   │   └── db.rs     # SQLite schema
-│   │   │   └── tests/        # Integration tests
-│   │   └── sidecar/          # Node.js sidecar (Playwright, MCP)
-│   └── studio/               # Creator application (future)
+│   └── runtime/              # SkillMint desktop application
+│       ├── src/              # React frontend
+│       ├── src-tauri/        # Rust backend
+│       │   ├── src/
+│       │   │   ├── agent/    # Agent system (executor, tools, registry)
+│       │   │   ├── adapters/ # LLM adapters (Anthropic, OpenAI)
+│       │   │   ├── commands/ # Tauri commands (skills, chat, models, mcp, packaging)
+│       │   │   └── db.rs     # SQLite schema
+│       │   └── tests/        # Integration tests
+│       └── sidecar/          # Node.js sidecar (Playwright, MCP)
 ├── packages/
 │   └── skillpack-rs/         # Encryption library (Rust)
 ├── docs/                     # Documentation
@@ -179,11 +170,11 @@ skillmint/
 # Install dependencies
 pnpm install
 
-# Run Runtime in dev mode
-pnpm runtime
+# Run app in dev mode
+pnpm app
 
 # Build for production
-pnpm build:runtime
+pnpm build:app
 
 # Run tests
 cd apps/runtime/src-tauri
@@ -276,7 +267,7 @@ cargo test
 
 ### Milestone 3: Ecosystem & Enterprise 🏢
 
-**Creator Tools (Studio Application)**:
+**Creator Capabilities (Built into SkillMint App)**:
 - [ ] Monaco Editor integration
 - [ ] Skill structure visual editor
 - [ ] Embedded testing chat (Claude Code integration)
