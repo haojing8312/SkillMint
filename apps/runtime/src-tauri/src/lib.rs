@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod sidecar;
+pub mod providers;
 mod adapters;
 pub mod commands;
 mod db;
@@ -127,9 +128,26 @@ pub fn run() {
             commands::models::get_model_api_key,
             commands::models::delete_model_config,
             commands::models::test_connection_cmd,
+            commands::models::save_provider_config,
+            commands::models::list_provider_configs,
+            commands::models::delete_provider_config,
+            commands::models::set_chat_routing_policy,
+            commands::models::get_chat_routing_policy,
+            commands::models::set_capability_routing_policy,
+            commands::models::get_capability_routing_policy,
+            commands::models::test_provider_health,
+            commands::models::test_all_provider_health,
+            commands::models::list_provider_recommended_models,
+            commands::models::list_provider_models,
+            commands::models::list_capability_route_templates,
+            commands::models::apply_capability_route_template,
+            commands::models::list_recent_route_attempt_logs,
+            commands::models::list_route_attempt_stats,
+            commands::models::export_route_attempt_logs_csv,
             commands::models::list_search_configs,
             commands::models::test_search_connection,
             commands::models::set_default_search,
+            commands::models::list_builtin_provider_plugins,
             commands::models::get_routing_settings,
             commands::models::set_routing_settings,
             commands::chat::create_session,

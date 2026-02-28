@@ -55,6 +55,112 @@ fn permission_mode_label_for_display(permission_mode: &str) -> &'static str {
     }
 }
 
+fn is_supported_protocol(protocol: &str) -> bool {
+    matches!(protocol, "openai" | "anthropic")
+}
+
+fn infer_capability_from_user_message(message: &str) -> &'static str {
+    let m = message.to_ascii_lowercase();
+    if m.contains("识图")
+        || m.contains("看图")
+        || m.contains("图片理解")
+        || m.contains("vision")
+        || m.contains("analyze image")
+    {
+        return "vision";
+    }
+    if m.contains("生图")
+        || m.contains("画图")
+        || m.contains("生成图片")
+        || m.contains("image generation")
+        || m.contains("generate image")
+    {
+        return "image_gen";
+    }
+    if m.contains("语音转文字")
+        || m.contains("语音识别")
+        || m.contains("stt")
+        || m.contains("transcribe")
+        || m.contains("speech to text")
+    {
+        return "audio_stt";
+    }
+    if m.contains("文字转语音")
+        || m.contains("tts")
+        || m.contains("text to speech")
+        || m.contains("语音合成")
+    {
+        return "audio_tts";
+    }
+    "chat"
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelRouteErrorKind {
+    Auth,
+    RateLimit,
+    Timeout,
+    Network,
+    Unknown,
+}
+
+fn classify_model_route_error(error_message: &str) -> ModelRouteErrorKind {
+    let lower = error_message.to_ascii_lowercase();
+    if lower.contains("api key")
+        || lower.contains("unauthorized")
+        || lower.contains("invalid_api_key")
+        || lower.contains("authentication")
+        || lower.contains("permission denied")
+        || lower.contains("forbidden")
+    {
+        return ModelRouteErrorKind::Auth;
+    }
+    if lower.contains("rate limit")
+        || lower.contains("too many requests")
+        || lower.contains("429")
+        || lower.contains("quota")
+    {
+        return ModelRouteErrorKind::RateLimit;
+    }
+    if lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline") {
+        return ModelRouteErrorKind::Timeout;
+    }
+    if lower.contains("connection")
+        || lower.contains("network")
+        || lower.contains("dns")
+        || lower.contains("connect")
+        || lower.contains("socket")
+    {
+        return ModelRouteErrorKind::Network;
+    }
+    ModelRouteErrorKind::Unknown
+}
+
+fn should_retry_same_candidate(kind: ModelRouteErrorKind) -> bool {
+    matches!(
+        kind,
+        ModelRouteErrorKind::RateLimit | ModelRouteErrorKind::Timeout | ModelRouteErrorKind::Network
+    )
+}
+
+fn parse_fallback_chain_targets(raw: &str) -> Vec<(String, String)> {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|item| {
+            let provider_id = item.get("provider_id")?.as_str()?.to_string();
+            let model = item
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some((provider_id, model))
+        })
+        .collect()
+}
+
 #[derive(serde::Serialize, Clone)]
 struct StreamToken {
     session_id: String,
@@ -232,8 +338,8 @@ pub async fn send_message(
     .await
     .map_err(|e| e.to_string())?;
 
-    // 加载模型配置（含 api_key）— 提前加载以获取 api_format
-    let (api_format, base_url, model_name, api_key) = sqlx::query_as::<_, (String, String, String, String)>(
+    // 加载会话模型配置（含 api_key）作为最后兜底候选
+    let (session_api_format, session_base_url, session_model_name, session_api_key) = sqlx::query_as::<_, (String, String, String, String)>(
         "SELECT api_format, base_url, model_name, api_key FROM model_configs WHERE id = ?"
     )
     .bind(&model_id)
@@ -241,9 +347,107 @@ pub async fn send_message(
     .await
     .map_err(|e| format!("模型配置不存在 (model_id={model_id}): {e}"))?;
 
-    if api_key.is_empty() {
+    // 构建候选链：routing policy primary/fallbacks + 会话 model 配置兜底
+    let mut route_candidates: Vec<(String, String, String, String)> = Vec::new();
+
+    let mut per_candidate_retry_count: usize = 0;
+    let requested_capability = infer_capability_from_user_message(&user_message);
+    if let Ok(Some((primary_provider_id, primary_model, fallback_chain_json, policy_retry_count))) = sqlx::query_as::<_, (String, String, String, i64)>(
+        "SELECT primary_provider_id, primary_model, fallback_chain_json, retry_count FROM routing_policies WHERE capability = ? AND enabled = 1 LIMIT 1"
+    )
+    .bind(requested_capability)
+    .fetch_optional(&db.0)
+    .await
+    {
+        per_candidate_retry_count = policy_retry_count.clamp(0, 3) as usize;
+        let mut candidates: Vec<(String, String)> = vec![(primary_provider_id, primary_model)];
+        candidates.extend(parse_fallback_chain_targets(&fallback_chain_json));
+
+        for (provider_id, preferred_model) in candidates {
+            if let Ok(Some((protocol_type, routed_base_url, routed_api_key))) = sqlx::query_as::<_, (String, String, String)>(
+                "SELECT protocol_type, base_url, api_key_encrypted FROM provider_configs WHERE id = ? AND enabled = 1 LIMIT 1"
+            )
+            .bind(&provider_id)
+            .fetch_optional(&db.0)
+            .await
+            {
+                if is_supported_protocol(&protocol_type) && !routed_api_key.trim().is_empty() {
+                    let candidate_model = if preferred_model.trim().is_empty() {
+                        session_model_name.clone()
+                    } else {
+                        preferred_model
+                    };
+                    route_candidates.push((
+                        protocol_type,
+                        routed_base_url,
+                        candidate_model,
+                        routed_api_key,
+                    ));
+                }
+            }
+        }
+    } else if requested_capability != "chat" {
+        // 能力未配置时退回 chat 路由
+        if let Ok(Some((primary_provider_id, primary_model, fallback_chain_json, policy_retry_count))) = sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT primary_provider_id, primary_model, fallback_chain_json, retry_count FROM routing_policies WHERE capability = 'chat' AND enabled = 1 LIMIT 1"
+        )
+        .fetch_optional(&db.0)
+        .await
+        {
+            per_candidate_retry_count = policy_retry_count.clamp(0, 3) as usize;
+            let mut candidates: Vec<(String, String)> = vec![(primary_provider_id, primary_model)];
+            candidates.extend(parse_fallback_chain_targets(&fallback_chain_json));
+
+            for (provider_id, preferred_model) in candidates {
+                if let Ok(Some((protocol_type, routed_base_url, routed_api_key))) = sqlx::query_as::<_, (String, String, String)>(
+                    "SELECT protocol_type, base_url, api_key_encrypted FROM provider_configs WHERE id = ? AND enabled = 1 LIMIT 1"
+                )
+                .bind(&provider_id)
+                .fetch_optional(&db.0)
+                .await
+                {
+                    if is_supported_protocol(&protocol_type) && !routed_api_key.trim().is_empty() {
+                        let candidate_model = if preferred_model.trim().is_empty() {
+                            session_model_name.clone()
+                        } else {
+                            preferred_model
+                        };
+                        route_candidates.push((
+                            protocol_type,
+                            routed_base_url,
+                            candidate_model,
+                            routed_api_key,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if !session_api_key.trim().is_empty() {
+        route_candidates.push((
+            session_api_format.clone(),
+            session_base_url.clone(),
+            session_model_name.clone(),
+            session_api_key.clone(),
+        ));
+    }
+
+    if route_candidates.is_empty() {
         return Err(format!("模型 API Key 为空，请在设置中重新配置 (model_id={model_id})"));
     }
+
+    // 去重，避免 fallback 与会话配置重复
+    route_candidates.dedup();
+    eprintln!(
+        "[routing] capability={}, candidates={}, retry_per_candidate={}",
+        requested_capability,
+        route_candidates.len(),
+        per_candidate_retry_count
+    );
+
+    // 当前回合默认使用首个候选的 api_format 做消息重建
+    let (api_format, base_url, model_name, api_key) = route_candidates[0].clone();
 
     // 重建 LLM 历史消息：将 JSON 包装的 assistant content 还原为 tool_use/tool_result 消息对
     let messages: Vec<Value> = history
@@ -403,38 +607,118 @@ pub async fn send_message(
     // 使用全局工具确认通道（在 lib.rs 中创建）
     let tool_confirm_responder = app.state::<ToolConfirmState>().0.clone();
 
-    // 始终走 Agent 模式
-    let app_clone = app.clone();
-    let session_id_clone = session_id.clone();
-    let final_messages = agent_executor
-        .execute_turn(
-            &api_format,
-            &base_url,
-            &api_key,
-            &model_name,
-            &system_prompt,
-            messages,
-            move |token: String| {
-                let _ = app_clone.emit("stream-token", StreamToken {
-                    session_id: session_id_clone.clone(),
-                    token,
-                    done: false,
-                    sub_agent: false,
-                });
-            },
-            Some(&app),
-            Some(&session_id),
-            allowed_tools.as_deref(),
-            permission_mode,
-            Some(tool_confirm_responder.clone()),
-            if work_dir.is_empty() { None } else { Some(work_dir.clone()) },
-            skill_config.max_iterations,
-            Some(cancel_flag_clone),
-            Some(routing_settings.node_timeout_seconds),
-            Some(routing_settings.retry_count),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+    // 始终走 Agent 模式；失败时按候选链重试
+    let mut final_messages_opt: Option<Vec<Value>> = None;
+    let mut last_error: Option<String> = None;
+    for (candidate_api_format, candidate_base_url, candidate_model_name, candidate_api_key) in &route_candidates {
+        let mut attempt_idx = 0usize;
+        loop {
+            let app_clone = app.clone();
+            let session_id_clone = session_id.clone();
+            let attempt = agent_executor
+                .execute_turn(
+                    candidate_api_format,
+                    candidate_base_url,
+                    candidate_api_key,
+                    candidate_model_name,
+                    &system_prompt,
+                    messages.clone(),
+                    move |token: String| {
+                        let _ = app_clone.emit("stream-token", StreamToken {
+                            session_id: session_id_clone.clone(),
+                            token,
+                            done: false,
+                            sub_agent: false,
+                        });
+                    },
+                    Some(&app),
+                    Some(&session_id),
+                    allowed_tools.as_deref(),
+                    permission_mode,
+                    Some(tool_confirm_responder.clone()),
+                    if work_dir.is_empty() {
+                        None
+                    } else {
+                        Some(work_dir.clone())
+                    },
+                    skill_config.max_iterations,
+                    Some(cancel_flag_clone.clone()),
+                    Some(routing_settings.node_timeout_seconds),
+                    Some(routing_settings.retry_count),
+                )
+                .await;
+
+            match attempt {
+                Ok(messages_out) => {
+                    let _ = sqlx::query(
+                        "INSERT INTO route_attempt_logs (id, session_id, capability, api_format, model_name, attempt_index, retry_index, error_kind, success, error_message, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, '', ?)",
+                    )
+                    .bind(Uuid::new_v4().to_string())
+                    .bind(&session_id)
+                    .bind(requested_capability)
+                    .bind(candidate_api_format)
+                    .bind(candidate_model_name)
+                    .bind((attempt_idx + 1) as i64)
+                    .bind(attempt_idx as i64)
+                    .bind("ok")
+                    .bind(Utc::now().to_rfc3339())
+                    .execute(&db.0)
+                    .await;
+                    final_messages_opt = Some(messages_out);
+                    break;
+                }
+                Err(err) => {
+                    let err_text = err.to_string();
+                    let kind = classify_model_route_error(&err_text);
+                    let kind_text = match kind {
+                        ModelRouteErrorKind::Auth => "auth",
+                        ModelRouteErrorKind::RateLimit => "rate_limit",
+                        ModelRouteErrorKind::Timeout => "timeout",
+                        ModelRouteErrorKind::Network => "network",
+                        ModelRouteErrorKind::Unknown => "unknown",
+                    };
+                    let _ = sqlx::query(
+                        "INSERT INTO route_attempt_logs (id, session_id, capability, api_format, model_name, attempt_index, retry_index, error_kind, success, error_message, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                    )
+                    .bind(Uuid::new_v4().to_string())
+                    .bind(&session_id)
+                    .bind(requested_capability)
+                    .bind(candidate_api_format)
+                    .bind(candidate_model_name)
+                    .bind((attempt_idx + 1) as i64)
+                    .bind(attempt_idx as i64)
+                    .bind(kind_text)
+                    .bind(err_text.clone())
+                    .bind(Utc::now().to_rfc3339())
+                    .execute(&db.0)
+                    .await;
+                    last_error = Some(err_text.clone());
+                    eprintln!(
+                        "[routing] 候选模型执行失败: format={}, model={}, attempt={}, kind={:?}, err={}",
+                        candidate_api_format,
+                        candidate_model_name,
+                        attempt_idx + 1,
+                        kind,
+                        err_text
+                    );
+
+                    if should_retry_same_candidate(kind) && attempt_idx < per_candidate_retry_count {
+                        attempt_idx += 1;
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        if final_messages_opt.is_some() {
+            break;
+        }
+    }
+
+    let final_messages = final_messages_opt
+        .ok_or_else(|| last_error.unwrap_or_else(|| "所有候选模型执行失败".to_string()))?;
 
     // 发送结束事件
     let _ = app.emit("stream-token", StreamToken {
@@ -823,8 +1107,10 @@ pub async fn get_sessions(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_permission_mode_for_storage, parse_permission_mode,
-        permission_mode_label_for_display,
+        classify_model_route_error, is_supported_protocol, normalize_permission_mode_for_storage,
+        parse_fallback_chain_targets, should_retry_same_candidate, infer_capability_from_user_message,
+        parse_permission_mode,
+        permission_mode_label_for_display, ModelRouteErrorKind,
     };
     use crate::agent::permissions::PermissionMode;
 
@@ -887,6 +1173,54 @@ mod tests {
             permission_mode_label_for_display("unrestricted"),
             "全自动模式（高风险）"
         );
+    }
+
+    #[test]
+    fn supported_protocols_are_openai_and_anthropic_only() {
+        assert!(is_supported_protocol("openai"));
+        assert!(is_supported_protocol("anthropic"));
+        assert!(!is_supported_protocol("gemini"));
+        assert!(!is_supported_protocol(""));
+    }
+
+    #[test]
+    fn parse_fallback_chain_targets_handles_json_array() {
+        let raw = r#"[{"provider_id":"p1","model":"m1"},{"provider_id":"p2","model":"m2"}]"#;
+        let parsed = parse_fallback_chain_targets(raw);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].0, "p1");
+        assert_eq!(parsed[0].1, "m1");
+        assert_eq!(parsed[1].0, "p2");
+        assert_eq!(parsed[1].1, "m2");
+    }
+
+    #[test]
+    fn classify_model_route_error_detects_auth() {
+        let kind = classify_model_route_error("Unauthorized: invalid_api_key");
+        assert_eq!(kind, ModelRouteErrorKind::Auth);
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_detects_retryable_kinds() {
+        let rate = classify_model_route_error("429 Too Many Requests");
+        let timeout = classify_model_route_error("request timeout while calling provider");
+        let network = classify_model_route_error("network connection reset");
+        assert_eq!(rate, ModelRouteErrorKind::RateLimit);
+        assert_eq!(timeout, ModelRouteErrorKind::Timeout);
+        assert_eq!(network, ModelRouteErrorKind::Network);
+        assert!(should_retry_same_candidate(rate));
+        assert!(should_retry_same_candidate(timeout));
+        assert!(should_retry_same_candidate(network));
+    }
+
+    #[test]
+    fn infer_capability_from_user_message_detects_modalities() {
+        assert_eq!(infer_capability_from_user_message("请帮我识图"), "vision");
+        assert_eq!(infer_capability_from_user_message("帮我生成图片"), "image_gen");
+        assert_eq!(infer_capability_from_user_message("这段音频做语音转文字"), "audio_stt");
+        assert_eq!(infer_capability_from_user_message("这段文案做文字转语音"), "audio_tts");
+        assert_eq!(infer_capability_from_user_message("解释这个报错"), "chat");
     }
 }
 

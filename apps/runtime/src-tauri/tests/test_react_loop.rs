@@ -1,5 +1,6 @@
 use runtime_lib::agent::permissions::PermissionMode;
 use runtime_lib::agent::{AgentExecutor, ToolRegistry};
+use runtime_lib::providers::{route_with_fallback, RouteFailureKind, RouteTarget, RoutingPolicy};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -81,4 +82,28 @@ async fn test_react_loop_openai_format_network_error() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(!err_msg.contains("not yet implemented"));
+}
+
+#[test]
+fn router_uses_fallback_on_primary_error() {
+    let policy = RoutingPolicy {
+        capability: "chat".to_string(),
+        primary: RouteTarget {
+            provider_id: "deepseek".to_string(),
+            model: "deepseek-chat".to_string(),
+        },
+        fallbacks: vec![RouteTarget {
+            provider_id: "qwen".to_string(),
+            model: "qwen-max".to_string(),
+        }],
+    };
+
+    let primary = route_with_fallback(&policy, None).expect("primary route");
+    assert_eq!(primary.provider_id, "deepseek");
+    assert_eq!(primary.model, "deepseek-chat");
+
+    let fallback = route_with_fallback(&policy, Some(RouteFailureKind::RateLimit))
+        .expect("fallback route");
+    assert_eq!(fallback.provider_id, "qwen");
+    assert_eq!(fallback.model, "qwen-max");
 }

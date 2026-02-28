@@ -1,6 +1,15 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ModelConfig } from "../types";
+import {
+  CapabilityRouteTemplateInfo,
+  CapabilityRoutingPolicy,
+  ModelConfig,
+  ProviderConfig,
+  ProviderHealthInfo,
+  ProviderPluginInfo,
+  RouteAttemptLog,
+  RouteAttemptStat,
+} from "../types";
 
 const MCP_PRESETS = [
   { label: "— 快速选择 —", value: "", name: "", command: "", args: "", env: "" },
@@ -44,6 +53,19 @@ interface RoutingSettings {
   retry_count: number;
 }
 
+const PROVIDER_PROTOCOL_OPTIONS = [
+  { label: "OpenAI 兼容", value: "openai" },
+  { label: "Anthropic 兼容", value: "anthropic" },
+];
+
+const ROUTING_CAPABILITIES = [
+  { label: "对话 Chat", value: "chat" },
+  { label: "视觉 Vision", value: "vision" },
+  { label: "生图 Image", value: "image_gen" },
+  { label: "语音转写 STT", value: "audio_stt" },
+  { label: "语音合成 TTS", value: "audio_tts" },
+];
+
 export function SettingsView({ onClose }: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [form, setForm] = useState({
@@ -67,7 +89,7 @@ export function SettingsView({ onClose }: Props) {
   const [mcpServers, setMcpServers] = useState<any[]>([]);
   const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", env: "" });
   const [mcpError, setMcpError] = useState("");
-  const [activeTab, setActiveTab] = useState<"models" | "mcp" | "search" | "routing">("models");
+  const [activeTab, setActiveTab] = useState<"models" | "providers" | "capabilities" | "health" | "mcp" | "search" | "routing">("models");
 
   // 搜索引擎配置
   const [searchConfigs, setSearchConfigs] = useState<ModelConfig[]>([]);
@@ -87,7 +109,81 @@ export function SettingsView({ onClose }: Props) {
   const [routeSaveState, setRouteSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [routeError, setRouteError] = useState("");
 
-  useEffect(() => { loadModels(); loadMcpServers(); loadSearchConfigs(); loadRoutingSettings(); }, []);
+  const [providerPlugins, setProviderPlugins] = useState<ProviderPluginInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [providerForm, setProviderForm] = useState<ProviderConfig>({
+    id: "",
+    provider_key: "deepseek",
+    display_name: "DeepSeek",
+    protocol_type: "openai",
+    base_url: "https://api.deepseek.com/v1",
+    auth_type: "api_key",
+    api_key_encrypted: "",
+    org_id: "",
+    extra_json: "{}",
+    enabled: true,
+  });
+  const [providerError, setProviderError] = useState("");
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+
+  const [selectedCapability, setSelectedCapability] = useState("chat");
+  const [chatRoutingPolicy, setChatRoutingPolicy] = useState<CapabilityRoutingPolicy>({
+    capability: "chat",
+    primary_provider_id: "",
+    primary_model: "",
+    fallback_chain_json: "[]",
+    timeout_ms: 60000,
+    retry_count: 0,
+    enabled: true,
+  });
+  const [policySaveState, setPolicySaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [policyError, setPolicyError] = useState("");
+  const [chatPrimaryModels, setChatPrimaryModels] = useState<string[]>([]);
+  const [chatFallbackRows, setChatFallbackRows] = useState<Array<{ provider_id: string; model: string }>>([]);
+  const [routeTemplates, setRouteTemplates] = useState<CapabilityRouteTemplateInfo[]>([]);
+  const [selectedRouteTemplateId, setSelectedRouteTemplateId] = useState("china-first-p0");
+
+  const [healthResult, setHealthResult] = useState<ProviderHealthInfo | null>(null);
+  const [allHealthResults, setAllHealthResults] = useState<ProviderHealthInfo[]>([]);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthProviderId, setHealthProviderId] = useState("");
+  const [routeLogs, setRouteLogs] = useState<RouteAttemptLog[]>([]);
+  const [routeLogsLoading, setRouteLogsLoading] = useState(false);
+  const [routeLogsOffset, setRouteLogsOffset] = useState(0);
+  const [routeLogsHasMore, setRouteLogsHasMore] = useState(false);
+  const [routeLogsSessionId, setRouteLogsSessionId] = useState("");
+  const [routeLogsCapabilityFilter, setRouteLogsCapabilityFilter] = useState("all");
+  const [routeLogsResultFilter, setRouteLogsResultFilter] = useState("all");
+  const [routeLogsErrorKindFilter, setRouteLogsErrorKindFilter] = useState("all");
+  const [routeLogsExporting, setRouteLogsExporting] = useState(false);
+  const [routeStats, setRouteStats] = useState<RouteAttemptStat[]>([]);
+  const [routeStatsLoading, setRouteStatsLoading] = useState(false);
+  const [routeStatsCapability, setRouteStatsCapability] = useState("all");
+  const [routeStatsHours, setRouteStatsHours] = useState(24);
+
+  useEffect(() => {
+    loadModels();
+    loadMcpServers();
+    loadSearchConfigs();
+    loadRoutingSettings();
+    loadProviderPlugins();
+    loadProviderConfigs();
+    loadCapabilityRoutingPolicy("chat");
+    loadRouteTemplates("chat");
+  }, []);
+
+  useEffect(() => {
+    if (chatRoutingPolicy.primary_provider_id) {
+      loadChatPrimaryModels(chatRoutingPolicy.primary_provider_id, selectedCapability);
+    }
+  }, [chatRoutingPolicy.primary_provider_id, selectedCapability]);
+
+  useEffect(() => {
+    if (activeTab === "health") {
+      loadRecentRouteLogs(false);
+      loadRouteStats();
+    }
+  }, [activeTab]);
 
   async function loadModels() {
     const list = await invoke<ModelConfig[]>("list_model_configs");
@@ -110,6 +206,316 @@ export function SettingsView({ onClose }: Props) {
     } catch (e) {
       setRouteError("加载自动路由设置失败: " + String(e));
       setRouteSaveState("error");
+    }
+  }
+
+  async function loadProviderPlugins() {
+    try {
+      const list = await invoke<ProviderPluginInfo[]>("list_builtin_provider_plugins");
+      setProviderPlugins(list);
+    } catch (e) {
+      setProviderError("加载 Provider 插件失败: " + String(e));
+    }
+  }
+
+  async function loadProviderConfigs() {
+    try {
+      const list = await invoke<ProviderConfig[]>("list_provider_configs");
+      setProviders(list);
+      if (!healthProviderId && list.length > 0) {
+        setHealthProviderId(list[0].id);
+      }
+    } catch (e) {
+      setProviderError("加载 Provider 配置失败: " + String(e));
+    }
+  }
+
+  async function loadCapabilityRoutingPolicy(capability: string) {
+    try {
+      const policy = await invoke<CapabilityRoutingPolicy | null>("get_capability_routing_policy", {
+        capability,
+      });
+      if (policy) {
+        setChatRoutingPolicy(policy);
+        try {
+          const parsed = JSON.parse(policy.fallback_chain_json || "[]");
+          if (Array.isArray(parsed)) {
+            setChatFallbackRows(
+              parsed.map((item) => ({
+                provider_id: String(item?.provider_id || ""),
+                model: String(item?.model || ""),
+              })),
+            );
+          }
+        } catch {
+          setChatFallbackRows([]);
+        }
+      } else {
+        setChatRoutingPolicy({
+          capability,
+          primary_provider_id: "",
+          primary_model: "",
+          fallback_chain_json: "[]",
+          timeout_ms: 60000,
+          retry_count: 0,
+          enabled: true,
+        });
+        setChatFallbackRows([]);
+      }
+    } catch (e) {
+      setPolicyError("加载聊天路由策略失败: " + String(e));
+    }
+  }
+
+  async function loadRouteTemplates(capability: string) {
+    try {
+      const list = await invoke<CapabilityRouteTemplateInfo[]>("list_capability_route_templates", {
+        capability,
+      });
+      setRouteTemplates(list);
+      if (list.length > 0 && !list.some((x) => x.template_id === selectedRouteTemplateId)) {
+        setSelectedRouteTemplateId(list[0].template_id);
+      }
+    } catch {
+      setRouteTemplates([]);
+    }
+  }
+
+  async function loadChatPrimaryModels(providerId: string, capability: string) {
+    if (!providerId) {
+      setChatPrimaryModels([]);
+      return;
+    }
+    try {
+      const models = await invoke<string[]>("list_provider_models", {
+        providerId,
+        capability,
+      });
+      setChatPrimaryModels(models);
+    } catch {
+      setChatPrimaryModels([]);
+    }
+  }
+
+  async function handleSaveProvider() {
+    setProviderError("");
+    try {
+      const id = await invoke<string>("save_provider_config", {
+        config: {
+          ...providerForm,
+          id: editingProviderId || providerForm.id,
+        },
+      });
+      setEditingProviderId(null);
+      setProviderForm((prev) => ({ ...prev, id, api_key_encrypted: "" }));
+      await loadProviderConfigs();
+    } catch (e) {
+      setProviderError("保存 Provider 配置失败: " + String(e));
+    }
+  }
+
+  function handleEditProvider(p: ProviderConfig) {
+    setEditingProviderId(p.id);
+    setProviderForm(p);
+    setProviderError("");
+  }
+
+  async function handleDeleteProvider(id: string) {
+    try {
+      await invoke("delete_provider_config", { providerId: id });
+      if (editingProviderId === id) {
+        setEditingProviderId(null);
+      }
+      await loadProviderConfigs();
+    } catch (e) {
+      setProviderError("删除 Provider 配置失败: " + String(e));
+    }
+  }
+
+  async function handleSaveChatPolicy() {
+    setPolicySaveState("saving");
+    setPolicyError("");
+    try {
+      const policyToSave = {
+        ...chatRoutingPolicy,
+        capability: selectedCapability,
+        fallback_chain_json: JSON.stringify(chatFallbackRows),
+      };
+      await invoke("set_capability_routing_policy", { policy: policyToSave });
+      setPolicySaveState("saved");
+      setTimeout(() => setPolicySaveState("idle"), 1200);
+    } catch (e) {
+      setPolicySaveState("error");
+      setPolicyError("保存聊天路由策略失败: " + String(e));
+    }
+  }
+
+  async function handleCheckProviderHealth() {
+    if (!healthProviderId) return;
+    setHealthLoading(true);
+    try {
+      const result = await invoke<ProviderHealthInfo>("test_provider_health", {
+        providerId: healthProviderId,
+      });
+      setHealthResult(result);
+    } catch (e) {
+      setHealthResult({
+        provider_id: healthProviderId,
+        ok: false,
+        protocol_type: "",
+        message: String(e),
+      });
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
+  async function handleCheckAllProviderHealth() {
+    setHealthLoading(true);
+    try {
+      const results = await invoke<ProviderHealthInfo[]>("test_all_provider_health");
+      setAllHealthResults(results);
+      if (results.length > 0) {
+        setHealthResult(results[0]);
+      }
+    } catch (e) {
+      setAllHealthResults([
+        {
+          provider_id: "",
+          ok: false,
+          protocol_type: "",
+          message: String(e),
+        },
+      ]);
+    } finally {
+      setHealthLoading(false);
+    }
+  }
+
+  async function loadRecentRouteLogs(append: boolean) {
+    setRouteLogsLoading(true);
+    try {
+      const logs = await invoke<RouteAttemptLog[]>("list_recent_route_attempt_logs", {
+        sessionId: routeLogsSessionId.trim() || null,
+        limit: 50,
+        offset: append ? routeLogsOffset : 0,
+      });
+      setRouteLogs((prev) => (append ? [...prev, ...logs] : logs));
+      setRouteLogsOffset((prev) => (append ? prev + logs.length : logs.length));
+      setRouteLogsHasMore(logs.length === 50);
+    } catch {
+      if (!append) {
+        setRouteLogs([]);
+        setRouteLogsOffset(0);
+        setRouteLogsHasMore(false);
+      }
+    } finally {
+      setRouteLogsLoading(false);
+    }
+  }
+
+  async function loadRouteStats() {
+    setRouteStatsLoading(true);
+    try {
+      const stats = await invoke<RouteAttemptStat[]>("list_route_attempt_stats", {
+        hours: routeStatsHours,
+        capability: routeStatsCapability === "all" ? null : routeStatsCapability,
+      });
+      setRouteStats(stats);
+    } catch {
+      setRouteStats([]);
+    } finally {
+      setRouteStatsLoading(false);
+    }
+  }
+
+  async function handleExportRouteLogsCsv() {
+    setRouteLogsExporting(true);
+    try {
+      const csv = await invoke<string>("export_route_attempt_logs_csv", {
+        sessionId: routeLogsSessionId.trim() || null,
+        hours: routeStatsHours,
+        capability: routeLogsCapabilityFilter === "all" ? null : routeLogsCapabilityFilter,
+        resultFilter: routeLogsResultFilter === "all" ? null : routeLogsResultFilter,
+        errorKind: routeLogsErrorKindFilter === "all" ? null : routeLogsErrorKindFilter,
+      });
+      const dir = await invoke<string | null>("select_directory", { defaultPath: "" });
+      if (dir) {
+        const stamp = new Date().toISOString().replace(/:/g, "-").replace(/\..+/, "");
+        const path = `${dir}\\route-attempt-logs-${stamp}.csv`;
+        await invoke("write_export_file", { path, content: csv });
+      }
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(csv);
+      }
+    } finally {
+      setRouteLogsExporting(false);
+    }
+  }
+
+  function getCapabilityRecommendedDefaults(capability: string): { timeout_ms: number; retry_count: number } {
+    switch (capability) {
+      case "vision":
+        return { timeout_ms: 90000, retry_count: 1 };
+      case "image_gen":
+        return { timeout_ms: 120000, retry_count: 1 };
+      case "audio_stt":
+        return { timeout_ms: 90000, retry_count: 1 };
+      case "audio_tts":
+        return { timeout_ms: 60000, retry_count: 1 };
+      default:
+        return { timeout_ms: 60000, retry_count: 1 };
+    }
+  }
+
+  const filteredRouteLogs = routeLogs.filter((log) => {
+    if (routeLogsCapabilityFilter !== "all" && log.capability !== routeLogsCapabilityFilter) return false;
+    if (routeLogsResultFilter === "success" && !log.success) return false;
+    if (routeLogsResultFilter === "failed" && log.success) return false;
+    if (routeLogsErrorKindFilter !== "all" && log.error_kind !== routeLogsErrorKindFilter) return false;
+    return true;
+  });
+
+  function addFallbackRow() {
+    setChatFallbackRows((rows) => [...rows, { provider_id: "", model: "" }]);
+  }
+
+  function updateFallbackRow(index: number, patch: Partial<{ provider_id: string; model: string }>) {
+    setChatFallbackRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function removeFallbackRow(index: number) {
+    setChatFallbackRows((rows) => rows.filter((_, i) => i !== index));
+  }
+
+  async function handleApplyRouteTemplate() {
+    try {
+      const policy = await invoke<CapabilityRoutingPolicy>("apply_capability_route_template", {
+        capability: selectedCapability,
+        templateId: selectedRouteTemplateId,
+      });
+      setChatRoutingPolicy(policy);
+      const parsed = JSON.parse(policy.fallback_chain_json || "[]");
+      if (Array.isArray(parsed)) {
+        setChatFallbackRows(
+          parsed.map((item) => ({
+            provider_id: String(item?.provider_id || ""),
+            model: String(item?.model || ""),
+          })),
+        );
+      } else {
+        setChatFallbackRows([]);
+      }
+    } catch (e) {
+      const raw = String(e);
+      const enabledKeys = Array.from(new Set(providers.filter((p) => p.enabled).map((p) => p.provider_key)));
+      const enabledText = enabledKeys.length > 0 ? enabledKeys.join(", ") : "无";
+      let missingText = "";
+      const match = raw.match(/需要其一）:\s*(\[[^\]]+\])/);
+      if (match?.[1]) {
+        missingText = `；缺少 Provider Key（任选其一）: ${match[1]}`;
+      }
+      setPolicyError(`应用路由模板失败: ${raw}${missingText}；当前已启用: ${enabledText}。请先到 Providers 页补齐并启用。`);
     }
   }
 
@@ -417,6 +823,27 @@ export function SettingsView({ onClose }: Props) {
             模型配置
           </button>
           <button
+            onClick={() => setActiveTab("providers")}
+            className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
+              (activeTab === "providers" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
+          >
+            Providers
+          </button>
+          <button
+            onClick={() => setActiveTab("capabilities")}
+            className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
+              (activeTab === "capabilities" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
+          >
+            能力路由
+          </button>
+          <button
+            onClick={() => setActiveTab("health")}
+            className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
+              (activeTab === "health" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
+          >
+            健康检查
+          </button>
+          <button
             onClick={() => setActiveTab("mcp")}
             className={"text-sm font-medium pb-1 border-b-2 transition-colors " +
               (activeTab === "mcp" ? "text-gray-800 border-blue-500" : "text-gray-500 border-transparent hover:text-gray-700")}
@@ -585,6 +1012,487 @@ export function SettingsView({ onClose }: Props) {
         </div>
       </div>
       </>)}
+
+      {activeTab === "providers" && (
+        <>
+          {providers.length > 0 && (
+            <div className="mb-6 space-y-2">
+              <div className="text-xs text-gray-500 mb-2">已配置 Providers</div>
+              {providers.map((p) => (
+                <div key={p.id} className="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 text-sm border border-transparent hover:border-gray-200">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-800">{p.display_name}</span>
+                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{p.provider_key}</span>
+                      {!p.enabled && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">禁用</span>}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5 truncate">{p.protocol_type} · {p.base_url}</div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                    <button onClick={() => handleEditProvider(p)} className="text-blue-500 hover:text-blue-600 text-xs">编辑</button>
+                    <button onClick={() => handleDeleteProvider(p.id)} className="text-red-400 hover:text-red-500 text-xs">删除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg p-4 space-y-3">
+            <div className="text-xs font-medium text-gray-500 mb-2">
+              {editingProviderId ? "编辑 Provider" : "添加 Provider"}
+            </div>
+            <div>
+              <label className={labelCls}>Provider Key</label>
+              <select
+                className={inputCls}
+                value={providerForm.provider_key}
+                onChange={(e) => {
+                  const key = e.target.value;
+                  const preset = providerPlugins.find((x) => x.key === key);
+                  setProviderForm((s) => ({
+                    ...s,
+                    provider_key: key,
+                    display_name: preset?.display_name || key,
+                  }));
+                }}
+              >
+                {providerPlugins.map((p) => (
+                  <option key={p.key} value={p.key}>{p.display_name} ({p.key})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>显示名称</label>
+              <input className={inputCls} value={providerForm.display_name} onChange={(e) => setProviderForm({ ...providerForm, display_name: e.target.value })} />
+            </div>
+            <div>
+              <label className={labelCls}>协议</label>
+              <select className={inputCls} value={providerForm.protocol_type} onChange={(e) => setProviderForm({ ...providerForm, protocol_type: e.target.value })}>
+                {PROVIDER_PROTOCOL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Base URL</label>
+              <input className={inputCls} value={providerForm.base_url} onChange={(e) => setProviderForm({ ...providerForm, base_url: e.target.value })} />
+            </div>
+            <div>
+              <label className={labelCls}>API Key</label>
+              <input className={inputCls} type="password" value={providerForm.api_key_encrypted} onChange={(e) => setProviderForm({ ...providerForm, api_key_encrypted: e.target.value })} />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              <input type="checkbox" checked={providerForm.enabled} onChange={(e) => setProviderForm({ ...providerForm, enabled: e.target.checked })} />
+              启用该 Provider
+            </label>
+            {providerError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{providerError}</div>}
+            <button
+              onClick={handleSaveProvider}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
+            >
+              {editingProviderId ? "保存修改" : "保存 Provider"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {activeTab === "capabilities" && (
+        <div className="bg-white rounded-lg p-4 space-y-3">
+          <div className="text-xs font-medium text-gray-500 mb-2">能力路由</div>
+          <div>
+            <label className={labelCls}>能力类型</label>
+            <select
+              className={inputCls}
+              value={selectedCapability}
+              onChange={(e) => {
+                const capability = e.target.value;
+                setSelectedCapability(capability);
+                loadCapabilityRoutingPolicy(capability);
+                loadRouteTemplates(capability);
+              }}
+            >
+              {ROUTING_CAPABILITIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>主 Provider</label>
+            <select
+              className={inputCls}
+              value={chatRoutingPolicy.primary_provider_id}
+              onChange={(e) => {
+                const providerId = e.target.value;
+                setChatRoutingPolicy((s) => ({ ...s, primary_provider_id: providerId }));
+                loadChatPrimaryModels(providerId, selectedCapability);
+              }}
+            >
+              <option value="">请选择</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>{p.display_name} ({p.provider_key})</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>主模型</label>
+            <input
+              className={inputCls}
+              list="chat-primary-models"
+              value={chatRoutingPolicy.primary_model}
+              onChange={(e) => setChatRoutingPolicy((s) => ({ ...s, primary_model: e.target.value }))}
+              placeholder="例如: deepseek-chat / qwen-max / kimi-k2"
+            />
+            {chatPrimaryModels.length > 0 && (
+              <datalist id="chat-primary-models">
+                {chatPrimaryModels.map((model) => (
+                  <option key={model} value={model} />
+                ))}
+              </datalist>
+            )}
+          </div>
+          <div>
+            <label className={labelCls}>Fallback 链</label>
+            <div className="space-y-2">
+              {chatFallbackRows.map((row, index) => (
+                <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                  <select
+                    className={inputCls}
+                    value={row.provider_id}
+                    onChange={(e) => updateFallbackRow(index, { provider_id: e.target.value })}
+                  >
+                    <option value="">选择 Provider</option>
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>{p.display_name}</option>
+                    ))}
+                  </select>
+                  <input
+                    className={inputCls}
+                    value={row.model}
+                    onChange={(e) => updateFallbackRow(index, { model: e.target.value })}
+                    placeholder="模型名"
+                  />
+                  <button
+                    onClick={() => removeFallbackRow(index)}
+                    className="px-2 text-xs text-red-500 hover:text-red-600"
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={addFallbackRow}
+                className="text-xs text-blue-500 hover:text-blue-600"
+              >
+                + 添加回退节点
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>超时(ms)</label>
+              <input
+                className={inputCls}
+                type="number"
+                value={chatRoutingPolicy.timeout_ms}
+                onChange={(e) => setChatRoutingPolicy((s) => ({ ...s, timeout_ms: Number(e.target.value || 60000) }))}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>重试次数</label>
+              <input
+                className={inputCls}
+                type="number"
+                value={chatRoutingPolicy.retry_count}
+                onChange={(e) => setChatRoutingPolicy((s) => ({ ...s, retry_count: Number(e.target.value || 0) }))}
+              />
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const defaults = getCapabilityRecommendedDefaults(selectedCapability);
+              setChatRoutingPolicy((s) => ({
+                ...s,
+                timeout_ms: defaults.timeout_ms,
+                retry_count: defaults.retry_count,
+              }));
+            }}
+            className="w-full bg-gray-100 hover:bg-gray-200 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
+          >
+            应用推荐超时/重试配置
+          </button>
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <select
+              className={inputCls}
+              value={selectedRouteTemplateId}
+              onChange={(e) => setSelectedRouteTemplateId(e.target.value)}
+            >
+              {routeTemplates.length === 0 && <option value="">暂无模板</option>}
+              {routeTemplates.map((tpl) => (
+                <option key={`${tpl.template_id}-${tpl.capability}`} value={tpl.template_id}>
+                  {tpl.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleApplyRouteTemplate}
+              disabled={!selectedRouteTemplateId}
+              className="bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm px-3 py-1.5 rounded-lg transition-all active:scale-[0.97]"
+            >
+              应用模板
+            </button>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-gray-600">
+            <input
+              type="checkbox"
+              checked={chatRoutingPolicy.enabled}
+              onChange={(e) => setChatRoutingPolicy((s) => ({ ...s, enabled: e.target.checked }))}
+            />
+            启用当前能力路由
+          </label>
+          {policyError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{policyError}</div>}
+          {policySaveState === "saved" && <div className="bg-green-50 text-green-600 text-xs px-2 py-1 rounded">已保存</div>}
+          <button
+            onClick={handleSaveChatPolicy}
+            disabled={policySaveState === "saving"}
+            className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
+          >
+            {policySaveState === "saving" ? "保存中..." : "保存能力路由策略"}
+          </button>
+        </div>
+      )}
+
+      {activeTab === "health" && (
+        <div className="bg-white rounded-lg p-4 space-y-3">
+          <div className="text-xs font-medium text-gray-500 mb-2">Provider 健康检查</div>
+          <div>
+            <label className={labelCls}>选择 Provider</label>
+            <select
+              className={inputCls}
+              value={healthProviderId}
+              onChange={(e) => setHealthProviderId(e.target.value)}
+            >
+              <option value="">请选择</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>{p.display_name} ({p.provider_key})</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleCheckProviderHealth}
+            disabled={!healthProviderId || healthLoading}
+            className="w-full bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
+          >
+            {healthLoading ? "检测中..." : "执行健康检查"}
+          </button>
+          <button
+            onClick={handleCheckAllProviderHealth}
+            disabled={healthLoading}
+            className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
+          >
+            {healthLoading ? "检测中..." : "一键巡检全部 Provider"}
+          </button>
+          {healthResult && (
+            <div className={"text-xs px-2 py-2 rounded " + (healthResult.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")}>
+              <div>状态: {healthResult.ok ? "正常" : "异常"}</div>
+              <div>协议: {healthResult.protocol_type || "-"}</div>
+              <div className="break-all">详情: {healthResult.message}</div>
+            </div>
+          )}
+          {allHealthResults.length > 0 && (
+            <div className="space-y-2">
+              {allHealthResults.map((r, idx) => (
+                <div
+                  key={`${r.provider_id}-${idx}`}
+                  className={"text-xs px-2 py-2 rounded " + (r.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")}
+                >
+                  <div>ID: {r.provider_id || "-"}</div>
+                  <div>状态: {r.ok ? "正常" : "异常"}</div>
+                  <div>协议: {r.protocol_type || "-"}</div>
+                  <div className="break-all">详情: {r.message}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="pt-2 border-t border-gray-100">
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-gray-500">路由统计</div>
+                <button
+                  onClick={loadRouteStats}
+                  disabled={routeStatsLoading}
+                  className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
+                >
+                  {routeStatsLoading ? "刷新中..." : "刷新"}
+                </button>
+              </div>
+              <div className="flex gap-2 mb-2">
+                <select
+                  className={inputCls}
+                  value={String(routeStatsHours)}
+                  onChange={(e) => setRouteStatsHours(Number(e.target.value || 24))}
+                >
+                  <option value="1">最近 1h</option>
+                  <option value="24">最近 24h</option>
+                  <option value="168">最近 7d</option>
+                </select>
+                <select
+                  className={inputCls}
+                  value={routeStatsCapability}
+                  onChange={(e) => setRouteStatsCapability(e.target.value)}
+                >
+                  <option value="all">全部能力</option>
+                  <option value="chat">chat</option>
+                  <option value="vision">vision</option>
+                  <option value="image_gen">image_gen</option>
+                  <option value="audio_stt">audio_stt</option>
+                  <option value="audio_tts">audio_tts</option>
+                </select>
+                <button
+                  onClick={loadRouteStats}
+                  disabled={routeStatsLoading}
+                  className="bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-xs px-3 rounded"
+                >
+                  应用
+                </button>
+              </div>
+              {routeStats.length === 0 ? (
+                <div className="text-xs text-gray-400">暂无统计数据</div>
+              ) : (
+                <div className="space-y-1">
+                  {routeStats.slice(0, 8).map((stat, idx) => (
+                    <div key={`${stat.capability}-${stat.error_kind}-${idx}`} className="text-xs bg-gray-50 border border-gray-100 rounded px-2 py-1 text-gray-700">
+                      {stat.capability} · {stat.success ? "success" : stat.error_kind || "unknown"} · {stat.count}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-medium text-gray-500">最近路由日志</div>
+              <button
+                onClick={() => {
+                  setRouteLogsOffset(0);
+                  loadRecentRouteLogs(false);
+                }}
+                disabled={routeLogsLoading}
+                className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
+              >
+                {routeLogsLoading ? "刷新中..." : "刷新"}
+              </button>
+            </div>
+            <button
+              onClick={handleExportRouteLogsCsv}
+              disabled={routeLogsExporting}
+              className="w-full mb-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-xs py-1.5 rounded"
+            >
+              {routeLogsExporting ? "导出中..." : "导出日志 CSV（保存文件并复制到剪贴板）"}
+            </button>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <input
+                className={inputCls}
+                placeholder="按 Session ID 过滤（可选）"
+                value={routeLogsSessionId}
+                onChange={(e) => setRouteLogsSessionId(e.target.value)}
+              />
+              <button
+                onClick={() => {
+                  setRouteLogsOffset(0);
+                  loadRecentRouteLogs(false);
+                }}
+                disabled={routeLogsLoading}
+                className="bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-xs py-1.5 rounded"
+              >
+                应用过滤
+              </button>
+              <select
+                className={inputCls}
+                value={routeLogsCapabilityFilter}
+                onChange={(e) => setRouteLogsCapabilityFilter(e.target.value)}
+              >
+                <option value="all">能力: 全部</option>
+                <option value="chat">chat</option>
+                <option value="vision">vision</option>
+                <option value="image_gen">image_gen</option>
+                <option value="audio_stt">audio_stt</option>
+                <option value="audio_tts">audio_tts</option>
+              </select>
+              <select
+                className={inputCls}
+                value={routeLogsResultFilter}
+                onChange={(e) => setRouteLogsResultFilter(e.target.value)}
+              >
+                <option value="all">结果: 全部</option>
+                <option value="success">成功</option>
+                <option value="failed">失败</option>
+              </select>
+              <select
+                className={inputCls}
+                value={routeLogsErrorKindFilter}
+                onChange={(e) => setRouteLogsErrorKindFilter(e.target.value)}
+              >
+                <option value="all">错误类型: 全部</option>
+                <option value="auth">auth</option>
+                <option value="rate_limit">rate_limit</option>
+                <option value="timeout">timeout</option>
+                <option value="network">network</option>
+                <option value="unknown">unknown</option>
+              </select>
+            </div>
+            {filteredRouteLogs.length === 0 ? (
+              <div className="text-xs text-gray-400">暂无路由日志</div>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {filteredRouteLogs.map((log, idx) => (
+                  <div
+                    key={`${log.created_at}-${idx}`}
+                    className={"text-xs rounded px-2 py-2 border " + (log.success ? "bg-green-50 border-green-100 text-green-700" : "bg-red-50 border-red-100 text-red-700")}
+                  >
+                    <div>{log.created_at}</div>
+                    <div>能力: {log.capability} · 协议: {log.api_format}</div>
+                    <div>模型: {log.model_name}</div>
+                    <div>尝试: #{log.attempt_index} / 重试: {log.retry_index}</div>
+                    <div className="flex gap-2 mt-1">
+                      <button
+                        onClick={() => setRouteLogsSessionId(log.session_id)}
+                        className="text-[11px] text-blue-600 hover:text-blue-700"
+                      >
+                        按此 Session 过滤
+                      </button>
+                      <button
+                        onClick={() => navigator?.clipboard?.writeText?.(log.session_id)}
+                        className="text-[11px] text-blue-600 hover:text-blue-700"
+                      >
+                        复制 Session ID
+                      </button>
+                      {!log.success && log.error_message && (
+                        <button
+                          onClick={() => navigator?.clipboard?.writeText?.(log.error_message)}
+                          className="text-[11px] text-blue-600 hover:text-blue-700"
+                        >
+                          复制错误详情
+                        </button>
+                      )}
+                    </div>
+                    <div>结果: {log.success ? "成功" : `失败 (${log.error_kind || "unknown"})`}</div>
+                    {!log.success && log.error_message && (
+                      <div className="break-all">错误: {log.error_message}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {routeLogsHasMore && (
+              <button
+                onClick={() => loadRecentRouteLogs(true)}
+                disabled={routeLogsLoading}
+                className="w-full mt-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-xs py-1.5 rounded"
+              >
+                {routeLogsLoading ? "加载中..." : "加载更多"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {activeTab === "mcp" && (<>
       {/* MCP 服务器管理 */}

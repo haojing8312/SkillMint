@@ -99,6 +99,89 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     .await
     .unwrap();
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS provider_configs (
+            id TEXT PRIMARY KEY,
+            provider_key TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            protocol_type TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            auth_type TEXT NOT NULL DEFAULT 'api_key',
+            api_key_encrypted TEXT NOT NULL DEFAULT '',
+            org_id TEXT NOT NULL DEFAULT '',
+            extra_json TEXT NOT NULL DEFAULT '{}',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS provider_capabilities (
+            provider_id TEXT NOT NULL,
+            capability TEXT NOT NULL,
+            supported INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 100,
+            default_model TEXT NOT NULL DEFAULT '',
+            fallback_models_json TEXT NOT NULL DEFAULT '[]',
+            PRIMARY KEY (provider_id, capability)
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS model_catalog_cache (
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            ttl_seconds INTEGER NOT NULL DEFAULT 3600,
+            PRIMARY KEY (provider_id, model_id)
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS routing_policies (
+            capability TEXT PRIMARY KEY,
+            primary_provider_id TEXT NOT NULL,
+            primary_model TEXT NOT NULL DEFAULT '',
+            fallback_chain_json TEXT NOT NULL DEFAULT '[]',
+            timeout_ms INTEGER NOT NULL DEFAULT 60000,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS route_attempt_logs (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            capability TEXT NOT NULL,
+            api_format TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            attempt_index INTEGER NOT NULL DEFAULT 1,
+            retry_index INTEGER NOT NULL DEFAULT 0,
+            error_kind TEXT NOT NULL DEFAULT '',
+            success INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
     (pool, tmp)
 }
 

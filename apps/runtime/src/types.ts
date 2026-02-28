@@ -19,6 +19,78 @@ export interface ModelConfig {
   is_default: boolean;
 }
 
+export interface ProviderConfig {
+  id: string;
+  provider_key: string;
+  display_name: string;
+  protocol_type: string;
+  base_url: string;
+  auth_type: string;
+  api_key_encrypted: string;
+  org_id: string;
+  extra_json: string;
+  enabled: boolean;
+}
+
+export interface ProviderPluginInfo {
+  key: string;
+  display_name: string;
+  capabilities: string[];
+}
+
+export interface ChatRoutingPolicy {
+  primary_provider_id: string;
+  primary_model: string;
+  fallback_chain_json: string;
+  timeout_ms: number;
+  retry_count: number;
+  enabled: boolean;
+}
+
+export interface CapabilityRoutingPolicy {
+  capability: string;
+  primary_provider_id: string;
+  primary_model: string;
+  fallback_chain_json: string;
+  timeout_ms: number;
+  retry_count: number;
+  enabled: boolean;
+}
+
+export interface ProviderHealthInfo {
+  provider_id: string;
+  ok: boolean;
+  protocol_type: string;
+  message: string;
+}
+
+export interface RouteAttemptLog {
+  session_id: string;
+  capability: string;
+  api_format: string;
+  model_name: string;
+  attempt_index: number;
+  retry_index: number;
+  error_kind: string;
+  success: boolean;
+  error_message: string;
+  created_at: string;
+}
+
+export interface RouteAttemptStat {
+  capability: string;
+  error_kind: string;
+  success: boolean;
+  count: number;
+}
+
+export interface CapabilityRouteTemplateInfo {
+  template_id: string;
+  name: string;
+  description: string;
+  capability: string;
+}
+
 export interface FrontMatter {
   name?: string;
   description?: string;
