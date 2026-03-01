@@ -66,6 +66,9 @@ The integrated environment where users can package, install, and run encrypted S
 **User Features**:
 - Install `.skillpack` files via drag-and-drop or file picker
 - Clean chat interface with real-time streaming responses
+- No-session landing page with capability intro and scenario templates
+- Expert Skills hub (`我的技能`) with guided two-column creation workflow
+- Skill packaging entry moved into the Expert Skills domain
 - Session history with searchable conversation archives
 - Multi-model support (Claude 4.6, GPT-4, MiniMax M2.5, GLM-4, DeepSeek)
 - Local secure workspace folder configuration
