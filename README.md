@@ -24,6 +24,31 @@ SkillMint helps AI Skill creators:
 **For Creators**: Package and sell your Skills securely
 **For Users**: Run powerful AI Skills locally without exposing sensitive data
 
+## Core Product Highlights
+
+- **Start tasks in one sentence**: Use the landing page to start local automation and coding tasks quickly.
+- **Agent + tools in one chat loop**: The assistant can read/write files, run commands, and show tool traces while responding.
+- **Expert Skills workflow**: Create reusable local skills with guided input and real-time `SKILL.md` preview.
+- **Built-in packaging flow**: Package skills from the app for secure sharing and distribution.
+- **Unified settings control**: Manage models, provider routing, search providers, MCP servers, and runtime options.
+
+## Product Screenshots
+
+### 1) Task Landing
+![Task Landing](docs/screenshots/app-home.png)
+
+### 2) Expert Skills Hub
+![Expert Skills Hub](docs/screenshots/experts-hub.png)
+
+### 3) Skill Packaging
+![Skill Packaging](docs/screenshots/skill-packaging.png)
+
+### 4) Settings
+![Settings](docs/screenshots/settings-page.png)
+
+### 5) Packaging Flow (GIF)
+![Packaging Flow](docs/screenshots/skill-packaging-demo.gif)
+
 ## Architecture
 
 SkillMint is delivered as a single integrated desktop application:
