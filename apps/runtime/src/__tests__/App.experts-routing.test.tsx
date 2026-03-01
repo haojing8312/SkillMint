@@ -50,6 +50,7 @@ vi.mock("../components/experts/ExpertsView", () => ({
     <div data-testid="experts-view">
       <div>我的技能</div>
       <button onClick={props.onCreate}>create-expert</button>
+      <button onClick={() => props.onStartTaskWithSkill?.("local-test-skill")}>start-task-local</button>
       <button onClick={() => props.onRefreshLocalSkill?.("local-test-skill")}>refresh-local</button>
       <button onClick={() => props.onDeleteSkill?.("local-test-skill")}>delete-local</button>
     </div>
@@ -257,6 +258,24 @@ describe("App experts routing", () => {
       expect(invokeMock).toHaveBeenCalledWith("delete_skill", {
         skillId: "local-test-skill",
       });
+    });
+  });
+
+  test("can start task from experts skill card", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "experts" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "start-task-local" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "start-task-local" }));
+
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(
+          (call) => call[0] === "get_sessions" && call[1]?.skillId === "local-test-skill"
+        )
+      ).toBe(true);
     });
   });
 });

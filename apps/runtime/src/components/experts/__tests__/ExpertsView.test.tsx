@@ -18,9 +18,10 @@ function buildSkill(partial: Partial<SkillManifest>): SkillManifest {
 }
 
 describe("ExpertsView", () => {
-  test("shows refresh/delete actions by skill source type", () => {
+  test("hides builtin skill and shows actions by source type", () => {
     const refreshSpy = vi.fn();
     const deleteSpy = vi.fn();
+    const startTaskSpy = vi.fn();
     render(
       <ExpertsView
         skills={[
@@ -30,37 +31,44 @@ describe("ExpertsView", () => {
         ]}
         onCreate={() => {}}
         onOpenPackaging={() => {}}
+        onStartTaskWithSkill={startTaskSpy}
         onRefreshLocalSkill={refreshSpy}
         onDeleteSkill={deleteSpy}
       />
     );
 
-    expect(screen.queryByText("通用助手")).toBeInTheDocument();
+    expect(screen.queryByText("通用助手")).not.toBeInTheDocument();
     expect(screen.queryByText("文件整理器")).toBeInTheDocument();
     expect(screen.queryByText("外部技能")).toBeInTheDocument();
 
+    const startTaskButtons = screen.getAllByRole("button", { name: "开始任务" });
     const refreshButtons = screen.getAllByRole("button", { name: "刷新" });
     const deleteButtons = screen.getAllByRole("button", { name: "移除" });
+    expect(startTaskButtons.length).toBe(2);
     expect(refreshButtons.length).toBe(1);
     expect(deleteButtons.length).toBe(2);
   });
 
-  test("triggers refresh/delete callbacks", () => {
+  test("triggers start-task/refresh/delete callbacks", () => {
     const refreshSpy = vi.fn();
     const deleteSpy = vi.fn();
+    const startTaskSpy = vi.fn();
     render(
       <ExpertsView
         skills={[buildSkill({ id: "local-file-organizer", name: "文件整理器" })]}
         onCreate={() => {}}
         onOpenPackaging={() => {}}
+        onStartTaskWithSkill={startTaskSpy}
         onRefreshLocalSkill={refreshSpy}
         onDeleteSkill={deleteSpy}
       />
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "开始任务" }));
     fireEvent.click(screen.getByRole("button", { name: "刷新" }));
     fireEvent.click(screen.getByRole("button", { name: "移除" }));
 
+    expect(startTaskSpy).toHaveBeenCalledWith("local-file-organizer");
     expect(refreshSpy).toHaveBeenCalledWith("local-file-organizer");
     expect(deleteSpy).toHaveBeenCalledWith("local-file-organizer");
   });

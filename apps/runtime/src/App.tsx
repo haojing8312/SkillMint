@@ -19,6 +19,7 @@ import { SkillManifest, ModelConfig, SessionInfo } from "./types";
 
 type MainView = "start-task" | "experts" | "experts-new" | "packaging";
 type SkillAction = "refresh" | "delete";
+const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 
 function extractErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string") {
@@ -36,6 +37,14 @@ function extractErrorMessage(error: unknown, fallback: string): string {
     return (error as { message: string }).message;
   }
   return fallback;
+}
+
+function getDefaultSkillId(skillList: SkillManifest[]): string | null {
+  const builtin = skillList.find((item) => item.id === BUILTIN_GENERAL_SKILL_ID);
+  if (builtin) {
+    return builtin.id;
+  }
+  return skillList[0]?.id ?? null;
 }
 
 export default function App() {
@@ -95,7 +104,7 @@ export default function App() {
       if (prev && list.some((item) => item.id === prev)) {
         return prev;
       }
-      return list[0]?.id ?? null;
+      return getDefaultSkillId(list);
     });
     return list;
   }
@@ -351,6 +360,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSkillId]);
 
+  function handleOpenStartTask() {
+    setSelectedSkillId((prev) => {
+      if (prev && skills.some((item) => item.id === prev)) {
+        return prev;
+      }
+      return getDefaultSkillId(skills);
+    });
+    navigate("start-task");
+  }
+
+  function handleStartTaskWithSkill(skillId: string) {
+    setSelectedSkillId(skillId);
+    setSelectedSessionId(null);
+    setCreateSessionError(null);
+    navigate("start-task");
+  }
+
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
 
@@ -358,11 +384,9 @@ export default function App() {
     <div className="flex h-screen bg-gray-50 text-gray-800 overflow-hidden">
       <Sidebar
         activeMainView={activeMainView}
-        onOpenStartTask={() => navigate("start-task")}
+        onOpenStartTask={handleOpenStartTask}
         onOpenExperts={() => navigate("experts")}
-        skills={skills}
         selectedSkillId={selectedSkillId}
-        onSelectSkill={setSelectedSkillId}
         sessions={sessions}
         selectedSessionId={selectedSessionId}
         onSelectSession={setSelectedSessionId}
@@ -455,6 +479,7 @@ export default function App() {
                   navigate("experts-new");
                 }}
                 onOpenPackaging={() => navigate("packaging")}
+                onStartTaskWithSkill={handleStartTaskWithSkill}
                 onRefreshLocalSkill={handleRefreshLocalSkill}
                 onDeleteSkill={handleDeleteSkill}
                 busySkillId={skillActionState?.skillId}
