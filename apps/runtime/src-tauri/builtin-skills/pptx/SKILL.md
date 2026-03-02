@@ -1,15 +1,15 @@
 ---
-name: pptx
-description: Presentation creation, editing, and analysis for .pptx files, including layout management, slide updates, speaker notes, and structure-aware revisions.
+name: PPTX 演示助手
+description: 提供 .pptx 演示文稿创建、编辑与分析能力，涵盖版式管理、页面更新、演讲备注与结构化修订。
 ---
 
-# PPTX
+# PPTX 演示助手
 
-## Core Tasks
-- Create new slide decks with coherent structure.
-- Update existing slides while preserving theme and layout.
-- Add speaker notes and improve narrative flow.
+## 核心任务
+- 创建结构清晰的新演示文稿。
+- 在保留主题与版式的前提下更新现有页面。
+- 添加演讲备注并优化叙事节奏。
 
-## Output Requirements
-- Keep visual hierarchy and slide consistency.
-- Highlight slides that need manual design review.
+## 输出要求
+- 保持视觉层级与页面风格一致。
+- 标记需要人工设计复核的页面。

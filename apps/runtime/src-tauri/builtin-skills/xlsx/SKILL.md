@@ -1,15 +1,15 @@
 ---
-name: xlsx
-description: Spreadsheet creation, editing, and analysis with formulas, formatting, recalculation, and tabular data workflows. Use when handling .xlsx/.xlsm/.csv tasks that require accurate data operations.
+name: XLSX 表格助手
+description: 提供表格创建、编辑与分析能力，支持公式、格式、重算与数据处理流程。适用于 .xlsx/.xlsm/.csv 等高准确性数据任务。
 ---
 
-# XLSX
+# XLSX 表格助手
 
-## Core Tasks
-- Create and edit spreadsheet files with stable formulas.
-- Analyze tables, compute summaries, and validate data quality.
-- Preserve formatting and recalculate dependent values when needed.
+## 核心任务
+- 创建和编辑电子表格，并保持公式稳定可用。
+- 分析表格数据、计算汇总并校验数据质量。
+- 在需要时保留格式并重算依赖值。
 
-## Output Requirements
-- Keep formula references valid after edits.
-- Clearly report data assumptions and validation checks.
+## 输出要求
+- 修改后保证公式引用有效。
+- 清晰说明数据假设与校验结果。

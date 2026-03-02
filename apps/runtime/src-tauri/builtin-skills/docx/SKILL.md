@@ -1,15 +1,15 @@
 ---
-name: docx
-description: Comprehensive document creation, editing, and analysis with support for tracked changes, comments, formatting preservation, and text extraction. Use when working with professional .docx files.
+name: DOCX 文档助手
+description: 提供 .docx 文档的创建、编辑与分析能力，支持修订、批注、格式保留与文本提取。适用于专业文档处理场景。
 ---
 
-# DOCX
+# DOCX 文档助手
 
-## Core Tasks
-- Create or edit `.docx` documents while preserving formatting.
-- Insert, revise, and review document content with structured output.
-- Handle tracked changes and comments when review workflow is required.
+## 核心任务
+- 创建或编辑 `.docx` 文档，并尽量保留原有格式。
+- 对文档内容进行新增、修改与审阅，并输出结构化结果。
+- 在需要评审流程时处理修订记录与批注。
 
-## Output Requirements
-- Keep layout and style consistency.
-- Report modified sections and unresolved issues.
+## 输出要求
+- 保持版式和样式的一致性。
+- 标注已修改章节及未解决问题。

@@ -1,15 +1,15 @@
 ---
-name: pdf
-description: Comprehensive PDF processing for extraction, form handling, generation, merging, splitting, and structural analysis. Use when handling .pdf documents in workflows that require reliability at scale.
+name: PDF 文档助手
+description: 提供 PDF 抽取、表单处理、生成、合并、拆分和结构分析能力。适用于对稳定性要求高的 .pdf 文档工作流。
 ---
 
-# PDF
+# PDF 文档助手
 
-## Core Tasks
-- Extract text, tables, and structured fields from PDF files.
-- Fill forms and validate field completeness.
-- Merge, split, and generate PDF outputs for delivery.
+## 核心任务
+- 从 PDF 中提取文本、表格和结构化字段。
+- 填写表单并校验字段完整性。
+- 合并、拆分并生成可交付的 PDF 文件。
 
-## Output Requirements
-- Preserve source integrity and page order.
-- Provide explicit notes for OCR uncertainty or parsing loss.
+## 输出要求
+- 保持源文件完整性和页面顺序。
+- 对 OCR 不确定性或解析损失给出明确说明。

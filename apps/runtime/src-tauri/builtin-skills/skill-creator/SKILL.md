@@ -1,22 +1,22 @@
 ---
-name: skill-creator
-description: Guide for creating effective skills. Use when users want to create a new skill or update an existing skill with clear trigger rules, reusable workflow steps, and quality checks.
+name: 创建技能
+description: 用于创建高质量技能。适用于用户要新建技能或优化已有技能时，帮助其定义触发规则、复用流程和质量校验。
 ---
 
-# Skill Creator
+# 创建技能
 
-## Objective
-- Design or iterate a skill with clear frontmatter, concise instructions, and reusable resources.
+## 目标
+- 设计或迭代一个技能，确保 frontmatter 清晰、指令精炼、资源可复用。
 
-## Workflow
-1. Clarify the target use cases and trigger phrases.
-2. Define minimal skill scope and required resources (`scripts/`, `references/`, `assets/`).
-3. Draft or update `SKILL.md` with only `name` and `description` in frontmatter.
-4. Keep instructions concise and task-oriented.
-5. Validate the skill behavior with at least one realistic usage example.
+## 工作流
+1. 明确目标使用场景和触发语句。
+2. 定义最小技能边界与必需资源（`scripts/`、`references/`、`assets/`）。
+3. 起草或更新 `SKILL.md`，frontmatter 仅保留 `name` 和 `description`。
+4. 保持指令简洁、面向任务执行。
+5. 至少用一个真实示例验证技能行为是否符合预期。
 
-## Quality Checklist
-- Description clearly states what the skill does and when to use it.
-- Workflow steps are actionable and ordered.
-- Content avoids unnecessary context bloat.
-- References and assets are only included when needed.
+## 质量检查清单
+- 描述清楚说明技能做什么、何时使用。
+- 工作流步骤可执行且顺序合理。
+- 内容避免无关上下文膨胀。
+- 引用与资源仅在必要时提供。
