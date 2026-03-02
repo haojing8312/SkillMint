@@ -88,6 +88,9 @@ describe("App session create flow", () => {
       if (command === "get_sessions") {
         return Promise.resolve([]);
       }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([]);
+      }
       if (command === "create_session") {
         return Promise.resolve("session-new-1");
       }
@@ -144,6 +147,79 @@ describe("App session create flow", () => {
     expect(
       invokeMock.mock.calls.some((call) => call[0] === "send_message")
     ).toBe(false);
+  });
+
+  test("keeps landing visible until initial message send completes", async () => {
+    let resolveSendMessage: (() => void) | undefined;
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "get_sessions") {
+        return Promise.resolve([]);
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([]);
+      }
+      if (command === "create_session") {
+        return Promise.resolve("session-new-1");
+      }
+      if (command === "send_message") {
+        return new Promise<void>((resolve) => {
+          resolveSendMessage = resolve;
+        });
+      }
+      return Promise.resolve(payload ?? null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "create-with-input" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "create-with-input" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-new-1",
+        userMessage: "整理本地文件",
+      });
+    });
+
+    expect(screen.queryByTestId("chat-view")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "create-with-input" })).toBeInTheDocument();
+
+    if (resolveSendMessage) {
+      resolveSendMessage();
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
+    });
   });
 
   test("does nothing when workspace dialog is canceled", async () => {

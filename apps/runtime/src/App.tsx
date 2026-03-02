@@ -209,7 +209,6 @@ export default function App() {
         workDir: dir,
         permissionMode: newSessionPermissionMode,
       });
-      setSelectedSessionId(id);
       if (selectedSkillId) await loadSessions(selectedSkillId);
 
       const firstMessage = initialMessage.trim();
@@ -218,8 +217,12 @@ export default function App() {
           await invoke("send_message", { sessionId: id, userMessage: firstMessage });
         } catch (sendError) {
           console.error("自动发送首条消息失败:", sendError);
+          setCreateSessionError("首条消息发送失败，请重试或进入会话后手动发送。");
+          return;
         }
       }
+
+      setSelectedSessionId(id);
     } catch (e) {
       console.error("创建会话失败:", e);
       setCreateSessionError("创建会话失败，请稍后重试");
@@ -731,7 +734,6 @@ export default function App() {
                 error={createSessionError}
                 onSelectSession={setSelectedSessionId}
                 onCreateSessionWithInitialMessage={handleCreateSession}
-                onOpenExperts={() => navigate("experts")}
               />
             </motion.div>
           ) : selectedSkill && models.length === 0 ? (

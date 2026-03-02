@@ -8,7 +8,6 @@ interface Props {
   error?: string | null;
   onSelectSession: (id: string) => void;
   onCreateSessionWithInitialMessage: (message: string) => void;
-  onOpenExperts?: () => void;
 }
 
 const SCENARIO_CARDS = [
@@ -41,14 +40,6 @@ const SCENARIO_CARDS = [
       "我会提供报错和代码片段，请先定位最可能根因，再给出最小可行修复方案。",
   },
 ] as const;
-
-function getTimeGreeting(date: Date): string {
-  const hour = date.getHours();
-  if (hour < 6) return "夜间好，欢迎回来";
-  if (hour < 12) return "早上好，欢迎回来";
-  if (hour < 18) return "下午好，欢迎回来";
-  return "晚上好，欢迎回来";
-}
 
 type SessionGroup = {
   key: "today" | "week" | "older";
@@ -93,14 +84,12 @@ export function NewSessionLanding({
   error,
   onSelectSession,
   onCreateSessionWithInitialMessage,
-  onOpenExperts,
 }: Props) {
   const [input, setInput] = useState("");
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
   const [showFilledHint, setShowFilledHint] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
-  const greeting = useMemo(() => getTimeGreeting(new Date()), []);
   const recentSessionGroups = useMemo(() => groupRecentSessions(sessions), [sessions]);
 
   const submit = () => {
@@ -127,19 +116,6 @@ export function NewSessionLanding({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: "easeOut" }}
         >
-          {onOpenExperts && (
-            <div className="mb-3">
-              <button
-                onClick={onOpenExperts}
-                className="inline-flex items-center h-8 px-3 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs transition-colors"
-              >
-                专家技能
-              </button>
-            </div>
-          )}
-          <div className="inline-flex items-center h-7 px-3 rounded-full bg-white/90 border border-blue-100 text-blue-700 text-xs mb-3">
-            {greeting}
-          </div>
           <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-gray-900 mb-3">
             把你的电脑任务，交给 AI 助手协作完成
           </h1>
