@@ -14,9 +14,19 @@ interface Props {
   sessionId: string;
   workDir?: string;
   onSessionUpdate?: () => void;
+  initialMessage?: string;
+  onInitialMessageConsumed?: () => void;
 }
 
-export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }: Props) {
+export function ChatView({
+  skill,
+  models,
+  sessionId,
+  workDir,
+  onSessionUpdate,
+  initialMessage,
+  onInitialMessageConsumed,
+}: Props) {
   const routeErrorHint = (code?: string) => {
     switch (code) {
       case "SKILL_NOT_FOUND":
@@ -176,7 +186,12 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
 
   // sessionId 变化时加载历史消息
   useEffect(() => {
-    loadMessages(sessionId);
+    // 新建会话带首条自动消息时，先发送首条，避免历史加载覆盖本地首句显示
+    if (!initialMessage?.trim()) {
+      loadMessages(sessionId);
+    } else {
+      setMessages([]);
+    }
     loadWorkspace(sessionId);
     // 切换会话时重置流式状态
     setStreaming(false);
@@ -462,6 +477,13 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
         : `附件文件：\n${attachmentsText}`;
     }
 
+    await sendContent(fullContent);
+  }
+
+  async function sendContent(fullContent: string) {
+    if (!fullContent.trim()) return;
+    if (streaming || !sessionId) return;
+
     setInput("");
     setAttachedFiles([]); // 发送后清空附件
     setMessages((prev) => [
@@ -489,6 +511,19 @@ export function ChatView({ skill, models, sessionId, workDir, onSessionUpdate }:
       setStreaming(false);
     }
   }
+
+  useEffect(() => {
+    const msg = initialMessage?.trim();
+    if (!msg) return;
+
+    const timer = setTimeout(() => {
+      void sendContent(msg);
+    }, 0);
+    onInitialMessageConsumed?.();
+    return () => clearTimeout(timer);
+    // 仅依赖会话与初始消息，避免重复发送
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, initialMessage]);
 
   async function handleCancel() {
     try {

@@ -18,7 +18,12 @@ vi.mock("../components/Sidebar", () => ({
 }));
 
 vi.mock("../components/ChatView", () => ({
-  ChatView: () => <div data-testid="chat-view">chat-view</div>,
+  ChatView: (props: any) => (
+    <div data-testid="chat-view">
+      chat-view
+      {props.initialMessage ? <span data-testid="chat-initial-message">{props.initialMessage}</span> : null}
+    </div>
+  ),
 }));
 
 vi.mock("../components/packaging/PackagingView", () => ({
@@ -101,7 +106,7 @@ describe("App session create flow", () => {
     });
   });
 
-  test("creates session and auto sends initial message", async () => {
+  test("creates session and forwards initial message to chat view", async () => {
     render(<App />);
 
     await waitFor(() => {
@@ -120,10 +125,10 @@ describe("App session create flow", () => {
       );
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("send_message", {
-      sessionId: "session-new-1",
-      userMessage: "整理本地文件",
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
     });
+    expect(screen.getByTestId("chat-initial-message")).toHaveTextContent("整理本地文件");
   });
 
   test("creates empty session without sending first message when input is empty", async () => {
@@ -149,8 +154,7 @@ describe("App session create flow", () => {
     ).toBe(false);
   });
 
-  test("keeps landing visible until initial message send completes", async () => {
-    let resolveSendMessage: (() => void) | undefined;
+  test("enters chat immediately and carries initial message", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
       if (command === "list_skills") {
         return Promise.resolve([
@@ -187,11 +191,6 @@ describe("App session create flow", () => {
       if (command === "create_session") {
         return Promise.resolve("session-new-1");
       }
-      if (command === "send_message") {
-        return new Promise<void>((resolve) => {
-          resolveSendMessage = resolve;
-        });
-      }
       return Promise.resolve(payload ?? null);
     });
 
@@ -204,22 +203,9 @@ describe("App session create flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "create-with-input" }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-new-1",
-        userMessage: "整理本地文件",
-      });
-    });
-
-    expect(screen.queryByTestId("chat-view")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "create-with-input" })).toBeInTheDocument();
-
-    if (resolveSendMessage) {
-      resolveSendMessage();
-    }
-
-    await waitFor(() => {
       expect(screen.getByTestId("chat-view")).toBeInTheDocument();
     });
+    expect(screen.getByTestId("chat-initial-message")).toHaveTextContent("整理本地文件");
   });
 
   test("does nothing when workspace dialog is canceled", async () => {

@@ -71,6 +71,10 @@ export default function App() {
   const [clawhubUpdateStatus, setClawhubUpdateStatus] = useState<Record<string, { hasUpdate: boolean; message: string }>>({});
   const [employees, setEmployees] = useState<AgentEmployee[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [pendingInitialMessage, setPendingInitialMessage] = useState<{
+    sessionId: string;
+    message: string;
+  } | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function navigate(view: MainView) {
@@ -209,20 +213,14 @@ export default function App() {
         workDir: dir,
         permissionMode: newSessionPermissionMode,
       });
-      if (selectedSkillId) await loadSessions(selectedSkillId);
-
       const firstMessage = initialMessage.trim();
-      if (firstMessage) {
-        try {
-          await invoke("send_message", { sessionId: id, userMessage: firstMessage });
-        } catch (sendError) {
-          console.error("自动发送首条消息失败:", sendError);
-          setCreateSessionError("首条消息发送失败，请重试或进入会话后手动发送。");
-          return;
-        }
-      }
-
+      if (selectedSkillId) await loadSessions(selectedSkillId);
       setSelectedSessionId(id);
+
+      if (firstMessage) {
+        // 由 ChatView 挂载后再自动发送，避免事件监听竞态导致“无响应”。
+        setPendingInitialMessage({ sessionId: id, message: firstMessage });
+      }
     } catch (e) {
       console.error("创建会话失败:", e);
       setCreateSessionError("创建会话失败，请稍后重试");
@@ -717,6 +715,16 @@ export default function App() {
                 sessionId={selectedSessionId}
                 workDir={selectedSession?.work_dir}
                 onSessionUpdate={handleSessionRefresh}
+                initialMessage={
+                  pendingInitialMessage && pendingInitialMessage.sessionId === selectedSessionId
+                    ? pendingInitialMessage.message
+                    : undefined
+                }
+                onInitialMessageConsumed={() => {
+                  setPendingInitialMessage((prev) =>
+                    prev && prev.sessionId === selectedSessionId ? null : prev
+                  );
+                }}
               />
             </motion.div>
           ) : selectedSkill && models.length > 0 ? (
