@@ -207,6 +207,42 @@ cd apps/runtime/src-tauri
 cargo test
 ```
 
+### 本地快速启动 Tauri 窗口（稳定流程）
+
+```bash
+# 1) 仅首次或依赖变更后执行
+pnpm install
+
+# 2) 若报错 "Port 5174 is already in use"，先定位并结束占用进程
+netstat -ano | findstr LISTENING | findstr :5174
+taskkill /PID <PID> /F
+
+# 3) 从仓库根目录启动 Tauri 桌面窗口
+pnpm app
+```
+
+启动成功后可用下面两条命令快速自检：
+
+```bash
+# 前端开发服务已启动（应返回 HTTP 200）
+curl -I http://localhost:5174
+
+# Tauri 桌面进程已启动（应看到 runtime.exe）
+tasklist | findstr /I runtime.exe
+```
+
+退出测试（按需）：
+
+```bash
+# 先结束 5174 端口监听进程
+netstat -ano | findstr LISTENING | findstr :5174
+taskkill /PID <PID> /F
+
+# 再结束 runtime.exe 对应 PID（只杀你本次测试启动的 PID）
+tasklist | findstr /I runtime.exe
+taskkill /PID <RUNTIME_PID> /F
+```
+
 ### Windows 自动 Release（GitHub）
 
 已支持 `tag` 自动发布 Windows 安装包到 GitHub Release。

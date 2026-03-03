@@ -207,6 +207,42 @@ cd apps/runtime/src-tauri
 cargo test
 ```
 
+### 本地快速启动 Tauri 窗口（稳定流程）
+
+```bash
+# 1) 仅首次或依赖变更后执行
+pnpm install
+
+# 2) 若报错 "Port 5174 is already in use"，先定位并结束占用进程
+netstat -ano | findstr LISTENING | findstr :5174
+taskkill /PID <PID> /F
+
+# 3) 从仓库根目录启动 Tauri 桌面窗口
+pnpm app
+```
+
+启动成功后可用下面两条命令快速自检：
+
+```bash
+# 前端开发服务已启动（应返回 HTTP 200）
+curl -I http://localhost:5174
+
+# Tauri 桌面进程已启动（应看到 runtime.exe）
+tasklist | findstr /I runtime.exe
+```
+
+退出测试（按需）：
+
+```bash
+# 先结束 5174 端口监听进程
+netstat -ano | findstr LISTENING | findstr :5174
+taskkill /PID <PID> /F
+
+# 再结束 runtime.exe 对应 PID（只杀你本次测试启动的 PID）
+tasklist | findstr /I runtime.exe
+taskkill /PID <RUNTIME_PID> /F
+```
+
 ### Windows 自动 Release（GitHub）
 
 已支持 `tag` 自动发布 Windows 安装包到 GitHub Release。
@@ -410,11 +446,10 @@ git push origin v0.1.0
 - 聊天页实时展示 `im-role-event` / `im-role-dispatch-request`
 
 快速使用：
-1. 打开 `设置 -> 飞书协作`。
-2. 填写并保存 `App ID / App Secret`（长连接模式下 `Ingress Token / Encrypt Key` 可空）。
-3. 点击“启动长连接”和“启动 Relay”。
-4. 在“群聊与线程”中选择线程并保存角色绑定（如 `presales,project_manager,business_consultant,architect`）。
-5. 在飞书群里 `@机器人` 发消息，观察桌面端时间线。
+1. 打开 `智能体员工` 页面。
+2. 新建或选择员工，填写并保存该员工的 `App ID / App Secret`（`open_id` 可选，仅用于飞书 @ 精准路由）。
+3. （可选）设为主员工，后续会话将默认使用该员工身份。
+4. 在飞书群里 `@机器人` 发消息，观察桌面端时间线。
 
 飞书后台要求：
 - 订阅方式：长连接
