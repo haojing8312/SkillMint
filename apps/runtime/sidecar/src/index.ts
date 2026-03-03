@@ -5,7 +5,9 @@ import { BrowserController } from './browser.js';
 import { MCPManager } from './mcp.js';
 import { FeishuClient } from './feishu.js';
 import { FeishuLongConnectionManager } from './feishu_ws.js';
+import { resolveRoute } from './openclaw-bridge/route-engine.js';
 import type { ApiResponse } from './types.js';
+import { pathToFileURL } from 'node:url';
 
 const app = new Hono();
 const browser = new BrowserController();
@@ -312,6 +314,27 @@ app.post('/api/web/search', async (c) => {
   }
 });
 
+// OpenClaw routing
+app.post('/api/openclaw/resolve-route', async (c) => {
+  try {
+    const body = await c.req.json();
+    const result = resolveRoute({
+      channel: String(body?.channel || ''),
+      accountId: body?.account_id ?? undefined,
+      peer: body?.peer ?? null,
+      parentPeer: body?.parent_peer ?? null,
+      guildId: body?.guild_id ?? undefined,
+      teamId: body?.team_id ?? undefined,
+      memberRoleIds: Array.isArray(body?.member_role_ids) ? body.member_role_ids : [],
+      bindings: Array.isArray(body?.bindings) ? body.bindings : [],
+      defaultAgentId: String(body?.default_agent_id || 'main'),
+    });
+    return c.json({ output: JSON.stringify(result) } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 400);
+  }
+});
+
 // ─── Feishu (official SDK) ───────────────────────────────────────
 app.post('/api/feishu/send-message', async (c) => {
   try {
@@ -372,15 +395,32 @@ app.post('/api/feishu/ws/drain-events', async (c) => {
 });
 
 const PORT = Number(process.env.PORT || 8765);
-console.log(`[sidecar] Starting on http://localhost:${PORT}`);
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await browser.close();
-  await mcp.closeAll();
-  process.exit(0);
-});
+let started = false;
+let shutdownHookInstalled = false;
 
-serve({ fetch: app.fetch, port: PORT });
+export function startSidecarServer(port = PORT) {
+  if (started) {
+    return;
+  }
+  started = true;
+  console.log(`[sidecar] Starting on http://localhost:${port}`);
+
+  if (!shutdownHookInstalled) {
+    shutdownHookInstalled = true;
+    process.on('SIGINT', async () => {
+      await browser.close();
+      await mcp.closeAll();
+      process.exit(0);
+    });
+  }
+
+  serve({ fetch: app.fetch, port });
+}
+
+const entryArg = process.argv[1];
+if (entryArg && pathToFileURL(entryArg).href === import.meta.url) {
+  startSidecarServer();
+}
 
 export default app;

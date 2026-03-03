@@ -1,1 +1,5 @@
-export { default } from "./src/index.js";
+import app, { startSidecarServer } from "./src/index.js";
+
+startSidecarServer();
+
+export default app;
