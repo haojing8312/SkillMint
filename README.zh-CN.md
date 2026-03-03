@@ -423,6 +423,25 @@ git push origin v0.1.0
 - 事件：`im.message.receive_v1`
 - 权限需发布生效（聊天相关 scope）
 
+## OpenClaw Feishu 路由（内置）
+
+当前版本已内置 OpenClaw 路由核心（不依赖外部 OpenClaw 运行时），并提供：
+- Sidecar vendored 路由引擎（`apps/runtime/sidecar/vendor/openclaw-core/`）
+- Rust 路由规则持久化（`im_routing_bindings`）
+- 设置页「飞书路由规则向导」可视化配置 + 模拟路由
+- 聊天页路由决策卡片（`matched_by` / `session_key` / `agent_id`）
+
+## OpenClaw 升级流程
+
+1. 准备 OpenClaw 上游仓库并设置 `OPENCLAW_UPSTREAM_PATH`。
+2. 执行 `node scripts/sync-openclaw-core.mjs`。
+3. 核对并更新：
+   - `apps/runtime/sidecar/vendor/openclaw-core/UPSTREAM_COMMIT`
+   - `apps/runtime/sidecar/vendor/openclaw-core/PATCHES.md`
+4. 执行回归验证：
+   - `pnpm --dir apps/runtime/sidecar test`
+   - `cargo test --test test_openclaw_gateway --test test_openclaw_route_regression -- --nocapture`
+
 ## 许可证
 
 Apache 2.0 - 详见 [LICENSE](LICENSE)
