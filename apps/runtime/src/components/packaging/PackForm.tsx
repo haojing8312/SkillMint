@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { FrontMatter } from "../../types";
@@ -18,8 +18,10 @@ export function PackForm({ dirPath, frontMatter, fileCount }: PackFormProps) {
   const [recommendedModel, setRecommendedModel] = useState(frontMatter.model ?? "claude-3-5-sonnet-20241022");
   const [status, setStatus] = useState<"idle" | "packing" | "done" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const packInFlightRef = useRef(false);
 
   async function handlePack() {
+    if (packInFlightRef.current || status === "packing") return;
     if (!username.trim()) {
       setErrorMsg("请填写用户名");
       setStatus("error");
@@ -36,11 +38,15 @@ export function PackForm({ dirPath, frontMatter, fileCount }: PackFormProps) {
       return;
     }
 
+    packInFlightRef.current = true;
     const outputPath = await save({
       defaultPath: `${name.trim().replace(/\s+/g, "-")}.skillpack`,
       filters: [{ name: "SkillPack", extensions: ["skillpack"] }],
     });
-    if (!outputPath) return;
+    if (!outputPath) {
+      packInFlightRef.current = false;
+      return;
+    }
 
     setStatus("packing");
     setErrorMsg("");
@@ -59,6 +65,8 @@ export function PackForm({ dirPath, frontMatter, fileCount }: PackFormProps) {
     } catch (e: unknown) {
       setStatus("error");
       setErrorMsg(String(e));
+    } finally {
+      packInFlightRef.current = false;
     }
   }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { FrontMatter } from "../../types";
@@ -22,6 +22,7 @@ export function IndustryPackView() {
   const [filterTag, setFilterTag] = useState("全部");
   const [status, setStatus] = useState<"idle" | "packing" | "done" | "error">("idle");
   const [message, setMessage] = useState("");
+  const packInFlightRef = useRef(false);
 
   const tagOptions = useMemo(() => {
     const tags = new Set<string>();
@@ -85,6 +86,7 @@ export function IndustryPackView() {
   }
 
   async function handlePack() {
+    if (packInFlightRef.current || status === "packing") return;
     const selectedSkillDirs = skills
       .filter((item) => selectedMap[item.dir_path])
       .map((item) => item.dir_path);
@@ -104,11 +106,15 @@ export function IndustryPackView() {
       return;
     }
 
+    packInFlightRef.current = true;
     const outputPath = await save({
       defaultPath: `${packId.trim()}.industrypack`,
       filters: [{ name: "IndustryPack", extensions: ["industrypack"] }],
     });
-    if (!outputPath) return;
+    if (!outputPath) {
+      packInFlightRef.current = false;
+      return;
+    }
 
     setStatus("packing");
     setMessage("");
@@ -126,6 +132,8 @@ export function IndustryPackView() {
     } catch (e: unknown) {
       setStatus("error");
       setMessage(String(e));
+    } finally {
+      packInFlightRef.current = false;
     }
   }
 
