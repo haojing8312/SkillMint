@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SessionInfo } from "../types";
+import { RiskConfirmDialog } from "./RiskConfirmDialog";
 
 interface Props {
   activeMainView: "start-task" | "experts" | "experts-new" | "packaging" | "employees";
@@ -40,6 +41,8 @@ export function Sidebar({
   collapsed,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingPermissionMode, setPendingPermissionMode] = useState<"default" | "accept_edits" | "unrestricted" | null>(null);
+  const [showPermissionConfirm, setShowPermissionConfirm] = useState(false);
 
   const isStartTask = activeMainView === "start-task";
   const isExperts = activeMainView === "experts" || activeMainView === "experts-new";
@@ -48,6 +51,31 @@ export function Sidebar({
   function handleSearchChange(value: string) {
     setSearchQuery(value);
     onSearchSessions(value);
+  }
+
+  function requestPermissionModeChange(nextMode: "default" | "accept_edits" | "unrestricted") {
+    if (nextMode !== "unrestricted") {
+      onChangeNewSessionPermissionMode(nextMode);
+      return;
+    }
+    if (newSessionPermissionMode === "unrestricted") {
+      return;
+    }
+    setPendingPermissionMode(nextMode);
+    setShowPermissionConfirm(true);
+  }
+
+  function handleConfirmUnrestrictedMode() {
+    if (pendingPermissionMode) {
+      onChangeNewSessionPermissionMode(pendingPermissionMode);
+    }
+    setPendingPermissionMode(null);
+    setShowPermissionConfirm(false);
+  }
+
+  function handleCancelUnrestrictedMode() {
+    setPendingPermissionMode(null);
+    setShowPermissionConfirm(false);
   }
 
   if (collapsed) {
@@ -159,7 +187,7 @@ export function Sidebar({
               <select
                 value={newSessionPermissionMode}
                 onChange={(e) =>
-                  onChangeNewSessionPermissionMode(e.target.value as "default" | "accept_edits" | "unrestricted")
+                  requestPermissionModeChange(e.target.value as "default" | "accept_edits" | "unrestricted")
                 }
                 className="sm-select w-full py-1 text-xs"
               >
@@ -234,6 +262,20 @@ export function Sidebar({
           设置
         </button>
       </div>
+
+      <RiskConfirmDialog
+        open={showPermissionConfirm}
+        level="high"
+        title="切换为全自动模式"
+        summary="该模式会在高风险操作时减少确认环节，请仅在可信任务中使用。"
+        impact="可能执行不可逆操作（如文件改写、删除）且自动化程度更高。"
+        irreversible
+        confirmLabel="确认切换"
+        cancelLabel="取消"
+        loading={false}
+        onConfirm={handleConfirmUnrestrictedMode}
+        onCancel={handleCancelUnrestrictedMode}
+      />
     </div>
   );
 }
