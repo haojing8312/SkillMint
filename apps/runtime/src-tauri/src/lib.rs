@@ -1,19 +1,21 @@
-pub mod agent;
-pub mod sidecar;
-pub mod providers;
-pub mod im;
 mod adapters;
+pub mod agent;
 mod builtin_skills;
 pub mod commands;
 mod db;
+pub mod im;
+pub mod providers;
+pub mod sidecar;
 
-use agent::{AgentExecutor, ToolRegistry};
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
-use commands::chat::{AskUserState, CancelFlagState, ToolConfirmState, ToolConfirmResponder, SearchCacheState};
+use agent::{AgentExecutor, ToolRegistry};
+use commands::chat::{
+    AskUserState, CancelFlagState, SearchCacheState, ToolConfirmResponder, ToolConfirmState,
+};
 use commands::skills::DbState;
-use std::sync::Arc;
 use sidecar::SidecarManager;
+use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -45,10 +47,7 @@ pub fn run() {
             app.manage(CancelFlagState(cancel_flag));
 
             // 创建全局搜索缓存（15 分钟 TTL，最多 100 条）
-            let search_cache = Arc::new(SearchCache::new(
-                std::time::Duration::from_secs(900),
-                100,
-            ));
+            let search_cache = Arc::new(SearchCache::new(std::time::Duration::from_secs(900), 100));
             app.manage(SearchCacheState(search_cache));
             let sidecar_manager = Arc::new(SidecarManager::new());
             app.manage(sidecar_manager.clone());
@@ -77,7 +76,7 @@ pub fn run() {
             let registry_for_mcp = Arc::clone(&registry);
             tauri::async_runtime::spawn(async move {
                 let servers = sqlx::query_as::<_, (String, String, String, String)>(
-                    "SELECT name, command, args, env FROM mcp_servers WHERE enabled = 1"
+                    "SELECT name, command, args, env FROM mcp_servers WHERE enabled = 1",
                 )
                 .fetch_all(&pool_for_mcp)
                 .await
@@ -94,7 +93,8 @@ pub fn run() {
                         serde_json::from_str(&env_json).unwrap_or_default();
 
                     // 连接 MCP 服务器
-                    let connect_result = client.post("http://localhost:8765/api/mcp/add-server")
+                    let connect_result = client
+                        .post("http://localhost:8765/api/mcp/add-server")
                         .json(&serde_json::json!({
                             "name": name,
                             "config": { "command": command, "args": args, "env": env }
@@ -108,7 +108,8 @@ pub fn run() {
                     }
 
                     // 获取工具列表并注册
-                    if let Ok(resp) = client.post("http://localhost:8765/api/mcp/list-tools")
+                    if let Ok(resp) = client
+                        .post("http://localhost:8765/api/mcp/list-tools")
                         .json(&serde_json::json!({ "serverName": name }))
                         .send()
                         .await
@@ -117,9 +118,11 @@ pub fn run() {
                             if let Some(tool_list) = body["tools"].as_array() {
                                 for tool in tool_list {
                                     let tool_name = tool["name"].as_str().unwrap_or_default();
-                                    let tool_desc = tool["description"].as_str().unwrap_or_default();
-                                    let schema = tool.get("inputSchema").cloned()
-                                        .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
+                                    let tool_desc =
+                                        tool["description"].as_str().unwrap_or_default();
+                                    let schema = tool.get("inputSchema").cloned().unwrap_or(
+                                        serde_json::json!({"type": "object", "properties": {}}),
+                                    );
 
                                     let full_name = format!("mcp_{}_{}", name, tool_name);
                                     registry_for_mcp.register(Arc::new(
@@ -130,7 +133,7 @@ pub fn run() {
                                             schema,
                                             name.clone(),
                                             tool_name.to_string(),
-                                        )
+                                        ),
                                     ));
                                 }
                                 eprintln!("[mcp] 已恢复 MCP 服务器 {} 的工具注册", name);
@@ -146,13 +149,14 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-                let (app_id_opt, app_secret_opt) = commands::feishu_gateway::resolve_feishu_app_credentials(
-                    &pool_for_feishu,
-                    None,
-                    None,
-                )
-                .await
-                .unwrap_or((None, None));
+                let (app_id_opt, app_secret_opt) =
+                    commands::feishu_gateway::resolve_feishu_app_credentials(
+                        &pool_for_feishu,
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap_or((None, None));
                 let app_id = app_id_opt.unwrap_or_default();
                 let app_secret = app_secret_opt.unwrap_or_default();
                 if app_id.trim().is_empty() || app_secret.trim().is_empty() {
@@ -189,6 +193,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::skills::install_skill,
             commands::skills::import_local_skill,
+            commands::skills::install_industry_bundle,
+            commands::skills::check_industry_bundle_update,
             commands::skills::refresh_local_skill,
             commands::skills::create_local_skill,
             commands::skills::render_local_skill_preview,
@@ -269,7 +275,12 @@ pub fn run() {
             commands::mcp::remove_mcp_server,
             commands::dialog::select_directory,
             commands::packaging::read_skill_dir,
+            commands::packaging::scan_skillmint_dirs,
+            commands::packaging::update_skill_dir_tags,
             commands::packaging::pack_skill,
+            commands::packaging::pack_industry_bundle,
+            commands::packaging::read_industry_bundle_manifest,
+            commands::packaging::unpack_industry_bundle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

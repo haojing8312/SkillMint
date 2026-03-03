@@ -285,9 +285,12 @@ export default function App() {
   }
 
   // 安装 Skill 后自动切换并创建新会话
-  async function handleInstalled(skillId: string) {
+  async function handleInstalled(skillId: string, options?: { createSession?: boolean }) {
     await loadSkills();
     setSelectedSkillId(skillId);
+    if (options?.createSession === false) {
+      return;
+    }
     const modelId = models[0]?.id;
     if (modelId) {
       const dir = await open({ directory: true, title: "选择工作目录" });
