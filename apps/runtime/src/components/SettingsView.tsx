@@ -13,7 +13,6 @@ import {
   ModelConfig,
   ProviderConfig,
   ProviderHealthInfo,
-  ProviderPluginInfo,
   RecentImThread,
   RouteAttemptLog,
   RouteAttemptStat,
@@ -68,11 +67,6 @@ interface RoutingSettings {
   node_timeout_seconds: number;
   retry_count: number;
 }
-
-const PROVIDER_PROTOCOL_OPTIONS = [
-  { label: "OpenAI 兼容", value: "openai" },
-  { label: "Anthropic 兼容", value: "anthropic" },
-];
 
 const ROUTING_CAPABILITIES = [
   { label: "对话 Chat", value: "chat" },
@@ -129,7 +123,7 @@ export function SettingsView({ onClose }: Props) {
   const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", env: "" });
   const [mcpError, setMcpError] = useState("");
   const [activeTab, setActiveTab] = useState<
-    "models" | "providers" | "capabilities" | "health" | "mcp" | "search" | "routing" | "feishu"
+    "models" | "capabilities" | "health" | "mcp" | "search" | "routing" | "feishu"
   >("models");
 
   // 搜索引擎配置
@@ -150,22 +144,7 @@ export function SettingsView({ onClose }: Props) {
   const [routeSaveState, setRouteSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [routeError, setRouteError] = useState("");
 
-  const [providerPlugins, setProviderPlugins] = useState<ProviderPluginInfo[]>([]);
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
-  const [providerForm, setProviderForm] = useState<ProviderConfig>({
-    id: "",
-    provider_key: "deepseek",
-    display_name: "DeepSeek",
-    protocol_type: "openai",
-    base_url: "https://api.deepseek.com/v1",
-    auth_type: "api_key",
-    api_key_encrypted: "",
-    org_id: "",
-    extra_json: "{}",
-    enabled: true,
-  });
-  const [providerError, setProviderError] = useState("");
-  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
 
   const [selectedCapability, setSelectedCapability] = useState("chat");
   const [chatRoutingPolicy, setChatRoutingPolicy] = useState<CapabilityRoutingPolicy>({
@@ -249,13 +228,54 @@ export function SettingsView({ onClose }: Props) {
   const [pendingDeleteEmployee, setPendingDeleteEmployee] = useState<{ id: string; name: string } | null>(null);
   const [deletingEmployee, setDeletingEmployee] = useState(false);
 
+  function inferConnectionKey(baseUrl: string, apiFormat: string): string {
+    const normalized = (baseUrl || "").toLowerCase();
+    if (normalized.includes("deepseek")) return "deepseek";
+    if (normalized.includes("dashscope")) return "qwen";
+    if (normalized.includes("moonshot") || normalized.includes("kimi")) return "moonshot";
+    if (normalized.includes("anthropic")) return "anthropic";
+    if (normalized.includes("minimax")) return "minimax";
+    if (normalized.includes("lingyiwanwu")) return "yi";
+    if (normalized.includes("openai")) return "openai";
+    if (apiFormat === "anthropic") return "anthropic";
+    return "openai";
+  }
+
+  async function syncConnectionToRouting(model: ModelConfig, apiKey: string) {
+    await invoke("save_provider_config", {
+      config: {
+        id: model.id,
+        provider_key: inferConnectionKey(model.base_url, model.api_format),
+        display_name: model.name || model.model_name || model.id,
+        protocol_type: model.api_format === "anthropic" ? "anthropic" : "openai",
+        base_url: model.base_url,
+        auth_type: "api_key",
+        api_key_encrypted: apiKey,
+        org_id: "",
+        extra_json: "{}",
+        enabled: true,
+      },
+    });
+  }
+
+  async function syncModelConnections(modelList: ModelConfig[]) {
+    await Promise.all(
+      modelList.map(async (model) => {
+        try {
+          const apiKey = await invoke<string>("get_model_api_key", { modelId: model.id });
+          await syncConnectionToRouting(model, apiKey);
+        } catch (e) {
+          console.warn("同步连接配置失败:", model.id, e);
+        }
+      }),
+    );
+  }
+
   useEffect(() => {
     loadModels();
     loadMcpServers();
     loadSearchConfigs();
     loadRoutingSettings();
-    loadProviderPlugins();
-    loadProviderConfigs();
     loadCapabilityRoutingPolicy("chat");
     loadRouteTemplates("chat");
   }, []);
@@ -287,8 +307,14 @@ export function SettingsView({ onClose }: Props) {
   }, [activeTab, selectedThreadId]);
 
   async function loadModels() {
-    const list = await invoke<ModelConfig[]>("list_model_configs");
-    setModels(list);
+    try {
+      const list = await invoke<ModelConfig[]>("list_model_configs");
+      setModels(list);
+      await syncModelConnections(list);
+      await loadProviderConfigs(list);
+    } catch (e) {
+      setError("加载模型连接失败: " + String(e));
+    }
   }
 
   async function loadFeishuSettings() {
@@ -665,24 +691,19 @@ export function SettingsView({ onClose }: Props) {
     }
   }
 
-  async function loadProviderPlugins() {
-    try {
-      const list = await invoke<ProviderPluginInfo[]>("list_builtin_provider_plugins");
-      setProviderPlugins(list);
-    } catch (e) {
-      setProviderError("加载 Provider 插件失败: " + String(e));
-    }
-  }
-
-  async function loadProviderConfigs() {
+  async function loadProviderConfigs(modelList: ModelConfig[] = models) {
     try {
       const list = await invoke<ProviderConfig[]>("list_provider_configs");
-      setProviders(list);
-      if (!healthProviderId && list.length > 0) {
-        setHealthProviderId(list[0].id);
+      const ids = new Set(modelList.map((m) => m.id));
+      const aligned = list.filter((p) => ids.has(p.id));
+      setProviders(aligned);
+      if (aligned.length === 0) {
+        setHealthProviderId("");
+      } else if (!healthProviderId || !aligned.some((p) => p.id === healthProviderId)) {
+        setHealthProviderId(aligned[0].id);
       }
     } catch (e) {
-      setProviderError("加载 Provider 配置失败: " + String(e));
+      console.warn("加载连接路由配置失败:", e);
     }
   }
 
@@ -750,41 +771,6 @@ export function SettingsView({ onClose }: Props) {
       setChatPrimaryModels(models);
     } catch {
       setChatPrimaryModels([]);
-    }
-  }
-
-  async function handleSaveProvider() {
-    setProviderError("");
-    try {
-      const id = await invoke<string>("save_provider_config", {
-        config: {
-          ...providerForm,
-          id: editingProviderId || providerForm.id,
-        },
-      });
-      setEditingProviderId(null);
-      setProviderForm((prev) => ({ ...prev, id, api_key_encrypted: "" }));
-      await loadProviderConfigs();
-    } catch (e) {
-      setProviderError("保存 Provider 配置失败: " + String(e));
-    }
-  }
-
-  function handleEditProvider(p: ProviderConfig) {
-    setEditingProviderId(p.id);
-    setProviderForm(p);
-    setProviderError("");
-  }
-
-  async function handleDeleteProvider(id: string) {
-    try {
-      await invoke("delete_provider_config", { providerId: id });
-      if (editingProviderId === id) {
-        setEditingProviderId(null);
-      }
-      await loadProviderConfigs();
-    } catch (e) {
-      setProviderError("删除 Provider 配置失败: " + String(e));
     }
   }
 
@@ -969,9 +955,9 @@ export function SettingsView({ onClose }: Props) {
       let missingText = "";
       const match = raw.match(/需要其一）:\s*(\[[^\]]+\])/);
       if (match?.[1]) {
-        missingText = `；缺少 Provider Key（任选其一）: ${match[1]}`;
+        missingText = `；缺少服务标识（任选其一）: ${match[1]}`;
       }
-      setPolicyError(`应用路由模板失败: ${raw}${missingText}；当前已启用: ${enabledText}。请先到 Providers 页补齐并启用。`);
+      setPolicyError(`应用路由模板失败: ${raw}${missingText}；当前已启用: ${enabledText}。请先到“模型连接”补齐并启用。`);
     }
   }
 
@@ -1056,7 +1042,7 @@ export function SettingsView({ onClose }: Props) {
       setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
       setEditingModelId(null);
       setShowApiKey(false);
-      loadModels();
+      await loadModels();
     } catch (e: unknown) {
       setError(String(e));
     }
@@ -1126,6 +1112,7 @@ export function SettingsView({ onClose }: Props) {
 
   async function handleDelete(id: string) {
     await invoke("delete_model_config", { modelId: id });
+    await invoke("delete_provider_config", { providerId: id }).catch(() => null);
     // 若删除的是当前编辑项，重置表单
     if (editingModelId === id) {
       setEditingModelId(null);
@@ -1134,7 +1121,7 @@ export function SettingsView({ onClose }: Props) {
       setError("");
       setTestResult(null);
     }
-    loadModels();
+    await loadModels();
   }
 
   async function loadMcpServers() {
@@ -1276,14 +1263,7 @@ export function SettingsView({ onClose }: Props) {
               className={"sm-btn h-8 px-2 rounded-none border-b-2 text-sm font-medium transition-colors " +
               (activeTab === "models" ? "text-[var(--sm-primary-strong)] border-[var(--sm-primary)]" : "sm-text-muted border-transparent hover:text-[var(--sm-text)]")}
           >
-            模型配置
-          </button>
-          <button
-            onClick={() => setActiveTab("providers")}
-              className={"sm-btn h-8 px-2 rounded-none border-b-2 text-sm font-medium transition-colors " +
-              (activeTab === "providers" ? "text-[var(--sm-primary-strong)] border-[var(--sm-primary)]" : "sm-text-muted border-transparent hover:text-[var(--sm-text)]")}
-          >
-            Providers
+            模型连接
           </button>
           <button
             onClick={() => setActiveTab("capabilities")}
@@ -1396,7 +1376,7 @@ export function SettingsView({ onClose }: Props) {
           )}
         </div>
         <div>
-          <label className={labelCls}>快速选择 Provider</label>
+          <label className={labelCls}>快速选择模型服务</label>
           <select
             className={inputCls}
             defaultValue=""
@@ -1473,91 +1453,11 @@ export function SettingsView({ onClose }: Props) {
             {editingModelId ? "保存修改" : "保存"}
           </button>
         </div>
+        <div className="text-xs text-gray-400">
+          保存后会自动同步到默认路由和健康检查，无需重复配置。
+        </div>
       </div>
       </>)}
-
-      {activeTab === "providers" && (
-        <>
-          {providers.length > 0 && (
-            <div className="mb-6 space-y-2">
-              <div className="text-xs text-gray-500 mb-2">已配置 Providers</div>
-              {providers.map((p) => (
-                <div key={p.id} className="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 text-sm border border-transparent hover:border-gray-200">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-800">{p.display_name}</span>
-                      <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{p.provider_key}</span>
-                      {!p.enabled && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded">禁用</span>}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5 truncate">{p.protocol_type} · {p.base_url}</div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <button onClick={() => handleEditProvider(p)} className="text-blue-500 hover:text-blue-600 text-xs">编辑</button>
-                    <button onClick={() => handleDeleteProvider(p.id)} className="text-red-400 hover:text-red-500 text-xs">删除</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="bg-white rounded-lg p-4 space-y-3">
-            <div className="text-xs font-medium text-gray-500 mb-2">
-              {editingProviderId ? "编辑 Provider" : "添加 Provider"}
-            </div>
-            <div>
-              <label className={labelCls}>Provider Key</label>
-              <select
-                className={inputCls}
-                value={providerForm.provider_key}
-                onChange={(e) => {
-                  const key = e.target.value;
-                  const preset = providerPlugins.find((x) => x.key === key);
-                  setProviderForm((s) => ({
-                    ...s,
-                    provider_key: key,
-                    display_name: preset?.display_name || key,
-                  }));
-                }}
-              >
-                {providerPlugins.map((p) => (
-                  <option key={p.key} value={p.key}>{p.display_name} ({p.key})</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>显示名称</label>
-              <input className={inputCls} value={providerForm.display_name} onChange={(e) => setProviderForm({ ...providerForm, display_name: e.target.value })} />
-            </div>
-            <div>
-              <label className={labelCls}>协议</label>
-              <select className={inputCls} value={providerForm.protocol_type} onChange={(e) => setProviderForm({ ...providerForm, protocol_type: e.target.value })}>
-                {PROVIDER_PROTOCOL_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Base URL</label>
-              <input className={inputCls} value={providerForm.base_url} onChange={(e) => setProviderForm({ ...providerForm, base_url: e.target.value })} />
-            </div>
-            <div>
-              <label className={labelCls}>API Key</label>
-              <input className={inputCls} type="password" value={providerForm.api_key_encrypted} onChange={(e) => setProviderForm({ ...providerForm, api_key_encrypted: e.target.value })} />
-            </div>
-            <label className="flex items-center gap-2 text-xs text-gray-600">
-              <input type="checkbox" checked={providerForm.enabled} onChange={(e) => setProviderForm({ ...providerForm, enabled: e.target.checked })} />
-              启用该 Provider
-            </label>
-            {providerError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{providerError}</div>}
-            <button
-              onClick={handleSaveProvider}
-              className="w-full bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
-            >
-              {editingProviderId ? "保存修改" : "保存 Provider"}
-            </button>
-          </div>
-        </>
-      )}
 
       {activeTab === "capabilities" && (
         <div className="bg-white rounded-lg p-4 space-y-3">
@@ -1580,7 +1480,7 @@ export function SettingsView({ onClose }: Props) {
             </select>
           </div>
           <div>
-            <label className={labelCls}>主 Provider</label>
+            <label className={labelCls}>主连接</label>
             <select
               className={inputCls}
               value={chatRoutingPolicy.primary_provider_id}
@@ -1592,7 +1492,7 @@ export function SettingsView({ onClose }: Props) {
             >
               <option value="">请选择</option>
               {providers.map((p) => (
-                <option key={p.id} value={p.id}>{p.display_name} ({p.provider_key})</option>
+                <option key={p.id} value={p.id}>{p.display_name}</option>
               ))}
             </select>
           </div>
@@ -1623,7 +1523,7 @@ export function SettingsView({ onClose }: Props) {
                     value={row.provider_id}
                     onChange={(e) => updateFallbackRow(index, { provider_id: e.target.value })}
                   >
-                    <option value="">选择 Provider</option>
+                    <option value="">选择连接</option>
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>{p.display_name}</option>
                     ))}
@@ -1726,9 +1626,9 @@ export function SettingsView({ onClose }: Props) {
 
       {activeTab === "health" && (
         <div className="bg-white rounded-lg p-4 space-y-3">
-          <div className="text-xs font-medium text-gray-500 mb-2">Provider 健康检查</div>
+          <div className="text-xs font-medium text-gray-500 mb-2">连接健康检查</div>
           <div>
-            <label className={labelCls}>选择 Provider</label>
+            <label className={labelCls}>选择连接</label>
             <select
               className={inputCls}
               value={healthProviderId}
@@ -1736,7 +1636,7 @@ export function SettingsView({ onClose }: Props) {
             >
               <option value="">请选择</option>
               {providers.map((p) => (
-                <option key={p.id} value={p.id}>{p.display_name} ({p.provider_key})</option>
+                <option key={p.id} value={p.id}>{p.display_name}</option>
               ))}
             </select>
           </div>
@@ -1752,7 +1652,7 @@ export function SettingsView({ onClose }: Props) {
             disabled={healthLoading}
             className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
-            {healthLoading ? "检测中..." : "一键巡检全部 Provider"}
+            {healthLoading ? "检测中..." : "一键巡检全部连接"}
           </button>
           {healthResult && (
             <div className={"text-xs px-2 py-2 rounded " + (healthResult.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")}>
@@ -1768,7 +1668,7 @@ export function SettingsView({ onClose }: Props) {
                   key={`${r.provider_id}-${idx}`}
                   className={"text-xs px-2 py-2 rounded " + (r.ok ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")}
                 >
-                  <div>ID: {r.provider_id || "-"}</div>
+                  <div>连接ID: {r.provider_id || "-"}</div>
                   <div>状态: {r.ok ? "正常" : "异常"}</div>
                   <div>协议: {r.protocol_type || "-"}</div>
                   <div className="break-all">详情: {r.message}</div>
