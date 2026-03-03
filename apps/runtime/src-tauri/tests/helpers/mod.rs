@@ -258,6 +258,7 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS agent_employees (
             id TEXT PRIMARY KEY,
+            employee_id TEXT NOT NULL DEFAULT '',
             name TEXT NOT NULL,
             role_id TEXT NOT NULL,
             persona TEXT NOT NULL DEFAULT '',
@@ -274,6 +275,18 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_employees_employee_id_unique ON agent_employees(employee_id)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_employees_role_id_unique ON agent_employees(role_id)",
     )
     .execute(&pool)
     .await

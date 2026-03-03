@@ -24,6 +24,7 @@ async fn employee_config_and_im_session_mapping_work() {
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "project_manager".to_string(),
             name: "项目经理智能体".to_string(),
             role_id: "project_manager".to_string(),
             persona: "负责拆解需求".to_string(),
@@ -117,6 +118,7 @@ async fn group_message_without_mention_routes_to_main_employee() {
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "main".to_string(),
             name: "主员工".to_string(),
             role_id: "main".to_string(),
             persona: "".to_string(),
@@ -140,6 +142,7 @@ async fn group_message_without_mention_routes_to_main_employee() {
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "presales".to_string(),
             name: "售前".to_string(),
             role_id: "presales".to_string(),
             persona: "".to_string(),
@@ -187,13 +190,14 @@ async fn group_message_without_mention_routes_to_main_employee() {
 }
 
 #[tokio::test]
-async fn upsert_employee_rejects_duplicate_role_id() {
+async fn upsert_employee_rejects_duplicate_employee_id() {
     let (pool, _tmp) = helpers::setup_test_db().await;
 
     upsert_agent_employee_with_pool(
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "duplicate_role".to_string(),
             name: "角色A".to_string(),
             role_id: "duplicate_role".to_string(),
             persona: "".to_string(),
@@ -217,6 +221,7 @@ async fn upsert_employee_rejects_duplicate_role_id() {
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "duplicate_role".to_string(),
             name: "角色B".to_string(),
             role_id: "duplicate_role".to_string(),
             persona: "".to_string(),
@@ -234,9 +239,9 @@ async fn upsert_employee_rejects_duplicate_role_id() {
         },
     )
     .await
-    .expect_err("duplicate role_id should fail");
+    .expect_err("duplicate employee_id should fail");
 
-    assert!(err.contains("role_id"));
+    assert!(err.contains("employee_id"));
 }
 
 #[tokio::test]
@@ -247,6 +252,7 @@ async fn employee_persists_openclaw_agent_mapping() {
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "main".to_string(),
             name: "主员工".to_string(),
             role_id: "main".to_string(),
             persona: "".to_string(),

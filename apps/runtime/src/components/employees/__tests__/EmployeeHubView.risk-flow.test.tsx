@@ -28,6 +28,7 @@ describe("EmployeeHubView risk flow", () => {
         employees={[
           {
             id: "emp-1",
+            employee_id: "project_manager",
             name: "张三",
             role_id: "project_manager",
             persona: "",
@@ -36,6 +37,9 @@ describe("EmployeeHubView risk flow", () => {
             feishu_app_secret: "",
             primary_skill_id: "",
             default_work_dir: "",
+            openclaw_agent_id: "project_manager",
+            routing_priority: 100,
+            enabled_scopes: ["feishu"],
             enabled: true,
             is_default: false,
             skill_ids: [],
