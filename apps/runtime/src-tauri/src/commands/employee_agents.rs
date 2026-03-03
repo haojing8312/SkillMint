@@ -1,13 +1,14 @@
 use crate::commands::skills::DbState;
 use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use crate::im::types::ImEvent;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct AgentEmployee {
     pub id: String,
+    pub employee_id: String,
     pub name: String,
     pub role_id: String,
     pub persona: String,
@@ -29,6 +30,8 @@ pub struct AgentEmployee {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct UpsertAgentEmployeeInput {
     pub id: Option<String>,
+    #[serde(default)]
+    pub employee_id: String,
     pub name: String,
     pub role_id: String,
     pub persona: String,
@@ -61,8 +64,8 @@ pub struct EnsuredEmployeeSession {
 }
 
 pub async fn list_agent_employees_with_pool(pool: &SqlitePool) -> Result<Vec<AgentEmployee>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, String, String, i64, String, i64, i64, String, String)>(
-        "SELECT id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json, enabled, is_default, created_at, updated_at
+    let rows = sqlx::query(
+        "SELECT id, employee_id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json, enabled, is_default, created_at, updated_at
          FROM agent_employees
          ORDER BY is_default DESC, updated_at DESC",
     )
@@ -71,7 +74,37 @@ pub async fn list_agent_employees_with_pool(pool: &SqlitePool) -> Result<Vec<Age
     .map_err(|e| e.to_string())?;
 
     let mut result = Vec::with_capacity(rows.len());
-    for (id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json, enabled, is_default, created_at, updated_at) in rows {
+    for row in rows {
+        let id: String = row.try_get("id").map_err(|e| e.to_string())?;
+        let employee_id_raw: String = row.try_get("employee_id").map_err(|e| e.to_string())?;
+        let name: String = row.try_get("name").map_err(|e| e.to_string())?;
+        let role_id: String = row.try_get("role_id").map_err(|e| e.to_string())?;
+        let persona: String = row.try_get("persona").map_err(|e| e.to_string())?;
+        let feishu_open_id: String = row.try_get("feishu_open_id").map_err(|e| e.to_string())?;
+        let feishu_app_id: String = row.try_get("feishu_app_id").map_err(|e| e.to_string())?;
+        let feishu_app_secret: String = row
+            .try_get("feishu_app_secret")
+            .map_err(|e| e.to_string())?;
+        let primary_skill_id: String = row
+            .try_get("primary_skill_id")
+            .map_err(|e| e.to_string())?;
+        let default_work_dir: String = row
+            .try_get("default_work_dir")
+            .map_err(|e| e.to_string())?;
+        let openclaw_agent_id: String = row
+            .try_get("openclaw_agent_id")
+            .map_err(|e| e.to_string())?;
+        let routing_priority: i64 = row
+            .try_get("routing_priority")
+            .map_err(|e| e.to_string())?;
+        let enabled_scopes_json: String = row
+            .try_get("enabled_scopes_json")
+            .map_err(|e| e.to_string())?;
+        let enabled: i64 = row.try_get("enabled").map_err(|e| e.to_string())?;
+        let is_default: i64 = row.try_get("is_default").map_err(|e| e.to_string())?;
+        let created_at: String = row.try_get("created_at").map_err(|e| e.to_string())?;
+        let updated_at: String = row.try_get("updated_at").map_err(|e| e.to_string())?;
+
         let skill_rows = sqlx::query_as::<_, (String,)>(
             "SELECT skill_id FROM agent_employee_skills WHERE employee_id = ? ORDER BY sort_order ASC",
         )
@@ -81,8 +114,14 @@ pub async fn list_agent_employees_with_pool(pool: &SqlitePool) -> Result<Vec<Age
         .map_err(|e| e.to_string())?;
         let enabled_scopes = serde_json::from_str::<Vec<String>>(&enabled_scopes_json)
             .unwrap_or_else(|_| vec!["feishu".to_string()]);
+        let employee_id = if employee_id_raw.trim().is_empty() {
+            role_id.clone()
+        } else {
+            employee_id_raw
+        };
         result.push(AgentEmployee {
             id,
+            employee_id,
             name,
             role_id,
             persona,
@@ -111,14 +150,20 @@ pub async fn upsert_agent_employee_with_pool(
     if input.name.trim().is_empty() {
         return Err("employee name is required".to_string());
     }
-    let role_id = input.role_id.trim();
-    if role_id.is_empty() {
-        return Err("employee role_id is required".to_string());
-    }
+    let employee_id = if !input.employee_id.trim().is_empty() {
+        input.employee_id.trim().to_string()
+    } else if !input.role_id.trim().is_empty() {
+        input.role_id.trim().to_string()
+    } else if !input.openclaw_agent_id.trim().is_empty() {
+        input.openclaw_agent_id.trim().to_string()
+    } else {
+        return Err("employee employee_id is required".to_string());
+    };
+    let role_id = employee_id.as_str();
     let existing_role = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM agent_employees WHERE role_id = ? LIMIT 1",
+        "SELECT id FROM agent_employees WHERE employee_id = ? LIMIT 1",
     )
-    .bind(role_id)
+    .bind(&employee_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -127,14 +172,14 @@ pub async fn upsert_agent_employee_with_pool(
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     if let Some((existing_id,)) = existing_role {
         if existing_id != id {
-            return Err("employee role_id already exists".to_string());
+            return Err("employee employee_id already exists".to_string());
         }
     }
     let default_work_dir = if input.default_work_dir.trim().is_empty() {
         let base = resolve_default_work_dir_with_pool(pool).await?;
         let by_role = std::path::PathBuf::from(base)
             .join("employees")
-            .join(role_id)
+            .join(&employee_id)
             .to_string_lossy()
             .to_string();
         std::fs::create_dir_all(&by_role).map_err(|e| format!("failed to create employee work dir: {e}"))?;
@@ -142,11 +187,7 @@ pub async fn upsert_agent_employee_with_pool(
     } else {
         input.default_work_dir.trim().to_string()
     };
-    let openclaw_agent_id = if input.openclaw_agent_id.trim().is_empty() {
-        role_id.to_string()
-    } else {
-        input.openclaw_agent_id.trim().to_string()
-    };
+    let openclaw_agent_id = employee_id.clone();
     let enabled_scopes = if input.enabled_scopes.is_empty() {
         vec!["feishu".to_string()]
     } else {
@@ -170,11 +211,12 @@ pub async fn upsert_agent_employee_with_pool(
 
     sqlx::query(
         "INSERT INTO agent_employees (
-            id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json,
+            id, employee_id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json,
             enabled, is_default, created_at, updated_at
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
+            employee_id = excluded.employee_id,
             name = excluded.name,
             role_id = excluded.role_id,
             persona = excluded.persona,
@@ -191,6 +233,7 @@ pub async fn upsert_agent_employee_with_pool(
             updated_at = excluded.updated_at",
     )
     .bind(&id)
+    .bind(&employee_id)
     .bind(input.name.trim())
     .bind(role_id)
     .bind(input.persona.trim())
@@ -326,7 +369,9 @@ pub async fn resolve_target_employees_for_event(
     if let Some(role_id) = event.role_id.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
         let targeted = all_enabled
             .iter()
-            .filter(|e| e.feishu_open_id == role_id || e.role_id == role_id)
+            .filter(|e| {
+                e.feishu_open_id == role_id || e.role_id == role_id || e.employee_id == role_id
+            })
             .cloned()
             .collect::<Vec<_>>();
         if !targeted.is_empty() {
@@ -484,7 +529,7 @@ fn build_route_session_key(event: &ImEvent, employee: &AgentEmployee) -> String 
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "default".to_string());
     let agent_id = if employee.openclaw_agent_id.trim().is_empty() {
-        employee.role_id.trim().to_lowercase()
+        employee.employee_id.trim().to_lowercase()
     } else {
         employee.openclaw_agent_id.trim().to_lowercase()
     };

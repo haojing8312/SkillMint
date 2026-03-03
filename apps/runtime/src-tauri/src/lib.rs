@@ -277,6 +277,8 @@ pub fn run() {
             commands::employee_agents::delete_agent_employee,
             commands::employee_agents::bind_thread_employees,
             commands::employee_agents::get_thread_employee_bindings,
+            commands::agent_profile::generate_agent_profile_draft,
+            commands::agent_profile::apply_agent_profile,
             commands::mcp::add_mcp_server,
             commands::mcp::list_mcp_servers,
             commands::mcp::remove_mcp_server,

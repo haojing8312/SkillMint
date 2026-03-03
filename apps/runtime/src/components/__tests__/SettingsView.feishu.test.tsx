@@ -64,6 +64,10 @@ describe("SettingsView feishu console", () => {
       expect(screen.getByText("飞书网关配置")).toBeInTheDocument();
       expect(screen.getByText("连接状态")).toBeInTheDocument();
       expect(screen.getByText("最近会话（用于绑定角色）")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("员工编号（employee_id，例如 project_manager）")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("机器人 App ID（可空）")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("机器人 App Secret（可空）")).toBeInTheDocument();
+      expect(screen.queryByPlaceholderText("角色 ID（如 project_manager）")).not.toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "保存配置" }));

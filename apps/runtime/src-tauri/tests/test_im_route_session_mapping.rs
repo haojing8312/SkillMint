@@ -22,6 +22,7 @@ async fn same_route_session_key_reuses_existing_session() {
         &pool,
         UpsertAgentEmployeeInput {
             id: None,
+            employee_id: "main".to_string(),
             name: "主员工".to_string(),
             role_id: "main".to_string(),
             persona: "".to_string(),

@@ -8,6 +8,7 @@ pub mod im_gateway;
 pub mod im_config;
 pub mod im_routing;
 pub mod employee_agents;
+pub mod agent_profile;
 pub mod openclaw_gateway;
 pub mod feishu_gateway;
 pub mod clawhub;

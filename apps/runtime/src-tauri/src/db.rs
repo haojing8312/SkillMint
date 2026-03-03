@@ -287,6 +287,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS agent_employees (
             id TEXT PRIMARY KEY,
+            employee_id TEXT NOT NULL DEFAULT '',
             name TEXT NOT NULL,
             role_id TEXT NOT NULL,
             persona TEXT NOT NULL DEFAULT '',
@@ -407,6 +408,17 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     let _ = sqlx::query("ALTER TABLE agent_employees ADD COLUMN enabled_scopes_json TEXT NOT NULL DEFAULT '[]'")
         .execute(&pool)
         .await;
+    let _ = sqlx::query("ALTER TABLE agent_employees ADD COLUMN employee_id TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("UPDATE agent_employees SET employee_id = role_id WHERE TRIM(employee_id) = ''")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_employees_employee_id_unique ON agent_employees(employee_id)",
+    )
+    .execute(&pool)
+    .await;
     let _ = sqlx::query(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_employees_role_id_unique ON agent_employees(role_id)",
     )

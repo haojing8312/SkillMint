@@ -82,25 +82,25 @@ const ROUTING_CAPABILITIES = [
   { label: "语音合成 TTS", value: "audio_tts" },
 ];
 
-const EMPLOYEE_ROLE_TEMPLATES: Array<{ name: string; role_id: string; persona: string }> = [
+const EMPLOYEE_ROLE_TEMPLATES: Array<{ name: string; employee_id: string; persona: string }> = [
   {
     name: "项目经理",
-    role_id: "project_manager",
+    employee_id: "project_manager",
     persona: "负责需求澄清、任务拆解、里程碑推进与风险管理，优先输出可执行计划与验收标准。",
   },
   {
     name: "技术负责人",
-    role_id: "tech_lead",
+    employee_id: "tech_lead",
     persona: "负责技术方案评审、架构决策和质量把关，强调可维护性、测试覆盖和交付稳定性。",
   },
   {
     name: "运营专员",
-    role_id: "operations",
+    employee_id: "operations",
     persona: "负责运营数据分析、活动复盘与流程优化，输出可落地行动项和指标跟踪方案。",
   },
   {
     name: "客服专员",
-    role_id: "customer_success",
+    employee_id: "customer_success",
     persona: "负责用户问题分级、解决路径设计与满意度提升，提供清晰且可执行的处理建议。",
   },
 ];
@@ -223,6 +223,7 @@ export function SettingsView({ onClose }: Props) {
   const [threadEmployeeIdsInput, setThreadEmployeeIdsInput] = useState("");
   const [employeeForm, setEmployeeForm] = useState<UpsertAgentEmployeeInput>({
     id: undefined,
+    employee_id: "",
     name: "",
     role_id: "",
     persona: "",
@@ -483,9 +484,12 @@ export function SettingsView({ onClose }: Props) {
 
   async function handleSaveEmployee() {
     try {
+      const employeeId = (employeeForm.employee_id || employeeForm.role_id || "main").trim().toLowerCase();
       const payload: UpsertAgentEmployeeInput = {
         ...employeeForm,
-        openclaw_agent_id: (employeeForm.openclaw_agent_id || employeeForm.role_id || "main").trim(),
+        employee_id: employeeId,
+        role_id: employeeId,
+        openclaw_agent_id: employeeId,
         routing_priority: Number.isFinite(employeeForm.routing_priority) ? employeeForm.routing_priority : 100,
         enabled_scopes: employeeForm.enabled_scopes?.length ? employeeForm.enabled_scopes : ["feishu"],
         skill_ids: employeeForm.skill_ids.filter((x) => x.trim().length > 0),
@@ -516,13 +520,14 @@ export function SettingsView({ onClose }: Props) {
     }
   }
 
-  function applyEmployeeRoleTemplate(roleId: string) {
-    const tpl = EMPLOYEE_ROLE_TEMPLATES.find((x) => x.role_id === roleId);
+  function applyEmployeeRoleTemplate(employeeId: string) {
+    const tpl = EMPLOYEE_ROLE_TEMPLATES.find((x) => x.employee_id === employeeId);
     if (!tpl) return;
     setEmployeeForm((s) => ({
       ...s,
-      role_id: tpl.role_id,
-      openclaw_agent_id: tpl.role_id,
+      employee_id: tpl.employee_id,
+      role_id: tpl.employee_id,
+      openclaw_agent_id: tpl.employee_id,
       persona: tpl.persona,
     }));
   }
@@ -544,6 +549,7 @@ export function SettingsView({ onClose }: Props) {
       setSelectedEmployeeId("");
       setEmployeeForm({
         id: undefined,
+        employee_id: "",
         name: "",
         role_id: "",
         persona: "",
@@ -594,15 +600,16 @@ export function SettingsView({ onClose }: Props) {
     if (!employee) return;
     setEmployeeForm({
       id: employee.id,
+      employee_id: employee.employee_id || employee.role_id || "",
       name: employee.name,
-      role_id: employee.role_id,
+      role_id: employee.employee_id || employee.role_id,
       persona: employee.persona,
       feishu_open_id: employee.feishu_open_id,
       feishu_app_id: employee.feishu_app_id,
       feishu_app_secret: employee.feishu_app_secret,
       primary_skill_id: employee.primary_skill_id || "",
       default_work_dir: employee.default_work_dir,
-      openclaw_agent_id: employee.openclaw_agent_id || employee.role_id || "",
+      openclaw_agent_id: employee.employee_id || employee.openclaw_agent_id || employee.role_id || "",
       routing_priority: Number.isFinite(employee.routing_priority) ? employee.routing_priority : 100,
       enabled_scopes: employee.enabled_scopes?.length ? employee.enabled_scopes : ["feishu"],
       enabled: employee.enabled,
@@ -2257,7 +2264,7 @@ export function SettingsView({ onClose }: Props) {
           <div className="bg-white rounded-lg p-4 space-y-3">
             <div className="text-xs font-medium text-gray-500">智能体员工</div>
             <div className="text-xs text-gray-400">
-              每个员工可配置角色、技能集合、飞书标识与默认工作目录。技能只允许在桌面端由管理员维护。
+              每个员工使用员工编号统一标识，可配置技能集合、飞书标识与默认工作目录。技能只允许在桌面端由管理员维护。
             </div>
             <div className="space-y-2 border border-gray-100 rounded p-2">
               <div className="text-xs text-gray-500">全局默认工作目录（新建会话默认使用）</div>
@@ -2292,7 +2299,7 @@ export function SettingsView({ onClose }: Props) {
                       }
                     >
                       <div className="font-medium truncate">
-                        {e.name} · {e.role_id}
+                        {e.name} · {e.employee_id || e.role_id}
                       </div>
                       <div className="text-[11px] text-gray-400 truncate">
                         skill={e.primary_skill_id || "通用助手（系统默认）"} · dir={e.default_work_dir || "(默认)"}
@@ -2310,16 +2317,23 @@ export function SettingsView({ onClose }: Props) {
                 />
                 <input
                   className={inputCls}
-                  placeholder="角色 ID（如 project_manager）"
-                  value={employeeForm.role_id}
-                  onChange={(e) => setEmployeeForm((s) => ({ ...s, role_id: e.target.value }))}
+                  placeholder="员工编号（employee_id，例如 project_manager）"
+                  value={employeeForm.employee_id}
+                  onChange={(e) =>
+                    setEmployeeForm((s) => ({
+                      ...s,
+                      employee_id: e.target.value,
+                      role_id: e.target.value,
+                      openclaw_agent_id: e.target.value,
+                    }))
+                  }
                 />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   {EMPLOYEE_ROLE_TEMPLATES.map((tpl) => (
                     <button
-                      key={tpl.role_id}
+                      key={tpl.employee_id}
                       type="button"
-                      onClick={() => applyEmployeeRoleTemplate(tpl.role_id)}
+                      onClick={() => applyEmployeeRoleTemplate(tpl.employee_id)}
                       className="h-8 rounded border border-gray-200 hover:border-blue-300 hover:bg-blue-50 text-xs text-gray-700"
                     >
                       填充{tpl.name}
@@ -2328,10 +2342,25 @@ export function SettingsView({ onClose }: Props) {
                 </div>
                 <input
                   className={inputCls}
-                  placeholder="飞书 open_id（可空，仅用于飞书@精准路由）"
+                  placeholder="飞书机器人 open_id（可空，仅用于飞书@精准路由）"
                   value={employeeForm.feishu_open_id}
                   onChange={(e) => setEmployeeForm((s) => ({ ...s, feishu_open_id: e.target.value }))}
                 />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <input
+                    className={inputCls}
+                    placeholder="机器人 App ID（可空）"
+                    value={employeeForm.feishu_app_id}
+                    onChange={(e) => setEmployeeForm((s) => ({ ...s, feishu_app_id: e.target.value }))}
+                  />
+                  <input
+                    className={inputCls}
+                    type="password"
+                    placeholder="机器人 App Secret（可空）"
+                    value={employeeForm.feishu_app_secret}
+                    onChange={(e) => setEmployeeForm((s) => ({ ...s, feishu_app_secret: e.target.value }))}
+                  />
+                </div>
                 <select
                   className={inputCls + " bg-white"}
                   value={employeeForm.primary_skill_id}

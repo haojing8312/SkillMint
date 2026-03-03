@@ -261,6 +261,7 @@ export interface ThreadRoleConfig {
 
 export interface AgentEmployee {
   id: string;
+  employee_id: string;
   name: string;
   role_id: string;
   persona: string;
@@ -281,6 +282,7 @@ export interface AgentEmployee {
 
 export interface UpsertAgentEmployeeInput {
   id?: string;
+  employee_id: string;
   name: string;
   role_id: string;
   persona: string;
@@ -300,6 +302,35 @@ export interface UpsertAgentEmployeeInput {
 export interface ThreadEmployeeBinding {
   thread_id: string;
   employee_ids: string[];
+}
+
+export interface AgentProfileAnswerInput {
+  key: string;
+  question: string;
+  answer: string;
+}
+
+export interface AgentProfilePayload {
+  employee_db_id: string;
+  answers: AgentProfileAnswerInput[];
+}
+
+export interface AgentProfileDraft {
+  employee_id: string;
+  employee_name: string;
+  agents_md: string;
+  soul_md: string;
+  user_md: string;
+}
+
+export interface AgentProfileFileResult {
+  path: string;
+  ok: boolean;
+  error?: string | null;
+}
+
+export interface ApplyAgentProfileResult {
+  files: AgentProfileFileResult[];
 }
 
 export interface ImRoutingBinding {
