@@ -20,3 +20,4 @@ scripts/sync-codex-skills.mjs
 .pnpm-store/
 sidecar.log
 .claude/settings.local.json
+.worktrees/
