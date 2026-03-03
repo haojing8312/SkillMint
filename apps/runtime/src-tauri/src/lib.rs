@@ -264,6 +264,7 @@ pub fn run() {
             commands::feishu_gateway::stop_feishu_event_relay,
             commands::feishu_gateway::get_feishu_event_relay_status,
             commands::openclaw_gateway::handle_openclaw_event,
+            commands::openclaw_gateway::simulate_im_route,
             commands::im_gateway::handle_feishu_callback,
             commands::im_gateway::list_recent_im_threads,
             commands::im_config::bind_thread_roles,

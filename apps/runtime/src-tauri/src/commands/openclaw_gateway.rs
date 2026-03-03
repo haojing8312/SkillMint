@@ -241,6 +241,45 @@ pub async fn resolve_openclaw_route_with_pool(
 }
 
 #[tauri::command]
+pub async fn simulate_im_route(
+    payload: serde_json::Value,
+    db: State<'_, DbState>,
+) -> Result<serde_json::Value, String> {
+    let sidecar_base_url = resolve_feishu_sidecar_base_url(&db.0, None).await?;
+    let channel = payload
+        .get("channel")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("feishu");
+    let account_id = payload
+        .get("account_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let default_agent_id = payload
+        .get("default_agent_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("main");
+    let peer = payload.get("peer").cloned().unwrap_or_else(|| {
+        serde_json::json!({
+            "kind": "group",
+            "id": "",
+        })
+    });
+    let bindings = payload
+        .get("bindings")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+
+    let body = serde_json::json!({
+        "channel": channel,
+        "account_id": account_id,
+        "peer": peer,
+        "default_agent_id": default_agent_id,
+        "bindings": bindings,
+    });
+    call_sidecar_json("/api/openclaw/resolve-route", body, sidecar_base_url).await
+}
+
+#[tauri::command]
 pub async fn handle_openclaw_event(
     payload: String,
     auth_token: Option<String>,

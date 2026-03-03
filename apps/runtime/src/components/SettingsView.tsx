@@ -4,6 +4,8 @@ import {
   CapabilityRouteTemplateInfo,
   CapabilityRoutingPolicy,
   AgentEmployee,
+  ImRouteSimulationPayload,
+  ImRoutingBinding,
   FeishuChatInfo,
   FeishuEventRelayStatus,
   FeishuGatewaySettings,
@@ -19,9 +21,11 @@ import {
   ThreadRoleConfig,
   RuntimePreferences,
   SkillManifest,
+  UpsertImRoutingBindingInput,
   UpsertAgentEmployeeInput,
 } from "../types";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
+import { FeishuRoutingWizard } from "./employees/FeishuRoutingWizard";
 
 const MCP_PRESETS = [
   { label: "— 快速选择 —", value: "", name: "", command: "", args: "", env: "" },
@@ -213,6 +217,7 @@ export function SettingsView({ onClose }: Props) {
   const [threadRoleConfig, setThreadRoleConfig] = useState<ThreadRoleConfig | null>(null);
   const [threadEmployeeBinding, setThreadEmployeeBinding] = useState<ThreadEmployeeBinding | null>(null);
   const [employees, setEmployees] = useState<AgentEmployee[]>([]);
+  const [routingBindings, setRoutingBindings] = useState<ImRoutingBinding[]>([]);
   const [employeeSkillOptions, setEmployeeSkillOptions] = useState<SkillManifest[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [threadEmployeeIdsInput, setThreadEmployeeIdsInput] = useState("");
@@ -331,6 +336,11 @@ export function SettingsView({ onClose }: Props) {
     }
   }
 
+  async function loadRoutingBindings() {
+    const list = await invoke<ImRoutingBinding[]>("list_im_routing_bindings");
+    setRoutingBindings(list || []);
+  }
+
   async function loadEmployeeSkillOptions() {
     const list = await invoke<SkillManifest[]>("list_skills");
     setEmployeeSkillOptions((list || []).filter((x) => x.id !== "builtin-general"));
@@ -384,6 +394,7 @@ export function SettingsView({ onClose }: Props) {
         loadFeishuChats(),
         loadRecentThreads(),
         loadAgentEmployees(),
+        loadRoutingBindings(),
         loadEmployeeSkillOptions(),
         loadRuntimePreferences(),
       ]);
@@ -561,6 +572,20 @@ export function SettingsView({ onClose }: Props) {
   function cancelDeleteEmployee() {
     if (deletingEmployee) return;
     setPendingDeleteEmployee(null);
+  }
+
+  async function handleSaveRoutingRule(input: UpsertImRoutingBindingInput) {
+    await invoke<string>("upsert_im_routing_binding", { input });
+    await loadRoutingBindings();
+  }
+
+  async function handleDeleteRoutingRule(id: string) {
+    await invoke("delete_im_routing_binding", { id });
+    await loadRoutingBindings();
+  }
+
+  async function handleSimulateRoute(payload: ImRouteSimulationPayload) {
+    return invoke("simulate_im_route", { payload });
   }
 
   function handlePickEmployee(employeeId: string) {
@@ -2390,6 +2415,13 @@ export function SettingsView({ onClose }: Props) {
               </div>
             </div>
           </div>
+
+          <FeishuRoutingWizard
+            bindings={routingBindings}
+            onSaveRule={handleSaveRoutingRule}
+            onDeleteRule={handleDeleteRoutingRule}
+            onSimulate={handleSimulateRoute}
+          />
 
           <div className="bg-white rounded-lg p-4 space-y-3">
             <div className="text-xs font-medium text-gray-500">最近会话（用于绑定角色）</div>
