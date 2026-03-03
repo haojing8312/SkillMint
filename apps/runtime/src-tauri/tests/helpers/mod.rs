@@ -220,6 +220,27 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     .unwrap();
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS im_routing_bindings (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '',
+            peer_kind TEXT NOT NULL DEFAULT '',
+            peer_id TEXT NOT NULL DEFAULT '',
+            guild_id TEXT NOT NULL DEFAULT '',
+            team_id TEXT NOT NULL DEFAULT '',
+            role_ids_json TEXT NOT NULL DEFAULT '[]',
+            priority INTEGER NOT NULL DEFAULT 100,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS im_inbox_events (
             id TEXT PRIMARY KEY,
             event_id TEXT NOT NULL,
