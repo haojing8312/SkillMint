@@ -1,5 +1,7 @@
 use crate::commands::im_gateway::{process_im_event, FeishuCallbackResult};
 use crate::commands::im_config::get_thread_role_config_with_pool;
+use crate::commands::im_routing::list_im_routing_bindings_with_pool;
+use crate::commands::feishu_gateway::{call_sidecar_json, resolve_feishu_sidecar_base_url};
 use crate::commands::skills::DbState;
 use crate::im::runtime_bridge::{build_im_role_event_payload, ImRoleEventPayload};
 use crate::im::types::{ImEvent, ImEventType};
@@ -182,6 +184,60 @@ pub async fn plan_role_events_for_openclaw(
             )
         })
         .collect())
+}
+
+fn bindings_to_openclaw_payload(bindings: Vec<crate::commands::im_routing::ImRoutingBinding>) -> Vec<serde_json::Value> {
+    bindings
+        .into_iter()
+        .filter(|binding| binding.enabled)
+        .map(|binding| {
+            let mut match_obj = serde_json::json!({
+                "channel": binding.channel,
+                "accountId": if binding.account_id.trim().is_empty() { "*" } else { binding.account_id.trim() },
+            });
+
+            if !binding.peer_kind.trim().is_empty() && !binding.peer_id.trim().is_empty() {
+                match_obj["peer"] = serde_json::json!({
+                    "kind": binding.peer_kind.trim().to_lowercase(),
+                    "id": binding.peer_id.trim(),
+                });
+            }
+            if !binding.guild_id.trim().is_empty() {
+                match_obj["guildId"] = serde_json::json!(binding.guild_id.trim());
+            }
+            if !binding.team_id.trim().is_empty() {
+                match_obj["teamId"] = serde_json::json!(binding.team_id.trim());
+            }
+            if !binding.role_ids.is_empty() {
+                match_obj["roles"] = serde_json::json!(binding.role_ids);
+            }
+
+            serde_json::json!({
+                "agentId": binding.agent_id,
+                "match": match_obj,
+            })
+        })
+        .collect()
+}
+
+pub async fn resolve_openclaw_route_with_pool(
+    pool: &SqlitePool,
+    event: &ImEvent,
+) -> Result<serde_json::Value, String> {
+    let bindings = list_im_routing_bindings_with_pool(pool).await?;
+    let default_agent_id = "main";
+    let body = serde_json::json!({
+        "channel": "feishu",
+        "account_id": event.tenant_id.clone().unwrap_or_default(),
+        "peer": {
+            "kind": "group",
+            "id": event.thread_id.clone(),
+        },
+        "default_agent_id": default_agent_id,
+        "bindings": bindings_to_openclaw_payload(bindings),
+    });
+    let sidecar_base_url = resolve_feishu_sidecar_base_url(pool, None).await?;
+    call_sidecar_json("/api/openclaw/resolve-route", body, sidecar_base_url).await
 }
 
 #[tauri::command]

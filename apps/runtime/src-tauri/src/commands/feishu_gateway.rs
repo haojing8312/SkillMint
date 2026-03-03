@@ -510,7 +510,7 @@ fn feishu_event_relay_status(state: &FeishuEventRelayState) -> FeishuEventRelayS
     }
 }
 
-async fn call_sidecar_json(
+pub async fn call_sidecar_json(
     path: &str,
     body: serde_json::Value,
     sidecar_base_url: Option<String>,
