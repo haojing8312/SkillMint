@@ -22,8 +22,11 @@ import { SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SkillAction = "refresh" | "delete" | "check-update" | "update";
 const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
+const BUILTIN_EMPLOYEE_CREATOR_SKILL_ID = "builtin-employee-creator";
 const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
 const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
+const EMPLOYEE_CREATOR_STARTER_PROMPT =
+  "请帮我创建一个新的智能体员工。先问我 1-2 个关键问题，再给出配置草案，确认后再执行创建。";
 
 const QUICK_MODEL_PRESETS: Array<{
   key: string;
@@ -65,6 +68,9 @@ type ImBridgeSessionContext = {
   streamBuffer: string;
   streamSentCount: number;
   waitingForAnswer: boolean;
+  streamFlushTimer: ReturnType<typeof setTimeout> | null;
+  lastStreamFlushAt: number;
+  streamFlushInFlight: boolean;
 };
 
 function extractErrorMessage(error: unknown, fallback: string): string {
@@ -212,12 +218,25 @@ export default function App() {
     const seen = new Set<string>();
     const sessionContexts = new Map<string, ImBridgeSessionContext>();
     const STREAM_CHUNK_SIZE = 120;
+    const STREAM_FLUSH_INTERVAL_MS = 1200;
 
     const markImManagedSession = (sessionId: string) => {
       setImManagedSessionIds((prev) => {
         if (prev.includes(sessionId)) return prev;
         return [...prev, sessionId];
       });
+    };
+
+    const scheduleImStreamFlush = (sessionId: string, delayMs: number) => {
+      const ctx = sessionContexts.get(sessionId);
+      if (!ctx || ctx.streamFlushTimer) return;
+      const safeDelay = Math.max(20, delayMs);
+      ctx.streamFlushTimer = setTimeout(() => {
+        const current = sessionContexts.get(sessionId);
+        if (!current) return;
+        current.streamFlushTimer = null;
+        void flushImStream(sessionId);
+      }, safeDelay);
     };
 
     const sendTextToFeishu = async (threadId: string, text: string) => {
@@ -231,23 +250,52 @@ export default function App() {
       });
     };
 
-    const flushImStream = async (sessionId: string) => {
+    const flushImStream = async (
+      sessionId: string,
+      options?: { force?: boolean }
+    ) => {
       const ctx = sessionContexts.get(sessionId);
       if (!ctx) return;
+      if (ctx.streamFlushInFlight) return;
+      const force = Boolean(options?.force);
       const chunk = ctx.streamBuffer.trim();
       if (!chunk) return;
-      ctx.streamBuffer = "";
-      if (chunk.length <= 1800) {
-        await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${chunk}`);
-        ctx.streamSentCount += 1;
-        return;
+      if (!force) {
+        const elapsed = Date.now() - ctx.lastStreamFlushAt;
+        if (elapsed < STREAM_FLUSH_INTERVAL_MS) {
+          scheduleImStreamFlush(sessionId, STREAM_FLUSH_INTERVAL_MS - elapsed);
+          return;
+        }
       }
-      let start = 0;
-      while (start < chunk.length) {
-        const part = chunk.slice(start, start + 1800);
-        await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${part}`);
-        ctx.streamSentCount += 1;
-        start += 1800;
+      if (ctx.streamFlushTimer) {
+        clearTimeout(ctx.streamFlushTimer);
+        ctx.streamFlushTimer = null;
+      }
+      ctx.streamBuffer = "";
+      ctx.streamFlushInFlight = true;
+      ctx.lastStreamFlushAt = Date.now();
+      try {
+        if (chunk.length <= 1800) {
+          await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${chunk}`);
+          ctx.streamSentCount += 1;
+          return;
+        }
+        let start = 0;
+        while (start < chunk.length) {
+          const part = chunk.slice(start, start + 1800);
+          await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${part}`);
+          ctx.streamSentCount += 1;
+          start += 1800;
+        }
+      } finally {
+        const latest = sessionContexts.get(sessionId);
+        if (!latest) return;
+        latest.streamFlushInFlight = false;
+        if (latest.streamBuffer.trim().length > 0) {
+          const elapsed = Date.now() - latest.lastStreamFlushAt;
+          const delayMs = Math.max(0, STREAM_FLUSH_INTERVAL_MS - elapsed);
+          scheduleImStreamFlush(sessionId, delayMs);
+        }
       }
     };
 
@@ -263,6 +311,9 @@ export default function App() {
         streamBuffer: existing?.streamBuffer ?? "",
         streamSentCount: 0,
         waitingForAnswer: existing?.waitingForAnswer ?? false,
+        streamFlushTimer: existing?.streamFlushTimer ?? null,
+        lastStreamFlushAt: existing?.lastStreamFlushAt ?? 0,
+        streamFlushInFlight: existing?.streamFlushInFlight ?? false,
       };
       sessionContexts.set(payload.session_id, ctx);
       markImManagedSession(payload.session_id);
@@ -278,7 +329,7 @@ export default function App() {
           });
         }
 
-        await flushImStream(payload.session_id);
+        await flushImStream(payload.session_id, { force: true });
         if (ctx.streamSentCount === 0) {
           const messages = await invoke<Message[]>("get_messages", {
             sessionId: payload.session_id,
@@ -307,14 +358,16 @@ export default function App() {
       sub_agent?: boolean;
     }>("stream-token", ({ payload }) => {
       const ctx = sessionContexts.get(payload.session_id);
-      if (!ctx || payload.sub_agent) return;
+      if (!ctx) return;
       if (payload.done) {
-        void flushImStream(payload.session_id);
+        void flushImStream(payload.session_id, { force: true });
         return;
       }
       ctx.streamBuffer += payload.token || "";
       if (ctx.streamBuffer.length >= STREAM_CHUNK_SIZE) {
         void flushImStream(payload.session_id);
+      } else {
+        scheduleImStreamFlush(payload.session_id, STREAM_FLUSH_INTERVAL_MS);
       }
     });
 
@@ -328,7 +381,7 @@ export default function App() {
       ctx.waitingForAnswer = true;
       const optionsText = payload.options?.length ? `\n可选项：${payload.options.join(" / ")}` : "";
       void (async () => {
-        await flushImStream(payload.session_id);
+        await flushImStream(payload.session_id, { force: true });
         await sendTextToFeishu(
           ctx.threadId,
           `${ctx.roleName}: ${payload.question}${optionsText}\n请直接回复你的选择或补充信息。`
@@ -337,6 +390,12 @@ export default function App() {
     });
 
     return () => {
+      sessionContexts.forEach((ctx) => {
+        if (ctx.streamFlushTimer) {
+          clearTimeout(ctx.streamFlushTimer);
+          ctx.streamFlushTimer = null;
+        }
+      });
       unlistenDispatchPromise.then((fn) => fn());
       unlistenStreamPromise.then((fn) => fn());
       unlistenAskUserPromise.then((fn) => fn());
@@ -409,6 +468,7 @@ export default function App() {
         skillId: chosenSkill,
         modelId,
         workDir: selectedEmployee?.default_work_dir || "",
+        employeeId: selectedEmployee?.employee_id || selectedEmployee?.role_id || "",
         permissionMode: newSessionPermissionMode,
       });
       const firstMessage = initialMessage.trim();
@@ -495,6 +555,7 @@ export default function App() {
           skillId,
           modelId,
           workDir: "",
+          employeeId: "",
           permissionMode: newSessionPermissionMode,
         });
         const sessions = await invoke<SessionInfo[]>("get_sessions", { skillId });
@@ -933,12 +994,66 @@ export default function App() {
         skillId,
         modelId,
         workDir: employee.default_work_dir || "",
+        employeeId: employee.employee_id || employee.role_id || "",
         permissionMode: newSessionPermissionMode,
       });
       await loadSessions(skillId);
       setSelectedSessionId(sessionId);
     } catch (e) {
       console.error("从员工页创建会话失败:", e);
+      setCreateSessionError("创建会话失败，请稍后重试");
+    } finally {
+      setCreatingSession(false);
+    }
+  }
+
+  async function handleOpenEmployeeCreatorSkill() {
+    if (creatingSession) return;
+    let nextSkills = skills;
+    if (!nextSkills.some((item) => item.id === BUILTIN_EMPLOYEE_CREATOR_SKILL_ID)) {
+      try {
+        nextSkills = await loadSkills();
+      } catch (e) {
+        console.error("加载创建员工内置技能失败:", e);
+      }
+    }
+
+    if (!nextSkills.some((item) => item.id === BUILTIN_EMPLOYEE_CREATOR_SKILL_ID)) {
+      setCreateSessionError("创建员工助手暂未就绪，请稍后重试");
+      navigate("experts");
+      return;
+    }
+
+    const skillId = BUILTIN_EMPLOYEE_CREATOR_SKILL_ID;
+    const modelId = models[0]?.id;
+
+    setSelectedEmployeeId(null);
+    setSelectedSkillId(skillId);
+    setSelectedSessionId(null);
+    setCreateSessionError(null);
+    navigate("start-task");
+
+    if (!modelId) {
+      return;
+    }
+
+    setCreatingSession(true);
+    try {
+      const sessionId = await invoke<string>("create_session", {
+        skillId,
+        modelId,
+        workDir: "",
+        employeeId: "",
+        permissionMode: newSessionPermissionMode,
+      });
+      await loadSessions(skillId);
+      setSelectedSessionId(sessionId);
+      setPendingInitialMessage({
+        sessionId,
+        message: EMPLOYEE_CREATOR_STARTER_PROMPT,
+      });
+    } catch (e) {
+      console.error("打开创建员工助手失败:", e);
       setCreateSessionError("创建会话失败，请稍后重试");
     } finally {
       setCreatingSession(false);
@@ -1283,6 +1398,7 @@ export default function App() {
                 onDeleteEmployee={handleDeleteEmployee}
                 onSetAsMainAndEnter={handleSetAsMainAndEnter}
                 onStartTaskWithEmployee={handleStartTaskWithEmployee}
+                onOpenEmployeeCreatorSkill={handleOpenEmployeeCreatorSkill}
               />
             </motion.div>
           ) : selectedSkill && models.length > 0 && selectedSessionId ? (

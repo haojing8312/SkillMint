@@ -18,3 +18,4 @@
 
 - 员工身份模型：`docs/architecture/employee-identity-model.md`
 - OpenClaw 升级维护：`docs/maintainers/openclaw-upgrade.md`
+- 飞书 IM 闭环桥接：`docs/integrations/feishu-im-bridge.md`

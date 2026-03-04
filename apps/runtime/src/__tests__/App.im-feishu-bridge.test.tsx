@@ -65,8 +65,15 @@ function emit(name: string, payload: any) {
   arr.forEach((fn) => fn({ payload }));
 }
 
+function listFeishuTextCalls() {
+  return invokeMock.mock.calls
+    .filter(([cmd]) => cmd === "send_feishu_text_message")
+    .map(([, payload]) => payload);
+}
+
 describe("App feishu IM bridge", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     listeners.clear();
     invokeMock.mockReset();
     Object.defineProperty(window as typeof window & { __TAURI_INTERNALS__?: unknown }, "__TAURI_INTERNALS__", {
@@ -225,6 +232,165 @@ describe("App feishu IM bridge", () => {
             String(payload?.text ?? "").includes("项目经理"),
         ),
       ).toBe(true);
+    });
+  });
+
+  test("forwards sub-agent stream token chunks to Feishu during IM session", async () => {
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-sub-agent",
+        thread_id: "chat-feishu-sub-agent",
+        role_id: "project_manager",
+        role_name: "项目经理",
+        prompt: "请安排开发团队接管",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-im-sub-agent",
+        userMessage: "请安排开发团队接管",
+      });
+    });
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: "session-im-sub-agent",
+        token: "子智能体执行中：".repeat(24),
+        done: false,
+        sub_agent: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        listFeishuTextCalls().some(
+          (payload) =>
+            String(payload?.chatId ?? "") === "chat-feishu-sub-agent" &&
+            String(payload?.text ?? "").includes("子智能体执行中"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  test("throttles Feishu stream forwarding and flushes buffered chunks after interval", async () => {
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-throttle",
+        thread_id: "chat-feishu-throttle",
+        role_id: "project_manager",
+        role_name: "项目经理",
+        prompt: "请持续汇报进度",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-im-throttle",
+        userMessage: "请持续汇报进度",
+      });
+    });
+
+    vi.useFakeTimers();
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: "session-im-throttle",
+        token: "A".repeat(130),
+        done: false,
+      });
+      emit("stream-token", {
+        session_id: "session-im-throttle",
+        token: "B".repeat(130),
+        done: false,
+      });
+    });
+
+    const immediateStreamCalls = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-throttle" &&
+        (String(payload?.text ?? "").includes("AAAA") || String(payload?.text ?? "").includes("BBBB")),
+    );
+    expect(immediateStreamCalls.length).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+      await Promise.resolve();
+    });
+
+    const delayedStreamCalls = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-throttle" &&
+        (String(payload?.text ?? "").includes("AAAA") || String(payload?.text ?? "").includes("BBBB")),
+    );
+    expect(delayedStreamCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("keeps Feishu closed-loop from delegated stream to clarification answer", async () => {
+    render(<App />);
+
+    const dispatchPayload = {
+      session_id: "session-im-closed-loop",
+      thread_id: "chat-feishu-closed-loop",
+      role_id: "project_manager",
+      role_name: "项目经理",
+      prompt: "请先分析并分派开发团队",
+      agent_type: "general-purpose",
+    };
+
+    await act(async () => {
+      emit("im-role-dispatch-request", dispatchPayload);
+      emit("stream-token", {
+        session_id: dispatchPayload.session_id,
+        token: "开发团队正在处理中。".repeat(12),
+        done: false,
+        sub_agent: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        listFeishuTextCalls().some(
+          (payload) =>
+            String(payload?.chatId ?? "") === dispatchPayload.thread_id &&
+            String(payload?.text ?? "").includes("开发团队正在处理中"),
+        ),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      emit("ask-user-event", {
+        session_id: dispatchPayload.session_id,
+        question: "需求澄清：确认技术方案 A 还是 B？",
+        options: ["A", "B"],
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        listFeishuTextCalls().some(
+          (payload) =>
+            String(payload?.chatId ?? "") === dispatchPayload.thread_id &&
+            String(payload?.text ?? "").includes("需求澄清"),
+        ),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        ...dispatchPayload,
+        prompt: "选 A",
+      });
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("answer_user_question", { answer: "选 A" });
     });
   });
 });
