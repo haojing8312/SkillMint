@@ -368,7 +368,8 @@ app.post('/api/feishu/ws/start', async (c) => {
 
 app.post('/api/feishu/ws/stop', async (_c) => {
   try {
-    const result = feishuWs.stop();
+    const body = await _c.req.json().catch(() => ({}));
+    const result = feishuWs.stop(body?.employee_id);
     return _c.json({ output: JSON.stringify(result) } as ApiResponse);
   } catch (e: any) {
     return _c.json({ error: e.message } as ApiResponse, 500);
@@ -377,7 +378,10 @@ app.post('/api/feishu/ws/stop', async (_c) => {
 
 app.post('/api/feishu/ws/status', async (_c) => {
   try {
-    const result = feishuWs.status();
+    const body = await _c.req.json().catch(() => ({}));
+    const result = body?.employee_id
+      ? feishuWs.statusByEmployee(String(body.employee_id))
+      : feishuWs.statusAll();
     return _c.json({ output: JSON.stringify(result) } as ApiResponse);
   } catch (e: any) {
     return _c.json({ error: e.message } as ApiResponse, 500);
@@ -387,7 +391,18 @@ app.post('/api/feishu/ws/status', async (_c) => {
 app.post('/api/feishu/ws/drain-events', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const result = feishuWs.drain(Number(body?.limit || 50));
+    const result = feishuWs.drainAll(Number(body?.limit || 50), body?.employee_id);
+    return c.json({ output: JSON.stringify(result) } as ApiResponse);
+  } catch (e: any) {
+    return c.json({ error: e.message } as ApiResponse, 500);
+  }
+});
+
+app.post('/api/feishu/ws/reconcile', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const employees = Array.isArray(body?.employees) ? body.employees : [];
+    const result = feishuWs.reconcile(employees);
     return c.json({ output: JSON.stringify(result) } as ApiResponse);
   } catch (e: any) {
     return c.json({ error: e.message } as ApiResponse, 500);

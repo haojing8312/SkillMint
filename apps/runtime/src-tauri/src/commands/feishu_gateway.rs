@@ -254,6 +254,40 @@ pub async fn resolve_feishu_app_credentials(
     Ok((resolved_app_id, resolved_app_secret))
 }
 
+pub async fn list_enabled_employee_feishu_connections_with_pool(
+    pool: &SqlitePool,
+) -> Result<Vec<FeishuEmployeeConnectionInput>, String> {
+    let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT employee_id, role_id, feishu_app_id, feishu_app_secret
+         FROM agent_employees
+         WHERE enabled = 1
+           AND TRIM(feishu_app_id) <> ''
+           AND TRIM(feishu_app_secret) <> ''
+         ORDER BY is_default DESC, updated_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::with_capacity(rows.len());
+    for (employee_id_raw, role_id, app_id, app_secret) in rows {
+        let employee_id = if employee_id_raw.trim().is_empty() {
+            role_id.trim().to_string()
+        } else {
+            employee_id_raw.trim().to_string()
+        };
+        if employee_id.is_empty() {
+            continue;
+        }
+        result.push(FeishuEmployeeConnectionInput {
+            employee_id,
+            app_id: app_id.trim().to_string(),
+            app_secret: app_secret.trim().to_string(),
+        });
+    }
+    Ok(result)
+}
+
 pub fn calculate_feishu_signature(timestamp: &str, nonce: &str, encrypt_key: &str, body: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{}{}{}{}", timestamp, nonce, encrypt_key, body));
@@ -492,7 +526,42 @@ pub struct FeishuWsStatus {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct FeishuEmployeeConnectionInput {
+    pub employee_id: String,
+    pub app_id: String,
+    pub app_secret: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct FeishuEmployeeWsStatus {
+    pub employee_id: String,
+    pub running: bool,
+    pub started_at: Option<String>,
+    pub queued_events: usize,
+    pub last_event_at: Option<String>,
+    pub last_error: Option<String>,
+    pub reconnect_attempts: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct FeishuWsStatusSummary {
+    pub running: bool,
+    pub started_at: Option<String>,
+    pub queued_events: usize,
+    pub running_count: usize,
+    pub items: Vec<FeishuEmployeeWsStatus>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct FeishuEmployeeConnectionStatuses {
+    pub relay: FeishuEventRelayStatus,
+    pub sidecar: FeishuWsStatusSummary,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct FeishuWsEventRecord {
+    #[serde(default)]
+    pub employee_id: String,
     pub id: String,
     pub event_type: String,
     pub chat_id: String,
@@ -728,6 +797,28 @@ pub async fn start_feishu_long_connection_with_pool(
     serde_json::from_value(v).map_err(|e| format!("parse ws status failed: {}", e))
 }
 
+pub async fn reconcile_feishu_employee_connections_with_pool(
+    pool: &SqlitePool,
+    sidecar_base_url: Option<String>,
+) -> Result<FeishuWsStatusSummary, String> {
+    let base = resolve_feishu_sidecar_base_url(pool, sidecar_base_url).await?;
+    let employees = list_enabled_employee_feishu_connections_with_pool(pool).await?;
+    let body = serde_json::json!({
+        "employees": employees,
+    });
+    let v = call_sidecar_json("/api/feishu/ws/reconcile", body, base).await?;
+    serde_json::from_value(v).map_err(|e| format!("parse ws reconcile status failed: {}", e))
+}
+
+pub async fn get_feishu_long_connection_status_summary_with_pool(
+    pool: &SqlitePool,
+    sidecar_base_url: Option<String>,
+) -> Result<FeishuWsStatusSummary, String> {
+    let base = resolve_feishu_sidecar_base_url(pool, sidecar_base_url).await?;
+    let v = call_sidecar_json("/api/feishu/ws/status", serde_json::json!({}), base).await?;
+    serde_json::from_value(v).map_err(|e| format!("parse ws summary status failed: {}", e))
+}
+
 #[tauri::command]
 pub async fn stop_feishu_long_connection(
     sidecar_base_url: Option<String>,
@@ -746,6 +837,20 @@ pub async fn get_feishu_long_connection_status(
     let base = resolve_feishu_sidecar_base_url(&db.0, sidecar_base_url).await?;
     let v = call_sidecar_json("/api/feishu/ws/status", serde_json::json!({}), base).await?;
     serde_json::from_value(v).map_err(|e| format!("parse ws status failed: {}", e))
+}
+
+#[tauri::command]
+pub async fn get_feishu_employee_connection_statuses(
+    sidecar_base_url: Option<String>,
+    db: State<'_, DbState>,
+    relay: State<'_, FeishuEventRelayState>,
+) -> Result<FeishuEmployeeConnectionStatuses, String> {
+    let sidecar =
+        get_feishu_long_connection_status_summary_with_pool(&db.0, sidecar_base_url).await?;
+    Ok(FeishuEmployeeConnectionStatuses {
+        relay: feishu_event_relay_status(relay.inner()),
+        sidecar,
+    })
 }
 
 #[tauri::command]
@@ -802,7 +907,11 @@ async fn sync_feishu_ws_events_core(
             } else {
                 Some(e.text.clone())
             },
-            role_id: None,
+            role_id: if e.employee_id.trim().is_empty() {
+                None
+            } else {
+                Some(e.employee_id.clone())
+            },
             tenant_id: if e.sender_open_id.trim().is_empty() {
                 None
             } else {

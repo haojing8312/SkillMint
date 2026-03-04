@@ -229,12 +229,35 @@ export interface FeishuWsStatus {
   queued_events: number;
 }
 
+export interface FeishuEmployeeWsStatus {
+  employee_id: string;
+  running: boolean;
+  started_at?: string | null;
+  queued_events: number;
+  last_event_at?: string | null;
+  last_error?: string | null;
+  reconnect_attempts: number;
+}
+
+export interface FeishuWsStatusSummary {
+  running: boolean;
+  started_at?: string | null;
+  queued_events: number;
+  running_count: number;
+  items: FeishuEmployeeWsStatus[];
+}
+
 export interface FeishuEventRelayStatus {
   running: boolean;
   generation: number;
   interval_ms: number;
   total_accepted: number;
   last_error?: string | null;
+}
+
+export interface FeishuEmployeeConnectionStatuses {
+  relay: FeishuEventRelayStatus;
+  sidecar: FeishuWsStatusSummary;
 }
 
 export interface FeishuChatInfo {

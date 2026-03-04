@@ -569,13 +569,50 @@ pub async fn list_agent_employees(db: State<'_, DbState>) -> Result<Vec<AgentEmp
 pub async fn upsert_agent_employee(
     input: UpsertAgentEmployeeInput,
     db: State<'_, DbState>,
+    relay: State<'_, crate::commands::feishu_gateway::FeishuEventRelayState>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
-    upsert_agent_employee_with_pool(&db.0, input).await
+    let id = upsert_agent_employee_with_pool(&db.0, input).await?;
+    let _ = crate::commands::feishu_gateway::reconcile_feishu_employee_connections_with_pool(
+        &db.0,
+        None,
+    )
+    .await;
+    let _ = crate::commands::feishu_gateway::start_feishu_event_relay_with_pool_and_app(
+        &db.0,
+        relay.inner().clone(),
+        Some(app),
+        None,
+        Some(1500),
+        Some(50),
+    )
+    .await;
+    Ok(id)
 }
 
 #[tauri::command]
-pub async fn delete_agent_employee(employee_id: String, db: State<'_, DbState>) -> Result<(), String> {
-    delete_agent_employee_with_pool(&db.0, &employee_id).await
+pub async fn delete_agent_employee(
+    employee_id: String,
+    db: State<'_, DbState>,
+    relay: State<'_, crate::commands::feishu_gateway::FeishuEventRelayState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    delete_agent_employee_with_pool(&db.0, &employee_id).await?;
+    let _ = crate::commands::feishu_gateway::reconcile_feishu_employee_connections_with_pool(
+        &db.0,
+        None,
+    )
+    .await;
+    let _ = crate::commands::feishu_gateway::start_feishu_event_relay_with_pool_and_app(
+        &db.0,
+        relay.inner().clone(),
+        Some(app),
+        None,
+        Some(1500),
+        Some(50),
+    )
+    .await;
+    Ok(())
 }
 
 #[tauri::command]

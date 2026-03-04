@@ -143,40 +143,29 @@ pub fn run() {
                 }
             });
 
-            // 自动恢复飞书长连接与事件同步 relay（若已配置凭据）
+            // 自动恢复飞书长连接与事件同步 relay（按员工配置对齐 + 周期健康检查）
             let pool_for_feishu = pool.clone();
             let relay_for_feishu = feishu_relay_state.clone();
+            let app_for_feishu = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-                let (app_id_opt, app_secret_opt) =
-                    commands::feishu_gateway::resolve_feishu_app_credentials(
-                        &pool_for_feishu,
-                        None,
-                        None,
-                    )
-                    .await
-                    .unwrap_or((None, None));
-                let app_id = app_id_opt.unwrap_or_default();
-                let app_secret = app_secret_opt.unwrap_or_default();
-                if app_id.trim().is_empty() || app_secret.trim().is_empty() {
-                    return;
-                }
-
-                // Sidecar 启动时机可能晚于 runtime，做重试恢复。
+                let mut backoff_secs = 2u64;
                 for _ in 0..30 {
-                    let ws_ok = commands::feishu_gateway::start_feishu_long_connection_with_pool(
-                        &pool_for_feishu,
-                        None,
-                        None,
-                        None,
-                    )
-                    .await
-                    .is_ok();
-                    if ws_ok {
-                        let _ = commands::feishu_gateway::start_feishu_event_relay_with_pool(
+                    let has_connections =
+                        match commands::feishu_gateway::reconcile_feishu_employee_connections_with_pool(
+                            &pool_for_feishu,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(summary) => !summary.items.is_empty(),
+                            Err(_) => false,
+                        };
+                    if has_connections {
+                        let _ = commands::feishu_gateway::start_feishu_event_relay_with_pool_and_app(
                             &pool_for_feishu,
                             relay_for_feishu.clone(),
+                            Some(app_for_feishu.clone()),
                             None,
                             Some(1500),
                             Some(50),
@@ -184,7 +173,37 @@ pub fn run() {
                         .await;
                         break;
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                    backoff_secs = (backoff_secs * 2).min(60);
+                }
+
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    let summary = match commands::feishu_gateway::reconcile_feishu_employee_connections_with_pool(
+                        &pool_for_feishu,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if summary.items.is_empty() {
+                        continue;
+                    }
+
+                    let relay_status = commands::feishu_gateway::start_feishu_event_relay_with_pool_and_app(
+                        &pool_for_feishu,
+                        relay_for_feishu.clone(),
+                        Some(app_for_feishu.clone()),
+                        None,
+                        Some(1500),
+                        Some(50),
+                    )
+                    .await;
+                    if relay_status.is_ok() {
+                        continue;
+                    }
                 }
             });
 
@@ -259,6 +278,7 @@ pub fn run() {
             commands::feishu_gateway::start_feishu_long_connection,
             commands::feishu_gateway::stop_feishu_long_connection,
             commands::feishu_gateway::get_feishu_long_connection_status,
+            commands::feishu_gateway::get_feishu_employee_connection_statuses,
             commands::feishu_gateway::sync_feishu_ws_events,
             commands::feishu_gateway::start_feishu_event_relay,
             commands::feishu_gateway::stop_feishu_event_relay,
