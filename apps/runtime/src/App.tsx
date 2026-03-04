@@ -598,6 +598,44 @@ export default function App() {
     navigate("start-task");
   }
 
+  async function handleStartTaskWithEmployee(employeeId: string) {
+    if (creatingSession) return;
+    const employee = employees.find((e) => e.id === employeeId);
+    if (!employee) return;
+
+    const skillId = employee.primary_skill_id || getDefaultSkillId(skills);
+    const modelId = models[0]?.id;
+
+    setSelectedEmployeeId(employee.id);
+    if (skillId) {
+      setSelectedSkillId(skillId);
+    }
+    setSelectedSessionId(null);
+    setCreateSessionError(null);
+    navigate("start-task");
+
+    if (!skillId || !modelId) {
+      return;
+    }
+
+    setCreatingSession(true);
+    try {
+      const sessionId = await invoke<string>("create_session", {
+        skillId,
+        modelId,
+        workDir: employee.default_work_dir || "",
+        permissionMode: newSessionPermissionMode,
+      });
+      await loadSessions(skillId);
+      setSelectedSessionId(sessionId);
+    } catch (e) {
+      console.error("从员工页创建会话失败:", e);
+      setCreateSessionError("创建会话失败，请稍后重试");
+    } finally {
+      setCreatingSession(false);
+    }
+  }
+
   function handleStartTaskWithSkill(skillId: string) {
     setSelectedSkillId(skillId);
     setSelectedSessionId(null);
@@ -735,6 +773,7 @@ export default function App() {
                 onSaveEmployee={handleSaveEmployee}
                 onDeleteEmployee={handleDeleteEmployee}
                 onSetAsMainAndEnter={handleSetAsMainAndEnter}
+                onStartTaskWithEmployee={handleStartTaskWithEmployee}
               />
             </motion.div>
           ) : selectedSkill && models.length > 0 && selectedSessionId ? (

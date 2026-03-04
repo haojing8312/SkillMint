@@ -64,6 +64,7 @@ describe("EmployeeHubView risk flow", () => {
         onSaveEmployee={async () => {}}
         onDeleteEmployee={onDeleteEmployee}
         onSetAsMainAndEnter={() => {}}
+        onStartTaskWithEmployee={() => {}}
       />
     );
 

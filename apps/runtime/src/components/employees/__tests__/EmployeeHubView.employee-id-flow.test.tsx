@@ -43,6 +43,7 @@ describe("EmployeeHubView employee_id flow", () => {
         onSaveEmployee={onSaveEmployee}
         onDeleteEmployee={async () => {}}
         onSetAsMainAndEnter={() => {}}
+        onStartTaskWithEmployee={() => {}}
       />,
     );
 

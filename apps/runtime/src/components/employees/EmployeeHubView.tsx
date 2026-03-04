@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AgentEmployee, RuntimePreferences, SkillManifest, UpsertAgentEmployeeInput } from "../../types";
+import {
+  AgentEmployee,
+  FeishuEmployeeConnectionStatuses,
+  FeishuEmployeeWsStatus,
+  RuntimePreferences,
+  SkillManifest,
+  UpsertAgentEmployeeInput,
+} from "../../types";
 import { RiskConfirmDialog } from "../RiskConfirmDialog";
 import { AgentProfileChatWizard } from "./AgentProfileChatWizard";
 
@@ -12,6 +19,7 @@ interface Props {
   onSaveEmployee: (input: UpsertAgentEmployeeInput) => Promise<void>;
   onDeleteEmployee: (employeeId: string) => Promise<void>;
   onSetAsMainAndEnter: (employeeId: string) => void;
+  onStartTaskWithEmployee: (employeeId: string) => Promise<void> | void;
 }
 
 const blankForm: UpsertAgentEmployeeInput = {
@@ -91,11 +99,13 @@ export function EmployeeHubView({
   onSaveEmployee,
   onDeleteEmployee,
   onSetAsMainAndEnter,
+  onStartTaskWithEmployee,
 }: Props) {
   const [form, setForm] = useState<UpsertAgentEmployeeInput>(blankForm);
   const [employeeIdEdited, setEmployeeIdEdited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [feishuStatuses, setFeishuStatuses] = useState<FeishuEmployeeConnectionStatuses | null>(null);
   const [globalDefaultWorkDir, setGlobalDefaultWorkDir] = useState("");
   const [savingGlobalWorkDir, setSavingGlobalWorkDir] = useState(false);
   const [pendingDeleteEmployee, setPendingDeleteEmployee] = useState<{ id: string; name: string } | null>(null);
@@ -119,6 +129,72 @@ export function EmployeeHubView({
       }
     })();
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const loadStatuses = async () => {
+      try {
+        const snapshot = await invoke<FeishuEmployeeConnectionStatuses>(
+          "get_feishu_employee_connection_statuses",
+          { sidecarBaseUrl: null },
+        );
+        if (!disposed) {
+          setFeishuStatuses(snapshot);
+        }
+      } catch {
+        if (!disposed) {
+          setFeishuStatuses(null);
+        }
+      }
+    };
+    void loadStatuses();
+    const timer = setInterval(() => {
+      void loadStatuses();
+    }, 5000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const feishuStatusByEmployeeId = useMemo(() => {
+    const map = new Map<string, FeishuEmployeeWsStatus>();
+    for (const item of feishuStatuses?.sidecar?.items || []) {
+      map.set((item.employee_id || "").trim().toLowerCase(), item);
+    }
+    return map;
+  }, [feishuStatuses]);
+
+  const relayRunning = feishuStatuses?.relay?.running ?? false;
+
+  function resolveFeishuStatus(employee: AgentEmployee): {
+    dotClass: string;
+    label: string;
+    error: string;
+  } {
+    const enabled = !!employee.enabled;
+    const hasCredentials = !!employee.feishu_app_id.trim() && !!employee.feishu_app_secret.trim();
+    if (!enabled) {
+      return { dotClass: "bg-gray-300", label: "未启用", error: "" };
+    }
+    if (!hasCredentials) {
+      return { dotClass: "bg-gray-300", label: "未绑定飞书凭据", error: "" };
+    }
+    const key = (employee.employee_id || employee.role_id || "").trim().toLowerCase();
+    const sidecarStatus = key ? feishuStatusByEmployeeId.get(key) : undefined;
+    if (sidecarStatus?.running && relayRunning) {
+      return { dotClass: "bg-emerald-500", label: "飞书连接正常", error: "" };
+    }
+    const error =
+      sidecarStatus?.last_error?.trim() ||
+      feishuStatuses?.relay?.last_error?.trim() ||
+      (!relayRunning ? "事件 relay 未运行" : "飞书长连接未运行");
+    return {
+      dotClass: "bg-red-500",
+      label: "飞书连接异常",
+      error,
+    };
+  }
 
   function pickEmployee(id: string) {
     onSelectEmployee(id);
@@ -261,6 +337,9 @@ export function EmployeeHubView({
   const deleteDialogImpact = pendingDeleteEmployee
     ? `员工ID: ${pendingDeleteEmployee.id}`
     : undefined;
+  const selectedEmployeeFeishuStatus = selectedEmployee
+    ? resolveFeishuStatus(selectedEmployee)
+    : null;
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
@@ -302,23 +381,33 @@ export function EmployeeHubView({
               新建员工
             </button>
             <div className="space-y-2">
-              {employees.map((e) => (
-                <button
-                  key={e.id}
-                  onClick={() => pickEmployee(e.id)}
-                  className={
-                    "w-full text-left border rounded p-2 text-xs " +
-                    (selectedEmployeeId === e.id ? "border-blue-300 bg-blue-50" : "border-gray-200 bg-white")
-                  }
-                >
-                  <div className="font-medium text-gray-800 truncate">
-                    {e.name} {e.is_default ? "· 主员工" : ""}
-                  </div>
-                  <div className="text-gray-500 truncate">{e.employee_id || e.role_id}</div>
-                </button>
-              ))}
+              {employees.map((e) => {
+                const status = resolveFeishuStatus(e);
+                return (
+                  <button
+                    key={e.id}
+                    onClick={() => pickEmployee(e.id)}
+                    className={
+                      "w-full text-left border rounded p-2 text-xs " +
+                      (selectedEmployeeId === e.id ? "border-blue-300 bg-blue-50" : "border-gray-200 bg-white")
+                    }
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        data-testid={`employee-connection-dot-${e.id}`}
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${status.dotClass}`}
+                        title={status.label}
+                      />
+                      <div className="font-medium text-gray-800 truncate">
+                        {e.name} {e.is_default ? "· 主员工" : ""}
+                      </div>
+                    </div>
+                    <div className="text-gray-500 truncate">{e.employee_id || e.role_id}</div>
+                  </button>
+                );
+              })}
             </div>
-          </div>
+            </div>
 
           <div className="md:col-span-2 bg-white border border-gray-200 rounded-xl p-4 space-y-3">
             <div className="text-xs text-gray-500">员工配置</div>
@@ -405,6 +494,25 @@ export function EmployeeHubView({
                   onChange={(e) => setForm((s) => ({ ...s, feishu_app_secret: e.target.value }))}
                 />
               </div>
+              {selectedEmployeeFeishuStatus && (
+                <div className="space-y-1">
+                  <div
+                    className={
+                      "text-xs " +
+                      (selectedEmployeeFeishuStatus.dotClass === "bg-emerald-500"
+                        ? "text-emerald-700"
+                        : selectedEmployeeFeishuStatus.dotClass === "bg-red-500"
+                          ? "text-red-600"
+                          : "text-gray-500")
+                    }
+                  >
+                    {selectedEmployeeFeishuStatus.label}
+                  </div>
+                  {selectedEmployeeFeishuStatus.error && (
+                    <div className="text-xs text-red-600">{selectedEmployeeFeishuStatus.error}</div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="rounded-lg border border-gray-200 p-3 space-y-2">
@@ -511,6 +619,13 @@ export function EmployeeHubView({
                 className="h-8 px-3 rounded bg-emerald-50 hover:bg-emerald-100 disabled:bg-gray-100 text-emerald-700 text-xs"
               >
                 设为主员工并进入首页
+              </button>
+              <button
+                disabled={!selectedEmployeeId || saving}
+                onClick={() => selectedEmployeeId && onStartTaskWithEmployee(selectedEmployeeId)}
+                className="h-8 px-3 rounded bg-indigo-50 hover:bg-indigo-100 disabled:bg-gray-100 text-indigo-700 text-xs"
+              >
+                与该员工对话开始任务
               </button>
             </div>
           </div>
