@@ -48,6 +48,7 @@ WorkClaw also benchmarks against Claude Cowork-style desktop agent experiences w
 
 - **Start tasks in one sentence**: Use the landing page to start local automation and coding tasks quickly.
 - **Agent + tools in one chat loop**: The assistant can read/write files, run commands, and show tool traces while responding.
+- **Employee-scoped long-term memory**: Memory is isolated by `employee_id + skill_id`, so each employee agent keeps its own context over time.
 - **Expert Skills workflow**: Create reusable local skills with guided input and real-time `SKILL.md` preview.
 - **Built-in packaging flow**: Package skills from the app for secure sharing and distribution.
 - **Unified settings control**: Manage models, provider routing, search providers, MCP servers, and runtime options.
@@ -104,7 +105,7 @@ The integrated environment where users can package, install, and run encrypted S
 - ✅ **Browser Automation**: Playwright integration for web scraping and automation (via Sidecar)
 - ✅ **MCP Integration**: Model Context Protocol server support for extended capabilities
 - ✅ **Multi-Agent System**: Sub-Agent task distribution with isolated contexts
-- ✅ **Memory Management**: TodoWrite for task tracking, context compression
+- ✅ **Layered Memory Management**: TodoWrite tracking + long-term isolation by `employee_id + skill_id`
 - ✅ **Web Search**: DuckDuckGo integration for real-time information
 - ✅ **Permission System**: Multi-layer security validation
 
@@ -135,7 +136,7 @@ Creators can develop Skills with **Claude Code** or **VS Code**, then package di
 - **Sub-Agent System**: Parallel task execution with isolated contexts
 - **Context Compression**: Smart truncation to stay within token limits
 - **Tool Registry**: Dynamic tool registration including MCP servers
-- **Memory Persistence**: TodoWrite for task tracking across sessions
+- **Long-Term Memory Isolation**: Employee sessions persist by `employee_id + skill_id`, while non-employee sessions keep the legacy path
 
 ### Developer Experience
 - **Multi-Model Support**: 15+ models across 9 providers
@@ -310,7 +311,7 @@ For security best practices, see [SECURITY.md](SECURITY.md).
 The following docs are optional for most end users and mainly target integrators and maintainers:
 
 - Feishu routing integration (CN): [docs/integrations/feishu-routing.md](docs/integrations/feishu-routing.md)
-- Employee identity model (`employee_id`) (CN): [docs/architecture/employee-identity-model.md](docs/architecture/employee-identity-model.md)
+- Employee identity and memory model (`employee_id`) (CN): [docs/architecture/employee-identity-model.md](docs/architecture/employee-identity-model.md)
 - OpenClaw upgrade runbook (CN): [docs/maintainers/openclaw-upgrade.md](docs/maintainers/openclaw-upgrade.md)
 - Skill installation troubleshooting (CN): [docs/troubleshooting/skill-installation.md](docs/troubleshooting/skill-installation.md)
 
