@@ -19,6 +19,7 @@ export interface FeishuWsEventRecord {
   chat_id: string;
   message_id: string;
   text: string;
+  mention_open_id: string;
   sender_open_id: string;
   received_at: string;
   raw: unknown;
@@ -79,6 +80,36 @@ function parseText(content: unknown): string {
   } catch {
     return content;
   }
+}
+
+function buildStableEventId(chatId: string, messageId: string): string {
+  const chat = chatId.trim();
+  const message = messageId.trim();
+  if (chat && message) {
+    return `${chat}:${message}`;
+  }
+  if (message) {
+    return message;
+  }
+  if (chat) {
+    return `${chat}:${Date.now()}`;
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function extractMentionOpenId(data: any): string {
+  const mentions = Array.isArray(data?.mentions) ? data.mentions : [];
+  for (const mention of mentions) {
+    const openId =
+      mention?.id?.open_id ||
+      mention?.mention_id?.open_id ||
+      mention?.open_id ||
+      '';
+    if (typeof openId === 'string' && openId.trim()) {
+      return openId.trim();
+    }
+  }
+  return '';
 }
 
 export class FeishuLongConnectionManager {
@@ -163,13 +194,16 @@ export class FeishuLongConnectionManager {
     const dispatcher = new this.sdk.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: any) => {
         const now = new Date().toISOString();
+        const chatId = data?.message?.chat_id || '';
+        const messageId = data?.message?.message_id || '';
         const rec: FeishuWsEventRecord = {
           employee_id: employeeId,
-          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          id: buildStableEventId(chatId, messageId),
           event_type: 'im.message.receive_v1',
-          chat_id: data?.message?.chat_id || '',
-          message_id: data?.message?.message_id || '',
+          chat_id: chatId,
+          message_id: messageId,
           text: parseText(data?.message?.content),
+          mention_open_id: extractMentionOpenId(data),
           sender_open_id: data?.sender?.sender_id?.open_id || '',
           received_at: now,
           raw: data,

@@ -86,3 +86,43 @@ test("drain keeps employee_id on ws events", async () => {
   assert.equal(first.chat_id, "oc_chat_1");
   assert.equal(first.text, "hello");
 });
+
+test("uses stable event id for same chat/message across multiple bot connections", async () => {
+  const manager = new FeishuLongConnectionManager(fakeSdk);
+  manager.reconcile([
+    { employee_id: "project_manager", app_id: "cli_pm", app_secret: "sec_pm" },
+    { employee_id: "dev_team", app_id: "cli_dev", app_secret: "sec_dev" },
+  ]);
+
+  const instances = FakeWSClient.instances.slice(-2);
+  const wsProjectManager = instances[0];
+  const wsDevTeam = instances[1];
+  assert.ok(wsProjectManager?.dispatcher);
+  assert.ok(wsDevTeam?.dispatcher);
+
+  const payload = {
+    message: {
+      chat_id: "oc_chat_same",
+      message_id: "om_same",
+      content: "{\"text\":\"请开始任务\"}",
+    },
+    sender: {
+      sender_id: { open_id: "ou_sender_1" },
+    },
+    mentions: [
+      {
+        key: "@_user_1",
+        id: { open_id: "ou_dev_team" },
+        name: "开发团队",
+      },
+    ],
+  };
+
+  await wsProjectManager!.dispatcher!.handlers["im.message.receive_v1"](payload);
+  await wsDevTeam!.dispatcher!.handlers["im.message.receive_v1"](payload);
+
+  const events = manager.drainAll(10);
+  assert.equal(events.length, 2);
+  assert.equal(events[0].id, "oc_chat_same:om_same");
+  assert.equal(events[1].id, "oc_chat_same:om_same");
+});

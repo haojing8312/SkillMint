@@ -190,6 +190,84 @@ async fn group_message_without_mention_routes_to_main_employee() {
 }
 
 #[tokio::test]
+async fn group_message_with_mention_routes_to_target_employee() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "main".to_string(),
+            name: "主员工".to_string(),
+            role_id: "main".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "ou_main".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "".to_string(),
+            openclaw_agent_id: "main".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: true,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("upsert main");
+
+    let dev_id = upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "dev_team".to_string(),
+            name: "开发团队".to_string(),
+            role_id: "dev_team".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "ou_dev_team".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "".to_string(),
+            openclaw_agent_id: "dev_team".to_string(),
+            routing_priority: 90,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: false,
+            skill_ids: vec!["builtin-general".to_string()],
+        },
+    )
+    .await
+    .expect("upsert dev team");
+
+    let targets = resolve_target_employees_for_event(
+        &pool,
+        &ImEvent {
+            event_type: ImEventType::MessageCreated,
+            thread_id: "chat_group_mention".to_string(),
+            event_id: Some("evt_mention_001".to_string()),
+            message_id: Some("msg_mention_001".to_string()),
+            text: Some("@开发团队 请开始处理".to_string()),
+            role_id: Some("ou_dev_team".to_string()),
+            tenant_id: None,
+        },
+    )
+    .await
+    .expect("resolve target employees");
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].id, dev_id);
+}
+
+#[tokio::test]
 async fn upsert_employee_rejects_duplicate_employee_id() {
     let (pool, _tmp) = helpers::setup_test_db().await;
 

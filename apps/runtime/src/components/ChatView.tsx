@@ -28,6 +28,7 @@ interface Props {
   onInitialMessageConsumed?: () => void;
   installedSkillIds?: string[];
   onSkillInstalled?: (skillId: string) => Promise<void> | void;
+  suppressAskUserPrompt?: boolean;
 }
 
 export function ChatView({
@@ -40,6 +41,7 @@ export function ChatView({
   onInitialMessageConsumed,
   installedSkillIds = [],
   onSkillInstalled,
+  suppressAskUserPrompt = false,
 }: Props) {
   const parseDuplicateSkillName = (error: unknown): string | null => {
     const message =
@@ -383,13 +385,18 @@ export function ChatView({
       options: string[];
     }>("ask-user-event", ({ payload }) => {
       if (payload.session_id !== sessionId) return;
+      if (suppressAskUserPrompt) {
+        setAskUserQuestion(null);
+        setAskUserOptions([]);
+        return;
+      }
       setAskUserQuestion(payload.question);
       setAskUserOptions(payload.options);
     });
     return () => {
       unlistenPromise.then((fn) => fn());
     };
-  }, [sessionId]);
+  }, [sessionId, suppressAskUserPrompt]);
 
   // agent-state-event 事件监听
   useEffect(() => {

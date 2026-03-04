@@ -567,6 +567,8 @@ pub struct FeishuWsEventRecord {
     pub chat_id: String,
     pub message_id: String,
     pub text: String,
+    #[serde(default)]
+    pub mention_open_id: String,
     pub sender_open_id: String,
     pub received_at: String,
 }
@@ -907,10 +909,12 @@ async fn sync_feishu_ws_events_core(
             } else {
                 Some(e.text.clone())
             },
-            role_id: if e.employee_id.trim().is_empty() {
+            // WS 多机器人场景下：仅在消息明确 @ 某个员工时才定向路由。
+            // 无 @ 时交给默认主员工，避免被“连接所属员工”错误抢占。
+            role_id: if e.mention_open_id.trim().is_empty() {
                 None
             } else {
-                Some(e.employee_id.clone())
+                Some(e.mention_open_id.clone())
             },
             tenant_id: if e.sender_open_id.trim().is_empty() {
                 None

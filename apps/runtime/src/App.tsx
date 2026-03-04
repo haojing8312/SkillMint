@@ -22,6 +22,50 @@ import { SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SkillAction = "refresh" | "delete" | "check-update" | "update";
 const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
+const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
+const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
+
+const QUICK_MODEL_PRESETS: Array<{
+  key: string;
+  label: string;
+  name: string;
+  api_format: string;
+  base_url: string;
+  model_name: string;
+}> = [
+  {
+    key: "openai",
+    label: "OpenAI",
+    name: "OpenAI",
+    api_format: "openai",
+    base_url: "https://api.openai.com/v1",
+    model_name: "gpt-4o-mini",
+  },
+  {
+    key: "anthropic",
+    label: "Claude (Anthropic)",
+    name: "Claude",
+    api_format: "anthropic",
+    base_url: "https://api.anthropic.com/v1",
+    model_name: "claude-3-5-haiku-20241022",
+  },
+  {
+    key: "deepseek",
+    label: "DeepSeek",
+    name: "DeepSeek",
+    api_format: "openai",
+    base_url: "https://api.deepseek.com/v1",
+    model_name: "deepseek-chat",
+  },
+];
+
+type ImBridgeSessionContext = {
+  threadId: string;
+  roleName: string;
+  streamBuffer: string;
+  streamSentCount: number;
+  waitingForAnswer: boolean;
+};
 
 function extractErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string") {
@@ -80,6 +124,40 @@ export default function App() {
   const [clawhubUpdateStatus, setClawhubUpdateStatus] = useState<Record<string, { hasUpdate: boolean; message: string }>>({});
   const [employees, setEmployees] = useState<AgentEmployee[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [imManagedSessionIds, setImManagedSessionIds] = useState<string[]>([]);
+  const [dismissedModelSetupHint, setDismissedModelSetupHint] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(MODEL_SETUP_HINT_DISMISSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [hasCompletedInitialModelSetup, setHasCompletedInitialModelSetup] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(INITIAL_MODEL_SETUP_COMPLETED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [showQuickModelSetup, setShowQuickModelSetup] = useState(false);
+  const [quickModelPresetKey, setQuickModelPresetKey] = useState(QUICK_MODEL_PRESETS[0].key);
+  const [quickModelForm, setQuickModelForm] = useState(() => ({
+    name: QUICK_MODEL_PRESETS[0].name,
+    api_format: QUICK_MODEL_PRESETS[0].api_format,
+    base_url: QUICK_MODEL_PRESETS[0].base_url,
+    model_name: QUICK_MODEL_PRESETS[0].model_name,
+    api_key: "",
+  }));
+  const [quickModelSaving, setQuickModelSaving] = useState(false);
+  const [quickModelTesting, setQuickModelTesting] = useState(false);
+  const [quickModelTestResult, setQuickModelTestResult] = useState<boolean | null>(null);
+  const [quickModelError, setQuickModelError] = useState("");
   const [pendingInitialMessage, setPendingInitialMessage] = useState<{
     sessionId: string;
     message: string;
@@ -107,6 +185,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (models.length === 0) {
+      return;
+    }
+    setHasCompletedInitialModelSetup(true);
+    setDismissedModelSetupHint(false);
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+      window.localStorage.removeItem(MODEL_SETUP_HINT_DISMISSED_KEY);
+    } catch {
+      // ignore
+    }
+  }, [models.length]);
+
+  useEffect(() => {
     if (
       typeof window === "undefined" ||
       !(window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } })
@@ -115,30 +210,88 @@ export default function App() {
       return;
     }
     const seen = new Set<string>();
-    const unlistenPromise = listen<ImRoleDispatchRequest>("im-role-dispatch-request", async ({ payload }) => {
+    const sessionContexts = new Map<string, ImBridgeSessionContext>();
+    const STREAM_CHUNK_SIZE = 120;
+
+    const markImManagedSession = (sessionId: string) => {
+      setImManagedSessionIds((prev) => {
+        if (prev.includes(sessionId)) return prev;
+        return [...prev, sessionId];
+      });
+    };
+
+    const sendTextToFeishu = async (threadId: string, text: string) => {
+      if (!threadId.trim() || !text.trim()) return;
+      await invoke("send_feishu_text_message", {
+        chatId: threadId,
+        text: text.slice(0, 1800),
+        appId: null,
+        appSecret: null,
+        sidecarBaseUrl: null,
+      });
+    };
+
+    const flushImStream = async (sessionId: string) => {
+      const ctx = sessionContexts.get(sessionId);
+      if (!ctx) return;
+      const chunk = ctx.streamBuffer.trim();
+      if (!chunk) return;
+      ctx.streamBuffer = "";
+      if (chunk.length <= 1800) {
+        await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${chunk}`);
+        ctx.streamSentCount += 1;
+        return;
+      }
+      let start = 0;
+      while (start < chunk.length) {
+        const part = chunk.slice(start, start + 1800);
+        await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${part}`);
+        ctx.streamSentCount += 1;
+        start += 1800;
+      }
+    };
+
+    const unlistenDispatchPromise = listen<ImRoleDispatchRequest>("im-role-dispatch-request", async ({ payload }) => {
       const key = `${payload.session_id}|${payload.role_id}|${payload.prompt}`;
       if (seen.has(key)) return;
       seen.add(key);
-      try {
-        await invoke("send_message", {
-          sessionId: payload.session_id,
-          userMessage: payload.prompt,
-        });
 
-        const messages = await invoke<Message[]>("get_messages", {
-          sessionId: payload.session_id,
-        });
-        const latestAssistant = [...messages]
-          .reverse()
-          .find((m) => m.role === "assistant" && m.content?.trim().length > 0);
-        if (latestAssistant) {
-          await invoke("send_feishu_text_message", {
-            chatId: payload.thread_id,
-            text: `${payload.role_name}: ${latestAssistant.content.slice(0, 1800)}`,
-            appId: null,
-            appSecret: null,
-            sidecarBaseUrl: null,
+      const existing = sessionContexts.get(payload.session_id);
+      const ctx: ImBridgeSessionContext = {
+        threadId: payload.thread_id,
+        roleName: payload.role_name || payload.role_id,
+        streamBuffer: existing?.streamBuffer ?? "",
+        streamSentCount: 0,
+        waitingForAnswer: existing?.waitingForAnswer ?? false,
+      };
+      sessionContexts.set(payload.session_id, ctx);
+      markImManagedSession(payload.session_id);
+
+      try {
+        if (ctx.waitingForAnswer) {
+          ctx.waitingForAnswer = false;
+          await invoke("answer_user_question", { answer: payload.prompt });
+        } else {
+          await invoke("send_message", {
+            sessionId: payload.session_id,
+            userMessage: payload.prompt,
           });
+        }
+
+        await flushImStream(payload.session_id);
+        if (ctx.streamSentCount === 0) {
+          const messages = await invoke<Message[]>("get_messages", {
+            sessionId: payload.session_id,
+          });
+          const latestAssistant = [...messages]
+            .reverse()
+            .find((m) => m.role === "assistant" && m.content?.trim().length > 0);
+          if (latestAssistant) {
+            await sendTextToFeishu(
+              ctx.threadId,
+              `${ctx.roleName}: ${latestAssistant.content.slice(0, 1800)}`
+            );
+          }
         }
       } catch (e) {
         console.error("IM 分发执行失败:", e);
@@ -146,8 +299,47 @@ export default function App() {
         setTimeout(() => seen.delete(key), 30_000);
       }
     });
+
+    const unlistenStreamPromise = listen<{
+      session_id: string;
+      token: string;
+      done: boolean;
+      sub_agent?: boolean;
+    }>("stream-token", ({ payload }) => {
+      const ctx = sessionContexts.get(payload.session_id);
+      if (!ctx || payload.sub_agent) return;
+      if (payload.done) {
+        void flushImStream(payload.session_id);
+        return;
+      }
+      ctx.streamBuffer += payload.token || "";
+      if (ctx.streamBuffer.length >= STREAM_CHUNK_SIZE) {
+        void flushImStream(payload.session_id);
+      }
+    });
+
+    const unlistenAskUserPromise = listen<{
+      session_id: string;
+      question: string;
+      options: string[];
+    }>("ask-user-event", ({ payload }) => {
+      const ctx = sessionContexts.get(payload.session_id);
+      if (!ctx) return;
+      ctx.waitingForAnswer = true;
+      const optionsText = payload.options?.length ? `\n可选项：${payload.options.join(" / ")}` : "";
+      void (async () => {
+        await flushImStream(payload.session_id);
+        await sendTextToFeishu(
+          ctx.threadId,
+          `${ctx.roleName}: ${payload.question}${optionsText}\n请直接回复你的选择或补充信息。`
+        );
+      })();
+    });
+
     return () => {
-      unlistenPromise.then((fn) => fn());
+      unlistenDispatchPromise.then((fn) => fn());
+      unlistenStreamPromise.then((fn) => fn());
+      unlistenAskUserPromise.then((fn) => fn());
     };
   }, []);
 
@@ -598,6 +790,123 @@ export default function App() {
     navigate("start-task");
   }
 
+  function dismissModelSetupHint() {
+    setDismissedModelSetupHint(true);
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(MODEL_SETUP_HINT_DISMISSED_KEY, "1");
+    } catch {
+      // ignore
+    }
+  }
+
+  function openSettingsForModelSetup() {
+    setShowQuickModelSetup(false);
+    setQuickModelError("");
+    setQuickModelTestResult(null);
+    setShowSettings(true);
+  }
+
+  function openQuickModelSetup() {
+    setShowQuickModelSetup(true);
+    setQuickModelError("");
+    setQuickModelTestResult(null);
+  }
+
+  function closeQuickModelSetup() {
+    if (
+      quickModelSaving ||
+      quickModelTesting ||
+      (models.length === 0 && !showSettings && !hasCompletedInitialModelSetup)
+    ) {
+      return;
+    }
+    setShowQuickModelSetup(false);
+    setQuickModelError("");
+    setQuickModelTestResult(null);
+  }
+
+  function applyQuickModelPreset(presetKey: string) {
+    const preset = QUICK_MODEL_PRESETS.find((item) => item.key === presetKey);
+    if (!preset) return;
+    setQuickModelPresetKey(preset.key);
+    setQuickModelForm((prev) => ({
+      ...prev,
+      name: preset.name,
+      api_format: preset.api_format,
+      base_url: preset.base_url,
+      model_name: preset.model_name,
+    }));
+    setQuickModelTestResult(null);
+    setQuickModelError("");
+  }
+
+  function getQuickModelConfig(isDefault: boolean) {
+    return {
+      id: "",
+      name: quickModelForm.name.trim() || "快速配置模型",
+      api_format: quickModelForm.api_format,
+      base_url: quickModelForm.base_url,
+      model_name: quickModelForm.model_name,
+      is_default: isDefault,
+    };
+  }
+
+  async function testQuickModelSetupConnection() {
+    if (quickModelSaving || quickModelTesting) return;
+    const apiKey = quickModelForm.api_key.trim();
+    if (!apiKey) {
+      setQuickModelError("请输入 API Key");
+      setQuickModelTestResult(null);
+      return;
+    }
+    setQuickModelTesting(true);
+    setQuickModelError("");
+    setQuickModelTestResult(null);
+    try {
+      const ok = await invoke<boolean>("test_connection_cmd", {
+        config: getQuickModelConfig(false),
+        apiKey,
+      });
+      setQuickModelTestResult(ok);
+      if (!ok) {
+        setQuickModelError("连接失败，请检查配置后重试");
+      }
+    } catch (e) {
+      setQuickModelError(String(e));
+      setQuickModelTestResult(false);
+    } finally {
+      setQuickModelTesting(false);
+    }
+  }
+
+  async function saveQuickModelSetup() {
+    if (quickModelSaving || quickModelTesting) return;
+    const apiKey = quickModelForm.api_key.trim();
+    if (!apiKey) {
+      setQuickModelError("请输入 API Key");
+      return;
+    }
+    setQuickModelSaving(true);
+    setQuickModelError("");
+    try {
+      await invoke("save_model_config", {
+        config: getQuickModelConfig(models.length === 0),
+        apiKey,
+      });
+      await loadModels();
+      setShowQuickModelSetup(false);
+      setQuickModelForm((prev) => ({ ...prev, api_key: "" }));
+      setQuickModelTestResult(null);
+    } catch (e) {
+      setQuickModelError(String(e));
+    } finally {
+      setQuickModelSaving(false);
+    }
+  }
+
   async function handleStartTaskWithEmployee(employeeId: string) {
     if (creatingSession) return;
     const employee = employees.find((e) => e.id === employeeId);
@@ -645,6 +954,14 @@ export default function App() {
 
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+  const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
+  const shouldShowModelSetupGate =
+    !showSettings && models.length === 0 && !hasCompletedInitialModelSetup;
+  const shouldShowModelSetupHint =
+    !showSettings &&
+    models.length === 0 &&
+    hasCompletedInitialModelSetup &&
+    !dismissedModelSetupHint;
 
   return (
     <div className="sm-app flex h-screen overflow-hidden">
@@ -669,9 +986,201 @@ export default function App() {
         onCollapse={() => setSidebarCollapsed((prev) => !prev)}
         collapsed={sidebarCollapsed}
       />
-      <div className="flex-1 overflow-hidden">
-        <AnimatePresence mode="wait">
-          {showSettings ? (
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {shouldShowModelSetupHint && (
+          <div className="px-4 pt-4">
+            <div
+              data-testid="model-setup-hint"
+              className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+            >
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-blue-900">先连接一个大模型，智能体才能开始工作</div>
+                <div className="text-xs text-blue-700 mt-1">
+                  只需 1 分钟完成配置。配置后就能创建会话、执行技能和驱动智能体员工协作。
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  data-testid="model-setup-hint-open-quick-setup"
+                  onClick={openQuickModelSetup}
+                  className="h-8 px-3 rounded bg-blue-500 hover:bg-blue-600 text-white text-xs"
+                >
+                  快速配置（1分钟）
+                </button>
+                <button
+                  data-testid="model-setup-hint-open-settings"
+                  onClick={openSettingsForModelSetup}
+                  className="h-8 px-3 rounded border border-blue-200 hover:bg-blue-100 text-blue-700 text-xs"
+                >
+                  打开设置
+                </button>
+                <button
+                  data-testid="model-setup-hint-dismiss"
+                  onClick={dismissModelSetupHint}
+                  className="h-8 px-3 rounded border border-blue-200 hover:bg-blue-100 text-blue-700 text-xs"
+                >
+                  稍后再说
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showQuickModelSetup && (
+          <div
+            data-testid="quick-model-setup-dialog"
+            className="fixed inset-0 z-40 bg-black/20 flex items-center justify-center p-4"
+          >
+            <div className="w-full max-w-lg rounded-xl bg-white border border-gray-200 shadow-lg p-4 space-y-3">
+              <div>
+                <div className="text-sm font-semibold text-gray-900">快速配置模型</div>
+                <div className="text-xs text-gray-500 mt-1">填好 API Key 即可完成首次配置，后续可在设置里细调。</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">服务商</div>
+                  <select
+                    data-testid="quick-model-setup-preset"
+                    value={quickModelPresetKey}
+                    onChange={(e) => applyQuickModelPreset(e.target.value)}
+                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm bg-white"
+                  >
+                    {QUICK_MODEL_PRESETS.map((preset) => (
+                      <option key={preset.key} value={preset.key}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">连接名称</div>
+                  <input
+                    value={quickModelForm.name}
+                    onChange={(e) => {
+                      setQuickModelForm((s) => ({ ...s, name: e.target.value }));
+                      setQuickModelTestResult(null);
+                    }}
+                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">Base URL</div>
+                  <input
+                    value={quickModelForm.base_url}
+                    onChange={(e) => {
+                      setQuickModelForm((s) => ({ ...s, base_url: e.target.value }));
+                      setQuickModelTestResult(null);
+                    }}
+                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-gray-600 mb-1">模型名</div>
+                  <input
+                    value={quickModelForm.model_name}
+                    onChange={(e) => {
+                      setQuickModelForm((s) => ({ ...s, model_name: e.target.value }));
+                      setQuickModelTestResult(null);
+                    }}
+                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-600 mb-1">API Key</div>
+                <input
+                  data-testid="quick-model-setup-api-key"
+                  type="password"
+                  value={quickModelForm.api_key}
+                  onChange={(e) => {
+                    setQuickModelForm((s) => ({ ...s, api_key: e.target.value }));
+                    setQuickModelTestResult(null);
+                  }}
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
+                  placeholder="请输入 API Key"
+                />
+              </div>
+              {quickModelTestResult !== null && (
+                <div
+                  data-testid="quick-model-setup-test-result"
+                  className={`text-xs rounded px-2 py-1 border ${
+                    quickModelTestResult
+                      ? "text-green-700 bg-green-50 border-green-100"
+                      : "text-orange-700 bg-orange-50 border-orange-100"
+                  }`}
+                >
+                  {quickModelTestResult ? "连接成功，可直接保存并开始" : "连接失败，请检查后重试"}
+                </div>
+              )}
+              {quickModelError && (
+                <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1">
+                  {quickModelError}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  data-testid="quick-model-setup-test-connection"
+                  onClick={testQuickModelSetupConnection}
+                  disabled={quickModelSaving || quickModelTesting}
+                  className="h-8 px-3 rounded border border-blue-200 hover:bg-blue-50 disabled:bg-gray-100 text-blue-700 text-xs"
+                >
+                  {quickModelTesting ? "测试中..." : "测试连接"}
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    data-testid="quick-model-setup-cancel"
+                    onClick={closeQuickModelSetup}
+                    disabled={quickModelSaving || quickModelTesting}
+                    className="h-8 px-3 rounded border border-gray-200 hover:bg-gray-50 disabled:bg-gray-100 text-gray-600 text-xs"
+                  >
+                    取消
+                  </button>
+                  <button
+                    data-testid="quick-model-setup-save"
+                    onClick={saveQuickModelSetup}
+                    disabled={quickModelSaving || quickModelTesting}
+                    className="h-8 px-3 rounded bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white text-xs"
+                  >
+                    {quickModelSaving ? "保存中..." : "保存并开始"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {shouldShowModelSetupGate && (
+          <div
+            data-testid="model-setup-gate"
+            className="fixed inset-0 z-30 bg-white/70 backdrop-blur-[1px] flex items-center justify-center p-4"
+          >
+            <div className="w-full max-w-lg rounded-xl border border-blue-100 bg-white shadow-sm p-5 space-y-3">
+              <div className="text-base font-semibold text-blue-900">首次使用需要先连接一个大模型</div>
+              <div className="text-sm text-blue-700">
+                完成模型配置后，才能开始任务、创建会话并驱动智能体员工执行技能。现在只需 1 分钟。
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  data-testid="model-setup-gate-open-quick-setup"
+                  onClick={openQuickModelSetup}
+                  className="h-9 px-4 rounded bg-blue-500 hover:bg-blue-600 text-white text-sm"
+                >
+                  快速配置（1分钟）
+                </button>
+                <button
+                  data-testid="model-setup-gate-open-settings"
+                  onClick={openSettingsForModelSetup}
+                  className="h-9 px-4 rounded border border-blue-200 hover:bg-blue-50 text-blue-700 text-sm"
+                >
+                  打开设置
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="flex-1 overflow-hidden">
+          <AnimatePresence mode="wait">
+            {showSettings ? (
             <motion.div
               key="settings"
               initial={{ opacity: 0 }}
@@ -793,6 +1302,7 @@ export default function App() {
                 onSessionUpdate={handleSessionRefresh}
                 installedSkillIds={skills.map((s) => s.id)}
                 onSkillInstalled={handleSkillInstalledFromChat}
+                suppressAskUserPrompt={selectedSessionImManaged}
                 initialMessage={
                   pendingInitialMessage && pendingInitialMessage.sessionId === selectedSessionId
                     ? pendingInitialMessage.message
@@ -826,12 +1336,13 @@ export default function App() {
             <div className="flex items-center justify-center h-full sm-text-muted text-sm">
               请先在设置中配置模型和 API Key
             </div>
-          ) : (
-            <div className="flex items-center justify-center h-full sm-text-muted text-sm">
-              从左侧选择一个技能，开始任务
-            </div>
-          )}
-        </AnimatePresence>
+            ) : (
+              <div className="flex items-center justify-center h-full sm-text-muted text-sm">
+                从左侧选择一个技能，开始任务
+              </div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
       {showInstall && (
         <InstallDialog onInstalled={handleInstalled} onClose={() => setShowInstall(false)} />
