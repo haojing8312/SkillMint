@@ -24,8 +24,10 @@ describe("Sidebar semantic theme", () => {
       />
     );
 
-    const title = screen.getByText("WorkClaw");
-    expect(title.closest("div")).toHaveClass("sm-surface");
+    expect(screen.getByText("导航")).toBeInTheDocument();
+    expect(screen.queryByText("WorkClaw")).not.toBeInTheDocument();
+    expect(screen.queryByAltText("WorkClaw Logo")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "折叠侧边栏" }).closest("div")).toHaveClass("sm-surface");
     expect(screen.getByRole("button", { name: "开始任务" })).toHaveClass("sm-btn");
     expect(screen.getByPlaceholderText("搜索会话...")).toHaveClass("sm-input");
     expect(screen.getByRole("combobox")).toHaveClass("sm-select");
