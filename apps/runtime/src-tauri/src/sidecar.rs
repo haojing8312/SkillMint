@@ -2,6 +2,9 @@ use anyhow::Result;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 pub struct SidecarManager {
     process: Arc<Mutex<Option<Child>>>,
     url: String,
@@ -33,11 +36,20 @@ impl SidecarManager {
             }
         };
 
-        let child = Command::new("node")
+        let mut command = Command::new("node");
+        command
             .arg(&sidecar_script)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            // Prevent a separate console window when launching the sidecar.
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let child = command.spawn()?;
 
         *proc = Some(child);
         drop(proc); // Release lock before polling
