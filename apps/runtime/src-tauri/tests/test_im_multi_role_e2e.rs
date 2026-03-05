@@ -20,6 +20,7 @@ fn group_orchestrator_transitions_across_required_phases() {
             "qa_team".to_string(),
         ],
         user_goal: "做一个桌面端拉群协作功能".to_string(),
+        execution_window: 3,
     });
 
     let phase_names = outcome
@@ -37,6 +38,35 @@ fn group_orchestrator_transitions_across_required_phases() {
     assert!(outcome.final_report.contains("计划"));
     assert!(outcome.final_report.contains("执行"));
     assert!(outcome.final_report.contains("汇报"));
+}
+
+#[test]
+fn group_orchestrator_uses_round_robin_with_concurrency_window() {
+    let outcome = simulate_group_run(GroupRunRequest {
+        group_id: "group-window".to_string(),
+        coordinator_employee_id: "project_manager".to_string(),
+        member_employee_ids: vec![
+            "project_manager".to_string(),
+            "dev_1".to_string(),
+            "dev_2".to_string(),
+            "dev_3".to_string(),
+            "qa_1".to_string(),
+            "qa_2".to_string(),
+            "ops_1".to_string(),
+        ],
+        user_goal: "并发窗口调度验证".to_string(),
+        execution_window: 3,
+    });
+
+    let mut round_counts = std::collections::BTreeMap::<i64, usize>::new();
+    for item in &outcome.execution {
+        *round_counts.entry(item.round_no).or_insert(0) += 1;
+    }
+
+    assert_eq!(round_counts.len(), 3, "7 members with window=3 should be 3 rounds");
+    assert_eq!(round_counts.get(&1).copied().unwrap_or(0), 3);
+    assert_eq!(round_counts.get(&2).copied().unwrap_or(0), 3);
+    assert_eq!(round_counts.get(&3).copied().unwrap_or(0), 1);
 }
 
 #[tokio::test]

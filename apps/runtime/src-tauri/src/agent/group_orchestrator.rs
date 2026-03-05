@@ -4,6 +4,7 @@ pub struct GroupRunRequest {
     pub coordinator_employee_id: String,
     pub member_employee_ids: Vec<String>,
     pub user_goal: String,
+    pub execution_window: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,9 +80,10 @@ pub fn simulate_group_run(request: GroupRunRequest) -> GroupRunOutcome {
 
     let mut plan = Vec::with_capacity(members.len());
     let mut execution = Vec::with_capacity(members.len());
+    let window = request.execution_window.clamp(1, 10);
     for (idx, assignee) in members.iter().enumerate() {
         let step_id = format!("step-{}", idx + 1);
-        let round_no = (idx as i64) + 1;
+        let round_no = ((idx / window) as i64) + 1;
         plan.push(GroupPlanItem {
             id: step_id.clone(),
             assignee_employee_id: assignee.clone(),
@@ -155,6 +157,7 @@ mod tests {
                 "qa_team".to_string(),
             ],
             user_goal: "发布协作功能".to_string(),
+            execution_window: 3,
         });
 
         assert_eq!(

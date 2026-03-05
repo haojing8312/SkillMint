@@ -1599,6 +1599,7 @@ mod tests {
                     "qa_team".to_string(),
                 ],
                 user_goal: "实现群组协作编排".to_string(),
+                execution_window: 3,
             },
         );
 
