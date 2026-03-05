@@ -21,3 +21,6 @@ scripts/sync-codex-skills.mjs
 sidecar.log
 .claude/
 .worktrees/
+apps/runtime/src-tauri/target-codex/
+logs/
+stdout
