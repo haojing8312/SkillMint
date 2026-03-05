@@ -8,6 +8,7 @@
     "build:runtime": "pnpm --dir apps/runtime/sidecar build && pnpm --filter runtime tauri build",
     "test:e2e:runtime": "pnpm --dir apps/runtime test:e2e",
     "release:check-version": "node scripts/check-release-version.mjs",
+    "test:release": "node --test scripts/check-release-version.test.mjs",
     "sync:openclaw-core": "node scripts/sync-openclaw-core.mjs",
     "sync:codex-skills": "node scripts/sync-codex-skills.mjs",
     "test:sidecar": "pnpm --dir apps/runtime/sidecar test",
