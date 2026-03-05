@@ -26,3 +26,9 @@ logs/
 stdout
 apps/runtime/playwright-report/
 apps/runtime/test-results/
+
+# local temporary debug artifacts
+.tmp_*
+/0
+/x.l.includes('employees')
+apps/runtime/src-tauri/target-tests/
