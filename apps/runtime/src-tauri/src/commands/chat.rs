@@ -334,6 +334,7 @@ pub async fn create_session(
     model_id: String,
     work_dir: Option<String>,
     employee_id: Option<String>,
+    title: Option<String>,
     permission_mode: Option<String>,
     db: State<'_, DbState>,
 ) -> Result<String, String> {
@@ -347,12 +348,21 @@ pub async fn create_session(
     } else {
         normalized_work_dir
     };
+    let normalized_title = title
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let resolved_title = if normalized_title.is_empty() {
+        "New Chat".to_string()
+    } else {
+        normalized_title
+    };
     sqlx::query(
         "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&session_id)
     .bind(&skill_id)
-    .bind("New Chat")
+    .bind(&resolved_title)
     .bind(&now)
     .bind(&model_id)
     .bind(permission_mode)
@@ -401,7 +411,7 @@ pub async fn send_message(
 
     if msg_count.0 <= 1 {
         let title: String = user_message.chars().take(20).collect();
-        sqlx::query("UPDATE sessions SET title = ? WHERE id = ?")
+        sqlx::query("UPDATE sessions SET title = ? WHERE id = ? AND (title = 'New Chat' OR title = '')")
             .bind(&title)
             .bind(&session_id)
             .execute(&db.0)
@@ -1320,14 +1330,27 @@ pub async fn get_messages(
 }
 
 #[tauri::command]
-pub async fn get_sessions(
-    skill_id: String,
-    db: State<'_, DbState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT id, title, created_at, model_id, COALESCE(work_dir, ''), COALESCE(permission_mode, 'accept_edits') FROM sessions WHERE skill_id = ? ORDER BY created_at DESC"
+pub async fn list_sessions(db: State<'_, DbState>) -> Result<Vec<serde_json::Value>, String> {
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, String, String)>(
+        "SELECT
+            s.id,
+            s.title,
+            s.created_at,
+            s.model_id,
+            COALESCE(s.work_dir, ''),
+            COALESCE(s.employee_id, ''),
+            COALESCE(s.permission_mode, 'accept_edits'),
+            CASE
+                WHEN EXISTS (SELECT 1 FROM im_thread_sessions ts WHERE ts.session_id = s.id) THEN 'feishu'
+                ELSE 'local'
+            END AS source_channel,
+            CASE
+                WHEN EXISTS (SELECT 1 FROM im_thread_sessions ts WHERE ts.session_id = s.id) THEN '飞书'
+                ELSE ''
+            END AS source_label
+         FROM sessions s
+         ORDER BY s.created_at DESC"
     )
-    .bind(&skill_id)
     .fetch_all(&db.0)
     .await
     .map_err(|e| e.to_string())?;
@@ -1335,19 +1358,32 @@ pub async fn get_sessions(
     Ok(rows
         .iter()
         .map(
-            |(id, title, created_at, model_id, work_dir, permission_mode)| {
+            |(id, title, created_at, model_id, work_dir, employee_id, permission_mode, source_channel, source_label)| {
                 json!({
                     "id": id,
                     "title": title,
                     "created_at": created_at,
                     "model_id": model_id,
                     "work_dir": work_dir,
+                    "employee_id": employee_id,
                     "permission_mode": permission_mode,
                     "permission_mode_label": permission_mode_label_for_display(permission_mode),
+                    "source_channel": source_channel,
+                    "source_label": source_label,
                 })
             },
         )
         .collect())
+}
+
+#[tauri::command]
+pub async fn get_sessions(
+    skill_id: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    // 兼容旧调用，skill_id 不再参与过滤
+    let _ = &skill_id;
+    list_sessions(db).await
 }
 
 #[cfg(test)]
@@ -1579,29 +1615,61 @@ pub async fn delete_session(session_id: String, db: State<'_, DbState>) -> Resul
 
 /// 搜索会话标题和消息内容
 #[tauri::command]
-pub async fn search_sessions(
-    skill_id: String,
+pub async fn search_sessions_global(
     query: String,
     db: State<'_, DbState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let pattern = format!("%{}%", query);
-    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
-        "SELECT DISTINCT s.id, s.title, s.created_at, s.model_id, COALESCE(s.work_dir, '')
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String, String)>(
+        "SELECT DISTINCT
+            s.id,
+            s.title,
+            s.created_at,
+            s.model_id,
+            COALESCE(s.work_dir, ''),
+            COALESCE(s.employee_id, ''),
+            CASE
+                WHEN EXISTS (SELECT 1 FROM im_thread_sessions ts WHERE ts.session_id = s.id) THEN 'feishu'
+                ELSE 'local'
+            END AS source_channel,
+            CASE
+                WHEN EXISTS (SELECT 1 FROM im_thread_sessions ts WHERE ts.session_id = s.id) THEN '飞书'
+                ELSE ''
+            END AS source_label
          FROM sessions s
          LEFT JOIN messages m ON m.session_id = s.id
-         WHERE s.skill_id = ? AND (s.title LIKE ? OR m.content LIKE ?)
+         WHERE (s.title LIKE ? OR m.content LIKE ?)
          ORDER BY s.created_at DESC",
     )
-    .bind(&skill_id)
     .bind(&pattern)
     .bind(&pattern)
     .fetch_all(&db.0)
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir)| {
-        json!({"id": id, "title": title, "created_at": created_at, "model_id": model_id, "work_dir": work_dir})
+    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir, employee_id, source_channel, source_label)| {
+        json!({
+            "id": id,
+            "title": title,
+            "created_at": created_at,
+            "model_id": model_id,
+            "work_dir": work_dir,
+            "employee_id": employee_id,
+            "source_channel": source_channel,
+            "source_label": source_label
+        })
     }).collect())
+}
+
+#[tauri::command]
+pub async fn search_sessions(
+    skill_id: String,
+    query: String,
+    db: State<'_, DbState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    // 兼容旧调用，skill_id 不再参与过滤
+    let _ = &skill_id;
+    search_sessions_global(query, db).await
 }
 
 /// 将会话消息导出为 Markdown 字符串

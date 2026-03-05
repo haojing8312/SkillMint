@@ -192,7 +192,7 @@ describe("ChatView semantic theme", () => {
           },
         ]);
       }
-      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
       return Promise.resolve(null);
     });
 

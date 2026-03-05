@@ -120,7 +120,7 @@ describe("App experts routing", () => {
           },
         ]);
       }
-      if (command === "get_sessions") {
+      if (command === "list_sessions") {
         return Promise.resolve([]);
       }
       if (command === "create_local_skill") {
@@ -275,7 +275,7 @@ describe("App experts routing", () => {
     await waitFor(() => {
       expect(
         invokeMock.mock.calls.some(
-          (call) => call[0] === "get_sessions" && call[1]?.skillId === "local-test-skill"
+          (call) => call[0] === "list_sessions" && call[1] === undefined
         )
       ).toBe(true);
     });
