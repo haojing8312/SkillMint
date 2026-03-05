@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-describe("EmployeeHubView employee_id flow", () => {
+describe("EmployeeHubView employee creation flow", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) => {
@@ -20,8 +20,8 @@ describe("EmployeeHubView employee_id flow", () => {
     });
   });
 
-  test("uses employee_id as only identity field and auto-generates value", async () => {
-    const onSaveEmployee = vi.fn(async (_input: any) => {});
+  test("uses skill-first creation and hides manual employee form", async () => {
+    const onOpenEmployeeCreatorSkill = vi.fn();
 
     render(
       <EmployeeHubView
@@ -40,37 +40,25 @@ describe("EmployeeHubView employee_id flow", () => {
         ]}
         selectedEmployeeId={null}
         onSelectEmployee={() => {}}
-        onSaveEmployee={onSaveEmployee}
+        onSaveEmployee={async () => {}}
         onDeleteEmployee={async () => {}}
         onSetAsMainAndEnter={() => {}}
         onStartTaskWithEmployee={() => {}}
-      />,
+        onOpenEmployeeCreatorSkill={onOpenEmployeeCreatorSkill}
+      />
     );
 
-    expect(screen.getByPlaceholderText("员工名称")).toBeInTheDocument();
-    expect(screen.getByText("主技能（用于新会话默认技能路由）")).toBeInTheDocument();
-    expect(screen.getByText("默认工作目录（该员工新会话默认目录）")).toBeInTheDocument();
-    expect(screen.queryByTestId("employee-routing-priority-input")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("技能合集（补充授权能力；当前会话默认仍优先使用“主技能”）"),
-    ).toBeInTheDocument();
-
-    fireEvent.change(screen.getByPlaceholderText("员工名称"), {
-      target: { value: "Project Manager" },
-    });
-
-    const employeeIdInput = screen.getByPlaceholderText("员工编号（自动生成，可编辑）") as HTMLInputElement;
-    expect(employeeIdInput.value).toBe("project_manager");
-
-    fireEvent.click(screen.getByRole("button", { name: "保存员工" }));
-
     await waitFor(() => {
-      expect(onSaveEmployee).toHaveBeenCalledTimes(1);
+      expect(invokeMock).toHaveBeenCalledWith("get_runtime_preferences");
     });
-    expect(onSaveEmployee.mock.calls[0][0]).toMatchObject({
-      employee_id: "project_manager",
-      role_id: "project_manager",
-      openclaw_agent_id: "project_manager",
-    });
+
+    expect(screen.queryByRole("button", { name: "手动新建" })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("员工名称")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存员工" })).not.toBeInTheDocument();
+    expect(screen.getByText("已移除手动创建流程，请通过「智能体员工助手」对话式完成创建与配置。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建员工" }));
+    expect(onOpenEmployeeCreatorSkill).toHaveBeenCalledTimes(1);
+    expect(onOpenEmployeeCreatorSkill).toHaveBeenCalledWith({ mode: "create" });
   });
 });

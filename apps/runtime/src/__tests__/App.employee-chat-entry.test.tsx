@@ -115,7 +115,6 @@ describe("App employee chat entry", () => {
             primary_skill_id: "skill-sales",
             default_work_dir: "D:\\\\workspace\\\\sales",
             openclaw_agent_id: "sales_lead",
-            routing_priority: 100,
             enabled_scopes: ["feishu"],
             enabled: true,
             is_default: false,

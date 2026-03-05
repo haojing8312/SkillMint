@@ -14,6 +14,22 @@ fn default_agent_type() -> String {
     "general-purpose".to_string()
 }
 
+fn default_message_type_system() -> String {
+    "system".to_string()
+}
+
+fn default_message_type_user_input() -> String {
+    "user_input".to_string()
+}
+
+fn default_sender_role_main() -> String {
+    "main_agent".to_string()
+}
+
+fn default_source_channel_feishu() -> String {
+    "feishu".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoleProgressEvent {
     pub role_id: String,
@@ -29,6 +45,20 @@ pub struct ImRoleEventPayload {
     pub thread_id: String,
     pub role_id: String,
     pub role_name: String,
+    #[serde(default = "default_message_type_system")]
+    pub message_type: String,
+    #[serde(default = "default_sender_role_main")]
+    pub sender_role: String,
+    #[serde(default)]
+    pub sender_employee_id: String,
+    #[serde(default)]
+    pub target_employee_id: String,
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub parent_task_id: String,
+    #[serde(default = "default_source_channel_feishu")]
+    pub source_channel: String,
     pub status: String,
     pub summary: String,
     pub duration_ms: Option<u64>,
@@ -40,6 +70,20 @@ pub struct ImRoleDispatchRequest {
     pub thread_id: String,
     pub role_id: String,
     pub role_name: String,
+    #[serde(default = "default_message_type_user_input")]
+    pub message_type: String,
+    #[serde(default = "default_sender_role_main")]
+    pub sender_role: String,
+    #[serde(default)]
+    pub sender_employee_id: String,
+    #[serde(default)]
+    pub target_employee_id: String,
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub parent_task_id: String,
+    #[serde(default = "default_source_channel_feishu")]
+    pub source_channel: String,
     pub prompt: String,
     pub agent_type: String,
 }
@@ -90,6 +134,13 @@ pub fn build_im_role_event_payload(
         thread_id: thread_id.to_string(),
         role_id: role_id.to_string(),
         role_name: role_name.to_string(),
+        message_type: default_message_type_system(),
+        sender_role: default_sender_role_main(),
+        sender_employee_id: role_id.to_string(),
+        target_employee_id: role_id.to_string(),
+        task_id: String::new(),
+        parent_task_id: String::new(),
+        source_channel: default_source_channel_feishu(),
         status: status.to_string(),
         summary: summary.to_string(),
         duration_ms,
@@ -109,6 +160,13 @@ pub fn build_im_role_dispatch_request(
         thread_id: thread_id.to_string(),
         role_id: role_id.to_string(),
         role_name: role_name.to_string(),
+        message_type: default_message_type_user_input(),
+        sender_role: default_sender_role_main(),
+        sender_employee_id: role_id.to_string(),
+        target_employee_id: role_id.to_string(),
+        task_id: String::new(),
+        parent_task_id: String::new(),
+        source_channel: default_source_channel_feishu(),
         prompt: prompt.to_string(),
         agent_type: agent_type.to_string(),
     }

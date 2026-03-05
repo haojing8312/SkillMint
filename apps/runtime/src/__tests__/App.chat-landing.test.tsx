@@ -128,6 +128,26 @@ describe("App chat landing", () => {
     });
   });
 
+  test("returns to landing when clicking start-task from selected session", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "select-first-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+  });
+
   test("keeps landing visible before session is selected", async () => {
     render(<App />);
     await waitFor(() => {

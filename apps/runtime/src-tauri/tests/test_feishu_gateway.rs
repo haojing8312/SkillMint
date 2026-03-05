@@ -136,6 +136,9 @@ async fn plan_role_events_for_feishu_uses_thread_bindings() {
     assert_eq!(planned.len(), 2);
     assert_eq!(planned[0].thread_id, "chat-1");
     assert_eq!(planned[0].status, "running");
+    assert_eq!(planned[0].message_type, "system");
+    assert_eq!(planned[0].sender_role, "main_agent");
+    assert_eq!(planned[0].source_channel, "feishu");
 
     let dispatches = plan_role_dispatch_requests_for_feishu(&pool, &evt)
         .await
@@ -144,6 +147,49 @@ async fn plan_role_events_for_feishu_uses_thread_bindings() {
     assert_eq!(dispatches[0].thread_id, "chat-1");
     assert_eq!(dispatches[0].agent_type, "plan");
     assert!(dispatches[0].prompt.contains("场景=opportunity_review"));
+    assert_eq!(dispatches[0].message_type, "user_input");
+    assert_eq!(dispatches[0].sender_role, "main_agent");
+    assert_eq!(dispatches[0].sender_employee_id, dispatches[0].role_id);
+    assert_eq!(dispatches[0].target_employee_id, dispatches[0].role_id);
+    assert_eq!(dispatches[0].source_channel, "feishu");
+}
+
+#[tokio::test]
+async fn plan_role_dispatch_falls_back_to_thread_roles_when_mention_role_unknown() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    bind_thread_roles_with_pool(
+        &pool,
+        "chat-unknown-role",
+        "tenant-x",
+        "opportunity_review",
+        &["presales".to_string(), "architect".to_string()],
+    )
+    .await
+    .expect("bind roles");
+
+    let parsed = parse_feishu_payload(
+        r#"{
+          "header":{"event_id":"evt-unknown","event_type":"im.message.receive_v1"},
+          "event":{"message":{"message_id":"msg-unknown","chat_id":"chat-unknown-role","content":"{\"text\":\"@某人 请先分析\"}"}}
+        }"#,
+    )
+    .expect("parse");
+
+    let mut evt = match parsed {
+        ParsedFeishuPayload::Event(e) => e,
+        _ => panic!("expected event"),
+    };
+    evt.role_id = Some("ou_unknown_mention".to_string());
+
+    let planned = plan_role_events_for_feishu(&pool, &evt)
+        .await
+        .expect("plan role events");
+    assert_eq!(planned.len(), 2);
+
+    let dispatches = plan_role_dispatch_requests_for_feishu(&pool, &evt)
+        .await
+        .expect("plan dispatch");
+    assert_eq!(dispatches.len(), 2);
 }
 
 #[tokio::test]

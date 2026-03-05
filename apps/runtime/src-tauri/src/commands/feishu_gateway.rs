@@ -1,5 +1,6 @@
 use crate::commands::employee_agents::{
     ensure_employee_sessions_for_event_with_pool, link_inbound_event_to_session_with_pool,
+    list_agent_employees_with_pool, AgentEmployee,
 };
 use crate::commands::im_config::get_thread_role_config_with_pool;
 use crate::commands::im_gateway::process_im_event;
@@ -400,15 +401,19 @@ pub async fn plan_role_events_for_feishu(
     let session_id = format!("im-{}", event.thread_id);
     let text = event.text.clone().unwrap_or_default();
 
-    let roles: Vec<String> = if let Some(role_id) = event.role_id.clone() {
-        if cfg.roles.iter().any(|r| r == &role_id) {
-            vec![role_id]
-        } else {
-            Vec::new()
-        }
-    } else {
-        cfg.roles
-    };
+    let roles: Vec<String> = event
+        .role_id
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .and_then(|role_id| {
+            if cfg.roles.iter().any(|r| r == role_id) {
+                Some(vec![role_id.to_string()])
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| cfg.roles.clone());
 
     Ok(roles
         .into_iter()
@@ -440,15 +445,19 @@ pub async fn plan_role_dispatch_requests_for_feishu(
         .clone()
         .unwrap_or_else(|| "请基于当前上下文继续协作".to_string());
 
-    let roles: Vec<String> = if let Some(role_id) = event.role_id.clone() {
-        if cfg.roles.iter().any(|r| r == &role_id) {
-            vec![role_id]
-        } else {
-            Vec::new()
-        }
-    } else {
-        cfg.roles
-    };
+    let roles: Vec<String> = event
+        .role_id
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .and_then(|role_id| {
+            if cfg.roles.iter().any(|r| r == role_id) {
+                Some(vec![role_id.to_string()])
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| cfg.roles.clone());
 
     let agent_type = if cfg.scenario_template == "opportunity_review" {
         "plan"
@@ -631,6 +640,8 @@ pub struct FeishuEmployeeConnectionStatuses {
 pub struct FeishuWsEventRecord {
     #[serde(default)]
     pub employee_id: String,
+    #[serde(default)]
+    pub source_employee_ids: Vec<String>,
     pub id: String,
     pub event_type: String,
     pub chat_id: String,
@@ -638,8 +649,112 @@ pub struct FeishuWsEventRecord {
     pub text: String,
     #[serde(default)]
     pub mention_open_id: String,
+    #[serde(default)]
+    pub mention_open_ids: Vec<String>,
     pub sender_open_id: String,
     pub received_at: String,
+}
+
+fn sanitize_ws_inbound_text(raw: &str) -> Option<String> {
+    let stripped = strip_placeholder_mentions(raw.to_string());
+    if stripped.trim().is_empty() {
+        None
+    } else {
+        Some(stripped)
+    }
+}
+
+fn collect_ws_mention_candidates(event: &FeishuWsEventRecord) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in &event.mention_open_ids {
+        let normalized = raw.trim().to_string();
+        if normalized.is_empty() || out.iter().any(|v| v == &normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    let fallback = event.mention_open_id.trim().to_string();
+    if !fallback.is_empty() && !out.iter().any(|v| v == &fallback) {
+        out.push(fallback);
+    }
+    out
+}
+
+fn extract_mention_labels(text: &str) -> Vec<String> {
+    let mut labels = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '@' {
+            continue;
+        }
+        let mut label = String::new();
+        while let Some(next) = chars.peek() {
+            if next.is_whitespace() {
+                break;
+            }
+            label.push(*next);
+            chars.next();
+        }
+        let normalized = label
+            .trim()
+            .trim_matches(|c: char| c == ',' || c == '，' || c == ':' || c == '：');
+        if normalized.is_empty() {
+            continue;
+        }
+        labels.push(normalized.to_string());
+    }
+    labels
+}
+
+fn resolve_ws_role_id(
+    candidates: &[String],
+    text: Option<&str>,
+    source_employee_ids: &[String],
+    employees: &[AgentEmployee],
+) -> Option<String> {
+    for candidate in candidates {
+        if employees.iter().any(|e| {
+            e.feishu_open_id == *candidate || e.role_id == *candidate || e.employee_id == *candidate
+        }) {
+            return Some(candidate.clone());
+        }
+    }
+
+    if let Some(text) = text {
+        for label in extract_mention_labels(text) {
+            for employee in employees {
+                let name = employee.name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                if label.contains(name) || name.contains(&label) {
+                    return Some(employee.employee_id.clone());
+                }
+            }
+        }
+    }
+
+    let mut matched_sources = Vec::new();
+    for source in source_employee_ids {
+        let normalized = source.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if let Some(employee) = employees
+            .iter()
+            .find(|e| e.id == normalized || e.employee_id == normalized || e.role_id == normalized)
+        {
+            let employee_id = employee.employee_id.clone();
+            if !matched_sources.iter().any(|v| v == &employee_id) {
+                matched_sources.push(employee_id);
+            }
+        }
+    }
+    if matched_sources.len() == 1 {
+        return Some(matched_sources[0].clone());
+    }
+
+    candidates.first().cloned()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -976,11 +1091,21 @@ async fn sync_feishu_ws_events_core(
     .await?;
     let events: Vec<FeishuWsEventRecord> =
         serde_json::from_value(v).map_err(|e| format!("parse ws events failed: {}", e))?;
+    let enabled_employees = list_agent_employees_with_pool(pool)
+        .await?
+        .into_iter()
+        .filter(|e| e.enabled)
+        .collect::<Vec<_>>();
 
     let mut accepted = 0usize;
     for e in events {
         if e.chat_id.trim().is_empty() {
             continue;
+        }
+        let role_candidates = collect_ws_mention_candidates(&e);
+        let mut source_employee_ids = e.source_employee_ids.clone();
+        if source_employee_ids.is_empty() && !e.employee_id.trim().is_empty() {
+            source_employee_ids.push(e.employee_id.trim().to_string());
         }
         let inbound = ImEvent {
             event_type: ImEventType::MessageCreated,
@@ -991,18 +1116,15 @@ async fn sync_feishu_ws_events_core(
             } else {
                 Some(e.message_id.clone())
             },
-            text: if e.text.trim().is_empty() {
-                None
-            } else {
-                Some(e.text.clone())
-            },
+            text: sanitize_ws_inbound_text(&e.text),
             // WS 多机器人场景下：仅在消息明确 @ 某个员工时才定向路由。
             // 无 @ 时交给默认主员工，避免被“连接所属员工”错误抢占。
-            role_id: if e.mention_open_id.trim().is_empty() {
-                None
-            } else {
-                Some(e.mention_open_id.clone())
-            },
+            role_id: resolve_ws_role_id(
+                &role_candidates,
+                Some(&e.text),
+                &source_employee_ids,
+                &enabled_employees,
+            ),
             tenant_id: if e.sender_open_id.trim().is_empty() {
                 None
             } else {
@@ -1213,7 +1335,11 @@ pub async fn get_feishu_event_relay_status(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_feishu_payload, ParsedFeishuPayload};
+    use super::{
+        parse_feishu_payload, resolve_ws_role_id, sanitize_ws_inbound_text, FeishuWsEventRecord,
+        ParsedFeishuPayload,
+    };
+    use crate::commands::employee_agents::AgentEmployee;
 
     #[test]
     fn parse_feishu_payload_extracts_mention_role_and_cleans_text() {
@@ -1282,5 +1408,132 @@ mod tests {
             }
             ParsedFeishuPayload::Challenge(_) => panic!("should parse as event"),
         }
+    }
+
+    #[test]
+    fn sanitize_ws_inbound_text_strips_placeholder_tokens() {
+        let cleaned = sanitize_ws_inbound_text("@_user_1  你细化一下技术方案");
+        assert_eq!(cleaned.as_deref(), Some("你细化一下技术方案"));
+    }
+
+    #[test]
+    fn resolve_ws_role_id_prefers_candidate_matching_employee() {
+        let employees = vec![
+            AgentEmployee {
+                id: "1".to_string(),
+                employee_id: "project_manager".to_string(),
+                name: "项目经理".to_string(),
+                role_id: "project_manager".to_string(),
+                persona: String::new(),
+                feishu_open_id: "ou_pm".to_string(),
+                feishu_app_id: String::new(),
+                feishu_app_secret: String::new(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: String::new(),
+                openclaw_agent_id: "project_manager".to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["feishu".to_string()],
+                enabled: true,
+                is_default: true,
+                skill_ids: Vec::new(),
+                created_at: "2026-03-05T00:00:00Z".to_string(),
+                updated_at: "2026-03-05T00:00:00Z".to_string(),
+            },
+            AgentEmployee {
+                id: "2".to_string(),
+                employee_id: "dev_team".to_string(),
+                name: "开发团队".to_string(),
+                role_id: "dev_team".to_string(),
+                persona: String::new(),
+                feishu_open_id: "ou_dev_team".to_string(),
+                feishu_app_id: String::new(),
+                feishu_app_secret: String::new(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: String::new(),
+                openclaw_agent_id: "dev_team".to_string(),
+                routing_priority: 90,
+                enabled_scopes: vec!["feishu".to_string()],
+                enabled: true,
+                is_default: false,
+                skill_ids: Vec::new(),
+                created_at: "2026-03-05T00:00:00Z".to_string(),
+                updated_at: "2026-03-05T00:00:00Z".to_string(),
+            },
+        ];
+        let event = FeishuWsEventRecord {
+            employee_id: "project_manager".to_string(),
+            source_employee_ids: vec!["project_manager".to_string(), "dev_team".to_string()],
+            id: "oc_chat:om_1".to_string(),
+            event_type: "im.message.receive_v1".to_string(),
+            chat_id: "oc_chat".to_string(),
+            message_id: "om_1".to_string(),
+            text: "你细化一下技术方案".to_string(),
+            mention_open_id: "ou_sender".to_string(),
+            mention_open_ids: vec!["ou_sender".to_string(), "ou_dev_team".to_string()],
+            sender_open_id: "ou_sender".to_string(),
+            received_at: "2026-03-05T00:00:00Z".to_string(),
+        };
+
+        let selected = resolve_ws_role_id(
+            &event.mention_open_ids,
+            Some(&event.text),
+            &event.source_employee_ids,
+            &employees,
+        );
+        assert_eq!(selected.as_deref(), Some("ou_dev_team"));
+    }
+
+    #[test]
+    fn resolve_ws_role_id_falls_back_to_single_source_employee() {
+        let employees = vec![
+            AgentEmployee {
+                id: "1".to_string(),
+                employee_id: "project_manager".to_string(),
+                name: "项目经理".to_string(),
+                role_id: "project_manager".to_string(),
+                persona: String::new(),
+                feishu_open_id: String::new(),
+                feishu_app_id: String::new(),
+                feishu_app_secret: String::new(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: String::new(),
+                openclaw_agent_id: "project_manager".to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["feishu".to_string()],
+                enabled: true,
+                is_default: true,
+                skill_ids: Vec::new(),
+                created_at: "2026-03-05T00:00:00Z".to_string(),
+                updated_at: "2026-03-05T00:00:00Z".to_string(),
+            },
+            AgentEmployee {
+                id: "2".to_string(),
+                employee_id: "tech_lead".to_string(),
+                name: "开发人员".to_string(),
+                role_id: "tech_lead".to_string(),
+                persona: String::new(),
+                feishu_open_id: String::new(),
+                feishu_app_id: String::new(),
+                feishu_app_secret: String::new(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: String::new(),
+                openclaw_agent_id: "tech_lead".to_string(),
+                routing_priority: 90,
+                enabled_scopes: vec!["feishu".to_string()],
+                enabled: true,
+                is_default: false,
+                skill_ids: Vec::new(),
+                created_at: "2026-03-05T00:00:00Z".to_string(),
+                updated_at: "2026-03-05T00:00:00Z".to_string(),
+            },
+        ];
+
+        let selected = resolve_ws_role_id(
+            &[],
+            Some("请你继续处理"),
+            &["tech_lead".to_string()],
+            &employees,
+        );
+        assert_eq!(selected.as_deref(), Some("tech_lead"));
     }
 }

@@ -14,12 +14,14 @@ export interface FeishuWsReconcileItem {
 
 export interface FeishuWsEventRecord {
   employee_id: string;
+  source_employee_ids: string[];
   id: string;
   event_type: string;
   chat_id: string;
   message_id: string;
   text: string;
   mention_open_id: string;
+  mention_open_ids: string[];
   sender_open_id: string;
   received_at: string;
   raw: unknown;
@@ -79,9 +81,11 @@ function normalizeInlineText(text: string): string {
 function collectMentions(data: any): any[] {
   const rootMentions = Array.isArray(data?.mentions) ? data.mentions : [];
   const messageMentions = Array.isArray(data?.message?.mentions) ? data.message.mentions : [];
-  if (rootMentions.length === 0) return messageMentions;
-  if (messageMentions.length === 0) return rootMentions;
-  return [...rootMentions, ...messageMentions];
+  const eventMentions = Array.isArray(data?.event?.mentions) ? data.event.mentions : [];
+  const eventMessageMentions = Array.isArray(data?.event?.message?.mentions)
+    ? data.event.message.mentions
+    : [];
+  return [...rootMentions, ...messageMentions, ...eventMentions, ...eventMessageMentions];
 }
 
 function sanitizeMentionTokens(text: string, mentions: any[]): string {
@@ -98,44 +102,78 @@ function sanitizeMentionTokens(text: string, mentions: any[]): string {
 }
 
 function parseText(content: unknown, mentions: any[]): string {
-  if (typeof content !== 'string' || !content.trim()) return '';
   const raw = (() => {
-    try {
-      const obj = JSON.parse(content);
-      return typeof obj.text === 'string' ? obj.text : content;
-    } catch {
-      return content;
+    if (typeof content === 'string') {
+      if (!content.trim()) return '';
+      try {
+        const obj = JSON.parse(content);
+        return typeof obj?.text === 'string' ? obj.text : content;
+      } catch {
+        return content;
+      }
     }
+    if (content && typeof content === 'object') {
+      const text = (content as Record<string, unknown>).text;
+      return typeof text === 'string' ? text : '';
+    }
+    return '';
   })();
+  if (!raw.trim()) return '';
   return sanitizeMentionTokens(raw, mentions);
 }
 
-function extractMentionOpenIdFromMentions(mentions: any[]): string {
-  for (const mention of mentions) {
-    const openId =
-      mention?.id?.open_id ||
-      mention?.mention_id?.open_id ||
-      mention?.open_id ||
-      '';
-    if (typeof openId === 'string' && openId.trim()) {
-      return openId.trim();
-    }
+function uniqNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
   }
-  return '';
+  return out;
 }
 
-function extractMentionOpenId(data: any): string {
+function extractMentionOpenIdsFromMentions(mentions: any[]): string[] {
+  const ids: string[] = [];
+  for (const mention of mentions) {
+    const candidates = [
+      mention?.id?.open_id,
+      mention?.mention_id?.open_id,
+      mention?.open_id,
+      mention?.id?.user_id,
+      mention?.mention_id?.user_id,
+      mention?.user_id,
+      mention?.id?.union_id,
+      mention?.mention_id?.union_id,
+      mention?.union_id,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) {
+        ids.push(candidate.trim());
+      }
+    }
+  }
+  return uniqNonEmpty(ids);
+}
+
+function extractMentionOpenIds(data: any): string[] {
   const mentions = collectMentions(data);
   if (mentions.length > 0) {
-    return extractMentionOpenIdFromMentions(mentions);
+    return extractMentionOpenIdsFromMentions(mentions);
   }
   try {
-    const messageContent = typeof data?.message?.content === 'string' ? data.message.content : '';
-    const parsed = JSON.parse(messageContent);
+    const messageContent = data?.message?.content ?? data?.event?.message?.content ?? '';
+    const parsed =
+      typeof messageContent === 'string'
+        ? JSON.parse(messageContent)
+        : messageContent && typeof messageContent === 'object'
+          ? messageContent
+          : {};
     const contentMentions = Array.isArray(parsed?.mentions) ? parsed.mentions : [];
-    return extractMentionOpenIdFromMentions(contentMentions);
+    return extractMentionOpenIdsFromMentions(contentMentions);
   } catch {
-    return '';
+    return [];
   }
 }
 
@@ -194,6 +232,33 @@ export class FeishuLongConnectionManager {
   }
 
   private pushEvent(rec: FeishuWsEventRecord): void {
+    const existingIndex = this.events.findIndex((evt) => evt.id === rec.id);
+    if (existingIndex >= 0) {
+      const existing = this.events[existingIndex];
+      const mentionIds = uniqNonEmpty([
+        ...(existing.mention_open_ids || []),
+        ...(rec.mention_open_ids || []),
+        existing.mention_open_id,
+        rec.mention_open_id,
+      ]);
+      const nextText = rec.text.trim().length > existing.text.trim().length ? rec.text : existing.text;
+      this.events[existingIndex] = {
+        ...existing,
+        source_employee_ids: uniqNonEmpty([
+          ...(existing.source_employee_ids || []),
+          ...(rec.source_employee_ids || []),
+          existing.employee_id,
+          rec.employee_id,
+        ]),
+        text: nextText,
+        mention_open_id: mentionIds[0] || '',
+        mention_open_ids: mentionIds,
+        sender_open_id: existing.sender_open_id || rec.sender_open_id,
+        received_at: rec.received_at || existing.received_at,
+        raw: rec.raw ?? existing.raw,
+      };
+      return;
+    }
     this.events.push(rec);
     if (this.events.length > this.maxEvents) {
       this.events.splice(0, this.events.length - this.maxEvents);
@@ -236,18 +301,23 @@ export class FeishuLongConnectionManager {
     const dispatcher = new this.sdk.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: any) => {
         const now = new Date().toISOString();
-        const chatId = data?.message?.chat_id || '';
-        const messageId = data?.message?.message_id || '';
+        const message = data?.message || data?.event?.message || {};
+        const sender = data?.sender || data?.event?.sender || {};
+        const chatId = message?.chat_id || '';
+        const messageId = message?.message_id || '';
         const mentions = collectMentions(data);
+        const mentionOpenIds = extractMentionOpenIds(data);
         const rec: FeishuWsEventRecord = {
           employee_id: employeeId,
+          source_employee_ids: [employeeId],
           id: buildStableEventId(chatId, messageId),
           event_type: 'im.message.receive_v1',
           chat_id: chatId,
           message_id: messageId,
-          text: parseText(data?.message?.content, mentions),
-          mention_open_id: extractMentionOpenId(data),
-          sender_open_id: data?.sender?.sender_id?.open_id || '',
+          text: parseText(message?.content, mentions),
+          mention_open_id: mentionOpenIds[0] || '',
+          mention_open_ids: mentionOpenIds,
+          sender_open_id: sender?.sender_id?.open_id || '',
           received_at: now,
           raw: data,
         };

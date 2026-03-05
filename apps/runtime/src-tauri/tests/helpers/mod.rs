@@ -357,6 +357,29 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     .await
     .unwrap();
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS skill_i18n_cache (
+            cache_key TEXT PRIMARY KEY,
+            source_text TEXT NOT NULL,
+            translated_text TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS clawhub_http_cache (
+            cache_key TEXT PRIMARY KEY,
+            body TEXT NOT NULL,
+            fetched_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
     (pool, tmp)
 }
 

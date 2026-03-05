@@ -71,6 +71,60 @@ function listFeishuTextCalls() {
     .map(([, payload]) => payload);
 }
 
+function defaultInvokeImpl(command: string) {
+  if (command === "list_skills") {
+    return Promise.resolve([
+      {
+        id: "builtin-general",
+        name: "General",
+        description: "desc",
+        version: "1.0.0",
+        author: "test",
+        recommended_model: "",
+        tags: [],
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  }
+  if (command === "list_model_configs") {
+    return Promise.resolve([
+      {
+        id: "model-a",
+        name: "Model A",
+        api_format: "openai",
+        base_url: "https://example.com",
+        model_name: "model-a",
+        is_default: true,
+      },
+    ]);
+  }
+  if (command === "list_agent_employees") {
+    return Promise.resolve([]);
+  }
+  if (command === "get_sessions") {
+    return Promise.resolve([]);
+  }
+  if (command === "send_message") {
+    return Promise.resolve(null);
+  }
+  if (command === "get_messages") {
+    return Promise.resolve([
+      {
+        role: "assistant",
+        content: "这是最终答复",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  }
+  if (command === "send_feishu_text_message") {
+    return Promise.resolve("om_reply_1");
+  }
+  if (command === "answer_user_question") {
+    return Promise.resolve(null);
+  }
+  return Promise.resolve(null);
+}
+
 describe("App feishu IM bridge", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -81,59 +135,7 @@ describe("App feishu IM bridge", () => {
       value: { transformCallback: vi.fn() },
     });
 
-    invokeMock.mockImplementation((command: string) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
-      if (command === "list_agent_employees") {
-        return Promise.resolve([]);
-      }
-      if (command === "get_sessions") {
-        return Promise.resolve([]);
-      }
-      if (command === "send_message") {
-        return Promise.resolve(null);
-      }
-      if (command === "get_messages") {
-        return Promise.resolve([
-          {
-            role: "assistant",
-            content: "这是最终答复",
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "send_feishu_text_message") {
-        return Promise.resolve("om_reply_1");
-      }
-      if (command === "answer_user_question") {
-        return Promise.resolve(null);
-      }
-      return Promise.resolve(null);
-    });
+    invokeMock.mockImplementation((command: string) => defaultInvokeImpl(command));
   });
 
   test("forwards ask_user to Feishu and routes follow-up message into answer_user_question", async () => {
@@ -211,6 +213,28 @@ describe("App feishu IM bridge", () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
         sessionId: "session-im-mention-clean",
+        userMessage: "你细化一下技术方案",
+      });
+    });
+  });
+
+  test("sanitizes plain @mention labels before dispatching to desktop session", async () => {
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-plain-mention-clean",
+        thread_id: "chat-feishu-plain-mention-clean",
+        role_id: "dev_team",
+        role_name: "开发团队",
+        prompt: "@开发团队 你细化一下技术方案 ",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-im-plain-mention-clean",
         userMessage: "你细化一下技术方案",
       });
     });
@@ -414,5 +438,225 @@ describe("App feishu IM bridge", () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("answer_user_question", { answer: "选 A" });
     });
+  });
+
+  test("uses bracket role prefix and switches back to main role after delegated stream", async () => {
+    render(<App />);
+
+    const dispatchPayload = {
+      session_id: "session-im-role-prefix",
+      thread_id: "chat-feishu-role-prefix",
+      role_id: "project_manager",
+      role_name: "项目经理",
+      prompt: "请先安排开发团队",
+      agent_type: "general-purpose",
+    };
+
+    await act(async () => {
+      emit("im-role-dispatch-request", dispatchPayload);
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: dispatchPayload.session_id,
+        userMessage: "请先安排开发团队",
+      });
+    });
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: dispatchPayload.session_id,
+        token: "子员工执行中。".repeat(20),
+        done: false,
+        sub_agent: true,
+        role_id: "dev_team",
+        role_name: "开发团队",
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        listFeishuTextCalls().some(
+          (payload) =>
+            String(payload?.chatId ?? "") === dispatchPayload.thread_id &&
+            String(payload?.text ?? "").startsWith("[开发团队] "),
+        ),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: dispatchPayload.session_id,
+        token: "",
+        done: true,
+        sub_agent: true,
+      });
+    });
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: dispatchPayload.session_id,
+        token: "主员工汇总输出。".repeat(20),
+        done: false,
+      });
+      emit("stream-token", {
+        session_id: dispatchPayload.session_id,
+        token: "",
+        done: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        listFeishuTextCalls().some(
+          (payload) =>
+            String(payload?.chatId ?? "") === dispatchPayload.thread_id &&
+            String(payload?.text ?? "").startsWith("[项目经理] ") &&
+            String(payload?.text ?? "").includes("主员工汇总输出"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  test("retries Feishu delivery after transient failure", async () => {
+    let failCount = 0;
+    invokeMock.mockImplementation((command: string, payload: any) => {
+      if (
+        command === "send_feishu_text_message" &&
+        String(payload?.chatId ?? "") === "chat-feishu-retry" &&
+        String(payload?.text ?? "").includes("重试消息")
+      ) {
+        if (failCount < 2) {
+          failCount += 1;
+          return Promise.reject(new Error("network timeout"));
+        }
+        return Promise.resolve("om_reply_retry_ok");
+      }
+      return defaultInvokeImpl(command);
+    });
+
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-retry",
+        thread_id: "chat-feishu-retry",
+        role_id: "project_manager",
+        role_name: "项目经理",
+        prompt: "请开始执行",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-im-retry",
+        userMessage: "请开始执行",
+      });
+    });
+
+    vi.useFakeTimers();
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: "session-im-retry",
+        token: "重试消息".repeat(40),
+        done: false,
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const firstWave = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-retry" &&
+        String(payload?.text ?? "").includes("重试消息"),
+    );
+    expect(firstWave.length).toBeGreaterThanOrEqual(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+
+    const calls = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-retry" &&
+        String(payload?.text ?? "").includes("重试消息"),
+    );
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    vi.useRealTimers();
+  });
+
+  test("stops retrying after max attempts when Feishu delivery keeps failing", async () => {
+    invokeMock.mockImplementation((command: string, payload: any) => {
+      if (
+        command === "send_feishu_text_message" &&
+        String(payload?.chatId ?? "") === "chat-feishu-degrade" &&
+        String(payload?.text ?? "").includes("降级消息")
+      ) {
+        return Promise.reject(new Error("permanent failure"));
+      }
+      return defaultInvokeImpl(command);
+    });
+
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-degrade",
+        thread_id: "chat-feishu-degrade",
+        role_id: "project_manager",
+        role_name: "项目经理",
+        prompt: "请开始执行",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-im-degrade",
+        userMessage: "请开始执行",
+      });
+    });
+
+    vi.useFakeTimers();
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: "session-im-degrade",
+        token: "降级消息".repeat(40),
+        done: false,
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(3100);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(9100);
+      await Promise.resolve();
+    });
+
+    const degradeCalls = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-degrade" &&
+        String(payload?.text ?? "").includes("降级消息"),
+    );
+    expect(degradeCalls.length).toBe(4);
+    vi.useRealTimers();
   });
 });

@@ -1,11 +1,11 @@
+use anyhow::{anyhow, Result};
+use chrono::Utc;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
-use uuid::Uuid;
-use chrono::Utc;
-use anyhow::{Result, anyhow};
 
 use crate::crypto::{derive_key, encrypt, make_verify_token};
 use crate::types::{PackConfig, SkillManifest};
@@ -58,10 +58,16 @@ pub fn parse_front_matter(content: &str) -> crate::types::FrontMatter {
     let mut in_fm = false;
     for line in content.lines() {
         if line == "---" {
-            if !in_fm { in_fm = true; continue; }
-            else { break; }
+            if !in_fm {
+                in_fm = true;
+                continue;
+            } else {
+                break;
+            }
         }
-        if !in_fm { continue; }
+        if !in_fm {
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("name:") {
             fm.name = Some(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("description:") {
@@ -99,8 +105,7 @@ pub fn pack(config: &PackConfig) -> Result<()> {
 
     let output_file = fs::File::create(&config.output_path)?;
     let mut zip = zip::ZipWriter::new(output_file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // Write manifest.json (plaintext)
     zip.start_file("manifest.json", options)?;
@@ -108,7 +113,9 @@ pub fn pack(config: &PackConfig) -> Result<()> {
 
     // Encrypt and write all files under encrypted/
     for entry in WalkDir::new(skill_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_dir() { continue; }
+        if entry.file_type().is_dir() {
+            continue;
+        }
         let abs_path = entry.path();
         let rel = abs_path.strip_prefix(skill_dir)?;
         let rel_str = canonical_rel_path(rel);
@@ -128,12 +135,16 @@ pub fn pack(config: &PackConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::fs;
     use std::io::Read;
+    use tempfile::tempdir;
 
     fn make_test_skill_dir(dir: &Path) {
-        fs::write(dir.join("SKILL.md"), "---\nname: Test Skill\nversion: 1.0.0\n---\n\n# Test\nYou are a test assistant.").unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: Test Skill\nversion: 1.0.0\n---\n\n# Test\nYou are a test assistant.",
+        )
+        .unwrap();
         fs::create_dir(dir.join("templates")).unwrap();
         fs::write(dir.join("templates/outline.md"), "# Outline template").unwrap();
     }
@@ -172,7 +183,11 @@ mod tests {
             author: "".to_string(),
             username: "alice".to_string(),
             recommended_model: "".to_string(),
-            output_path: dir.path().join("out.skillpack").to_string_lossy().to_string(),
+            output_path: dir
+                .path()
+                .join("out.skillpack")
+                .to_string_lossy()
+                .to_string(),
         };
         assert!(pack(&config).is_err());
     }

@@ -2,10 +2,10 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
 };
+use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
-use anyhow::{Result, anyhow};
 
 const PBKDF2_ITERATIONS: u32 = 100_000;
 const VERIFY_PLAINTEXT: &[u8] = b"SKILLMINT_OK";
@@ -18,12 +18,7 @@ pub fn derive_key(username: &str, skill_id: &str, skill_name: &str) -> [u8; 32] 
     let salt = hasher.finalize();
 
     let mut key = [0u8; 32];
-    pbkdf2_hmac::<Sha256>(
-        username.as_bytes(),
-        &salt,
-        PBKDF2_ITERATIONS,
-        &mut key,
-    );
+    pbkdf2_hmac::<Sha256>(username.as_bytes(), &salt, PBKDF2_ITERATIONS, &mut key);
     key
 }
 
@@ -56,8 +51,12 @@ pub fn make_verify_token(key: &[u8; 32]) -> Result<String> {
 }
 
 pub fn check_verify_token(token: &str, key: &[u8; 32]) -> bool {
-    let Ok(data) = B64.decode(token) else { return false };
-    let Ok(plain) = decrypt(&data, key) else { return false };
+    let Ok(data) = B64.decode(token) else {
+        return false;
+    };
+    let Ok(plain) = decrypt(&data, key) else {
+        return false;
+    };
     plain == VERIFY_PLAINTEXT
 }
 

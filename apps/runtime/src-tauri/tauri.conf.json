@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.workclaw.runtime",
   "build": {
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev:tauri",
+    "beforeBuildCommand": "pnpm build:tauri",
     "devUrl": "http://localhost:5174",
     "frontendDist": "../dist"
   },
@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "WorkClaw",
+        "center": true,
         "width": 1200,
         "height": 750,
         "resizable": true

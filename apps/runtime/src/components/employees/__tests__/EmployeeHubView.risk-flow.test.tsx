@@ -38,7 +38,6 @@ describe("EmployeeHubView risk flow", () => {
             primary_skill_id: "",
             default_work_dir: "",
             openclaw_agent_id: "project_manager",
-            routing_priority: 100,
             enabled_scopes: ["feishu"],
             enabled: true,
             is_default: false,

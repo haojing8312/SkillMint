@@ -574,6 +574,14 @@ pub async fn resolve_target_employees_for_event(
     pool: &SqlitePool,
     event: &ImEvent,
 ) -> Result<Vec<AgentEmployee>, String> {
+    fn text_mentioned(text_lower: &str, alias: &str) -> bool {
+        let normalized = alias.trim().to_lowercase();
+        if normalized.is_empty() {
+            return false;
+        }
+        text_lower.contains(&format!("@{}", normalized))
+    }
+
     let all_enabled = list_agent_employees_with_pool(pool)
         .await?
         .into_iter()
@@ -595,6 +603,23 @@ pub async fn resolve_target_employees_for_event(
             .collect::<Vec<_>>();
         if !targeted.is_empty() {
             return Ok(targeted);
+        }
+    }
+
+    if let Some(text) = event.text.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        let text_lower = text.to_lowercase();
+        let targeted = all_enabled
+            .iter()
+            .filter(|e| {
+                text_mentioned(&text_lower, &e.name)
+                    || text_mentioned(&text_lower, &e.employee_id)
+                    || text_mentioned(&text_lower, &e.role_id)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !targeted.is_empty() {
+            // 1:1 路由模式下，文本 mention 命中时只取首个目标。
+            return Ok(vec![targeted[0].clone()]);
         }
     }
 
@@ -630,10 +655,11 @@ pub async fn ensure_employee_sessions_for_event_with_pool(
 
     // 同一个 IM thread 尽量复用同一个 session_id，保证线程上下文连续。
     let mut shared_thread_session_id = sqlx::query_as::<_, (String,)>(
-        "SELECT session_id
-         FROM im_thread_sessions
-         WHERE thread_id = ?
-         ORDER BY updated_at DESC
+        "SELECT ts.session_id
+         FROM im_thread_sessions ts
+         INNER JOIN sessions s ON s.id = ts.session_id
+         WHERE ts.thread_id = ?
+         ORDER BY ts.updated_at DESC
          LIMIT 1",
     )
     .bind(&event.thread_id)
@@ -645,8 +671,13 @@ pub async fn ensure_employee_sessions_for_event_with_pool(
     let mut results = Vec::with_capacity(employees.len());
     for employee in employees {
         let route_session_key = build_route_session_key(event);
-        let existing = sqlx::query_as::<_, (String,)>(
-            "SELECT session_id FROM im_thread_sessions WHERE thread_id = ? AND employee_id = ? LIMIT 1",
+        let existing = sqlx::query_as::<_, (String, i64)>(
+            "SELECT ts.session_id,
+                    CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS session_exists
+             FROM im_thread_sessions ts
+             LEFT JOIN sessions s ON s.id = ts.session_id
+             WHERE ts.thread_id = ? AND ts.employee_id = ?
+             LIMIT 1",
         )
         .bind(&event.thread_id)
         .bind(&employee.id)
@@ -654,8 +685,72 @@ pub async fn ensure_employee_sessions_for_event_with_pool(
         .await
         .map_err(|e| e.to_string())?;
 
-        let (session_id, created) = if let Some((session_id,)) = existing {
-            (session_id, false)
+        let (session_id, created) = if let Some((session_id, session_exists)) = existing {
+            if session_exists == 1 {
+                (session_id, false)
+            } else if let Some(shared_session_id) = shared_thread_session_id.clone() {
+                let now = chrono::Utc::now().to_rfc3339();
+                sqlx::query(
+                    "INSERT INTO im_thread_sessions (thread_id, employee_id, session_id, route_session_key, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(thread_id, employee_id) DO UPDATE SET
+                        session_id = excluded.session_id,
+                        route_session_key = excluded.route_session_key,
+                        updated_at = excluded.updated_at",
+                )
+                .bind(&event.thread_id)
+                .bind(&employee.id)
+                .bind(&shared_session_id)
+                .bind(&route_session_key)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                (shared_session_id, false)
+            } else {
+                let now = chrono::Utc::now().to_rfc3339();
+                let session_id = Uuid::new_v4().to_string();
+                let skill_id = if employee.primary_skill_id.trim().is_empty() {
+                    "builtin-general".to_string()
+                } else {
+                    employee.primary_skill_id.clone()
+                };
+
+                sqlx::query(
+                    "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id)
+                     VALUES (?, ?, ?, ?, ?, 'accept_edits', ?, ?)",
+                )
+                .bind(&session_id)
+                .bind(&skill_id)
+                .bind(format!("IM:{}@{}", employee.name, event.thread_id))
+                .bind(&now)
+                .bind(&default_model_id)
+                .bind(employee.default_work_dir.trim())
+                .bind(employee.employee_id.trim())
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+
+                sqlx::query(
+                    "INSERT INTO im_thread_sessions (thread_id, employee_id, session_id, route_session_key, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(thread_id, employee_id) DO UPDATE SET
+                        session_id = excluded.session_id,
+                        route_session_key = excluded.route_session_key,
+                        updated_at = excluded.updated_at",
+                )
+                .bind(&event.thread_id)
+                .bind(&employee.id)
+                .bind(&session_id)
+                .bind(&route_session_key)
+                .bind(&now)
+                .bind(&now)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                (session_id, true)
+            }
         } else if let Some(session_id) = shared_thread_session_id.clone() {
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query(

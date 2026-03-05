@@ -127,12 +127,18 @@ mod tests {
             "employee creator should require explicit confirmation before create"
         );
         assert!(
-            markdown.contains("AGENTS.md") && markdown.contains("SOUL.md") && markdown.contains("USER.md"),
+            markdown.contains("AGENTS.md")
+                && markdown.contains("SOUL.md")
+                && markdown.contains("USER.md"),
             "employee creator should include AGENTS/SOUL/USER delivery"
         );
         assert!(
             markdown.contains("profile_answers"),
             "employee creator should pass profile answers into employee creation"
+        );
+        assert!(
+            markdown.contains("未提供时系统会自动从 `skill_ids` 的第一个技能推导"),
+            "employee creator should explain primary skill auto-derivation"
         );
         assert!(
             !markdown.contains("routing_priority"),

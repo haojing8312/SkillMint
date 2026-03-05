@@ -243,46 +243,61 @@ export function Sidebar({
                 <div className="px-4 py-3 text-xs sm-text-muted">{searchQuery ? "未找到匹配会话" : "暂无会话"}</div>
               )}
               <AnimatePresence>
-                {sessions.map((s) => (
-                  <motion.div
-                    key={s.id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20, height: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className={
-                      "group flex items-center px-4 py-2 text-sm cursor-pointer rounded-md mx-1 transition-colors " +
-                      (selectedSessionId === s.id ? "bg-[var(--sm-primary-soft)] text-[var(--sm-primary-strong)]" : "sm-text-primary hover:bg-[var(--sm-surface-soft)]")
-                    }
-                    onClick={() => onSelectSession(s.id)}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate text-[13px]">{s.title || "未命名任务"}</div>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onExportSession(s.id);
-                      }}
-                      className="hidden group-hover:inline-flex sm-btn sm-btn-ghost h-6 w-6 text-xs ml-1 flex-shrink-0"
-                      title="导出会话"
-                      aria-label="导出会话"
+                {sessions.map((s) => {
+                  const sourceLabel = (s.source_label || "").trim();
+                  const isFeishuSession = (s.source_channel || "").toLowerCase() === "feishu";
+                  const badgeText = sourceLabel || "飞书";
+                  return (
+                    <motion.div
+                      key={s.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className={
+                        "group flex items-center px-4 py-2 text-sm cursor-pointer rounded-md mx-1 transition-colors " +
+                        (selectedSessionId === s.id ? "bg-[var(--sm-primary-soft)] text-[var(--sm-primary-strong)]" : "sm-text-primary hover:bg-[var(--sm-surface-soft)]")
+                      }
+                      onClick={() => onSelectSession(s.id)}
                     >
-                      <Download className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteSession(s.id);
-                      }}
-                      className="hidden group-hover:inline-flex sm-btn sm-btn-danger h-6 w-6 text-xs ml-1 flex-shrink-0"
-                      title="删除会话"
-                      aria-label="删除会话"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </motion.div>
-                ))}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="truncate text-[13px]">{s.title || "未命名任务"}</div>
+                          {isFeishuSession && (
+                            <span
+                              title="来自飞书会话同步"
+                              className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 flex-shrink-0"
+                            >
+                              {badgeText}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onExportSession(s.id);
+                        }}
+                        className="hidden group-hover:inline-flex sm-btn sm-btn-ghost h-6 w-6 text-xs ml-1 flex-shrink-0"
+                        title="导出会话"
+                        aria-label="导出会话"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSession(s.id);
+                        }}
+                        className="hidden group-hover:inline-flex sm-btn sm-btn-danger h-6 w-6 text-xs ml-1 flex-shrink-0"
+                        title="删除会话"
+                        aria-label="删除会话"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
           </div>

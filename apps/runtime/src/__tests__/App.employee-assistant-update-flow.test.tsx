@@ -3,6 +3,7 @@ import App from "../App";
 
 const invokeMock = vi.fn();
 let employeeListCalls = 0;
+let createdSessionCount = 0;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -30,6 +31,11 @@ vi.mock("../components/ChatView", () => ({
   ChatView: (props: any) => (
     <div data-testid="chat-view">
       {props.initialMessage ? <div data-testid="chat-initial-message">{props.initialMessage}</div> : null}
+      {props.employeeAssistantContext ? (
+        <div data-testid="chat-assistant-context">
+          {props.employeeAssistantContext.mode}:{props.employeeAssistantContext.employeeName || ""}:{props.employeeAssistantContext.employeeCode || ""}
+        </div>
+      ) : null}
       <div data-testid="chat-quick-prompts">
         {(props.quickPrompts || []).map((item: { label: string }, idx: number) => (
           <span key={`${item.label}-${idx}`}>{item.label}</span>
@@ -67,19 +73,28 @@ vi.mock("../components/NewSessionLanding", () => ({
 vi.mock("../components/employees/EmployeeHubView", () => ({
   EmployeeHubView: (props: any) => (
     <div>
-      <div data-testid="employee-count">{props.employees.length}</div>
-      <div data-testid="employee-highlight-id">{props.highlightEmployeeId || ""}</div>
-      <div data-testid="employee-highlight-message">{props.highlightMessage || ""}</div>
-      <button onClick={() => props.onOpenEmployeeCreatorSkill?.()}>open-employee-creator</button>
-      <button onClick={() => props.onDismissHighlight?.()}>dismiss-employee-highlight</button>
+      <div data-testid="employee-snapshot">
+        {JSON.stringify(
+          (props.employees || []).map((item: any) => ({
+            id: item.id,
+            employee_id: item.employee_id,
+            name: item.name,
+            primary_skill_id: item.primary_skill_id,
+            skill_ids: item.skill_ids,
+          })),
+        )}
+      </div>
+      <button onClick={() => props.onOpenEmployeeCreatorSkill?.({ mode: "create" })}>open-employee-assistant-create</button>
+      <button onClick={() => props.onOpenEmployeeCreatorSkill?.({ mode: "update", employeeId: "emp-created" })}>open-employee-assistant-adjust</button>
     </div>
   ),
 }));
 
-describe("App employee creator skill flow", () => {
+describe("App employee assistant create+update regression", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     employeeListCalls = 0;
+    createdSessionCount = 0;
     window.localStorage.clear();
     window.location.hash = "#/employees";
 
@@ -122,26 +137,49 @@ describe("App employee creator skill flow", () => {
       }
       if (command === "list_agent_employees") {
         employeeListCalls += 1;
-        if (employeeListCalls <= 1) {
+        if (employeeListCalls === 1) {
           return Promise.resolve([]);
+        }
+        if (employeeListCalls === 2) {
+          return Promise.resolve([
+            {
+              id: "emp-created",
+              employee_id: "project_manager",
+              name: "项目经理",
+              role_id: "project_manager",
+              persona: "推进需求上线",
+              feishu_open_id: "",
+              feishu_app_id: "",
+              feishu_app_secret: "",
+              primary_skill_id: "builtin-general",
+              default_work_dir: "D:\\\\workspace\\\\project_manager",
+              openclaw_agent_id: "project_manager",
+              enabled_scopes: ["feishu"],
+              enabled: true,
+              is_default: false,
+              skill_ids: ["builtin-general"],
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ]);
         }
         return Promise.resolve([
           {
             id: "emp-created",
             employee_id: "project_manager",
-            name: "项目经理",
+            name: "项目经理-升级",
             role_id: "project_manager",
-            persona: "",
+            persona: "推进需求上线并负责技能编排",
             feishu_open_id: "",
             feishu_app_id: "",
             feishu_app_secret: "",
-            primary_skill_id: "builtin-general",
+            primary_skill_id: "docx-helper",
             default_work_dir: "D:\\\\workspace\\\\project_manager",
             openclaw_agent_id: "project_manager",
             enabled_scopes: ["feishu"],
             enabled: true,
             is_default: false,
-            skill_ids: ["builtin-general"],
+            skill_ids: ["docx-helper", "find-skills"],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -151,8 +189,8 @@ describe("App employee creator skill flow", () => {
         if (payload?.skillId === "builtin-employee-creator") {
           return Promise.resolve([
             {
-              id: "session-creator",
-              title: "创建员工会话",
+              id: `session-creator-${Math.max(createdSessionCount, 1)}`,
+              title: "智能体员工助手会话",
               created_at: new Date().toISOString(),
               model_id: "model-a",
               permission_mode: "accept_edits",
@@ -162,7 +200,8 @@ describe("App employee creator skill flow", () => {
         return Promise.resolve([]);
       }
       if (command === "create_session") {
-        return Promise.resolve("session-creator");
+        createdSessionCount += 1;
+        return Promise.resolve(`session-creator-${createdSessionCount}`);
       }
       return Promise.resolve(null);
     });
@@ -172,34 +211,30 @@ describe("App employee creator skill flow", () => {
     window.location.hash = "";
   });
 
-  test("opens builtin employee creator and refreshes employees after chat session update", async () => {
+  test("keeps employee detail synced after assistant creates and then updates employee", async () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "open-employee-creator" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "open-employee-assistant-create" })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "open-employee-creator" }));
+    fireEvent.click(screen.getByRole("button", { name: "open-employee-assistant-create" }));
 
     await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
       expect(invokeMock).toHaveBeenCalledWith(
         "create_session",
         expect.objectContaining({
           skillId: "builtin-employee-creator",
           modelId: "model-a",
           employeeId: "",
+          title: "创建员工：新员工",
         }),
       );
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
       expect(screen.getByTestId("chat-initial-message")).toHaveTextContent("请帮我创建一个新的智能体员工");
+      expect(screen.getByTestId("chat-assistant-context")).toHaveTextContent("create");
       expect(screen.getByTestId("chat-quick-prompts")).toHaveTextContent("加技能");
       expect(screen.getByTestId("chat-quick-prompts")).toHaveTextContent("删技能");
-      expect(screen.getByTestId("chat-quick-prompts")).toHaveTextContent("改主技能");
-      expect(screen.getByTestId("chat-quick-prompts")).toHaveTextContent("改飞书配置");
-      expect(screen.getByTestId("chat-quick-prompts")).toHaveTextContent("更新画像");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "trigger-session-refresh" }));
@@ -210,18 +245,38 @@ describe("App employee creator skill flow", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "open-employees" }));
-
     await waitFor(() => {
-      expect(screen.getByTestId("employee-count")).toHaveTextContent("1");
-      expect(screen.getByTestId("employee-highlight-id")).toHaveTextContent("emp-created");
-      expect(screen.getByTestId("employee-highlight-message")).toHaveTextContent("已由智能体员工助手生成");
+      expect(screen.getByTestId("employee-snapshot")).toHaveTextContent("项目经理");
+      expect(screen.getByTestId("employee-snapshot")).toHaveTextContent("builtin-general");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "dismiss-employee-highlight" }));
+    fireEvent.click(screen.getByRole("button", { name: "open-employee-assistant-adjust" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
+      expect(invokeMock).toHaveBeenCalledWith(
+        "create_session",
+        expect.objectContaining({
+          skillId: "builtin-employee-creator",
+          modelId: "model-a",
+          employeeId: "project_manager",
+          title: "调整员工：项目经理",
+        }),
+      );
+      expect(screen.getByTestId("chat-initial-message")).toHaveTextContent("请帮我修改智能体员工「项目经理」");
+      expect(screen.getByTestId("chat-assistant-context")).toHaveTextContent("update:项目经理:project_manager");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "trigger-session-refresh" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("employee-highlight-id")).toHaveTextContent("");
-      expect(screen.getByTestId("employee-highlight-message")).toHaveTextContent("");
+      const listCalls = invokeMock.mock.calls.filter((call) => call[0] === "list_agent_employees");
+      expect(listCalls.length).toBeGreaterThanOrEqual(3);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "open-employees" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("employee-snapshot")).toHaveTextContent("项目经理-升级");
+      expect(screen.getByTestId("employee-snapshot")).toHaveTextContent("docx-helper");
+      expect(screen.getByTestId("employee-snapshot")).toHaveTextContent("find-skills");
     });
   });
 });

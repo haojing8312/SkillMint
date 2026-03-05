@@ -39,6 +39,23 @@ pub struct ApplyAgentProfileResult {
     pub files: Vec<AgentProfileFileResult>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AgentProfileFileView {
+    pub name: String,
+    pub path: String,
+    pub exists: bool,
+    pub content: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AgentProfileFilesView {
+    pub employee_id: String,
+    pub employee_name: String,
+    pub profile_dir: String,
+    pub files: Vec<AgentProfileFileView>,
+}
+
 fn normalized_answer(answers: &[AgentProfileAnswerInput], key: &str) -> String {
     answers
         .iter()
@@ -159,6 +176,58 @@ pub async fn apply_agent_profile_with_pool(
     Ok(ApplyAgentProfileResult { files })
 }
 
+pub async fn get_agent_profile_files_with_pool(
+    pool: &SqlitePool,
+    employee_db_id: &str,
+) -> Result<AgentProfileFilesView, String> {
+    let employee = find_employee_with_pool(pool, employee_db_id.trim()).await?;
+    let fallback_base = if employee.default_work_dir.trim().is_empty() {
+        resolve_default_work_dir_with_pool(pool).await?
+    } else {
+        String::new()
+    };
+    let profile_dir = resolve_profile_dir(&employee, &fallback_base);
+    let profile_dir_text = profile_dir.to_string_lossy().to_string();
+    let mut files = Vec::with_capacity(3);
+
+    for name in ["AGENTS.md", "SOUL.md", "USER.md"] {
+        let file_path = profile_dir.join(name);
+        let path_text = file_path.to_string_lossy().to_string();
+        match std::fs::read_to_string(&file_path) {
+            Ok(content) => files.push(AgentProfileFileView {
+                name: name.to_string(),
+                path: path_text,
+                exists: true,
+                content,
+                error: None,
+            }),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                files.push(AgentProfileFileView {
+                    name: name.to_string(),
+                    path: path_text,
+                    exists: false,
+                    content: String::new(),
+                    error: None,
+                })
+            }
+            Err(err) => files.push(AgentProfileFileView {
+                name: name.to_string(),
+                path: path_text,
+                exists: false,
+                content: String::new(),
+                error: Some(err.to_string()),
+            }),
+        }
+    }
+
+    Ok(AgentProfileFilesView {
+        employee_id: employee.employee_id,
+        employee_name: employee.name,
+        profile_dir: profile_dir_text,
+        files,
+    })
+}
+
 #[tauri::command]
 pub async fn generate_agent_profile_draft(
     payload: AgentProfilePayload,
@@ -173,4 +242,12 @@ pub async fn apply_agent_profile(
     db: State<'_, DbState>,
 ) -> Result<ApplyAgentProfileResult, String> {
     apply_agent_profile_with_pool(&db.0, payload).await
+}
+
+#[tauri::command]
+pub async fn get_agent_profile_files(
+    employee_db_id: String,
+    db: State<'_, DbState>,
+) -> Result<AgentProfileFilesView, String> {
+    get_agent_profile_files_with_pool(&db.0, employee_db_id.as_str()).await
 }

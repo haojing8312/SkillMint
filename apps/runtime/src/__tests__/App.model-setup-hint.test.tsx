@@ -103,8 +103,8 @@ describe("App model setup hint", () => {
             id: "model-quick",
             name: "Quick Setup",
             api_format: "openai",
-            base_url: "https://api.openai.com/v1",
-            model_name: "gpt-4o-mini",
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            model_name: "glm-4-flash",
             is_default: true,
           },
         ];
@@ -204,8 +204,8 @@ describe("App model setup hint", () => {
         expect.objectContaining({
           config: expect.objectContaining({
             api_format: "openai",
-            base_url: "https://api.openai.com/v1",
-            model_name: "gpt-4o-mini",
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            model_name: "glm-4-flash",
           }),
           apiKey: "sk-test-quick-123",
         }),
@@ -243,8 +243,8 @@ describe("App model setup hint", () => {
         expect.objectContaining({
           config: expect.objectContaining({
             api_format: "openai",
-            base_url: "https://api.openai.com/v1",
-            model_name: "gpt-4o-mini",
+            base_url: "https://open.bigmodel.cn/api/paas/v4",
+            model_name: "glm-4-flash",
           }),
           apiKey: "sk-test-quick-connection",
         }),
