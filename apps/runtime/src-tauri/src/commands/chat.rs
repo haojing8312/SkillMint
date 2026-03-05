@@ -1600,6 +1600,8 @@ mod tests {
                 ],
                 user_goal: "实现群组协作编排".to_string(),
                 execution_window: 3,
+                timeout_employee_ids: Vec::new(),
+                max_retry_per_step: 1,
             },
         );
 

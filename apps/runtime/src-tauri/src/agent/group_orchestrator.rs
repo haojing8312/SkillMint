@@ -5,6 +5,8 @@ pub struct GroupRunRequest {
     pub member_employee_ids: Vec<String>,
     pub user_goal: String,
     pub execution_window: usize,
+    pub timeout_employee_ids: Vec<String>,
+    pub max_retry_per_step: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +82,10 @@ pub fn simulate_group_run(request: GroupRunRequest) -> GroupRunOutcome {
 
     let mut plan = Vec::with_capacity(members.len());
     let mut execution = Vec::with_capacity(members.len());
+    let timeout_targets = normalize_timeouts(&request.timeout_employee_ids);
     let window = request.execution_window.clamp(1, 10);
+    let retry_limit = request.max_retry_per_step.min(3);
+    let mut failed_members: Vec<String> = Vec::new();
     for (idx, assignee) in members.iter().enumerate() {
         let step_id = format!("step-{}", idx + 1);
         let round_no = ((idx / window) as i64) + 1;
@@ -90,22 +95,42 @@ pub fn simulate_group_run(request: GroupRunRequest) -> GroupRunOutcome {
             objective: format!("围绕目标执行子任务：{}", request.user_goal),
             acceptance: "输出可验证结果与下一步建议".to_string(),
         });
-        execution.push(GroupExecutionItem {
-            id: step_id,
-            round_no,
-            assignee_employee_id: assignee.clone(),
-            status: "completed".to_string(),
-            output: format!("{} 已完成第 {} 轮执行", assignee, round_no),
-        });
+        if timeout_targets.contains(assignee) {
+            failed_members.push(assignee.clone());
+            execution.push(GroupExecutionItem {
+                id: step_id,
+                round_no,
+                assignee_employee_id: assignee.clone(),
+                status: "failed".to_string(),
+                output: format!(
+                    "{} 在第 {} 轮执行超时，重试{}次后仍失败",
+                    assignee, round_no, retry_limit
+                ),
+            });
+        } else {
+            execution.push(GroupExecutionItem {
+                id: step_id,
+                round_no,
+                assignee_employee_id: assignee.clone(),
+                status: "completed".to_string(),
+                output: format!("{} 已完成第 {} 轮执行", assignee, round_no),
+            });
+        }
     }
 
-    let final_report = format!(
+    let mut final_report = format!(
         "计划：共 {} 步，协调员={}。\n执行：已完成 {} 步。\n汇报：目标“{}”已产出阶段结果，建议进入交付复核。",
         plan.len(),
         request.coordinator_employee_id,
-        execution.len(),
+        execution.iter().filter(|item| item.status == "completed").count(),
         request.user_goal
     );
+    if !failed_members.is_empty() {
+        final_report.push_str(&format!(
+            "\n未完成项：{}。\n补救建议：由协调员改派可用成员或缩减范围后重试。",
+            failed_members.join(", ")
+        ));
+    }
 
     GroupRunOutcome {
         states,
@@ -142,6 +167,13 @@ fn normalize_members(coordinator: &str, members: &[String]) -> Vec<String> {
     out
 }
 
+fn normalize_timeouts(raw: &[String]) -> std::collections::HashSet<String> {
+    raw.iter()
+        .map(|item| item.trim().to_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect::<std::collections::HashSet<_>>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{simulate_group_run, GroupRunRequest, GroupRunState};
@@ -158,6 +190,8 @@ mod tests {
             ],
             user_goal: "发布协作功能".to_string(),
             execution_window: 3,
+            timeout_employee_ids: Vec::new(),
+            max_retry_per_step: 1,
         });
 
         assert_eq!(

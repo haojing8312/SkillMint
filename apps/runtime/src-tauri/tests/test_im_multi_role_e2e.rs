@@ -21,6 +21,8 @@ fn group_orchestrator_transitions_across_required_phases() {
         ],
         user_goal: "做一个桌面端拉群协作功能".to_string(),
         execution_window: 3,
+        timeout_employee_ids: Vec::new(),
+        max_retry_per_step: 1,
     });
 
     let phase_names = outcome
@@ -56,6 +58,8 @@ fn group_orchestrator_uses_round_robin_with_concurrency_window() {
         ],
         user_goal: "并发窗口调度验证".to_string(),
         execution_window: 3,
+        timeout_employee_ids: Vec::new(),
+        max_retry_per_step: 1,
     });
 
     let mut round_counts = std::collections::BTreeMap::<i64, usize>::new();
@@ -67,6 +71,37 @@ fn group_orchestrator_uses_round_robin_with_concurrency_window() {
     assert_eq!(round_counts.get(&1).copied().unwrap_or(0), 3);
     assert_eq!(round_counts.get(&2).copied().unwrap_or(0), 3);
     assert_eq!(round_counts.get(&3).copied().unwrap_or(0), 1);
+}
+
+#[test]
+fn group_orchestrator_retries_timeout_once_and_degrades_report() {
+    let outcome = simulate_group_run(GroupRunRequest {
+        group_id: "group-retry".to_string(),
+        coordinator_employee_id: "project_manager".to_string(),
+        member_employee_ids: vec![
+            "project_manager".to_string(),
+            "dev_team".to_string(),
+            "qa_team".to_string(),
+        ],
+        user_goal: "超时重试与降级验证".to_string(),
+        execution_window: 3,
+        timeout_employee_ids: vec!["qa_team".to_string()],
+        max_retry_per_step: 1,
+    });
+
+    let failed_step = outcome
+        .execution
+        .iter()
+        .find(|item| item.assignee_employee_id == "qa_team")
+        .expect("qa_team step should exist");
+    assert_eq!(failed_step.status, "failed");
+    assert!(
+        failed_step.output.contains("重试1次"),
+        "failed step should record retry behavior"
+    );
+
+    assert!(outcome.final_report.contains("未完成项"));
+    assert!(outcome.final_report.contains("补救建议"));
 }
 
 #[tokio::test]
