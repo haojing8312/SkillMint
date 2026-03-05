@@ -20,6 +20,11 @@ type TauriMockModel = {
   is_default: boolean;
 };
 
+type TauriInvokeCall = {
+  cmd: string;
+  args: Record<string, unknown> | undefined;
+};
+
 async function installTauriMocks(page: Page): Promise<void> {
   const skills: TauriMockSkill[] = [
     {
@@ -30,6 +35,16 @@ async function installTauriMocks(page: Page): Promise<void> {
       author: "e2e",
       recommended_model: "model-a",
       tags: [],
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: "local-e2e-skill",
+      name: "E2E Local Skill",
+      description: "Skill used by Playwright smoke tests",
+      version: "local",
+      author: "e2e",
+      recommended_model: "model-a",
+      tags: ["e2e"],
       created_at: new Date().toISOString(),
     },
   ];
@@ -46,7 +61,16 @@ async function installTauriMocks(page: Page): Promise<void> {
 
   await page.addInitScript(
     ({ mockedSkills, mockedModels }) => {
-      const runtimePreferences = {
+      const calls: TauriInvokeCall[] = [];
+      const sessions: Array<{
+        id: string;
+        title: string;
+        created_at: string;
+        skill_id: string;
+        work_dir: string;
+      }> = [];
+      let sessionCounter = 1;
+      let runtimePreferences = {
         default_work_dir: "",
         default_language: "zh-CN",
         immersive_translation_enabled: true,
@@ -67,6 +91,7 @@ async function installTauriMocks(page: Page): Promise<void> {
       };
 
       const invoke = async (cmd: string, args?: Record<string, unknown>) => {
+        calls.push({ cmd, args });
         switch (cmd) {
           case "list_skills":
             return mockedSkills;
@@ -75,7 +100,25 @@ async function installTauriMocks(page: Page): Promise<void> {
           case "list_agent_employees":
             return [];
           case "get_sessions":
-            return [];
+            if (!args?.skillId || typeof args.skillId !== "string") {
+              return sessions;
+            }
+            return sessions.filter((item) => item.skill_id === args.skillId);
+          case "create_session": {
+            const sessionId = `session-e2e-${sessionCounter++}`;
+            const skillId =
+              typeof args?.skillId === "string"
+                ? args.skillId
+                : mockedSkills[0]?.id || "builtin-general";
+            sessions.push({
+              id: sessionId,
+              title: "E2E Session",
+              created_at: new Date().toISOString(),
+              skill_id: skillId,
+              work_dir: "",
+            });
+            return sessionId;
+          }
           case "list_search_configs":
             return [];
           case "get_runtime_preferences":
@@ -89,10 +132,11 @@ async function installTauriMocks(page: Page): Promise<void> {
           case "list_provider_configs":
             return [providerConfig];
           case "set_runtime_preferences":
-            return {
+            runtimePreferences = {
               ...runtimePreferences,
               ...(args?.input as Record<string, unknown> | undefined),
             };
+            return { ...runtimePreferences };
           default:
             return null;
         }
@@ -100,17 +144,42 @@ async function installTauriMocks(page: Page): Promise<void> {
 
       const w = window as typeof window & {
         __TAURI_INTERNALS__?: { invoke: typeof invoke };
+        __E2E_TAURI_CALLS__?: TauriInvokeCall[];
       };
       w.__TAURI_INTERNALS__ = { invoke };
+      w.__E2E_TAURI_CALLS__ = calls;
     },
     { mockedSkills: skills, mockedModels: models },
   );
 }
 
-test("main navigation smoke flow works end-to-end", async ({ page }) => {
-  await installTauriMocks(page);
-  await page.goto("/");
+async function readInvokeCalls(page: Page): Promise<TauriInvokeCall[]> {
+  return page.evaluate(() => {
+    const w = window as typeof window & { __E2E_TAURI_CALLS__?: TauriInvokeCall[] };
+    return w.__E2E_TAURI_CALLS__ ?? [];
+  });
+}
 
+test.describe.configure({ timeout: 60_000 });
+
+test.beforeEach(async ({ page }) => {
+  await installTauriMocks(page);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.goto("/", { waitUntil: "domcontentloaded" });
+      break;
+    } catch (error) {
+      if (attempt === 1) {
+        throw error;
+      }
+    }
+  }
+  await expect(
+    page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
+  ).toBeVisible({ timeout: 30_000 });
+});
+
+test("navigates across start task, settings and experts", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
   ).toBeVisible();
@@ -125,4 +194,44 @@ test("main navigation smoke flow works end-to-end", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
   ).toBeVisible();
+});
+
+test("saves default language and translation preference from settings", async ({ page }) => {
+  await page.getByRole("button", { name: "设置" }).first().click();
+  await expect(page.getByRole("button", { name: "模型连接" })).toBeVisible();
+
+  await page.getByLabel("默认语言").selectOption("en-US");
+  await page.getByRole("button", { name: "保存语言与翻译设置" }).click();
+  await expect(page.getByText("已保存")).toBeVisible();
+
+  const calls = await readInvokeCalls(page);
+  const saveCall = calls.find((call) => call.cmd === "set_runtime_preferences");
+  expect(saveCall).toBeTruthy();
+  expect(saveCall?.args?.input).toMatchObject({
+    default_language: "en-US",
+  });
+});
+
+test("can start a task from experts skill card and return to landing", async ({ page }) => {
+  await page.getByRole("button", { name: "专家技能" }).first().click();
+  await expect(page.getByRole("heading", { name: "专家技能" })).toBeVisible();
+
+  const skillCard = page
+    .locator("div.bg-white.border.border-gray-200.rounded-xl.p-4")
+    .filter({ hasText: "E2E Local Skill" });
+  await expect(skillCard).toBeVisible();
+  await skillCard.getByRole("button", { name: "开始任务" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
+  ).toBeVisible();
+});
+
+test("creates a new session from start task composer", async ({ page }) => {
+  const input = page.getByPlaceholder("先描述你要完成什么任务...");
+  await input.fill("请帮我检查本地项目并给出下一步建议");
+  await input.press("Enter");
+
+  await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
+  await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-");
 });
