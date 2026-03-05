@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-> 中文产品名（暂定）：打工虾
+> 中文产品名：打工虾
 
 <p align="center">
   <img src="docs/workclaw_logo_w.png" alt="WorkClaw Logo" width="140" />

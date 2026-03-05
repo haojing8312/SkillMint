@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-> Chinese product name (temporary): 打工虾
+> Chinese product name: 打工虾
 
 <p align="center">
   <img src="docs/workclaw_logo_w.png" alt="WorkClaw Logo" width="140" />
