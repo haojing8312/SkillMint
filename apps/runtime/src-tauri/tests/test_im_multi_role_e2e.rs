@@ -1,5 +1,6 @@
 mod helpers;
 
+use runtime_lib::agent::group_orchestrator::{simulate_group_run, GroupRunRequest};
 use runtime_lib::commands::im_config::{
     bind_thread_roles_with_pool, get_thread_role_config_with_pool,
 };
@@ -7,6 +8,36 @@ use runtime_lib::commands::im_gateway::process_im_event;
 use runtime_lib::im::feishu_formatter::format_role_message;
 use runtime_lib::im::memory::{capture_entry, MemoryEntry};
 use runtime_lib::im::types::{ImEvent, ImEventType};
+
+#[test]
+fn group_orchestrator_transitions_across_required_phases() {
+    let outcome = simulate_group_run(GroupRunRequest {
+        group_id: "group-1".to_string(),
+        coordinator_employee_id: "project_manager".to_string(),
+        member_employee_ids: vec![
+            "project_manager".to_string(),
+            "dev_team".to_string(),
+            "qa_team".to_string(),
+        ],
+        user_goal: "做一个桌面端拉群协作功能".to_string(),
+    });
+
+    let phase_names = outcome
+        .states
+        .iter()
+        .map(|s| s.as_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        phase_names,
+        vec!["planning", "executing", "synthesizing", "done"]
+    );
+
+    assert!(!outcome.plan.is_empty(), "plan should not be empty");
+    assert!(!outcome.execution.is_empty(), "execution should not be empty");
+    assert!(outcome.final_report.contains("计划"));
+    assert!(outcome.final_report.contains("执行"));
+    assert!(outcome.final_report.contains("汇报"));
+}
 
 #[tokio::test]
 async fn feishu_thread_multi_role_collaboration_e2e() {
