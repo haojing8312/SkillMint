@@ -6,6 +6,7 @@
     "runtime": "pnpm --filter runtime tauri dev",
     "build:app": "pnpm --filter runtime tauri build",
     "build:runtime": "pnpm --filter runtime tauri build",
+    "test:e2e:runtime": "pnpm --dir apps/runtime test:e2e",
     "release:check-version": "node scripts/check-release-version.mjs",
     "sync:openclaw-core": "node scripts/sync-openclaw-core.mjs",
     "sync:codex-skills": "node scripts/sync-codex-skills.mjs",

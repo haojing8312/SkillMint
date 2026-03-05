@@ -24,3 +24,5 @@ sidecar.log
 apps/runtime/src-tauri/target-codex/
 logs/
 stdout
+apps/runtime/playwright-report/
+apps/runtime/test-results/
