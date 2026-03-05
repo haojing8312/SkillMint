@@ -1,18 +1,29 @@
 use chrono::Utc;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
+use std::future::Future;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::Mutex;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
+use crate::agent::types::LLMResponse;
+use crate::commands::runtime_preferences::get_runtime_preferences_with_pool;
 use crate::commands::skills::{ensure_skill_display_name_available, DbState, ImportResult};
 
 const DEFAULT_CLAWHUB_BASE: &str = "https://www.clawhub.ai";
+const CLAWHUB_LIBRARY_CACHE_TTL_SECONDS: i64 = 10 * 60;
+const CLAWHUB_DETAIL_CACHE_TTL_SECONDS: i64 = 24 * 60 * 60;
+const CLAWHUB_FIRST_CURSOR: &str = "__first__";
+
+static CLAWHUB_REFRESH_INFLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClawhubSkillSummary {
@@ -42,6 +53,22 @@ pub struct ClawhubLibraryResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClawhubSkillDetail {
+    pub slug: String,
+    pub name: String,
+    pub summary: String,
+    pub description: String,
+    pub author: Option<String>,
+    pub github_url: Option<String>,
+    pub source_url: Option<String>,
+    pub updated_at: Option<String>,
+    pub stars: i64,
+    pub downloads: i64,
+    pub tags: Vec<String>,
+    pub readme: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClawhubSkillRecommendation {
     pub slug: String,
     pub name: String,
@@ -67,6 +94,104 @@ fn clawhub_base_url() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_CLAWHUB_BASE.to_string())
+}
+
+fn clawhub_refresh_inflight() -> &'static Mutex<HashSet<String>> {
+    CLAWHUB_REFRESH_INFLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn normalize_library_limit(limit: Option<u32>) -> u32 {
+    limit.unwrap_or(20).max(1).min(100)
+}
+
+fn normalize_library_sort(sort: Option<&str>) -> String {
+    let clean = sort.unwrap_or("updated").trim();
+    if clean.is_empty() {
+        "updated".to_string()
+    } else {
+        clean.to_string()
+    }
+}
+
+fn build_library_cache_key(cursor: Option<&str>, limit: u32, sort: &str) -> String {
+    let normalized_cursor = cursor
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .unwrap_or(CLAWHUB_FIRST_CURSOR);
+    format!(
+        "clawhub:library:v1:sort={}:limit={}:cursor={}",
+        sort,
+        limit,
+        normalized_cursor
+    )
+}
+
+fn build_detail_cache_key(slug: &str) -> String {
+    format!("clawhub:detail:v1:slug={}", slug.trim())
+}
+
+async fn load_cached_http_body(
+    pool: &SqlitePool,
+    cache_key: &str,
+    ttl_seconds: i64,
+) -> Result<Option<(String, bool)>, String> {
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT body, fetched_at FROM clawhub_http_cache WHERE cache_key = ?")
+            .bind(cache_key)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    let Some((body, fetched_at)) = row else {
+        return Ok(None);
+    };
+
+    let stale = chrono::DateTime::parse_from_rfc3339(&fetched_at)
+        .map(|dt| {
+            let age = Utc::now().signed_duration_since(dt.with_timezone(&Utc));
+            age.num_seconds() > ttl_seconds
+        })
+        .unwrap_or(true);
+
+    Ok(Some((body, stale)))
+}
+
+async fn upsert_http_cache_body(
+    pool: &SqlitePool,
+    cache_key: &str,
+    body: &str,
+) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT OR REPLACE INTO clawhub_http_cache (cache_key, body, fetched_at) VALUES (?, ?, ?)",
+    )
+    .bind(cache_key)
+    .bind(body)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn spawn_refresh_if_needed<F>(cache_key: String, task: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    tauri::async_runtime::spawn(async move {
+        let guard = clawhub_refresh_inflight();
+        {
+            let mut inflight = guard.lock().await;
+            if !inflight.insert(cache_key.clone()) {
+                return;
+            }
+        }
+
+        task.await;
+
+        let mut inflight = guard.lock().await;
+        inflight.remove(&cache_key);
+    });
 }
 
 fn sanitize_slug_stable(name: &str) -> String {
@@ -169,6 +294,119 @@ fn normalize_library_item(item: &Value) -> Option<ClawhubLibraryItem> {
         tags,
         stars,
         downloads,
+    })
+}
+
+fn normalize_skill_detail(raw: &Value, fallback_slug: &str) -> Option<ClawhubSkillDetail> {
+    let payload = raw.get("skill").unwrap_or(raw);
+    let slug = payload
+        .get("slug")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("slug").and_then(|v| v.as_str()))
+        .unwrap_or(fallback_slug)
+        .to_string();
+    let name = payload
+        .get("displayName")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("name").and_then(|v| v.as_str()))
+        .or_else(|| raw.get("displayName").and_then(|v| v.as_str()))
+        .or_else(|| raw.get("name").and_then(|v| v.as_str()))
+        .unwrap_or(&slug)
+        .to_string();
+    let summary = payload
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("summary").and_then(|v| v.as_str()))
+        .unwrap_or_default()
+        .to_string();
+    let description = payload
+        .get("description")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("description").and_then(|v| v.as_str()))
+        .unwrap_or(summary.as_str())
+        .to_string();
+    let tags = payload
+        .get("tags")
+        .map(|v| {
+            if let Some(obj) = v.as_object() {
+                obj.keys().cloned().collect::<Vec<String>>()
+            } else if let Some(arr) = v.as_array() {
+                arr.iter()
+                    .filter_map(|it| it.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<String>>()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+    let stars = payload
+        .get("stats")
+        .and_then(|s| s.get("stars"))
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            raw.get("stats")
+                .and_then(|s| s.get("stars"))
+                .and_then(|v| v.as_i64())
+        })
+        .or_else(|| payload.get("stars").and_then(|v| v.as_i64()))
+        .unwrap_or(0);
+    let downloads = payload
+        .get("stats")
+        .and_then(|s| s.get("downloads"))
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            raw.get("stats")
+                .and_then(|s| s.get("downloads"))
+                .and_then(|v| v.as_i64())
+        })
+        .unwrap_or(0);
+    let author = payload
+        .get("author")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            payload
+                .get("owner")
+                .and_then(|o| o.get("name"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| raw.get("author").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let github_url = payload
+        .get("github_url")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("github_url").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let source_url = payload
+        .get("source_url")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("source_url").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let updated_at = payload
+        .get("updatedAt")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("updated_at").and_then(|v| v.as_str()))
+        .or_else(|| raw.get("updatedAt").and_then(|v| v.as_str()))
+        .or_else(|| raw.get("updated_at").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let readme = payload
+        .get("readme")
+        .and_then(|v| v.as_str())
+        .or_else(|| raw.get("readme").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+
+    Some(ClawhubSkillDetail {
+        slug,
+        name,
+        summary,
+        description,
+        author,
+        github_url,
+        source_url,
+        updated_at,
+        stars,
+        downloads,
+        tags,
+        readme,
     })
 }
 
@@ -320,6 +558,24 @@ fn is_mostly_cjk(text: &str) -> bool {
     total > 0 && cjk * 100 / total >= 60
 }
 
+fn normalize_target_language(raw: &str) -> String {
+    let normalized = raw.trim();
+    if normalized.is_empty() {
+        "zh-CN".to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn should_skip_translation(text: &str, target_lang: &str) -> bool {
+    if target_lang.eq_ignore_ascii_case("zh-CN")
+        || target_lang.to_ascii_lowercase().starts_with("zh")
+    {
+        return is_mostly_cjk(text);
+    }
+    false
+}
+
 fn parse_google_translate_text(body: &Value) -> Option<String> {
     let arr = body.as_array()?;
     let segments = arr.first()?.as_array()?;
@@ -336,13 +592,17 @@ fn parse_google_translate_text(body: &Value) -> Option<String> {
     }
 }
 
-async fn translate_text_to_zh(client: &Client, text: &str) -> Result<String, String> {
+async fn translate_text_via_google(
+    client: &Client,
+    text: &str,
+    target_lang: &str,
+) -> Result<String, String> {
     let resp = client
         .get("https://translate.googleapis.com/translate_a/single")
         .query(&[
             ("client", "gtx"),
             ("sl", "auto"),
-            ("tl", "zh-CN"),
+            ("tl", target_lang),
             ("dt", "t"),
             ("q", text),
         ])
@@ -354,6 +614,140 @@ async fn translate_text_to_zh(client: &Client, text: &str) -> Result<String, Str
     }
     let body: Value = resp.json().await.map_err(|e| e.to_string())?;
     parse_google_translate_text(&body).ok_or_else(|| "翻译结果解析失败".to_string())
+}
+
+#[derive(Debug, Clone)]
+struct TranslationModelConfig {
+    api_format: String,
+    base_url: String,
+    model_name: String,
+    api_key: String,
+}
+
+impl TranslationModelConfig {
+    fn cache_key(&self) -> String {
+        format!(
+            "model:{}:{}",
+            self.api_format.trim().to_ascii_lowercase(),
+            self.model_name.trim()
+        )
+    }
+}
+
+async fn load_translation_model(
+    pool: &SqlitePool,
+    preferred_model_id: &str,
+) -> Option<TranslationModelConfig> {
+    let preferred = if !preferred_model_id.trim().is_empty() {
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT api_format, base_url, model_name, api_key
+             FROM model_configs
+             WHERE id = ? AND TRIM(api_key) != ''
+             LIMIT 1",
+        )
+        .bind(preferred_model_id.trim())
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    let primary = if preferred.is_none() {
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT api_format, base_url, model_name, api_key
+             FROM model_configs
+             WHERE is_default = 1 AND TRIM(api_key) != ''
+             ORDER BY id ASC LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    let fallback = if preferred.is_none() && primary.is_none() {
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT api_format, base_url, model_name, api_key
+             FROM model_configs
+             WHERE TRIM(api_key) != ''
+             ORDER BY id ASC LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    preferred
+        .or(primary)
+        .or(fallback)
+        .map(
+            |(api_format, base_url, model_name, api_key)| TranslationModelConfig {
+                api_format,
+                base_url,
+                model_name,
+                api_key,
+            },
+        )
+}
+
+async fn translate_text_via_model(
+    model: &TranslationModelConfig,
+    text: &str,
+    target_lang: &str,
+) -> Result<String, String> {
+    let user_prompt = format!(
+        "Translate the following text into {target_lang}. Return translation only, no explanation.\n\n{text}"
+    );
+    let messages = vec![serde_json::json!({
+        "role": "user",
+        "content": user_prompt
+    })];
+    let response = match model.api_format.trim().to_ascii_lowercase().as_str() {
+        "anthropic" => crate::adapters::anthropic::chat_stream_with_tools(
+            &model.base_url,
+            &model.api_key,
+            &model.model_name,
+            "You are a professional translation assistant.",
+            messages,
+            vec![],
+            |_| {},
+        )
+        .await
+        .map_err(|e| e.to_string())?,
+        "openai" => crate::adapters::openai::chat_stream_with_tools(
+            &model.base_url,
+            &model.api_key,
+            &model.model_name,
+            "You are a professional translation assistant.",
+            messages,
+            vec![],
+            |_| {},
+        )
+        .await
+        .map_err(|e| e.to_string())?,
+        _ => {
+            return Err("当前默认模型协议不支持翻译".to_string());
+        }
+    };
+
+    let translated = match response {
+        LLMResponse::Text(v) => v,
+        LLMResponse::TextWithToolCalls(v, _) => v,
+        LLMResponse::ToolCalls(_) => String::new(),
+    };
+    let clean = translated.trim().to_string();
+    if clean.is_empty() {
+        Err("模型翻译结果为空".to_string())
+    } else {
+        Ok(clean)
+    }
 }
 
 fn find_skill_root(extract_dir: &Path) -> Option<PathBuf> {
@@ -374,37 +768,104 @@ fn find_skill_root(extract_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-async fn fetch_skill_detail_url(client: &Client, slug: &str) -> Result<Option<String>, String> {
-    let base = clawhub_base_url();
-    let query_url = format!("{}/api/v1/skill?slug={}", base, urlencoding::encode(slug));
-    if let Ok(resp) = client.get(&query_url).send().await {
-        if resp.status().is_success() {
-            let body: Value = resp.json().await.map_err(|e| e.to_string())?;
-            let direct = body
-                .get("github_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let nested = body
-                .get("skill")
-                .and_then(|s| s.get("github_url"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            if direct.is_some() || nested.is_some() {
-                return Ok(direct.or(nested));
-            }
-        }
-    }
-
-    let path_url = format!("{}/api/v1/skill/{}", base, urlencoding::encode(slug));
+async fn fetch_skill_detail_candidate(client: &Client, url: &str) -> Result<Option<Value>, String> {
     let resp = client
-        .get(&path_url)
+        .get(url)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("ClawHub 详情加载失败: {}", e))?;
+    if resp.status().is_success() {
+        return resp.json::<Value>().await.map(Some).map_err(|e| e.to_string());
+    }
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    Err(format!("ClawHub 详情加载失败: HTTP {}", resp.status()))
+}
+
+async fn fetch_skill_detail_from_search(client: &Client, slug: &str) -> Result<Option<Value>, String> {
+    let base = clawhub_base_url();
+    let search_url = format!(
+        "{}/api/v1/search?query={}&page=1&limit=20",
+        base,
+        urlencoding::encode(slug.trim())
+    );
+    let resp = match client.get(&search_url).send().await {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
     if !resp.status().is_success() {
         return Ok(None);
     }
-    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let body: Value = match resp.json().await {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let items = body
+        .get("results")
+        .and_then(|v| v.as_array())
+        .or_else(|| body.get("skills").and_then(|v| v.as_array()))
+        .cloned()
+        .or_else(|| body.as_array().cloned())
+        .unwrap_or_default();
+    let target_slug = slug.trim().to_ascii_lowercase();
+    let matched = items
+        .iter()
+        .find(|entry| {
+            entry
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .map(|value| value.eq_ignore_ascii_case(slug.trim()))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .or_else(|| {
+            items
+                .iter()
+                .find(|entry| {
+                    entry
+                        .get("name")
+                        .or_else(|| entry.get("displayName"))
+                        .and_then(|v| v.as_str())
+                        .map(|name| name.to_ascii_lowercase().contains(&target_slug))
+                        .unwrap_or(false)
+                })
+                .cloned()
+        });
+
+    Ok(matched.map(|item| serde_json::json!({ "skill": item })))
+}
+
+async fn fetch_skill_detail_body(client: &Client, slug: &str) -> Result<Value, String> {
+    let base = clawhub_base_url();
+    let endpoints = [
+        format!("{}/api/v1/skill?slug={}", base, urlencoding::encode(slug)),
+        format!("{}/api/v1/skill/{}", base, urlencoding::encode(slug)),
+        format!("{}/api/v1/skills/{}", base, urlencoding::encode(slug)),
+    ];
+    let mut found_not_found = false;
+
+    for endpoint in endpoints {
+        match fetch_skill_detail_candidate(client, &endpoint).await {
+            Ok(Some(body)) => return Ok(body),
+            Ok(None) => found_not_found = true,
+            Err(error) => return Err(error),
+        }
+    }
+
+    if let Some(fallback) = fetch_skill_detail_from_search(client, slug).await? {
+        return Ok(fallback);
+    }
+
+    if found_not_found {
+        return Err("ClawHub 详情加载失败: HTTP 404 Not Found".to_string());
+    }
+    Err("ClawHub 详情加载失败".to_string())
+}
+
+async fn fetch_skill_detail_url(client: &Client, slug: &str) -> Result<Option<String>, String> {
+    let body = fetch_skill_detail_body(client, slug).await?;
     let direct = body
         .get("github_url")
         .and_then(|v| v.as_str())
@@ -537,30 +998,32 @@ pub async fn recommend_clawhub_skills(
     Ok(recs)
 }
 
-#[tauri::command]
-pub async fn list_clawhub_library(
-    cursor: Option<String>,
-    limit: Option<u32>,
-    sort: Option<String>,
-) -> Result<ClawhubLibraryResponse, String> {
+async fn fetch_library_body(
+    client: &Client,
+    cursor: Option<&str>,
+    limit: u32,
+    sort: &str,
+) -> Result<Value, String> {
     let base = clawhub_base_url();
     let mut url = format!(
         "{}/api/v1/skills?limit={}&sort={}",
         base,
-        limit.unwrap_or(20).max(1).min(100),
-        urlencoding::encode(sort.as_deref().unwrap_or("updated"))
+        limit,
+        urlencoding::encode(sort)
     );
-    if let Some(c) = cursor.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(c) = cursor.filter(|s| !s.trim().is_empty()) {
         url.push_str("&cursor=");
         url.push_str(&urlencoding::encode(c));
     }
 
-    let client = Client::new();
     let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("ClawHub 列表加载失败: HTTP {}", resp.status()));
     }
-    let body: Value = resp.json().await.map_err(|e| e.to_string())?;
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+fn normalize_library_response(body: &Value) -> ClawhubLibraryResponse {
     let items = body
         .get("items")
         .and_then(|v| v.as_array())
@@ -578,22 +1041,162 @@ pub async fn list_clawhub_library(
                 .map(|s| s.to_string())
         });
 
-    Ok(ClawhubLibraryResponse {
+    ClawhubLibraryResponse {
         items: items.iter().filter_map(normalize_library_item).collect(),
         next_cursor,
-    })
+    }
+}
+
+pub async fn list_clawhub_library_with_pool(
+    pool: &SqlitePool,
+    cursor: Option<String>,
+    limit: Option<u32>,
+    sort: Option<String>,
+) -> Result<ClawhubLibraryResponse, String> {
+    let normalized_limit = normalize_library_limit(limit);
+    let normalized_sort = normalize_library_sort(sort.as_deref());
+    let cursor_ref = cursor.as_deref();
+    let cache_key = build_library_cache_key(cursor_ref, normalized_limit, &normalized_sort);
+
+    if let Some((cached_body, stale)) =
+        load_cached_http_body(pool, &cache_key, CLAWHUB_LIBRARY_CACHE_TTL_SECONDS).await?
+    {
+        if let Ok(cached_json) = serde_json::from_str::<Value>(&cached_body) {
+            let cached_response = normalize_library_response(&cached_json);
+            if stale {
+                let key_for_refresh = cache_key.clone();
+                let pool_for_refresh = pool.clone();
+                let sort_for_refresh = normalized_sort.clone();
+                let cursor_for_refresh = cursor.clone();
+                spawn_refresh_if_needed(key_for_refresh.clone(), async move {
+                    let client = Client::new();
+                    if let Ok(fresh_json) = fetch_library_body(
+                        &client,
+                        cursor_for_refresh.as_deref(),
+                        normalized_limit,
+                        &sort_for_refresh,
+                    )
+                    .await
+                    {
+                        let _ = upsert_http_cache_body(
+                            &pool_for_refresh,
+                            &key_for_refresh,
+                            &fresh_json.to_string(),
+                        )
+                        .await;
+                    }
+                });
+            }
+            return Ok(cached_response);
+        }
+    }
+
+    let client = Client::new();
+    let body = fetch_library_body(&client, cursor_ref, normalized_limit, &normalized_sort).await?;
+    let response = normalize_library_response(&body);
+    let _ = upsert_http_cache_body(pool, &cache_key, &body.to_string()).await;
+    Ok(response)
 }
 
 #[tauri::command]
-pub async fn translate_clawhub_texts(
-    texts: Vec<String>,
+pub async fn list_clawhub_library(
+    cursor: Option<String>,
+    limit: Option<u32>,
+    sort: Option<String>,
     db: State<'_, DbState>,
+) -> Result<ClawhubLibraryResponse, String> {
+    list_clawhub_library_with_pool(&db.0, cursor, limit, sort).await
+}
+
+pub async fn get_clawhub_skill_detail_with_pool(
+    pool: &SqlitePool,
+    slug: String,
+) -> Result<ClawhubSkillDetail, String> {
+    let clean_slug = slug.trim();
+    if clean_slug.is_empty() {
+        return Err("slug 不能为空".to_string());
+    }
+
+    let cache_key = build_detail_cache_key(clean_slug);
+    if let Some((cached_body, stale)) =
+        load_cached_http_body(pool, &cache_key, CLAWHUB_DETAIL_CACHE_TTL_SECONDS).await?
+    {
+        if let Ok(cached_json) = serde_json::from_str::<Value>(&cached_body) {
+            if let Some(cached_detail) = normalize_skill_detail(&cached_json, clean_slug) {
+                if stale {
+                    let key_for_refresh = cache_key.clone();
+                    let slug_for_refresh = clean_slug.to_string();
+                    let pool_for_refresh = pool.clone();
+                    spawn_refresh_if_needed(key_for_refresh.clone(), async move {
+                        let client = Client::new();
+                        if let Ok(fresh_json) = fetch_skill_detail_body(&client, &slug_for_refresh).await
+                        {
+                            let _ = upsert_http_cache_body(
+                                &pool_for_refresh,
+                                &key_for_refresh,
+                                &fresh_json.to_string(),
+                            )
+                            .await;
+                        }
+                    });
+                }
+                return Ok(cached_detail);
+            }
+        }
+    }
+
+    let client = Client::new();
+    let body = fetch_skill_detail_body(&client, clean_slug).await?;
+    let detail =
+        normalize_skill_detail(&body, clean_slug).ok_or_else(|| "解析技能详情失败".to_string())?;
+    let _ = upsert_http_cache_body(pool, &cache_key, &body.to_string()).await;
+    Ok(detail)
+}
+
+#[tauri::command]
+pub async fn get_clawhub_skill_detail(
+    slug: String,
+    db: State<'_, DbState>,
+) -> Result<ClawhubSkillDetail, String> {
+    get_clawhub_skill_detail_with_pool(&db.0, slug).await
+}
+
+pub async fn translate_texts_with_preferences_with_pool(
+    pool: &SqlitePool,
+    texts: Vec<String>,
 ) -> Result<Vec<String>, String> {
     if texts.is_empty() {
         return Ok(Vec::new());
     }
 
+    let prefs = get_runtime_preferences_with_pool(pool).await?;
+    let target_lang = normalize_target_language(&prefs.default_language);
+    if !prefs.immersive_translation_enabled {
+        let mut passthrough = Vec::with_capacity(texts.len());
+        for source in texts {
+            passthrough.push(source.trim().to_string());
+        }
+        return Ok(passthrough);
+    }
+
+    let translation_engine = prefs.translation_engine.trim().to_ascii_lowercase();
+    let allow_model = translation_engine != "free_only";
+    let allow_free = translation_engine != "model_only";
+
     let client = Client::new();
+    let model_cfg = if allow_model {
+        load_translation_model(pool, &prefs.translation_model_id).await
+    } else {
+        None
+    };
+    let engine_cache_key = if let Some(cfg) = model_cfg.as_ref() {
+        cfg.cache_key()
+    } else if allow_free {
+        "google-gtx".to_string()
+    } else {
+        "model-missing".to_string()
+    };
+
     let mut out = Vec::with_capacity(texts.len());
     for source in texts {
         let clean = source.trim().to_string();
@@ -601,16 +1204,21 @@ pub async fn translate_clawhub_texts(
             out.push(String::new());
             continue;
         }
-        if is_mostly_cjk(&clean) {
+        if should_skip_translation(&clean, &target_lang) {
             out.push(clean);
             continue;
         }
 
-        let cache_key = format!("zh-CN:{}", sha256_hex(&clean));
+        let cache_key = format!(
+            "{}:{}:{}",
+            target_lang,
+            engine_cache_key,
+            sha256_hex(&clean)
+        );
         let cached: Option<(String,)> =
             sqlx::query_as("SELECT translated_text FROM skill_i18n_cache WHERE cache_key = ?")
                 .bind(&cache_key)
-                .fetch_optional(&db.0)
+                .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
         if let Some((translated,)) = cached {
@@ -618,9 +1226,24 @@ pub async fn translate_clawhub_texts(
             continue;
         }
 
-        let translated = match translate_text_to_zh(&client, &clean).await {
-            Ok(v) if !v.trim().is_empty() => v,
-            _ => clean.clone(),
+        let translated = if let Some(model) = model_cfg.as_ref() {
+            match translate_text_via_model(model, &clean, &target_lang).await {
+                Ok(v) if !v.trim().is_empty() => v,
+                _ if allow_free => {
+                    match translate_text_via_google(&client, &clean, &target_lang).await {
+                        Ok(v) if !v.trim().is_empty() => v,
+                        _ => clean.clone(),
+                    }
+                }
+                _ => clean.clone(),
+            }
+        } else if allow_free {
+            match translate_text_via_google(&client, &clean, &target_lang).await {
+                Ok(v) if !v.trim().is_empty() => v,
+                _ => clean.clone(),
+            }
+        } else {
+            clean.clone()
         };
         let now = Utc::now().to_rfc3339();
         let _ = sqlx::query(
@@ -630,12 +1253,30 @@ pub async fn translate_clawhub_texts(
         .bind(&clean)
         .bind(&translated)
         .bind(&now)
-        .execute(&db.0)
+        .execute(pool)
         .await;
         out.push(translated);
     }
 
     Ok(out)
+}
+
+#[tauri::command]
+pub async fn translate_texts_with_preferences(
+    texts: Vec<String>,
+    scene: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<Vec<String>, String> {
+    let _ = scene;
+    translate_texts_with_preferences_with_pool(&db.0, texts).await
+}
+
+#[tauri::command]
+pub async fn translate_clawhub_texts(
+    texts: Vec<String>,
+    db: State<'_, DbState>,
+) -> Result<Vec<String>, String> {
+    translate_texts_with_preferences_with_pool(&db.0, texts).await
 }
 
 #[tauri::command]

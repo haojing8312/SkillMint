@@ -22,6 +22,7 @@ const MCP_PRESETS = [
 
 const PROVIDER_PRESETS = [
   { label: "— 快速选择 —", value: "", models: [] as string[] },
+  { label: "智谱 GLM", value: "zhipu", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", models: ["glm-4-flash", "glm-4-plus", "glm-4-air", "glm-4-long"] },
   { label: "OpenAI", value: "openai", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"] },
   { label: "Claude (Anthropic)", value: "anthropic", api_format: "anthropic", base_url: "https://api.anthropic.com/v1", model_name: "claude-3-5-haiku-20241022", models: ["claude-sonnet-4-5-20250929", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022"] },
   { label: "MiniMax (OpenAI 兼容)", value: "minimax-oai", api_format: "openai", base_url: "https://api.minimax.io/v1", model_name: "MiniMax-M2.5", models: ["MiniMax-M2.5", "MiniMax-M1", "MiniMax-Text-01"] },
@@ -91,6 +92,9 @@ const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   default_language: "zh-CN",
   immersive_translation_enabled: true,
   immersive_translation_display: "translated_only",
+  immersive_translation_trigger: "auto",
+  translation_engine: "model_then_free",
+  translation_model_id: "",
 };
 
 export function SettingsView({ onClose }: Props) {
@@ -98,8 +102,8 @@ export function SettingsView({ onClose }: Props) {
   const [form, setForm] = useState({
     name: "",
     api_format: "openai",
-    base_url: "https://api.openai.com/v1",
-    model_name: "gpt-4o-mini",
+    base_url: "https://open.bigmodel.cn/api/paas/v4",
+    model_name: "glm-4-flash",
     api_key: "",
   });
   const [error, setError] = useState("");
@@ -188,6 +192,7 @@ export function SettingsView({ onClose }: Props) {
     if (normalized.includes("deepseek")) return "deepseek";
     if (normalized.includes("dashscope")) return "qwen";
     if (normalized.includes("moonshot") || normalized.includes("kimi")) return "moonshot";
+    if (normalized.includes("bigmodel") || normalized.includes("open.bigmodel")) return "zhipu";
     if (normalized.includes("anthropic")) return "anthropic";
     if (normalized.includes("minimax")) return "minimax";
     if (normalized.includes("lingyiwanwu")) return "yi";
@@ -281,6 +286,13 @@ export function SettingsView({ onClose }: Props) {
       parsed.immersive_translation_display === "bilingual_inline"
         ? "bilingual_inline"
         : "translated_only";
+    const triggerMode = parsed.immersive_translation_trigger === "manual" ? "manual" : "auto";
+    const translationEngine =
+      parsed.translation_engine === "model_only" || parsed.translation_engine === "free_only"
+        ? parsed.translation_engine
+        : "model_then_free";
+    const translationModelId =
+      typeof parsed.translation_model_id === "string" ? parsed.translation_model_id : "";
     return {
       default_work_dir: typeof parsed.default_work_dir === "string" ? parsed.default_work_dir : "",
       default_language:
@@ -292,6 +304,9 @@ export function SettingsView({ onClose }: Props) {
           ? parsed.immersive_translation_enabled
           : true,
       immersive_translation_display: immersiveDisplay,
+      immersive_translation_trigger: triggerMode,
+      translation_engine: translationEngine,
+      translation_model_id: translationModelId,
     };
   }
 
@@ -314,10 +329,16 @@ export function SettingsView({ onClose }: Props) {
         default_language: string;
         immersive_translation_enabled: boolean;
         immersive_translation_display: string;
+        immersive_translation_trigger: string;
+        translation_engine: string;
+        translation_model_id: string;
       } = {
         default_language: runtimePreferences.default_language,
         immersive_translation_enabled: runtimePreferences.immersive_translation_enabled,
         immersive_translation_display: runtimePreferences.immersive_translation_display,
+        immersive_translation_trigger: runtimePreferences.immersive_translation_trigger,
+        translation_engine: runtimePreferences.translation_engine,
+        translation_model_id: runtimePreferences.translation_model_id,
       };
       if (runtimePreferences.default_work_dir.trim()) {
         input.default_work_dir = runtimePreferences.default_work_dir;
@@ -690,7 +711,7 @@ export function SettingsView({ onClose }: Props) {
         },
         apiKey: form.api_key,
       });
-      setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
+      setForm({ name: "", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", api_key: "" });
       setEditingModelId(null);
       setShowApiKey(false);
       await loadModels();
@@ -775,7 +796,7 @@ export function SettingsView({ onClose }: Props) {
     if (editingModelId === id) {
       setEditingModelId(null);
       setShowApiKey(false);
-      setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
+      setForm({ name: "", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", api_key: "" });
       setError("");
       setTestResult(null);
     }
@@ -1023,7 +1044,7 @@ export function SettingsView({ onClose }: Props) {
               onClick={() => {
                 setEditingModelId(null);
                 setShowApiKey(false);
-                setForm({ name: "", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", api_key: "" });
+                setForm({ name: "", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", api_key: "" });
                 setError("");
                 setTestResult(null);
               }}
@@ -1163,6 +1184,83 @@ export function SettingsView({ onClose }: Props) {
             <option value="bilingual_inline">双语对照</option>
           </select>
         </div>
+        <div>
+          <label className={labelCls}>翻译触发方式</label>
+          <select
+            aria-label="翻译触发方式"
+            className={inputCls}
+            value={runtimePreferences.immersive_translation_trigger}
+            onChange={(e) =>
+              setRuntimePreferences((prev) => ({
+                ...prev,
+                immersive_translation_trigger: e.target.value === "manual" ? "manual" : "auto",
+              }))
+            }
+          >
+            <option value="auto">自动翻译（默认）</option>
+            <option value="manual">手动触发</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>翻译引擎策略</label>
+          <select
+            aria-label="翻译引擎策略"
+            className={inputCls}
+            value={runtimePreferences.translation_engine}
+            onChange={(e) =>
+              setRuntimePreferences((prev) => ({
+                ...prev,
+                translation_engine:
+                  e.target.value === "model_only" || e.target.value === "free_only"
+                    ? e.target.value
+                    : "model_then_free",
+                translation_model_id: e.target.value === "free_only" ? "" : prev.translation_model_id,
+              }))
+            }
+          >
+            <option value="model_then_free">优先模型，失败回退免费翻译（推荐）</option>
+            <option value="model_only">仅使用翻译模型</option>
+            <option value="free_only">仅使用免费翻译</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>翻译模型</label>
+          <select
+            aria-label="翻译模型"
+            className={inputCls}
+            disabled={runtimePreferences.translation_engine === "free_only"}
+            value={runtimePreferences.translation_model_id}
+            onChange={(e) =>
+              setRuntimePreferences((prev) => ({
+                ...prev,
+                translation_model_id: e.target.value,
+              }))
+            }
+          >
+            <option value="">跟随默认模型</option>
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name || model.model_name || model.id}
+              </option>
+            ))}
+          </select>
+        </div>
+        {runtimePreferences.translation_engine !== "free_only" && models.length === 0 && (
+          <div className="bg-amber-50 text-amber-700 text-xs px-2 py-1 rounded">
+            当前未配置可用模型。翻译会尝试免费翻译接口；若策略为“仅使用翻译模型”则可能失败。
+          </div>
+        )}
+        {runtimePreferences.translation_engine === "model_only" && models.length === 0 && (
+          <div className="bg-red-50 text-red-700 text-xs px-2 py-1 rounded">
+            已选择仅模型翻译，但当前无可用模型配置。建议切换到“优先模型，失败回退免费翻译”。
+          </div>
+        )}
+        {runtimePreferences.translation_model_id &&
+          !models.some((model) => model.id === runtimePreferences.translation_model_id) && (
+            <div className="bg-amber-50 text-amber-700 text-xs px-2 py-1 rounded">
+              选中的翻译模型不存在，将自动跟随默认模型或回退免费翻译。
+            </div>
+          )}
         {runtimePreferencesError && (
           <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">
             {runtimePreferencesError}

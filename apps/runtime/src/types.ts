@@ -28,6 +28,21 @@ export interface ClawhubLibraryItem {
   downloads: number;
 }
 
+export interface ClawhubSkillDetail {
+  slug: string;
+  name: string;
+  summary: string;
+  description: string;
+  author?: string | null;
+  github_url?: string | null;
+  source_url?: string | null;
+  updated_at?: string | null;
+  stars: number;
+  downloads: number;
+  tags: string[];
+  readme?: string | null;
+}
+
 export interface ClawhubSkillRecommendation {
   slug: string;
   name: string;
@@ -162,8 +177,11 @@ export interface SessionInfo {
   created_at: string;
   model_id: string;
   work_dir?: string;
+  employee_id?: string;
   permission_mode?: "default" | "accept_edits" | "unrestricted";
   permission_mode_label?: string;
+  source_channel?: "local" | "feishu" | string;
+  source_label?: string;
 }
 
 export type SkillRouteNodeStatus =
@@ -193,6 +211,13 @@ export interface ImRoleTimelineEvent {
   thread_id: string;
   role_id: string;
   role_name: string;
+  message_type?: string;
+  sender_role?: "user" | "main_agent" | "sub_agent" | "system" | string;
+  sender_employee_id?: string;
+  target_employee_id?: string;
+  task_id?: string;
+  parent_task_id?: string;
+  source_channel?: "desktop" | "feishu" | string;
   status: "running" | "completed" | "failed" | string;
   summary?: string;
   duration_ms?: number;
@@ -203,6 +228,13 @@ export interface ImRoleDispatchRequest {
   thread_id: string;
   role_id: string;
   role_name: string;
+  message_type?: string;
+  sender_role?: "user" | "main_agent" | "sub_agent" | "system" | string;
+  sender_employee_id?: string;
+  target_employee_id?: string;
+  task_id?: string;
+  parent_task_id?: string;
+  source_channel?: "desktop" | "feishu" | string;
   prompt: string;
   agent_type: string;
 }
@@ -384,6 +416,21 @@ export interface ApplyAgentProfileResult {
   files: AgentProfileFileResult[];
 }
 
+export interface AgentProfileFileView {
+  name: string;
+  path: string;
+  exists: boolean;
+  content: string;
+  error?: string | null;
+}
+
+export interface AgentProfileFilesView {
+  employee_id: string;
+  employee_name: string;
+  profile_dir: string;
+  files: AgentProfileFileView[];
+}
+
 export interface ImRoutingBinding {
   id: string;
   agent_id: string;
@@ -437,6 +484,12 @@ export interface ImRouteSimulationPayload {
 
 export interface RuntimePreferences {
   default_work_dir: string;
+  default_language: string;
+  immersive_translation_enabled: boolean;
+  immersive_translation_display: "translated_only" | "bilingual_inline" | string;
+  immersive_translation_trigger: "auto" | "manual" | string;
+  translation_engine: "model_then_free" | "model_only" | "free_only" | string;
+  translation_model_id: string;
 }
 
 /// 文件附件（用于 File Upload 功能）

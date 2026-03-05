@@ -11,7 +11,18 @@ describe("SettingsView translation preferences", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_model_configs") return Promise.resolve([]);
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-1",
+            name: "Translator Model",
+            api_format: "openai",
+            base_url: "https://api.openai.com/v1",
+            model_name: "gpt-4o-mini",
+            is_default: true,
+          },
+        ]);
+      }
       if (command === "list_mcp_servers") return Promise.resolve([]);
       if (command === "list_search_configs") return Promise.resolve([]);
       if (command === "list_provider_configs") return Promise.resolve([]);
@@ -21,6 +32,9 @@ describe("SettingsView translation preferences", () => {
           default_language: "zh-CN",
           immersive_translation_enabled: true,
           immersive_translation_display: "translated_only",
+          immersive_translation_trigger: "auto",
+          translation_engine: "model_then_free",
+          translation_model_id: "",
         });
       }
       if (command === "set_runtime_preferences") {
@@ -30,6 +44,10 @@ describe("SettingsView translation preferences", () => {
           immersive_translation_enabled: payload?.input?.immersive_translation_enabled ?? true,
           immersive_translation_display:
             payload?.input?.immersive_translation_display ?? "translated_only",
+          immersive_translation_trigger:
+            payload?.input?.immersive_translation_trigger ?? "auto",
+          translation_engine: payload?.input?.translation_engine ?? "model_then_free",
+          translation_model_id: payload?.input?.translation_model_id ?? "",
         });
       }
       return Promise.resolve(null);
@@ -47,6 +65,15 @@ describe("SettingsView translation preferences", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "翻译显示模式" }), {
       target: { value: "bilingual_inline" },
     });
+    fireEvent.change(screen.getByRole("combobox", { name: "翻译触发方式" }), {
+      target: { value: "manual" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "翻译引擎策略" }), {
+      target: { value: "model_only" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "翻译模型" }), {
+      target: { value: "model-1" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "保存语言与翻译设置" }));
 
     await waitFor(() => {
@@ -56,6 +83,9 @@ describe("SettingsView translation preferences", () => {
           default_language: "en-US",
           immersive_translation_enabled: false,
           immersive_translation_display: "bilingual_inline",
+          immersive_translation_trigger: "manual",
+          translation_engine: "model_only",
+          translation_model_id: "model-1",
         },
       });
     });

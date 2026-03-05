@@ -54,6 +54,7 @@ WorkClaw also benchmarks against Claude Cowork-style desktop agent experiences w
 - **Expert Skills workflow**: Create reusable local skills with guided input and real-time `SKILL.md` preview.
 - **Built-in packaging flow**: Package skills from the app for secure sharing and distribution.
 - **Unified settings control**: Manage models, provider routing, search providers, MCP servers, and runtime options.
+- **Default language + immersive translation**: After choosing a default language, English content in Skill Library / Find Skills / chat install candidates can be translated automatically for display.
 
 ## Product Screenshots
 
@@ -120,6 +121,8 @@ The integrated environment where users can package, install, and run encrypted S
 - Session history with searchable conversation archives
 - Multi-model support (Claude 4.6, GPT-4, MiniMax M2.5, GLM-4, DeepSeek)
 - Local secure workspace folder configuration
+- Default language and immersive translation settings (`translated_only` / `bilingual_inline`)
+- Translation failures fall back to source text and never alter install parameters (`slug` / `githubUrl` / `sourceUrl`)
 - No command line required
 
 ### Creator Workflow

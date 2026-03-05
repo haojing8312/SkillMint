@@ -367,6 +367,16 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS clawhub_http_cache (
+            cache_key TEXT PRIMARY KEY,
+            body TEXT NOT NULL,
+            fetched_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
     // Migration: add api_key column for databases created before this column existed
     let _ = sqlx::query("ALTER TABLE model_configs ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
         .execute(&pool)
@@ -466,6 +476,21 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     .await;
     let _ = sqlx::query(
         "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('runtime_default_work_dir', '')",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('runtime_default_language', 'zh-CN')",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('runtime_immersive_translation_enabled', 'true')",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('runtime_immersive_translation_display', 'translated_only')",
     )
     .execute(&pool)
     .await;
