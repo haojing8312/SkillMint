@@ -21,12 +21,50 @@ import { SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message
 
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SkillAction = "refresh" | "delete" | "check-update" | "update";
+type EmployeeAssistantMode = "create" | "update";
+type EmployeeAssistantLaunchOptions = {
+  mode?: EmployeeAssistantMode;
+  employeeId?: string;
+};
+type EmployeeAssistantSessionContext = {
+  mode: EmployeeAssistantMode;
+  employeeName?: string;
+  employeeCode?: string;
+};
 const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 const BUILTIN_EMPLOYEE_CREATOR_SKILL_ID = "builtin-employee-creator";
 const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
 const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
+const EMPLOYEE_ASSISTANT_DISPLAY_NAME = "智能体员工助手";
 const EMPLOYEE_CREATOR_STARTER_PROMPT =
   "请帮我创建一个新的智能体员工。先问我 1-2 个关键问题，再给出配置草案，确认后再执行创建。";
+const EMPLOYEE_ASSISTANT_QUICK_PROMPTS: Array<{ label: string; prompt: string }> = [
+  {
+    label: "加技能",
+    prompt:
+      "请帮我修改一个已有智能体员工：给目标员工增加技能。你先调用 list_employees 和 list_skills，然后给出 update_employee 草案（使用 add_skill_ids），我确认后再执行。",
+  },
+  {
+    label: "删技能",
+    prompt:
+      "请帮我修改一个已有智能体员工：给目标员工移除技能。你先调用 list_employees，再给出 update_employee 草案（使用 remove_skill_ids），我确认后再执行。",
+  },
+  {
+    label: "改主技能",
+    prompt:
+      "请帮我修改一个已有智能体员工：调整 primary_skill_id。你先确认员工与目标主技能，再给出 update_employee 草案，我确认后再执行。",
+  },
+  {
+    label: "改飞书配置",
+    prompt:
+      "请帮我修改一个已有智能体员工的飞书配置（open_id / app_id / app_secret）。你先确认目标员工，再给出 update_employee 草案，我确认后再执行。",
+  },
+  {
+    label: "更新画像",
+    prompt:
+      "请帮我更新已有员工的 AGENTS/SOUL/USER 配置。你先引导我补齐 mission/responsibilities/collaboration/tone/boundaries/user_profile，再给出 update_employee + profile_answers 草案，我确认后再执行。",
+  },
+];
 
 const QUICK_MODEL_PRESETS: Array<{
   key: string;
@@ -36,6 +74,14 @@ const QUICK_MODEL_PRESETS: Array<{
   base_url: string;
   model_name: string;
 }> = [
+  {
+    key: "zhipu",
+    label: "智谱 GLM",
+    name: "智谱 GLM",
+    api_format: "openai",
+    base_url: "https://open.bigmodel.cn/api/paas/v4",
+    model_name: "glm-4-flash",
+  },
   {
     key: "openai",
     label: "OpenAI",
@@ -74,6 +120,13 @@ type ImBridgeSessionContext = {
   streamFlushInFlight: boolean;
 };
 
+function formatFeishuRoleMessage(roleName: string, text: string): string {
+  const safeRole = (roleName || "").trim() || "智能体员工";
+  const safeText = (text || "").trim();
+  if (!safeText) return "";
+  return `[${safeRole}] ${safeText}`;
+}
+
 function extractErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string") {
     return error;
@@ -107,6 +160,11 @@ function getDefaultSkillId(skillList: SkillManifest[]): string | null {
     return builtin.id;
   }
   return skillList[0]?.id ?? null;
+}
+
+function buildEmployeeAssistantUpdatePrompt(employee: AgentEmployee): string {
+  const employeeCode = (employee.employee_id || employee.role_id || employee.id || "").trim();
+  return `调整员工任务：请帮我修改智能体员工「${employee.name}」（employee_id: ${employeeCode}）。先确认修改目标，再给出 update_employee 配置草案（包含变更字段与理由），待我确认后再执行。`;
 }
 
 export default function App() {
@@ -173,6 +231,9 @@ export default function App() {
     sessionId: string;
     message: string;
   } | null>(null);
+  const [employeeAssistantSessionContexts, setEmployeeAssistantSessionContexts] = useState<
+    Record<string, EmployeeAssistantSessionContext>
+  >({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const employeesRef = useRef<AgentEmployee[]>([]);
 
@@ -227,11 +288,15 @@ export default function App() {
     }
     const seen = new Set<string>();
     const sessionContexts = new Map<string, ImBridgeSessionContext>();
+    const feishuRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const STREAM_CHUNK_SIZE = 120;
     const STREAM_FLUSH_INTERVAL_MS = 1200;
+    const FEISHU_RETRY_DELAYS_MS = [1000, 3000, 8000];
+    const FEISHU_MAX_ATTEMPTS = FEISHU_RETRY_DELAYS_MS.length + 1;
     const sanitizeInboundPrompt = (raw: string): string =>
       raw
-        .replace(/@_[A-Za-z0-9_]+/g, " ")
+        .replace(/(^|\s)@_[A-Za-z0-9_]+/g, "$1")
+        .replace(/(^|\s)@[^\s@]+/g, "$1")
         .replace(/\s+/g, " ")
         .trim();
 
@@ -254,15 +319,68 @@ export default function App() {
       }, safeDelay);
     };
 
-    const sendTextToFeishu = async (threadId: string, text: string) => {
-      if (!threadId.trim() || !text.trim()) return;
+    const buildFeishuRetryKey = (threadId: string, text: string) => `${threadId}::${text}`;
+
+    const clearFeishuRetryTimer = (key: string) => {
+      const timer = feishuRetryTimers.get(key);
+      if (timer) {
+        clearTimeout(timer);
+      }
+      feishuRetryTimers.delete(key);
+    };
+
+    const invokeFeishuSend = async (threadId: string, text: string) => {
       await invoke("send_feishu_text_message", {
         chatId: threadId,
-        text: text.slice(0, 1800),
+        text,
         appId: null,
         appSecret: null,
         sidecarBaseUrl: null,
       });
+    };
+
+    const scheduleFeishuRetry = (
+      threadId: string,
+      text: string,
+      attempt: number,
+      lastError: unknown
+    ) => {
+      const key = buildFeishuRetryKey(threadId, text);
+      if (attempt > FEISHU_MAX_ATTEMPTS) {
+        clearFeishuRetryTimer(key);
+        console.error(
+          "飞书消息转发失败，已降级为仅桌面可见",
+          threadId,
+          extractErrorMessage(lastError, "unknown error")
+        );
+        return;
+      }
+      if (feishuRetryTimers.has(key)) return;
+      const delay = FEISHU_RETRY_DELAYS_MS[Math.max(0, attempt - 2)] ?? FEISHU_RETRY_DELAYS_MS[FEISHU_RETRY_DELAYS_MS.length - 1];
+      const timer = setTimeout(() => {
+        feishuRetryTimers.delete(key);
+        void (async () => {
+          try {
+            await invokeFeishuSend(threadId, text);
+          } catch (error) {
+            scheduleFeishuRetry(threadId, text, attempt + 1, error);
+          }
+        })();
+      }, delay);
+      feishuRetryTimers.set(key, timer);
+    };
+
+    const sendTextToFeishu = async (threadId: string, text: string) => {
+      const chatId = threadId.trim();
+      const messageText = text.trim().slice(0, 1800);
+      if (!chatId || !messageText) return;
+      const key = buildFeishuRetryKey(chatId, messageText);
+      clearFeishuRetryTimer(key);
+      try {
+        await invokeFeishuSend(chatId, messageText);
+      } catch (error) {
+        scheduleFeishuRetry(chatId, messageText, 2, error);
+      }
     };
 
     const flushImStream = async (
@@ -291,14 +409,14 @@ export default function App() {
       ctx.lastStreamFlushAt = Date.now();
       try {
         if (chunk.length <= 1800) {
-          await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${chunk}`);
+          await sendTextToFeishu(ctx.threadId, formatFeishuRoleMessage(ctx.roleName, chunk));
           ctx.streamSentCount += 1;
           return;
         }
         let start = 0;
         while (start < chunk.length) {
           const part = chunk.slice(start, start + 1800);
-          await sendTextToFeishu(ctx.threadId, `${ctx.roleName}: ${part}`);
+          await sendTextToFeishu(ctx.threadId, formatFeishuRoleMessage(ctx.roleName, part));
           ctx.streamSentCount += 1;
           start += 1800;
         }
@@ -363,7 +481,7 @@ export default function App() {
           if (latestAssistant) {
             await sendTextToFeishu(
               ctx.threadId,
-              `${ctx.roleName}: ${latestAssistant.content.slice(0, 1800)}`
+              formatFeishuRoleMessage(ctx.roleName, latestAssistant.content.slice(0, 1800))
             );
           }
         }
@@ -423,7 +541,10 @@ export default function App() {
         await flushImStream(payload.session_id, { force: true });
         await sendTextToFeishu(
           ctx.threadId,
-          `${ctx.roleName}: ${payload.question}${optionsText}\n请直接回复你的选择或补充信息。`
+          formatFeishuRoleMessage(
+            ctx.roleName,
+            `${payload.question}${optionsText}\n请直接回复你的选择或补充信息。`
+          )
         );
       })();
     });
@@ -435,6 +556,8 @@ export default function App() {
           ctx.streamFlushTimer = null;
         }
       });
+      feishuRetryTimers.forEach((timer) => clearTimeout(timer));
+      feishuRetryTimers.clear();
       unlistenDispatchPromise.then((fn) => fn());
       unlistenStreamPromise.then((fn) => fn());
       unlistenAskUserPromise.then((fn) => fn());
@@ -484,10 +607,10 @@ export default function App() {
     }
   }
 
-  async function loadSessions(skillId: string) {
+  async function loadSessions(_skillId: string) {
     try {
-      const list = await invoke<SessionInfo[]>("get_sessions", { skillId });
-      setSessions(list);
+      const list = await invoke<SessionInfo[]>("list_sessions");
+      setSessions(Array.isArray(list) ? list : []);
     } catch (e) {
       console.error("加载会话列表失败:", e);
       setSessions([]);
@@ -530,6 +653,12 @@ export default function App() {
     try {
       await invoke("delete_session", { sessionId });
       if (selectedSessionId === sessionId) setSelectedSessionId(null);
+      setEmployeeAssistantSessionContexts((prev) => {
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
       if (selectedSkillId) await loadSessions(selectedSkillId);
     } catch (e) {
       console.error("删除会话失败:", e);
@@ -553,11 +682,10 @@ export default function App() {
 
     searchTimerRef.current = setTimeout(async () => {
       try {
-        const results = await invoke<SessionInfo[]>("search_sessions", {
-          skillId: selectedSkillId,
+        const results = await invoke<SessionInfo[]>("search_sessions_global", {
           query: query.trim(),
         });
-        setSessions(results);
+        setSessions(Array.isArray(results) ? results : []);
       } catch (e) {
         console.error("搜索会话失败:", e);
       }
@@ -597,8 +725,7 @@ export default function App() {
           employeeId: "",
           permissionMode: newSessionPermissionMode,
         });
-        const sessions = await invoke<SessionInfo[]>("get_sessions", { skillId });
-        setSessions(sessions);
+        await loadSessions(skillId);
         setSelectedSessionId(sessionId);
       } catch (e) {
         console.error("自动创建会话失败:", e);
@@ -813,29 +940,30 @@ export default function App() {
   const handleSessionRefresh = useCallback(() => {
     if (selectedSkillId) {
       loadSessions(selectedSkillId);
-      if (selectedSkillId === BUILTIN_EMPLOYEE_CREATOR_SKILL_ID) {
-        const previousEmployeeIds = new Set(
-          employeesRef.current.map((item) => item.id),
-        );
-        void (async () => {
-          try {
-            const latest = await loadEmployees();
-            const created = latest.find(
-              (item) => !previousEmployeeIds.has(item.id),
-            );
-            if (created) {
-              setSelectedEmployeeId(created.id);
-              setEmployeeCreatorHighlight({
-                employeeId: created.id,
-                name: created.name,
-              });
-            }
-          } catch (e) {
-            console.error("刷新员工列表失败:", e);
-          }
-        })();
-      }
     }
+    const previousEmployeeIds = new Set(
+      employeesRef.current.map((item) => item.id),
+    );
+    void (async () => {
+      try {
+        const latest = await loadEmployees();
+        if (selectedSkillId !== BUILTIN_EMPLOYEE_CREATOR_SKILL_ID) {
+          return;
+        }
+        const created = latest.find(
+          (item) => !previousEmployeeIds.has(item.id),
+        );
+        if (created) {
+          setSelectedEmployeeId(created.id);
+          setEmployeeCreatorHighlight({
+            employeeId: created.id,
+            name: created.name,
+          });
+        }
+      } catch (e) {
+        console.error("刷新员工列表失败:", e);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSkillId]);
 
@@ -845,6 +973,7 @@ export default function App() {
 
   function handleOpenStartTask() {
     setShowSettings(false);
+    setSelectedSessionId(null);
     const mainEmployee = employees.find((e) => e.is_default) ?? employees[0];
     if (mainEmployee) {
       setSelectedEmployeeId(mainEmployee.id);
@@ -903,7 +1032,6 @@ export default function App() {
         primary_skill_id: employee.primary_skill_id,
         default_work_dir: employee.default_work_dir,
         openclaw_agent_id: employee.employee_id || employee.openclaw_agent_id || employee.role_id,
-        routing_priority: employee.routing_priority ?? 100,
         enabled_scopes: employee.enabled_scopes?.length ? employee.enabled_scopes : ["feishu"],
         enabled: employee.enabled,
         is_default: true,
@@ -1074,20 +1202,27 @@ export default function App() {
     }
   }
 
-  async function handleOpenEmployeeCreatorSkill() {
+  async function handleOpenEmployeeCreatorSkill(options?: EmployeeAssistantLaunchOptions) {
     if (creatingSession) return;
     setEmployeeCreatorHighlight(null);
+    const requestedMode: EmployeeAssistantMode = options?.mode === "update" ? "update" : "create";
+    const targetEmployee =
+      requestedMode === "update"
+        ? employees.find((item) => item.id === (options?.employeeId || selectedEmployeeId || ""))
+        : null;
+    const launchMode: EmployeeAssistantMode =
+      requestedMode === "update" && targetEmployee ? "update" : "create";
     let nextSkills = skills;
     if (!nextSkills.some((item) => item.id === BUILTIN_EMPLOYEE_CREATOR_SKILL_ID)) {
       try {
         nextSkills = await loadSkills();
       } catch (e) {
-        console.error("加载创建员工内置技能失败:", e);
+        console.error(`加载${EMPLOYEE_ASSISTANT_DISPLAY_NAME}内置技能失败:`, e);
       }
     }
 
     if (!nextSkills.some((item) => item.id === BUILTIN_EMPLOYEE_CREATOR_SKILL_ID)) {
-      setCreateSessionError("创建员工助手暂未就绪，请稍后重试");
+      setCreateSessionError(`${EMPLOYEE_ASSISTANT_DISPLAY_NAME}暂未就绪，请稍后重试`);
       navigate("experts");
       return;
     }
@@ -1095,7 +1230,11 @@ export default function App() {
     const skillId = BUILTIN_EMPLOYEE_CREATOR_SKILL_ID;
     const modelId = models[0]?.id;
 
-    setSelectedEmployeeId(null);
+    if (launchMode === "update" && targetEmployee) {
+      setSelectedEmployeeId(targetEmployee.id);
+    } else {
+      setSelectedEmployeeId(null);
+    }
     setSelectedSkillId(skillId);
     setSelectedSessionId(null);
     setCreateSessionError(null);
@@ -1107,21 +1246,48 @@ export default function App() {
 
     setCreatingSession(true);
     try {
+      const employeeCode =
+        launchMode === "update" && targetEmployee
+          ? (targetEmployee.employee_id || targetEmployee.role_id || "").trim()
+          : "";
+      const sessionTitle =
+        launchMode === "update" && targetEmployee
+          ? `调整员工：${targetEmployee.name}`
+          : "创建员工：新员工";
       const sessionId = await invoke<string>("create_session", {
         skillId,
         modelId,
-        workDir: "",
-        employeeId: "",
+        workDir:
+          launchMode === "update" && targetEmployee
+            ? targetEmployee.default_work_dir || ""
+            : "",
+        employeeId: employeeCode,
+        title: sessionTitle,
         permissionMode: newSessionPermissionMode,
       });
       await loadSessions(skillId);
       setSelectedSessionId(sessionId);
+      const initialMessage =
+        launchMode === "update" && targetEmployee
+          ? buildEmployeeAssistantUpdatePrompt(targetEmployee)
+          : EMPLOYEE_CREATOR_STARTER_PROMPT;
       setPendingInitialMessage({
         sessionId,
-        message: EMPLOYEE_CREATOR_STARTER_PROMPT,
+        message: initialMessage,
       });
+      setEmployeeAssistantSessionContexts((prev) => ({
+        ...prev,
+        [sessionId]:
+          launchMode === "update" && targetEmployee
+            ? {
+                mode: "update",
+                employeeName: targetEmployee.name,
+                employeeCode: (targetEmployee.employee_id || targetEmployee.role_id || "").trim(),
+              }
+            : { mode: "create" },
+      }));
     } catch (e) {
-      console.error("打开创建员工助手失败:", e);
+      console.error(`打开${EMPLOYEE_ASSISTANT_DISPLAY_NAME}失败:`, e);
       setCreateSessionError("创建会话失败，请稍后重试");
     } finally {
       setCreatingSession(false);
@@ -1137,6 +1303,31 @@ export default function App() {
 
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+  const selectedEmployeeAssistantContext = (() => {
+    if (selectedSkill?.id !== BUILTIN_EMPLOYEE_CREATOR_SKILL_ID || !selectedSessionId) {
+      return undefined;
+    }
+    const fromSession = employeeAssistantSessionContexts[selectedSessionId];
+    if (fromSession) {
+      return fromSession;
+    }
+    const sessionEmployeeId = (selectedSession?.employee_id || "").trim();
+    if (!sessionEmployeeId) {
+      return { mode: "create" as const };
+    }
+    const matchedEmployee = employees.find((item) => {
+      const employeeCode = (item.employee_id || item.role_id || item.id || "").trim();
+      return (
+        employeeCode.toLowerCase() === sessionEmployeeId.toLowerCase() ||
+        item.id.trim().toLowerCase() === sessionEmployeeId.toLowerCase()
+      );
+    });
+    return {
+      mode: "update" as const,
+      employeeName: matchedEmployee?.name,
+      employeeCode: sessionEmployeeId,
+    };
+  })();
   const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
   const shouldShowModelSetupGate =
     !showSettings && models.length === 0 && !hasCompletedInitialModelSetup;
@@ -1470,7 +1661,7 @@ export default function App() {
                 highlightEmployeeId={employeeCreatorHighlight?.employeeId ?? null}
                 highlightMessage={
                   employeeCreatorHighlight
-                    ? `已由创建员工助手生成：${employeeCreatorHighlight.name}`
+                    ? `已由${EMPLOYEE_ASSISTANT_DISPLAY_NAME}生成：${employeeCreatorHighlight.name}`
                     : null
                 }
                 onDismissHighlight={() => setEmployeeCreatorHighlight(null)}
@@ -1496,6 +1687,8 @@ export default function App() {
                 models={models}
                 sessionId={selectedSessionId}
                 workDir={selectedSession?.work_dir}
+                sessionSourceChannel={selectedSession?.source_channel}
+                sessionSourceLabel={selectedSession?.source_label}
                 onSessionUpdate={handleSessionRefresh}
                 installedSkillIds={skills.map((s) => s.id)}
                 onSkillInstalled={handleSkillInstalledFromChat}
@@ -1504,6 +1697,14 @@ export default function App() {
                   pendingInitialMessage && pendingInitialMessage.sessionId === selectedSessionId
                     ? pendingInitialMessage.message
                     : undefined
+                }
+                quickPrompts={
+                  selectedSkill.id === BUILTIN_EMPLOYEE_CREATOR_SKILL_ID
+                    ? EMPLOYEE_ASSISTANT_QUICK_PROMPTS
+                    : []
+                }
+                employeeAssistantContext={
+                  selectedEmployeeAssistantContext
                 }
                 onInitialMessageConsumed={() => {
                   setPendingInitialMessage((prev) =>

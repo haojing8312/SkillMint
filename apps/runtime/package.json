@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5174",
+    "dev:tauri": "pnpm --dir sidecar build && pnpm dev",
     "build": "tsc && vite build",
+    "build:tauri": "pnpm --dir sidecar build && pnpm build",
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
@@ -20,7 +22,8 @@
     "react": "^18",
     "react-dom": "^18",
     "react-markdown": "^9",
-    "react-syntax-highlighter": "^15"
+    "react-syntax-highlighter": "^15",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

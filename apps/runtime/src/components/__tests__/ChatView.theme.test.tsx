@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "../ChatView";
 
 const invokeMock = vi.fn();
@@ -20,9 +20,44 @@ describe("ChatView semantic theme", () => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) => {
       if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
       if (command === "get_sessions") return Promise.resolve([]);
       return Promise.resolve(null);
     });
+  });
+
+  test("loads workspace via global list_sessions command", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-a"
+      />
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("list_sessions");
+    });
+
+    expect(invokeMock.mock.calls.some((call) => call[0] === "get_sessions")).toBe(false);
   });
 
   test("uses semantic classes in composer shell", async () => {
@@ -58,5 +93,138 @@ describe("ChatView semantic theme", () => {
 
     expect(screen.getByPlaceholderText("输入消息，Shift+Enter 换行...")).toHaveClass("sm-textarea");
     expect(screen.getByRole("button", { name: "发送" })).toHaveClass("sm-btn-primary");
+  });
+
+  test("can send quick prompt directly from preset buttons", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-employee-creator",
+          name: "智能体员工助手",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-a"
+        quickPrompts={[{ label: "加技能", prompt: "请帮我给 employee_a 增加 find-skills" }]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-quick-prompts")).toBeInTheDocument();
+      expect(screen.getByText("加技能")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("加技能"));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-a",
+        userMessage: "请帮我给 employee_a 增加 find-skills",
+      });
+    });
+  });
+
+  test("shows employee assistant context banner in update mode", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-employee-creator",
+          name: "智能体员工助手",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-a"
+        employeeAssistantContext={{
+          mode: "update",
+          employeeName: "项目经理",
+          employeeCode: "project_manager",
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-employee-assistant-context")).toHaveTextContent(
+        "正在修改：项目经理（project_manager）",
+      );
+    });
+  });
+
+  test("renders markdown table as semantic table elements", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            role: "assistant",
+            content: [
+              "| 员工 | 主技能 | 附加技能 |",
+              "|------|--------|----------|",
+              "| 玉帝 | builtin-general | builtin-find-skills |",
+            ].join("\n"),
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-table"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("table")).toBeInTheDocument();
+      expect(screen.getByRole("columnheader", { name: "员工" })).toBeInTheDocument();
+    });
   });
 });

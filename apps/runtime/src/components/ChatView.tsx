@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, SkillRouteEvent, ImRoleTimelineEvent, ImRoleDispatchRequest, ImRouteDecisionEvent } from "../types";
@@ -30,6 +31,14 @@ interface Props {
   installedSkillIds?: string[];
   onSkillInstalled?: (skillId: string) => Promise<void> | void;
   suppressAskUserPrompt?: boolean;
+  quickPrompts?: Array<{ label: string; prompt: string }>;
+  employeeAssistantContext?: {
+    mode: "create" | "update";
+    employeeName?: string;
+    employeeCode?: string;
+  };
+  sessionSourceChannel?: string;
+  sessionSourceLabel?: string;
 }
 
 export function ChatView({
@@ -43,6 +52,10 @@ export function ChatView({
   installedSkillIds = [],
   onSkillInstalled,
   suppressAskUserPrompt = false,
+  quickPrompts = [],
+  employeeAssistantContext,
+  sessionSourceChannel,
+  sessionSourceLabel,
 }: Props) {
   const parseDuplicateSkillName = (error: unknown): string | null => {
     const message =
@@ -95,9 +108,23 @@ export function ChatView({
   const [installError, setInstallError] = useState<string | null>(null);
   const installInFlightRef = useRef(false);
   const [subAgentBuffer, setSubAgentBuffer] = useState("");
+  const [subAgentRoleName, setSubAgentRoleName] = useState("");
+  const [mainRoleName, setMainRoleName] = useState("");
+  const [mainSummaryDelivered, setMainSummaryDelivered] = useState(false);
+  const [showDelegationHistory, setShowDelegationHistory] = useState(false);
+  const [delegationCards, setDelegationCards] = useState<
+    Array<{
+      id: string;
+      fromRole: string;
+      toRole: string;
+      status: "running" | "completed" | "failed";
+      taskId?: string;
+    }>
+  >([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
+  const mainRoleNameRef = useRef("");
 
   // File Upload: 附件状态
   const [attachedFiles, setAttachedFiles] = useState<FileAttachment[]>([]);
@@ -161,7 +188,7 @@ export function ChatView({
   // Secure Workspace: 加载会话的工作空间
   const loadWorkspace = async (sid: string) => {
     try {
-      const sessions = await invoke<any[]>("get_sessions", { skillId: skill.id });
+      const sessions = await invoke<any[]>("list_sessions");
       const current = sessions.find((s: any) => s.id === sid);
       if (current) {
         setWorkspace(current.work_dir || "");
@@ -232,6 +259,12 @@ export function ChatView({
     setStreamItems([]);
     streamItemsRef.current = [];
     setSubAgentBuffer("");
+    setSubAgentRoleName("");
+    setMainRoleName("");
+    setMainSummaryDelivered(false);
+    setShowDelegationHistory(false);
+    mainRoleNameRef.current = "";
+    setDelegationCards([]);
     subAgentBufferRef.current = "";
     setAskUserQuestion(null);
     setAskUserOptions([]);
@@ -256,6 +289,8 @@ export function ChatView({
       token: string;
       done: boolean;
       sub_agent?: boolean;
+      role_id?: string;
+      role_name?: string;
     }>(
       "stream-token",
       ({ payload }) => {
@@ -286,9 +321,14 @@ export function ChatView({
           setStreamItems([]);
           subAgentBufferRef.current = "";
           setSubAgentBuffer("");
+          setSubAgentRoleName("");
           setStreaming(false);
         } else if (payload.sub_agent) {
           // 子 Agent 的 token 单独缓冲
+          const delegatedRole = (payload.role_name || payload.role_id || "").trim();
+          if (delegatedRole) {
+            setSubAgentRoleName(delegatedRole);
+          }
           subAgentBufferRef.current += payload.token;
           setSubAgentBuffer(subAgentBufferRef.current);
         } else {
@@ -334,6 +374,44 @@ export function ChatView({
     const unlistenPromise = listen<ImRoleTimelineEvent>("im-role-event", ({ payload }) => {
       if (payload.session_id !== sessionId) return;
       setImRoleEvents((prev) => [...prev, payload]);
+      const roleLabel = (payload.role_name || payload.role_id || "").trim();
+      if (payload.sender_role === "main_agent" && roleLabel) {
+        mainRoleNameRef.current = roleLabel;
+        setMainRoleName(roleLabel);
+      }
+      if (payload.sender_role === "main_agent") {
+        if (payload.status === "completed") {
+          setMainSummaryDelivered(true);
+        } else if (payload.status === "running") {
+          setMainSummaryDelivered(false);
+        }
+      }
+      if (
+        payload.sender_role === "sub_agent" &&
+        roleLabel &&
+        (payload.status === "completed" || payload.status === "failed")
+      ) {
+        setDelegationCards((prev) => {
+          const next = [...prev];
+          let matchedIndex = -1;
+          for (let i = next.length - 1; i >= 0; i -= 1) {
+            const item = next[i];
+            const byTaskId = payload.task_id && item.taskId === payload.task_id;
+            const byRole = item.toRole === roleLabel;
+            if (item.status === "running" && (byTaskId || byRole)) {
+              matchedIndex = i;
+              break;
+            }
+          }
+          if (matchedIndex >= 0) {
+            next[matchedIndex] = {
+              ...next[matchedIndex],
+              status: payload.status === "failed" ? "failed" : "completed",
+            };
+          }
+          return next;
+        });
+      }
     });
     return () => {
       unlistenPromise.then((fn) => fn());
@@ -362,16 +440,36 @@ export function ChatView({
           session_id: payload.session_id,
           thread_id: payload.thread_id,
           role_id: payload.role_id,
-          role_name: payload.role_name,
+          role_name: roleLabel,
+          sender_role: payload.sender_role ?? "main_agent",
+          sender_employee_id: payload.sender_employee_id ?? payload.role_id,
+          target_employee_id: payload.target_employee_id ?? payload.role_id,
+          task_id: payload.task_id,
+          parent_task_id: payload.parent_task_id,
+          message_type: payload.message_type ?? "delegate_request",
+          source_channel: payload.source_channel ?? "feishu",
           status: "running",
           summary: `任务已分发(${payload.agent_type}) -> ${roleLabel}`,
         },
       ]);
+      const delegationId = (payload.task_id || "").trim() || `${payload.thread_id}-${Date.now()}`;
+      setMainSummaryDelivered(false);
+      setDelegationCards((prev) => {
+        const next = prev.filter((item) => item.id !== delegationId);
+        next.push({
+          id: delegationId,
+          fromRole: mainRoleNameRef.current || mainRoleName || "主员工",
+          toRole: roleLabel,
+          status: "running",
+          taskId: payload.task_id,
+        });
+        return next.slice(-8);
+      });
     });
     return () => {
       unlistenPromise.then((fn) => fn());
     };
-  }, [sessionId]);
+  }, [mainRoleName, sessionId]);
 
   useEffect(() => {
     const unlistenPromise = listen<ImRouteDecisionEvent>("im-route-decision", ({ payload }) => {
@@ -558,6 +656,7 @@ export function ChatView({
     setStreamItems([]);
     subAgentBufferRef.current = "";
     setSubAgentBuffer("");
+    setSubAgentRoleName("");
     try {
       await invoke("send_message", { sessionId, userMessage: fullContent });
       onSessionUpdate?.();
@@ -645,6 +744,30 @@ export function ChatView({
   const routeCompleted = routeEvents.filter((e) => e.status === "completed").length;
   const routeFailed = routeEvents.filter((e) => e.status === "failed").length;
   const routeTotalDuration = routeEvents.reduce((sum, e) => sum + (e.duration_ms || 0), 0);
+  const isFeishuSource = (sessionSourceChannel || "").trim().toLowerCase() === "feishu";
+  const sessionSourceBadgeText = (sessionSourceLabel || "").trim() || "飞书同步";
+  const activeDelegationCard = [...delegationCards]
+    .reverse()
+    .find((card) => card.status === "running");
+  const primaryDelegationCard =
+    activeDelegationCard || (delegationCards.length > 0 ? delegationCards[delegationCards.length - 1] : null);
+  const delegationHistoryCards = primaryDelegationCard
+    ? delegationCards.filter((card) => card.id !== primaryDelegationCard.id)
+    : [];
+  const runningDelegationCount = delegationCards.filter((card) => card.status === "running").length;
+  const completedDelegationCount = delegationCards.filter((card) => card.status === "completed").length;
+  const failedDelegationCount = delegationCards.filter((card) => card.status === "failed").length;
+  const latestCompletedDelegation = [...delegationCards]
+    .reverse()
+    .find((card) => card.status === "completed");
+  const collaborationStatusText =
+    mainSummaryDelivered
+      ? `${mainRoleName || "主员工"} 已输出最终汇总`
+      : runningDelegationCount > 0 && primaryDelegationCard
+      ? `${mainRoleName || "主员工"} 正在处理，已委派 ${primaryDelegationCard.toRole}`
+      : latestCompletedDelegation
+      ? `${latestCompletedDelegation.toRole} 已完成，${mainRoleName || "主员工"} 正在汇总最终答复`
+      : `${mainRoleName || "主员工"} 正在处理`;
 
   function parseClawhubCandidatesFromOutput(output?: string): ClawhubInstallCandidate[] {
     if (!output) return [];
@@ -915,7 +1038,7 @@ export function ChatView({
       if (!text) return null;
       return (
         <div key={`txt-${i}`}>
-          <ReactMarkdown components={markdownComponents}>{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
         </div>
       );
     });
@@ -927,6 +1050,15 @@ export function ChatView({
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white/70 backdrop-blur-sm">
         <div className="flex items-center gap-3 min-w-0">
           <span className="font-semibold text-gray-900 flex-shrink-0">{skill.name}</span>
+          {isFeishuSource && (
+            <span
+              data-testid="chat-session-source-badge"
+              title="该会话由飞书消息同步触发"
+              className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+            >
+              {sessionSourceBadgeText}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
           {/* 右侧面板切换按钮 */}
@@ -976,6 +1108,20 @@ export function ChatView({
       <div className="flex-1 flex overflow-hidden">
         {/* 消息列表 */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        {employeeAssistantContext && (
+          <div
+            data-testid="chat-employee-assistant-context"
+            className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-800"
+          >
+            {employeeAssistantContext.mode === "update"
+              ? `正在修改：${employeeAssistantContext.employeeName || "目标员工"}${
+                  employeeAssistantContext.employeeCode
+                    ? `（${employeeAssistantContext.employeeCode}）`
+                    : ""
+                }`
+              : "正在创建：新智能体员工"}
+          </div>
+        )}
         {agentState && (
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-white/80 backdrop-blur-lg px-4 py-2 rounded-xl text-xs text-gray-600 border border-gray-200 shadow-sm mx-4 mt-2">
             <span className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full" />
@@ -983,6 +1129,70 @@ export function ChatView({
             {agentState.state === "tool_calling" && `执行工具: ${agentState.detail}`}
             {agentState.state === "error" && (
               <span className="text-red-400">错误: {agentState.detail}</span>
+            )}
+          </div>
+        )}
+        {(mainRoleName || primaryDelegationCard) && (
+          <div
+            data-testid="team-collab-status-bar"
+            className="sticky top-0 z-10 max-w-[80%] rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-xs text-sky-800"
+          >
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-sky-500 text-[10px] font-semibold text-white">
+                主
+              </span>
+              <span>{collaborationStatusText}</span>
+            </div>
+            {(completedDelegationCount > 0 || failedDelegationCount > 0) && (
+              <div className="mt-1 text-[11px] text-sky-700/90">
+                {completedDelegationCount > 0 && <span>已完成 {completedDelegationCount} 次协作</span>}
+                {completedDelegationCount > 0 && failedDelegationCount > 0 && <span> · </span>}
+                {failedDelegationCount > 0 && <span>待处理失败 {failedDelegationCount} 次</span>}
+              </div>
+            )}
+          </div>
+        )}
+        {primaryDelegationCard && (
+          <div className="space-y-2">
+            <div
+              data-testid={`delegation-card-${primaryDelegationCard.id}`}
+              className="max-w-[80%] rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800"
+            >
+              <div className="font-medium">{`${primaryDelegationCard.fromRole} 已将任务分配给 ${primaryDelegationCard.toRole}`}</div>
+              <div className="mt-1">
+                {primaryDelegationCard.status === "running" && "执行中"}
+                {primaryDelegationCard.status === "completed" && "已完成"}
+                {primaryDelegationCard.status === "failed" && "失败"}
+              </div>
+            </div>
+            {delegationHistoryCards.length > 0 && (
+              <>
+                <button
+                  data-testid="delegation-history-toggle"
+                  onClick={() => setShowDelegationHistory((prev) => !prev)}
+                  className="text-[11px] text-emerald-700 hover:text-emerald-800 underline underline-offset-2"
+                >
+                  历史协作（{delegationHistoryCards.length}）
+                </button>
+                {showDelegationHistory && (
+                  <div data-testid="delegation-history-panel" className="space-y-2">
+                    {delegationHistoryCards.map((card) => (
+                      <div
+                        key={card.id}
+                        data-testid={`delegation-card-${card.id}`}
+                        className="max-w-[80%] rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] text-gray-700"
+                      >
+                        <div>{`${card.fromRole} -> ${card.toRole}`}</div>
+                        <div className="mt-0.5 text-gray-500">
+                          {card.status === "running" && "执行中"}
+                          {card.status === "completed" && "已完成"}
+                          {card.status === "failed" && "失败"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1012,10 +1222,10 @@ export function ChatView({
                 ) : m.role === "assistant" && m.toolCalls ? (
                   <>
                     <ToolIsland toolCalls={m.toolCalls} isRunning={false} />
-                    <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
                   </>
                 ) : m.role === "assistant" ? (
-                  <ReactMarkdown components={markdownComponents}>{m.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
                 ) : (
                   m.content
                 )}
@@ -1024,23 +1234,45 @@ export function ChatView({
           );
         })}
         {/* 流式输出区域：按时间顺序渲染 */}
-        {streamItems.length > 0 && (
+        {(streamItems.length > 0 || subAgentBuffer.length > 0) && (
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             className="flex justify-start"
           >
             <div className="max-w-[80%] bg-white rounded-2xl px-5 py-3 text-sm text-gray-800 shadow-sm border border-gray-100">
-              {renderStreamItems(streamItems, true)}
-              {/* 光标闪烁效果 */}
-              <span className="inline-block w-0.5 h-4 bg-blue-400 ml-0.5 align-middle animate-[blink_1s_infinite]" />
+              {streamItems.length > 0 && renderStreamItems(streamItems, true)}
+              {subAgentBuffer && (
+                <div
+                  data-testid="sub-agent-stream-buffer"
+                  className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2"
+                >
+                  <div className="text-[11px] font-semibold text-emerald-700 mb-1">
+                    {subAgentRoleName ? `子员工 · ${subAgentRoleName}` : "子员工"}
+                  </div>
+                  <div className="prose prose-xs prose-emerald max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{subAgentBuffer}</ReactMarkdown>
+                    <span className="animate-pulse text-emerald-500">|</span>
+                  </div>
+                </div>
+              )}
+              {streamItems.length > 0 && (
+                <>
+                  {/* 光标闪烁效果 */}
+                  <span className="inline-block w-0.5 h-4 bg-blue-400 ml-0.5 align-middle animate-[blink_1s_infinite]" />
+                </>
+              )}
             </div>
           </motion.div>
         )}
         {/* AskUser 问答卡片 */}
         {askUserQuestion && (
-          <div className="flex justify-start">
-            <div className="max-w-[80%] bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm">
+          <div className="sticky top-0 z-20 flex justify-start">
+            <div
+              data-testid="ask-user-action-card"
+              className="max-w-[80%] bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3 text-sm shadow-sm"
+            >
+              <div className="font-semibold text-amber-800 mb-1">需要你的确认</div>
               <div className="font-medium text-amber-700 mb-2">{askUserQuestion}</div>
               {askUserOptions.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
@@ -1048,7 +1280,7 @@ export function ChatView({
                     <button
                       key={i}
                       onClick={() => handleAnswerUser(opt)}
-                      className="bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-1 rounded text-xs transition-colors"
+                      className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-3 py-1 rounded text-xs transition-colors border border-amber-300"
                     >
                       {opt}
                     </button>
@@ -1187,7 +1419,22 @@ export function ChatView({
                         {imRoleEvents.slice(-8).map((evt, idx) => (
                           <div key={`${evt.thread_id}-${evt.role_id}-${idx}`} className="text-xs bg-gray-50 rounded p-2">
                             <div className="flex items-center justify-between">
-                              <span className="font-mono text-gray-700">{evt.role_name}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white ${
+                                    evt.sender_role === "sub_agent" ? "bg-emerald-500" : "bg-blue-500"
+                                  }`}
+                                >
+                                  {evt.sender_role === "sub_agent" ? "子" : "主"}
+                                </span>
+                                <span className="font-mono text-gray-700">{evt.role_name}</span>
+                                {evt.sender_role === "main_agent" && (
+                                  <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">主员工</span>
+                                )}
+                                {evt.sender_role === "sub_agent" && (
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">子员工</span>
+                                )}
+                              </div>
                               <span
                                 className={`px-1.5 py-0.5 rounded ${
                                   evt.status === "completed"
@@ -1377,6 +1624,23 @@ export function ChatView({
           </div>
         )}
         <div className="sm-panel max-w-3xl mx-auto focus-within:border-[var(--sm-primary)] focus-within:shadow-[var(--sm-focus-ring)] transition-all">
+          {quickPrompts.length > 0 && (
+            <div data-testid="chat-quick-prompts" className="px-3 pt-3 pb-1 flex flex-wrap gap-2 border-b border-gray-100">
+              {quickPrompts.map((item, index) => (
+                <button
+                  key={`${item.label}-${index}`}
+                  data-testid={`chat-quick-prompt-${index}`}
+                  type="button"
+                  disabled={streaming}
+                  title={item.prompt}
+                  onClick={() => void sendContent(item.prompt)}
+                  className="h-7 px-2.5 rounded border border-blue-200 hover:bg-blue-50 disabled:bg-gray-100 disabled:text-gray-400 text-blue-700 text-[11px]"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
           {/* 隐藏的文件输入 */}
           <input
             type="file"
