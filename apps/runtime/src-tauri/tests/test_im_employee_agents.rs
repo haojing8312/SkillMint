@@ -1,9 +1,10 @@
 mod helpers;
 
 use runtime_lib::commands::employee_agents::{
+    create_employee_group_with_pool, delete_employee_group_with_pool,
     ensure_employee_sessions_for_event_with_pool, link_inbound_event_to_session_with_pool,
-    list_agent_employees_with_pool, resolve_target_employees_for_event,
-    upsert_agent_employee_with_pool, UpsertAgentEmployeeInput,
+    list_agent_employees_with_pool, list_employee_groups_with_pool, resolve_target_employees_for_event,
+    upsert_agent_employee_with_pool, CreateEmployeeGroupInput, UpsertAgentEmployeeInput,
 };
 use runtime_lib::im::types::{ImEvent, ImEventType};
 
@@ -413,4 +414,102 @@ async fn employee_persists_openclaw_agent_mapping() {
     let list = list_agent_employees_with_pool(&pool).await.expect("list");
     assert_eq!(list[0].id, id);
     assert_eq!(list[0].openclaw_agent_id, "main");
+}
+
+#[tokio::test]
+async fn create_list_delete_employee_group_with_constraints() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "project_manager".to_string(),
+            name: "项目经理".to_string(),
+            role_id: "project_manager".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "".to_string(),
+            openclaw_agent_id: "project_manager".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: true,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("seed coordinator");
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "交付战队".to_string(),
+            coordinator_employee_id: "project_manager".to_string(),
+            member_employee_ids: vec![
+                "project_manager".to_string(),
+                "dev_team".to_string(),
+                "qa_team".to_string(),
+            ],
+        },
+    )
+    .await
+    .expect("create group");
+
+    let groups = list_employee_groups_with_pool(&pool).await.expect("list groups");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].id, group_id);
+    assert_eq!(groups[0].coordinator_employee_id, "project_manager");
+    assert_eq!(groups[0].member_count, 3);
+
+    delete_employee_group_with_pool(&pool, &group_id)
+        .await
+        .expect("delete group");
+
+    let groups_after_delete = list_employee_groups_with_pool(&pool).await.expect("list groups");
+    assert!(groups_after_delete.is_empty());
+}
+
+#[tokio::test]
+async fn create_employee_group_rejects_more_than_ten_members_and_missing_coordinator() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    let too_many = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "超限群".to_string(),
+            coordinator_employee_id: "pm".to_string(),
+            member_employee_ids: vec![
+                "pm".to_string(),
+                "e1".to_string(),
+                "e2".to_string(),
+                "e3".to_string(),
+                "e4".to_string(),
+                "e5".to_string(),
+                "e6".to_string(),
+                "e7".to_string(),
+                "e8".to_string(),
+                "e9".to_string(),
+                "e10".to_string(),
+            ],
+        },
+    )
+    .await
+    .expect_err("should reject > 10 members");
+    assert!(too_many.contains("cannot exceed 10"));
+
+    let missing_coordinator = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "缺协调员".to_string(),
+            coordinator_employee_id: "pm".to_string(),
+            member_employee_ids: vec!["e1".to_string(), "e2".to_string()],
+        },
+    )
+    .await
+    .expect_err("coordinator must be in members");
+    assert!(missing_coordinator.contains("must be included in members"));
 }

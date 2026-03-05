@@ -53,6 +53,22 @@ fn default_routing_priority() -> i64 {
     100
 }
 
+fn normalize_member_employee_ids(raw: &[String]) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for item in raw {
+        let normalized = item.trim().to_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct EnsuredEmployeeSession {
     pub employee_id: String,
@@ -60,6 +76,24 @@ pub struct EnsuredEmployeeSession {
     pub employee_name: String,
     pub session_id: String,
     pub created: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct EmployeeGroup {
+    pub id: String,
+    pub name: String,
+    pub coordinator_employee_id: String,
+    pub member_employee_ids: Vec<String>,
+    pub member_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct CreateEmployeeGroupInput {
+    pub name: String,
+    pub coordinator_employee_id: String,
+    pub member_employee_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -570,6 +604,109 @@ pub async fn delete_agent_employee_with_pool(
     Ok(())
 }
 
+pub async fn create_employee_group_with_pool(
+    pool: &SqlitePool,
+    input: CreateEmployeeGroupInput,
+) -> Result<String, String> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("group name is required".to_string());
+    }
+
+    let coordinator = input.coordinator_employee_id.trim().to_lowercase();
+    if coordinator.is_empty() {
+        return Err("coordinator_employee_id is required".to_string());
+    }
+
+    let members = normalize_member_employee_ids(&input.member_employee_ids);
+    if members.is_empty() {
+        return Err("member_employee_ids is required".to_string());
+    }
+    if members.len() > 10 {
+        return Err("member_employee_ids cannot exceed 10".to_string());
+    }
+    if !members.iter().any(|m| m == &coordinator) {
+        return Err("coordinator_employee_id must be included in members".to_string());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let members_json = serde_json::to_string(&members).map_err(|e| e.to_string())?;
+
+    sqlx::query(
+        "INSERT INTO employee_groups (
+            id, name, coordinator_employee_id, member_employee_ids_json, member_count, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(name)
+    .bind(&coordinator)
+    .bind(members_json)
+    .bind(members.len() as i64)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(id)
+}
+
+pub async fn list_employee_groups_with_pool(
+    pool: &SqlitePool,
+) -> Result<Vec<EmployeeGroup>, String> {
+    let rows = sqlx::query(
+        "SELECT id, name, coordinator_employee_id, member_employee_ids_json, member_count, created_at, updated_at
+         FROM employee_groups
+         ORDER BY updated_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let members_json: String = row
+            .try_get("member_employee_ids_json")
+            .map_err(|e| e.to_string())?;
+        let members = serde_json::from_str::<Vec<String>>(&members_json).unwrap_or_default();
+        out.push(EmployeeGroup {
+            id: row.try_get("id").map_err(|e| e.to_string())?,
+            name: row.try_get("name").map_err(|e| e.to_string())?,
+            coordinator_employee_id: row
+                .try_get("coordinator_employee_id")
+                .map_err(|e| e.to_string())?,
+            member_employee_ids: members,
+            member_count: row.try_get("member_count").map_err(|e| e.to_string())?,
+            created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
+            updated_at: row.try_get("updated_at").map_err(|e| e.to_string())?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn delete_employee_group_with_pool(pool: &SqlitePool, group_id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM group_run_steps WHERE run_id IN (SELECT id FROM group_runs WHERE group_id = ?)")
+        .bind(group_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query("DELETE FROM group_runs WHERE group_id = ?")
+        .bind(group_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query("DELETE FROM employee_groups WHERE id = ?")
+        .bind(group_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 pub async fn resolve_target_employees_for_event(
     pool: &SqlitePool,
     event: &ImEvent,
@@ -912,6 +1049,24 @@ pub async fn clear_employee_memory(
         skill_id.as_deref(),
         &skills_root,
     )
+}
+
+#[tauri::command]
+pub async fn create_employee_group(
+    input: CreateEmployeeGroupInput,
+    db: State<'_, DbState>,
+) -> Result<String, String> {
+    create_employee_group_with_pool(&db.0, input).await
+}
+
+#[tauri::command]
+pub async fn list_employee_groups(db: State<'_, DbState>) -> Result<Vec<EmployeeGroup>, String> {
+    list_employee_groups_with_pool(&db.0).await
+}
+
+#[tauri::command]
+pub async fn delete_employee_group(group_id: String, db: State<'_, DbState>) -> Result<(), String> {
+    delete_employee_group_with_pool(&db.0, &group_id).await
 }
 
 #[tauri::command]
