@@ -185,19 +185,16 @@ describe("App employee assistant create+update regression", () => {
           },
         ]);
       }
-      if (command === "get_sessions") {
-        if (payload?.skillId === "builtin-employee-creator") {
-          return Promise.resolve([
-            {
-              id: `session-creator-${Math.max(createdSessionCount, 1)}`,
-              title: "智能体员工助手会话",
-              created_at: new Date().toISOString(),
-              model_id: "model-a",
-              permission_mode: "accept_edits",
-            },
-          ]);
-        }
-        return Promise.resolve([]);
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: `session-creator-${Math.max(createdSessionCount, 1)}`,
+            title: "智能体员工助手会话",
+            created_at: new Date().toISOString(),
+            model_id: "model-a",
+            permission_mode: "accept_edits",
+          },
+        ]);
       }
       if (command === "create_session") {
         createdSessionCount += 1;
