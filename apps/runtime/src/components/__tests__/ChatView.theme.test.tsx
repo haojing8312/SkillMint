@@ -95,6 +95,89 @@ describe("ChatView semantic theme", () => {
     expect(screen.getByRole("button", { name: "发送" })).toHaveClass("sm-btn-primary");
   });
 
+  test("does not expose a manual compact button in the composer", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-a"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: "压缩" })).not.toBeInTheDocument();
+  });
+
+  test("treats /compact as a normal user message", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "send_message") return Promise.resolve({ content: "ok" });
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-a"
+      />
+    );
+
+    const input = await screen.findByPlaceholderText("输入消息，Shift+Enter 换行...");
+    fireEvent.change(input, { target: { value: "/compact" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        sessionId: "session-a",
+        userMessage: "/compact",
+      });
+    });
+
+    expect(invokeMock.mock.calls.some((call) => call[0] === "compact_context")).toBe(false);
+  });
+
   test("can send quick prompt directly from preset buttons", async () => {
     render(
       <ChatView
