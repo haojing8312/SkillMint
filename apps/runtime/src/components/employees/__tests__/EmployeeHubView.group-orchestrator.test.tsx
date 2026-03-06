@@ -132,6 +132,7 @@ describe("EmployeeHubView group orchestrator panel", () => {
   });
 
   test("starts group run with instruction and shows report", async () => {
+    const openSessionMock = vi.fn();
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) => {
       if (command === "get_runtime_preferences") {
@@ -154,6 +155,8 @@ describe("EmployeeHubView group orchestrator panel", () => {
         return Promise.resolve({
           run_id: "run-1",
           group_id: "group-1",
+          session_id: "session-group-1",
+          session_skill_id: "builtin-general",
           state: "done",
           current_round: 1,
           final_report: "计划：共 3 步\n执行：已完成 3 步。\n汇报：已完成。",
@@ -181,6 +184,7 @@ describe("EmployeeHubView group orchestrator panel", () => {
         onDeleteEmployee={async () => {}}
         onSetAsMainAndEnter={() => {}}
         onStartTaskWithEmployee={() => {}}
+        onOpenGroupRunSession={openSessionMock}
       />
     );
 
@@ -204,6 +208,7 @@ describe("EmployeeHubView group orchestrator panel", () => {
         },
       });
       expect(screen.getByTestId("employee-group-run-report-group-1")).toHaveTextContent("计划：共 3 步");
+      expect(openSessionMock).toHaveBeenCalledWith("session-group-1", "builtin-general");
     });
   });
 });

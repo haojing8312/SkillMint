@@ -360,6 +360,18 @@ export interface EmployeeGroupRunStep {
 export interface EmployeeGroupRunResult {
   run_id: string;
   group_id: string;
+  session_id: string;
+  session_skill_id: string;
+  state: string;
+  current_round: number;
+  final_report: string;
+  steps: EmployeeGroupRunStep[];
+}
+
+export interface EmployeeGroupRunSnapshot {
+  run_id: string;
+  group_id: string;
+  session_id: string;
   state: string;
   current_round: number;
   final_report: string;

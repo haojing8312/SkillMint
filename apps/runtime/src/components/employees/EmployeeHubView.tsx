@@ -25,6 +25,7 @@ interface Props {
   onDeleteEmployee: (employeeId: string) => Promise<void>;
   onSetAsMainAndEnter: (employeeId: string) => void;
   onStartTaskWithEmployee: (employeeId: string) => Promise<void> | void;
+  onOpenGroupRunSession?: (sessionId: string, skillId: string) => Promise<void> | void;
   onOpenEmployeeCreatorSkill?: (options?: { mode?: "create" | "update"; employeeId?: string }) => Promise<void> | void;
   highlightEmployeeId?: string | null;
   highlightMessage?: string | null;
@@ -51,6 +52,7 @@ export function EmployeeHubView({
   onDeleteEmployee,
   onSetAsMainAndEnter,
   onStartTaskWithEmployee,
+  onOpenGroupRunSession,
   onOpenEmployeeCreatorSkill,
   highlightEmployeeId,
   highlightMessage,
@@ -465,6 +467,9 @@ export function EmployeeHubView({
         },
       });
       setGroupRunReportById((prev) => ({ ...prev, [groupId]: result.final_report || "" }));
+      if (result.session_id && result.session_skill_id) {
+        await onOpenGroupRunSession?.(result.session_id, result.session_skill_id);
+      }
       setMessage(`协作任务已完成（第 ${result.current_round || 1} 轮）`);
     } catch (e) {
       setMessage(`发起协作失败: ${String(e)}`);
