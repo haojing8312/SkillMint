@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SettingsView } from "../SettingsView";
 
 const invokeMock = vi.fn();
@@ -55,16 +56,21 @@ function createUpdaterState() {
   };
 }
 
-describe("SettingsView data retention", () => {
+describe("SettingsView desktop/system tab", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     useAppUpdaterMock.mockReset();
     useAppUpdaterMock.mockReturnValue(createUpdaterState());
     invokeMock.mockImplementation((command: string) => {
-      if (command === "list_model_configs") return Promise.resolve([]);
-      if (command === "list_mcp_servers") return Promise.resolve([]);
-      if (command === "list_search_configs") return Promise.resolve([]);
-      if (command === "list_provider_configs") return Promise.resolve([]);
+      if (command === "list_model_configs") {
+        return Promise.resolve([]);
+      }
+      if (command === "list_search_configs") {
+        return Promise.resolve([]);
+      }
+      if (command === "list_mcp_servers" || command === "list_provider_configs") {
+        return Promise.resolve([]);
+      }
       if (command === "get_runtime_preferences") {
         return Promise.resolve(createRuntimePreferences());
       }
@@ -76,43 +82,23 @@ describe("SettingsView data retention", () => {
           default_work_dir: "E:\\workspace",
         });
       }
-      if (command === "clear_desktop_cache_and_logs") {
-        return Promise.resolve({
-          removed_files: 12,
-          removed_dirs: 3,
-        });
-      }
-      if (command === "export_desktop_environment_summary") {
-        return Promise.resolve("# WorkClaw Environment Summary");
-      }
-      if (command === "open_desktop_path") {
-        return Promise.resolve(null);
-      }
       return Promise.resolve(null);
     });
   });
 
-  test("shows data paths, uninstall guidance and maintenance actions", async () => {
+  test("keeps desktop/system preferences outside the model tab", async () => {
     render(<SettingsView onClose={() => {}} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "桌面 / 系统" }));
+    await screen.findByTestId("settings-model-provider-preset");
+    expect(screen.queryByRole("button", { name: "保存语言与翻译设置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存更新设置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "清理缓存与日志" })).not.toBeInTheDocument();
 
-    expect(await screen.findByText("应用数据目录")).toBeInTheDocument();
-    expect(screen.getByText("C:\\Users\\me\\AppData\\Roaming\\WorkClaw")).toBeInTheDocument();
-    expect(screen.getByText("C:\\Users\\me\\AppData\\Local\\WorkClaw\\cache")).toBeInTheDocument();
-    expect(screen.getByText("E:\\workspace")).toBeInTheDocument();
-    expect(screen.getByText("卸载程序不会删除你的工作目录。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "桌面 / 系统" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "打开应用数据目录" }));
-    fireEvent.click(screen.getByRole("button", { name: "清理缓存与日志" }));
-    fireEvent.click(screen.getByRole("button", { name: "导出环境摘要" }));
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("open_desktop_path", {
-        path: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw",
-      });
-      expect(invokeMock).toHaveBeenCalledWith("clear_desktop_cache_and_logs");
-      expect(invokeMock).toHaveBeenCalledWith("export_desktop_environment_summary");
-    });
+    expect(await screen.findByRole("button", { name: "保存语言与翻译设置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存更新设置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "清理缓存与日志" })).toBeInTheDocument();
+    expect(screen.queryByTestId("settings-model-provider-preset")).not.toBeInTheDocument();
   });
 });
