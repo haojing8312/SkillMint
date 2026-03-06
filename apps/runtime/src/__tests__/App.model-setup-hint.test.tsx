@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "../App";
+import { MODEL_PROVIDER_CATALOG } from "../model-provider-catalog";
 
 const invokeMock = vi.fn();
 const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
@@ -30,6 +31,7 @@ vi.mock("../components/Sidebar", () => ({
   Sidebar: (props: any) => (
     <div>
       <button onClick={props.onOpenStartTask}>open-start-task</button>
+      <button onClick={props.onSettings}>open-settings</button>
     </div>
   ),
 }));
@@ -55,6 +57,12 @@ vi.mock("../components/SettingsView", () => ({
     <div data-testid="settings-view">
       settings-view
       <button onClick={props.onClose}>close-settings</button>
+      {props.showDevModelSetupTools ? (
+        <>
+          <button onClick={props.onDevResetFirstUseOnboarding}>reset-first-use-onboarding</button>
+          <button onClick={props.onDevOpenQuickModelSetup}>open-dev-quick-setup</button>
+        </>
+      ) : null}
     </div>
   ),
 }));
@@ -73,7 +81,7 @@ describe("App model setup hint", () => {
     window.localStorage.clear();
     mockModels = [];
 
-    invokeMock.mockImplementation((command: string) => {
+    invokeMock.mockImplementation((command: string, payload?: any) => {
       if (command === "list_skills") {
         return Promise.resolve([
           {
@@ -98,13 +106,14 @@ describe("App model setup hint", () => {
         return Promise.resolve([]);
       }
       if (command === "save_model_config") {
+        const savedConfig = payload?.config;
         mockModels = [
           {
             id: "model-quick",
-            name: "Quick Setup",
-            api_format: "openai",
-            base_url: "https://open.bigmodel.cn/api/paas/v4",
-            model_name: "glm-4-flash",
+            name: savedConfig?.name ?? "Quick Setup",
+            api_format: savedConfig?.api_format ?? "openai",
+            base_url: savedConfig?.base_url ?? "https://open.bigmodel.cn/api/paas/v4",
+            model_name: savedConfig?.model_name ?? "glm-4-flash",
             is_default: true,
           },
         ];
@@ -256,6 +265,143 @@ describe("App model setup hint", () => {
     );
   });
 
+  test("shows the full shared provider list in quick setup", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(MODEL_PROVIDER_CATALOG.length);
+
+    for (const provider of MODEL_PROVIDER_CATALOG) {
+      expect(screen.getByRole("option", { name: provider.label })).toBeInTheDocument();
+    }
+  });
+
+  test("shows official console links for official providers and guidance for custom ones", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("link", { name: "获取 API Key" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("quick-model-setup-preset"), {
+      target: { value: "custom-openai" },
+    });
+
+    expect(screen.queryByRole("link", { name: "获取 API Key" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("quick-model-setup-custom-guidance")).toHaveTextContent(
+      "请向你的中转或代理服务商申请 API Key。",
+    );
+  });
+
+  test("switches quick setup to custom anthropic and saves anthropic config", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("quick-model-setup-preset"), {
+      target: { value: "custom-anthropic" },
+    });
+    fireEvent.change(screen.getByTestId("quick-model-setup-base-url"), {
+      target: { value: "https://claude-proxy.example.com/v1" },
+    });
+    fireEvent.change(screen.getByTestId("quick-model-setup-model-name"), {
+      target: { value: "claude-3-5-sonnet-20241022" },
+    });
+    fireEvent.change(screen.getByTestId("quick-model-setup-api-key"), {
+      target: { value: "sk-ant-proxy-123" },
+    });
+    fireEvent.click(screen.getByTestId("quick-model-setup-save"));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_model_config",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            api_format: "anthropic",
+            base_url: "https://claude-proxy.example.com/v1",
+            model_name: "claude-3-5-sonnet-20241022",
+          }),
+          apiKey: "sk-ant-proxy-123",
+        }),
+      );
+    });
+  });
+
+  test("lets people reveal the API key in quick setup before saving", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    const apiKeyInput = screen.getByTestId("quick-model-setup-api-key");
+    expect(apiKeyInput).toHaveAttribute("type", "password");
+
+    fireEvent.click(screen.getByTestId("quick-model-setup-toggle-api-key-visibility"));
+    expect(apiKeyInput).toHaveAttribute("type", "text");
+
+    fireEvent.click(screen.getByTestId("quick-model-setup-toggle-api-key-visibility"));
+    expect(apiKeyInput).toHaveAttribute("type", "password");
+  });
+
+  test("allows dismissing quick setup with Escape after opening it from the hint", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("quick-model-setup-dialog")).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+  });
+
   test("enforces first-launch model setup gate until at least one model is configured", async () => {
     render(<App />);
 
@@ -296,6 +442,25 @@ describe("App model setup hint", () => {
     });
   });
 
+  test("keeps quick setup open on first launch when Escape is pressed", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-gate")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-gate-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("model-setup-gate")).toBeInTheDocument();
+  });
+
   test("shows non-blocking hint instead of gate after first model setup has been completed once", async () => {
     window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
     render(<App />);
@@ -304,5 +469,54 @@ describe("App model setup hint", () => {
       expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("model-setup-gate")).not.toBeInTheDocument();
+  });
+
+  test("can reset first-use onboarding from dev settings tools and bring the gate back", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    window.localStorage.setItem(MODEL_SETUP_HINT_DISMISSED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("model-setup-hint")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("model-setup-gate")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("open-settings"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("settings-view")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("reset-first-use-onboarding"));
+    expect(window.localStorage.getItem(INITIAL_MODEL_SETUP_COMPLETED_KEY)).toBeNull();
+    expect(window.localStorage.getItem(MODEL_SETUP_HINT_DISMISSED_KEY)).toBeNull();
+
+    fireEvent.click(screen.getByText("close-settings"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-gate")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("model-setup-hint")).not.toBeInTheDocument();
+  });
+
+  test("can open quick setup directly from dev settings tools", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-settings"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("settings-view")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("open-dev-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
   });
 });

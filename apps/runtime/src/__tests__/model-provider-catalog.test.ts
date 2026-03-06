@@ -1,0 +1,75 @@
+import { describe, expect, test } from "vitest";
+import {
+  DEFAULT_MODEL_PROVIDER_ID,
+  MODEL_PROVIDER_CATALOG,
+  buildModelFormFromCatalogItem,
+  resolveCatalogItemForConfig,
+} from "../model-provider-catalog";
+
+describe("model provider catalog", () => {
+  test("contains the full set of official and custom providers", () => {
+    expect(MODEL_PROVIDER_CATALOG.map((item) => item.id)).toEqual([
+      "zhipu",
+      "openai",
+      "anthropic",
+      "minimax-openai",
+      "minimax-anthropic",
+      "deepseek",
+      "qwen-intl",
+      "qwen-cn",
+      "moonshot",
+      "yi",
+      "custom-openai",
+      "custom-anthropic",
+    ]);
+  });
+
+  test("uses zhipu as the default provider for first-run setup", () => {
+    expect(DEFAULT_MODEL_PROVIDER_ID).toBe("zhipu");
+
+    const item = MODEL_PROVIDER_CATALOG.find((entry) => entry.id === DEFAULT_MODEL_PROVIDER_ID);
+    expect(item?.officialConsoleUrl).toBeTruthy();
+  });
+
+  test("builds model form defaults from a catalog item", () => {
+    const item = MODEL_PROVIDER_CATALOG.find((entry) => entry.id === "deepseek");
+    expect(item).toBeDefined();
+
+    expect(buildModelFormFromCatalogItem(item!)).toEqual({
+      name: "DeepSeek",
+      api_format: "openai",
+      base_url: "https://api.deepseek.com/v1",
+      model_name: "deepseek-chat",
+    });
+  });
+
+  test("resolves official providers from api format and base url", () => {
+    const item = resolveCatalogItemForConfig({
+      api_format: "anthropic",
+      base_url: "https://api.anthropic.com/v1",
+    });
+
+    expect(item.id).toBe("anthropic");
+    expect(item.models).toContain("claude-3-5-haiku-20241022");
+  });
+
+  test("falls back unknown openai configs to custom openai", () => {
+    const item = resolveCatalogItemForConfig({
+      api_format: "openai",
+      base_url: "https://proxy.example.com/v1",
+    });
+
+    expect(item.id).toBe("custom-openai");
+    expect(item.isCustom).toBe(true);
+  });
+
+  test("falls back unknown anthropic configs to custom anthropic", () => {
+    const item = resolveCatalogItemForConfig({
+      api_format: "anthropic",
+      base_url: "https://claude-proxy.example.com/v1",
+    });
+
+    expect(item.id).toBe("custom-anthropic");
+    expect(item.isCustom).toBe(true);
+  });
+});

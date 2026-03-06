@@ -49,5 +49,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ3NEE5MzM2NjMwODcwREUKUldUZWNBaGpOcE5LUjFRUUFWTU1sTmEzK0hVWE1aaEJ4Z0lKYmMxcTNabXZ4UXpuNHhUaXg4K3IK",
+      "endpoints": [
+        "https://github.com/haojing8312/WorkClaw/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

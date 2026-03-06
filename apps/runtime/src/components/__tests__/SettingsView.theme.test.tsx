@@ -25,6 +25,17 @@ describe("SettingsView semantic theme", () => {
     });
   });
 
+  test("keeps first-use dev tools hidden for regular users", async () => {
+    render(<SettingsView onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "模型连接" })).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("model-setup-dev-tools")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重置首次引导状态" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开首次配置弹层" })).not.toBeInTheDocument();
+  });
+
   test("uses semantic classes and keeps regular-user tabs minimal", async () => {
     render(<SettingsView onClose={() => {}} />);
 
@@ -47,5 +58,28 @@ describe("SettingsView semantic theme", () => {
     fireEvent.click(screen.getByRole("button", { name: "MCP 服务器" }));
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "brave-search" } });
     expect(screen.getByPlaceholderText("请输入 BRAVE_API_KEY")).toBeInTheDocument();
+  });
+
+  test("shows first-use dev tools only when explicitly enabled", async () => {
+    const onDevResetFirstUseOnboarding = vi.fn();
+    const onDevOpenQuickModelSetup = vi.fn();
+
+    render(
+      <SettingsView
+        onClose={() => {}}
+        showDevModelSetupTools
+        onDevResetFirstUseOnboarding={onDevResetFirstUseOnboarding}
+        onDevOpenQuickModelSetup={onDevOpenQuickModelSetup}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-dev-tools")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "重置首次引导状态" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开首次配置弹层" }));
+
+    expect(onDevResetFirstUseOnboarding).toHaveBeenCalledTimes(1);
+    expect(onDevOpenQuickModelSetup).toHaveBeenCalledTimes(1);
   });
 });

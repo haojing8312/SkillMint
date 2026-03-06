@@ -3,6 +3,20 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  BadgeCheck,
+  Bot,
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Settings2,
+  Sparkles,
+  Wand2,
+  X,
+} from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { InstallDialog } from "./components/InstallDialog";
@@ -11,6 +25,12 @@ import { PackagingView } from "./components/packaging/PackagingView";
 import { NewSessionLanding } from "./components/NewSessionLanding";
 import { ExpertsView } from "./components/experts/ExpertsView";
 import { EmployeeHubView } from "./components/employees/EmployeeHubView";
+import {
+  DEFAULT_MODEL_PROVIDER_ID,
+  MODEL_PROVIDER_CATALOG,
+  buildModelFormFromCatalogItem,
+  getModelProviderCatalogItem,
+} from "./model-provider-catalog";
 import {
   ExpertCreatePayload,
   ExpertCreateView,
@@ -66,47 +86,24 @@ const EMPLOYEE_ASSISTANT_QUICK_PROMPTS: Array<{ label: string; prompt: string }>
   },
 ];
 
-const QUICK_MODEL_PRESETS: Array<{
-  key: string;
-  label: string;
-  name: string;
-  api_format: string;
-  base_url: string;
-  model_name: string;
-}> = [
+const DEFAULT_QUICK_MODEL_PROVIDER = getModelProviderCatalogItem(DEFAULT_MODEL_PROVIDER_ID);
+
+const MODEL_SETUP_STEPS: Array<{ title: string; description: string }> = [
   {
-    key: "zhipu",
-    label: "智谱 GLM",
-    name: "智谱 GLM",
-    api_format: "openai",
-    base_url: "https://open.bigmodel.cn/api/paas/v4",
-    model_name: "glm-4-flash",
+    title: "选择一个服务商模板",
+    description: "优先选你已经有 API Key 的平台，系统会自动带出推荐参数。",
   },
   {
-    key: "openai",
-    label: "OpenAI",
-    name: "OpenAI",
-    api_format: "openai",
-    base_url: "https://api.openai.com/v1",
-    model_name: "gpt-4o-mini",
+    title: "填入 API Key",
+    description: "首次接入只需要这一步，其他字段后续都能在设置里细调。",
   },
   {
-    key: "anthropic",
-    label: "Claude (Anthropic)",
-    name: "Claude",
-    api_format: "anthropic",
-    base_url: "https://api.anthropic.com/v1",
-    model_name: "claude-3-5-haiku-20241022",
-  },
-  {
-    key: "deepseek",
-    label: "DeepSeek",
-    name: "DeepSeek",
-    api_format: "openai",
-    base_url: "https://api.deepseek.com/v1",
-    model_name: "deepseek-chat",
+    title: "测试连接并开始",
+    description: "验证通过后就能立即创建会话、执行技能和驱动员工协作。",
   },
 ];
+
+const MODEL_SETUP_OUTCOMES = ["创建会话", "执行技能", "驱动智能体员工协作"];
 
 type ImBridgeSessionContext = {
   threadId: string;
@@ -162,6 +159,8 @@ function getDefaultSkillId(skillList: SkillManifest[]): string | null {
   return skillList[0]?.id ?? null;
 }
 
+const SHOW_DEV_MODEL_SETUP_TOOLS = import.meta.env.DEV || import.meta.env.MODE === "test";
+
 function buildEmployeeAssistantUpdatePrompt(employee: AgentEmployee): string {
   const employeeCode = (employee.employee_id || employee.role_id || employee.id || "").trim();
   return `调整员工任务：请帮我修改智能体员工「${employee.name}」（employee_id: ${employeeCode}）。先确认修改目标，再给出 update_employee 配置草案（包含变更字段与理由），待我确认后再执行。`;
@@ -215,18 +214,16 @@ export default function App() {
     }
   });
   const [showQuickModelSetup, setShowQuickModelSetup] = useState(false);
-  const [quickModelPresetKey, setQuickModelPresetKey] = useState(QUICK_MODEL_PRESETS[0].key);
+  const [quickModelPresetKey, setQuickModelPresetKey] = useState(DEFAULT_QUICK_MODEL_PROVIDER.id);
   const [quickModelForm, setQuickModelForm] = useState(() => ({
-    name: QUICK_MODEL_PRESETS[0].name,
-    api_format: QUICK_MODEL_PRESETS[0].api_format,
-    base_url: QUICK_MODEL_PRESETS[0].base_url,
-    model_name: QUICK_MODEL_PRESETS[0].model_name,
+    ...buildModelFormFromCatalogItem(DEFAULT_QUICK_MODEL_PROVIDER),
     api_key: "",
   }));
   const [quickModelSaving, setQuickModelSaving] = useState(false);
   const [quickModelTesting, setQuickModelTesting] = useState(false);
   const [quickModelTestResult, setQuickModelTestResult] = useState<boolean | null>(null);
   const [quickModelError, setQuickModelError] = useState("");
+  const [quickModelApiKeyVisible, setQuickModelApiKeyVisible] = useState(false);
   const [pendingInitialMessage, setPendingInitialMessage] = useState<{
     sessionId: string;
     message: string;
@@ -236,6 +233,10 @@ export default function App() {
   >({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const employeesRef = useRef<AgentEmployee[]>([]);
+  const quickModelApiKeyInputRef = useRef<HTMLInputElement | null>(null);
+  const isBlockingInitialModelSetup = models.length === 0 && !showSettings && !hasCompletedInitialModelSetup;
+  const canDismissQuickModelSetup = !quickModelSaving && !quickModelTesting && !isBlockingInitialModelSetup;
+  const selectedQuickModelProvider = getModelProviderCatalogItem(quickModelPresetKey);
 
   function navigate(view: MainView) {
     setActiveMainView(view);
@@ -277,6 +278,42 @@ export default function App() {
   useEffect(() => {
     employeesRef.current = employees;
   }, [employees]);
+
+  useEffect(() => {
+    if (!showQuickModelSetup || typeof window === "undefined") {
+      return;
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      quickModelApiKeyInputRef.current?.focus();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+    };
+  }, [showQuickModelSetup]);
+
+  useEffect(() => {
+    if (!showQuickModelSetup || typeof window === "undefined") {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !canDismissQuickModelSetup) {
+        return;
+      }
+      event.preventDefault();
+      setShowQuickModelSetup(false);
+      setQuickModelError("");
+      setQuickModelTestResult(null);
+      setQuickModelApiKeyVisible(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showQuickModelSetup, canDismissQuickModelSetup]);
 
   useEffect(() => {
     if (
@@ -1058,10 +1095,34 @@ export default function App() {
     }
   }
 
+  function resetFirstUseOnboardingForDevelopment() {
+    setHasCompletedInitialModelSetup(false);
+    setDismissedModelSetupHint(false);
+    setShowQuickModelSetup(false);
+    setQuickModelPresetKey(DEFAULT_QUICK_MODEL_PROVIDER.id);
+    setQuickModelForm({
+      ...buildModelFormFromCatalogItem(DEFAULT_QUICK_MODEL_PROVIDER),
+      api_key: "",
+    });
+    setQuickModelError("");
+    setQuickModelTestResult(null);
+    setQuickModelApiKeyVisible(false);
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
+      window.localStorage.removeItem(MODEL_SETUP_HINT_DISMISSED_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
   function openSettingsForModelSetup() {
     setShowQuickModelSetup(false);
     setQuickModelError("");
     setQuickModelTestResult(null);
+    setQuickModelApiKeyVisible(false);
     setShowSettings(true);
   }
 
@@ -1069,31 +1130,26 @@ export default function App() {
     setShowQuickModelSetup(true);
     setQuickModelError("");
     setQuickModelTestResult(null);
+    setQuickModelApiKeyVisible(false);
   }
 
   function closeQuickModelSetup() {
-    if (
-      quickModelSaving ||
-      quickModelTesting ||
-      (models.length === 0 && !showSettings && !hasCompletedInitialModelSetup)
-    ) {
+    if (!canDismissQuickModelSetup) {
       return;
     }
     setShowQuickModelSetup(false);
     setQuickModelError("");
     setQuickModelTestResult(null);
+    setQuickModelApiKeyVisible(false);
   }
 
   function applyQuickModelPreset(presetKey: string) {
-    const preset = QUICK_MODEL_PRESETS.find((item) => item.key === presetKey);
-    if (!preset) return;
-    setQuickModelPresetKey(preset.key);
+    const provider = getModelProviderCatalogItem(presetKey);
+    setQuickModelPresetKey(provider.id);
     setQuickModelForm((prev) => ({
       ...prev,
-      name: preset.name,
-      api_format: preset.api_format,
-      base_url: preset.base_url,
-      model_name: preset.model_name,
+      ...buildModelFormFromCatalogItem(provider),
+      api_key: prev.api_key,
     }));
     setQuickModelTestResult(null);
     setQuickModelError("");
@@ -1104,20 +1160,34 @@ export default function App() {
       id: "",
       name: quickModelForm.name.trim() || "快速配置模型",
       api_format: quickModelForm.api_format,
-      base_url: quickModelForm.base_url,
-      model_name: quickModelForm.model_name,
+      base_url: quickModelForm.base_url.trim(),
+      model_name: quickModelForm.model_name.trim(),
       is_default: isDefault,
     };
   }
 
+  function validateQuickModelSetup() {
+    if (!quickModelForm.base_url.trim()) {
+      return "请输入 Base URL";
+    }
+    if (!quickModelForm.model_name.trim()) {
+      return "请输入模型名";
+    }
+    if (!quickModelForm.api_key.trim()) {
+      return "请输入 API Key";
+    }
+    return null;
+  }
+
   async function testQuickModelSetupConnection() {
     if (quickModelSaving || quickModelTesting) return;
-    const apiKey = quickModelForm.api_key.trim();
-    if (!apiKey) {
-      setQuickModelError("请输入 API Key");
+    const validationError = validateQuickModelSetup();
+    if (validationError) {
+      setQuickModelError(validationError);
       setQuickModelTestResult(null);
       return;
     }
+    const apiKey = quickModelForm.api_key.trim();
     setQuickModelTesting(true);
     setQuickModelError("");
     setQuickModelTestResult(null);
@@ -1140,11 +1210,13 @@ export default function App() {
 
   async function saveQuickModelSetup() {
     if (quickModelSaving || quickModelTesting) return;
-    const apiKey = quickModelForm.api_key.trim();
-    if (!apiKey) {
-      setQuickModelError("请输入 API Key");
+    const validationError = validateQuickModelSetup();
+    if (validationError) {
+      setQuickModelError(validationError);
+      setQuickModelTestResult(null);
       return;
     }
+    const apiKey = quickModelForm.api_key.trim();
     setQuickModelSaving(true);
     setQuickModelError("");
     try {
@@ -1156,6 +1228,7 @@ export default function App() {
       setShowQuickModelSetup(false);
       setQuickModelForm((prev) => ({ ...prev, api_key: "" }));
       setQuickModelTestResult(null);
+      setQuickModelApiKeyVisible(false);
     } catch (e) {
       setQuickModelError(String(e));
     } finally {
@@ -1337,8 +1410,7 @@ export default function App() {
     };
   })();
   const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
-  const shouldShowModelSetupGate =
-    !showSettings && models.length === 0 && !hasCompletedInitialModelSetup;
+  const shouldShowModelSetupGate = isBlockingInitialModelSetup;
   const shouldShowModelSetupHint =
     !showSettings &&
     models.length === 0 &&
@@ -1379,36 +1451,65 @@ export default function App() {
           <div className="px-4 pt-4">
             <div
               data-testid="model-setup-hint"
-              className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+              className="relative overflow-hidden rounded-[28px] border border-[var(--sm-primary-soft)] bg-white px-5 py-5 shadow-[0_18px_60px_rgba(37,99,235,0.12)]"
             >
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-blue-900">先连接一个大模型，智能体才能开始工作</div>
-                <div className="text-xs text-blue-700 mt-1">
-                  只需 1 分钟完成配置。配置后就能创建会话、执行技能和驱动智能体员工协作。
+              <div className="absolute inset-y-0 right-0 hidden w-72 bg-[radial-gradient(circle_at_center,_rgba(37,99,235,0.16),_transparent_72%)] md:block" />
+              <div className="relative flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-[var(--sm-primary-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--sm-primary-strong)]">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    首次引导
+                  </div>
+                  <div className="mt-3 text-lg font-semibold text-[var(--sm-text)]">先连接一个大模型，智能体才能开始工作</div>
+                  <div className="mt-2 max-w-2xl text-sm leading-6 text-[var(--sm-text-muted)]">
+                    只需 1 分钟完成配置。配置后就能创建会话、执行技能和驱动智能体员工协作。
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {MODEL_SETUP_OUTCOMES.map((item) => (
+                      <span
+                        key={item}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-3 py-1.5 text-xs text-[var(--sm-text-muted)]"
+                      >
+                        <BadgeCheck className="h-3.5 w-3.5 text-[var(--sm-primary)]" />
+                        {item}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  data-testid="model-setup-hint-open-quick-setup"
-                  onClick={openQuickModelSetup}
-                  className="h-8 px-3 rounded bg-blue-500 hover:bg-blue-600 text-white text-xs"
-                >
-                  快速配置（1分钟）
-                </button>
-                <button
-                  data-testid="model-setup-hint-open-settings"
-                  onClick={openSettingsForModelSetup}
-                  className="h-8 px-3 rounded border border-blue-200 hover:bg-blue-100 text-blue-700 text-xs"
-                >
-                  打开设置
-                </button>
-                <button
-                  data-testid="model-setup-hint-dismiss"
-                  onClick={dismissModelSetupHint}
-                  className="h-8 px-3 rounded border border-blue-200 hover:bg-blue-100 text-blue-700 text-xs"
-                >
-                  稍后再说
-                </button>
+                <div className="flex flex-col gap-3 xl:min-w-[320px]">
+                  <div className="rounded-2xl border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm font-medium text-[var(--sm-text)]">
+                      <Bot className="h-4 w-4 text-[var(--sm-primary)]" />
+                      推荐先用快速配置
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-[var(--sm-text-muted)]">
+                      默认模板会自动带出常用参数，先跑通连接，再到设置里做高级调整。
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    <button
+                      data-testid="model-setup-hint-open-quick-setup"
+                      onClick={openQuickModelSetup}
+                      className="sm-btn sm-btn-primary min-h-11 flex-1 rounded-xl px-4 text-sm"
+                    >
+                      快速配置（1分钟）
+                    </button>
+                    <button
+                      data-testid="model-setup-hint-open-settings"
+                      onClick={openSettingsForModelSetup}
+                      className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm"
+                    >
+                      打开设置
+                    </button>
+                    <button
+                      data-testid="model-setup-hint-dismiss"
+                      onClick={dismissModelSetupHint}
+                      className="sm-btn sm-btn-ghost min-h-11 rounded-xl px-4 text-sm"
+                    >
+                      稍后再说
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1416,122 +1517,327 @@ export default function App() {
         {showQuickModelSetup && (
           <div
             data-testid="quick-model-setup-dialog"
-            className="fixed inset-0 z-40 bg-black/20 flex items-center justify-center p-4"
+            className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/30 px-4 py-6 backdrop-blur-sm"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                closeQuickModelSetup();
+              }
+            }}
           >
-            <div className="w-full max-w-lg rounded-xl bg-white border border-gray-200 shadow-lg p-4 space-y-3">
-              <div>
-                <div className="text-sm font-semibold text-gray-900">快速配置模型</div>
-                <div className="text-xs text-gray-500 mt-1">填好 API Key 即可完成首次配置，后续可在设置里细调。</div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-gray-600 mb-1">服务商</div>
-                  <select
-                    data-testid="quick-model-setup-preset"
-                    value={quickModelPresetKey}
-                    onChange={(e) => applyQuickModelPreset(e.target.value)}
-                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm bg-white"
-                  >
-                    {QUICK_MODEL_PRESETS.map((preset) => (
-                      <option key={preset.key} value={preset.key}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="quick-model-setup-title"
+              className="w-full max-w-[1120px] overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_36px_120px_rgba(15,23,42,0.24)]"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="grid lg:grid-cols-[0.9fr_1.1fr]">
+                <div className="relative overflow-hidden bg-[linear-gradient(180deg,#eff6ff_0%,#f8fafc_100%)] p-6 sm:p-7 lg:p-6">
+                  <div className="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.18),_transparent_72%)]" />
+                  <div className="relative">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-[var(--sm-primary-strong)] shadow-[var(--sm-shadow-sm)]">
+                      <Wand2 className="h-3.5 w-3.5" />
+                      一次配置，后续复用
+                    </div>
+                    <div className="mt-4 text-2xl font-semibold tracking-tight text-[var(--sm-text)]">1 分钟完成模型接入</div>
+                    <div className="mt-3 text-sm leading-6 text-[var(--sm-text-muted)]">
+                      先选服务商模板，再填入 API Key。默认参数已经按常见场景预填好，连接通过后即可直接开始任务。
+                    </div>
+                    <div className="mt-5 space-y-3">
+                      {MODEL_SETUP_STEPS.map((step, index) => (
+                        <div
+                          key={step.title}
+                          className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/70 px-4 py-3 backdrop-blur-sm"
+                        >
+                          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-[var(--sm-primary)] text-sm font-semibold text-white">
+                            {index + 1}
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium text-[var(--sm-text)]">{step.title}</div>
+                            <div className="mt-1 text-xs leading-5 text-[var(--sm-text-muted)]">{step.description}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      {MODEL_SETUP_OUTCOMES.map((item) => (
+                        <span
+                          key={item}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-white/80 bg-white/85 px-3 py-1.5 text-xs text-[var(--sm-text-muted)] shadow-[var(--sm-shadow-sm)]"
+                        >
+                          <BadgeCheck className="h-3.5 w-3.5 text-[var(--sm-primary)]" />
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-xs text-gray-600 mb-1">连接名称</div>
-                  <input
-                    value={quickModelForm.name}
-                    onChange={(e) => {
-                      setQuickModelForm((s) => ({ ...s, name: e.target.value }));
-                      setQuickModelTestResult(null);
-                    }}
-                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-gray-600 mb-1">Base URL</div>
-                  <input
-                    value={quickModelForm.base_url}
-                    onChange={(e) => {
-                      setQuickModelForm((s) => ({ ...s, base_url: e.target.value }));
-                      setQuickModelTestResult(null);
-                    }}
-                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
-                  />
-                </div>
-                <div>
-                  <div className="text-xs text-gray-600 mb-1">模型名</div>
-                  <input
-                    value={quickModelForm.model_name}
-                    onChange={(e) => {
-                      setQuickModelForm((s) => ({ ...s, model_name: e.target.value }));
-                      setQuickModelTestResult(null);
-                    }}
-                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
-                  />
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-600 mb-1">API Key</div>
-                <input
-                  data-testid="quick-model-setup-api-key"
-                  type="password"
-                  value={quickModelForm.api_key}
-                  onChange={(e) => {
-                    setQuickModelForm((s) => ({ ...s, api_key: e.target.value }));
-                    setQuickModelTestResult(null);
-                  }}
-                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm"
-                  placeholder="请输入 API Key"
-                />
-              </div>
-              {quickModelTestResult !== null && (
-                <div
-                  data-testid="quick-model-setup-test-result"
-                  className={`text-xs rounded px-2 py-1 border ${
-                    quickModelTestResult
-                      ? "text-green-700 bg-green-50 border-green-100"
-                      : "text-orange-700 bg-orange-50 border-orange-100"
-                  }`}
-                >
-                  {quickModelTestResult ? "连接成功，可直接保存并开始" : "连接失败，请检查后重试"}
-                </div>
-              )}
-              {quickModelError && (
-                <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1">
-                  {quickModelError}
-                </div>
-              )}
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  data-testid="quick-model-setup-test-connection"
-                  onClick={testQuickModelSetupConnection}
-                  disabled={quickModelSaving || quickModelTesting}
-                  className="h-8 px-3 rounded border border-blue-200 hover:bg-blue-50 disabled:bg-gray-100 text-blue-700 text-xs"
-                >
-                  {quickModelTesting ? "测试中..." : "测试连接"}
-                </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    data-testid="quick-model-setup-cancel"
-                    onClick={closeQuickModelSetup}
-                    disabled={quickModelSaving || quickModelTesting}
-                    className="h-8 px-3 rounded border border-gray-200 hover:bg-gray-50 disabled:bg-gray-100 text-gray-600 text-xs"
-                  >
-                    取消
-                  </button>
-                  <button
-                    data-testid="quick-model-setup-save"
-                    onClick={saveQuickModelSetup}
-                    disabled={quickModelSaving || quickModelTesting}
-                    className="h-8 px-3 rounded bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white text-xs"
-                  >
-                    {quickModelSaving ? "保存中..." : "保存并开始"}
-                  </button>
+                <div className="p-6 sm:p-7 lg:p-8">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div id="quick-model-setup-title" className="text-xl font-semibold text-[var(--sm-text)]">
+                        快速配置模型
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-[var(--sm-text-muted)]">
+                        填好 API Key 即可完成首次配置，后续可在设置里细调。
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="quick-model-setup-close"
+                      onClick={closeQuickModelSetup}
+                      disabled={!canDismissQuickModelSetup}
+                      aria-label="关闭快速配置"
+                      className="sm-btn sm-btn-ghost h-10 w-10 rounded-xl disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="sm-field-label mb-0">推荐模板</div>
+                      <div className="text-[11px] text-[var(--sm-text-muted)]">先选模板，再补 API Key</div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {MODEL_PROVIDER_CATALOG.map((provider) => {
+                        const isActive = quickModelPresetKey === provider.id;
+                        return (
+                          <button
+                            key={provider.id}
+                            type="button"
+                            onClick={() => applyQuickModelPreset(provider.id)}
+                            className={`text-left rounded-2xl border px-3 py-3 transition-colors ${
+                              isActive
+                                ? "border-[var(--sm-primary)] bg-[var(--sm-primary-soft)] shadow-[var(--sm-shadow-sm)]"
+                                : "border-[var(--sm-border)] bg-white hover:border-[var(--sm-primary)] hover:bg-[var(--sm-surface-soft)]"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-[11px] font-semibold text-[var(--sm-primary-strong)]">{provider.badge}</div>
+                                <div className="mt-1 text-sm font-medium text-[var(--sm-text)]">{provider.label}</div>
+                              </div>
+                              {provider.id === DEFAULT_MODEL_PROVIDER_ID ? (
+                                <span className="sm-badge-info">推荐</span>
+                              ) : null}
+                            </div>
+                            <div className="mt-2 text-xs leading-5 text-[var(--sm-text-muted)]">{provider.helper}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="sm-field-label">服务商</label>
+                      <select
+                        data-testid="quick-model-setup-preset"
+                        value={quickModelPresetKey}
+                        onChange={(e) => applyQuickModelPreset(e.target.value)}
+                        className="sm-select h-11 bg-white px-3 text-sm"
+                      >
+                        {MODEL_PROVIDER_CATALOG.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="sm-field-label">连接名称</label>
+                      <input
+                        value={quickModelForm.name}
+                        onChange={(e) => {
+                          setQuickModelForm((s) => ({ ...s, name: e.target.value }));
+                          setQuickModelTestResult(null);
+                        }}
+                        className="sm-input h-11 px-3 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="sm-field-label">Base URL</label>
+                      <input
+                        data-testid="quick-model-setup-base-url"
+                        value={quickModelForm.base_url}
+                        onChange={(e) => {
+                          setQuickModelForm((s) => ({ ...s, base_url: e.target.value }));
+                          setQuickModelTestResult(null);
+                        }}
+                        className="sm-input h-11 px-3 text-sm"
+                        placeholder={selectedQuickModelProvider.baseUrlPlaceholder}
+                      />
+                    </div>
+                    <div>
+                      <label className="sm-field-label">模型名</label>
+                      <input
+                        data-testid="quick-model-setup-model-name"
+                        value={quickModelForm.model_name}
+                        onChange={(e) => {
+                          setQuickModelForm((s) => ({ ...s, model_name: e.target.value }));
+                          setQuickModelTestResult(null);
+                        }}
+                        className="sm-input h-11 px-3 text-sm"
+                        placeholder={selectedQuickModelProvider.modelNamePlaceholder}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-4 py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-sm font-medium text-[var(--sm-text)]">
+                            {selectedQuickModelProvider.label}
+                          </div>
+                          <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-[var(--sm-primary-strong)]">
+                            {selectedQuickModelProvider.protocolLabel}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-xs leading-5 text-[var(--sm-text-muted)]">
+                          {selectedQuickModelProvider.helper}
+                        </div>
+                      </div>
+                      {selectedQuickModelProvider.officialConsoleUrl ? (
+                        <div className="flex flex-wrap gap-2">
+                          <a
+                            href={selectedQuickModelProvider.officialConsoleUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="sm-btn sm-btn-secondary min-h-10 rounded-xl px-4 text-sm"
+                          >
+                            {selectedQuickModelProvider.officialConsoleLabel ?? "获取 API Key"}
+                          </a>
+                          {selectedQuickModelProvider.officialDocsUrl ? (
+                            <a
+                              href={selectedQuickModelProvider.officialDocsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="sm-btn sm-btn-ghost min-h-10 rounded-xl px-4 text-sm"
+                            >
+                              {selectedQuickModelProvider.officialDocsLabel ?? "查看文档"}
+                            </a>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    {selectedQuickModelProvider.isCustom ? (
+                      <div
+                        data-testid="quick-model-setup-custom-guidance"
+                        className="mt-3 rounded-2xl border border-dashed border-[var(--sm-border)] bg-white px-3 py-3"
+                      >
+                        <div className="text-xs font-semibold text-[var(--sm-text)]">
+                          {selectedQuickModelProvider.customGuidanceTitle}
+                        </div>
+                        <div className="mt-2 space-y-1.5 text-[12px] leading-5 text-[var(--sm-text-muted)]">
+                          {selectedQuickModelProvider.customGuidanceLines?.map((line) => (
+                            <div key={line}>{line}</div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-3">
+                    <label className="sm-field-label">API Key</label>
+                    <div className="relative">
+                      <input
+                        ref={quickModelApiKeyInputRef}
+                        data-testid="quick-model-setup-api-key"
+                        type={quickModelApiKeyVisible ? "text" : "password"}
+                        value={quickModelForm.api_key}
+                        onChange={(e) => {
+                          setQuickModelForm((s) => ({ ...s, api_key: e.target.value }));
+                          setQuickModelTestResult(null);
+                        }}
+                        className="sm-input h-11 px-3 pr-12 text-sm"
+                        placeholder="请输入 API Key"
+                      />
+                      <button
+                        type="button"
+                        data-testid="quick-model-setup-toggle-api-key-visibility"
+                        onClick={() => setQuickModelApiKeyVisible((prev) => !prev)}
+                        aria-label={quickModelApiKeyVisible ? "隐藏 API Key" : "显示 API Key"}
+                        className="sm-btn sm-btn-ghost absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 rounded-lg"
+                      >
+                        {quickModelApiKeyVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <div className="mt-2 flex items-start gap-2 rounded-2xl border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-3 py-3 text-[12px] leading-5 text-[var(--sm-text-muted)]">
+                      <KeyRound className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--sm-primary)]" />
+                      API Key 仅用于当前模型连接。若你更熟悉高级配置，也可以直接进入设置页调整更多参数。
+                    </div>
+                  </div>
+
+                  {quickModelTestResult !== null && (
+                    <div
+                      data-testid="quick-model-setup-test-result"
+                      className={`mt-4 flex items-start gap-2 rounded-2xl border px-3 py-3 text-xs ${
+                        quickModelTestResult
+                          ? "border-green-200 bg-green-50 text-green-700"
+                          : "border-orange-200 bg-orange-50 text-orange-700"
+                      }`}
+                    >
+                      {quickModelTestResult ? (
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      ) : (
+                        <CircleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      )}
+                      <span>{quickModelTestResult ? "连接成功，可直接保存并开始" : "连接失败，请检查后重试"}</span>
+                    </div>
+                  )}
+                  {quickModelError && (
+                    <div className="mt-4 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-3 text-xs text-red-700">
+                      <CircleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      <span>{quickModelError}</span>
+                    </div>
+                  )}
+
+                  <div className="mt-6 border-t border-[var(--sm-border)] pt-4">
+                    <div className="text-xs leading-5 text-[var(--sm-text-muted)]">
+                      {isBlockingInitialModelSetup
+                        ? "首次使用至少完成一次模型接入后，才能关闭这个向导。"
+                        : "按 Esc 或点击遮罩可以关闭此弹窗。"}
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        data-testid="quick-model-setup-cancel"
+                        onClick={closeQuickModelSetup}
+                        disabled={!canDismissQuickModelSetup}
+                        className="sm-btn sm-btn-ghost min-h-11 rounded-xl px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isBlockingInitialModelSetup ? "完成后可关闭" : "取消"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openSettingsForModelSetup}
+                        disabled={quickModelSaving || quickModelTesting}
+                        className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
+                      >
+                        <Settings2 className="h-4 w-4" />
+                        打开设置
+                      </button>
+                      <button
+                        data-testid="quick-model-setup-test-connection"
+                        onClick={testQuickModelSetupConnection}
+                        disabled={quickModelSaving || quickModelTesting}
+                        className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
+                      >
+                        {quickModelTesting ? "测试中..." : "测试连接"}
+                      </button>
+                      <button
+                        data-testid="quick-model-setup-save"
+                        onClick={saveQuickModelSetup}
+                        disabled={quickModelSaving || quickModelTesting}
+                        className="sm-btn sm-btn-primary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                        {quickModelSaving ? "保存中..." : "保存并开始"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1540,28 +1846,84 @@ export default function App() {
         {shouldShowModelSetupGate && (
           <div
             data-testid="model-setup-gate"
-            className="fixed inset-0 z-30 bg-white/70 backdrop-blur-[1px] flex items-center justify-center p-4"
+            className="fixed inset-0 z-30 flex items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.16),_rgba(241,245,249,0.92)_46%,_rgba(241,245,249,0.98)_100%)] px-4 py-6 backdrop-blur-sm"
           >
-            <div className="w-full max-w-lg rounded-xl border border-blue-100 bg-white shadow-sm p-5 space-y-3">
-              <div className="text-base font-semibold text-blue-900">首次使用需要先连接一个大模型</div>
-              <div className="text-sm text-blue-700">
-                完成模型配置后，才能开始任务、创建会话并驱动智能体员工执行技能。现在只需 1 分钟。
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  data-testid="model-setup-gate-open-quick-setup"
-                  onClick={openQuickModelSetup}
-                  className="h-9 px-4 rounded bg-blue-500 hover:bg-blue-600 text-white text-sm"
-                >
-                  快速配置（1分钟）
-                </button>
-                <button
-                  data-testid="model-setup-gate-open-settings"
-                  onClick={openSettingsForModelSetup}
-                  className="h-9 px-4 rounded border border-blue-200 hover:bg-blue-50 text-blue-700 text-sm"
-                >
-                  打开设置
-                </button>
+            <div className="w-full max-w-4xl overflow-hidden rounded-[32px] border border-white/80 bg-white shadow-[0_40px_120px_rgba(15,23,42,0.18)]">
+              <div className="grid gap-6 p-6 lg:grid-cols-[1.2fr_0.8fr] lg:p-8">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-[var(--sm-primary-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--sm-primary-strong)]">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    首次启动必做一步
+                  </div>
+                  <div className="mt-4 text-[30px] font-semibold leading-tight tracking-tight text-[var(--sm-text)]">
+                    首次使用需要先连接一个大模型
+                  </div>
+                  <div className="mt-3 max-w-2xl text-base leading-7 text-[var(--sm-text-muted)]">
+                    完成模型配置后，才能开始任务、创建会话并驱动智能体员工执行技能。现在只需 1 分钟。
+                  </div>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {MODEL_SETUP_OUTCOMES.map((item) => (
+                      <span
+                        key={item}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-3 py-1.5 text-xs text-[var(--sm-text-muted)]"
+                      >
+                        <BadgeCheck className="h-3.5 w-3.5 text-[var(--sm-primary)]" />
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    <button
+                      data-testid="model-setup-gate-open-quick-setup"
+                      onClick={openQuickModelSetup}
+                      className="sm-btn sm-btn-primary min-h-12 rounded-xl px-5 text-sm"
+                    >
+                      快速配置（1分钟）
+                    </button>
+                    <button
+                      data-testid="model-setup-gate-open-settings"
+                      onClick={openSettingsForModelSetup}
+                      className="sm-btn sm-btn-secondary min-h-12 rounded-xl px-5 text-sm"
+                    >
+                      打开设置
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-[26px] border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] p-5">
+                  <div className="flex items-center gap-2 text-sm font-medium text-[var(--sm-text)]">
+                    <Bot className="h-4 w-4 text-[var(--sm-primary)]" />
+                    推荐流程
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-[var(--sm-text-muted)]">
+                    优先选择快速配置，模板会自动补齐常用 URL 和模型名。
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {MODEL_SETUP_STEPS.map((step, index) => (
+                      <div key={step.title} className="flex items-start gap-3">
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white text-sm font-semibold text-[var(--sm-primary-strong)] shadow-[var(--sm-shadow-sm)]">
+                          {index + 1}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-[var(--sm-text)]">{step.title}</div>
+                          <div className="mt-1 text-xs leading-5 text-[var(--sm-text-muted)]">{step.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5 rounded-2xl border border-white bg-white px-4 py-3">
+                    <div className="text-xs font-semibold text-[var(--sm-text)]">支持模板</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {MODEL_PROVIDER_CATALOG.map((provider) => (
+                        <span
+                          key={provider.id}
+                          className="inline-flex items-center rounded-full bg-[var(--sm-primary-soft)] px-2.5 py-1 text-[11px] font-medium text-[var(--sm-primary-strong)]"
+                        >
+                          {provider.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1582,6 +1944,9 @@ export default function App() {
                   await loadModels();
                   setShowSettings(false);
                 }}
+                showDevModelSetupTools={SHOW_DEV_MODEL_SETUP_TOOLS}
+                onDevResetFirstUseOnboarding={resetFirstUseOnboardingForDevelopment}
+                onDevOpenQuickModelSetup={openQuickModelSetup}
               />
             </motion.div>
           ) : activeMainView === "packaging" ? (

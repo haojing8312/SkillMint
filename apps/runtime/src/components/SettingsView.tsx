@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  DEFAULT_MODEL_PROVIDER_ID,
+  MODEL_PROVIDER_CATALOG,
+  buildModelFormFromCatalogItem,
+  getModelProviderCatalogItem,
+  resolveCatalogItemForConfig,
+} from "../model-provider-catalog";
+import {
   CapabilityRouteTemplateInfo,
   CapabilityRoutingPolicy,
   ModelConfig,
@@ -18,21 +25,6 @@ const MCP_PRESETS = [
   { label: "Memory", value: "memory", name: "memory", command: "npx", args: "-y @anthropic/mcp-server-memory", env: "" },
   { label: "Puppeteer", value: "puppeteer", name: "puppeteer", command: "npx", args: "-y @anthropic/mcp-server-puppeteer", env: "" },
   { label: "Fetch", value: "fetch", name: "fetch", command: "npx", args: "-y @anthropic/mcp-server-fetch", env: "" },
-];
-
-const PROVIDER_PRESETS = [
-  { label: "— 快速选择 —", value: "", models: [] as string[] },
-  { label: "智谱 GLM", value: "zhipu", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", models: ["glm-4-flash", "glm-4-plus", "glm-4-air", "glm-4-long"] },
-  { label: "OpenAI", value: "openai", api_format: "openai", base_url: "https://api.openai.com/v1", model_name: "gpt-4o-mini", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"] },
-  { label: "Claude (Anthropic)", value: "anthropic", api_format: "anthropic", base_url: "https://api.anthropic.com/v1", model_name: "claude-3-5-haiku-20241022", models: ["claude-sonnet-4-5-20250929", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022"] },
-  { label: "MiniMax (OpenAI 兼容)", value: "minimax-oai", api_format: "openai", base_url: "https://api.minimax.io/v1", model_name: "MiniMax-M2.5", models: ["MiniMax-M2.5", "MiniMax-M1", "MiniMax-Text-01"] },
-  { label: "MiniMax (Anthropic 兼容)", value: "minimax-ant", api_format: "anthropic", base_url: "https://api.minimax.io/anthropic/v1", model_name: "MiniMax-M2.5", models: ["MiniMax-M2.5", "MiniMax-M1", "MiniMax-Text-01"] },
-  { label: "DeepSeek", value: "deepseek", api_format: "openai", base_url: "https://api.deepseek.com/v1", model_name: "deepseek-chat", models: ["deepseek-chat", "deepseek-reasoner"] },
-  { label: "Qwen (国际)", value: "qwen-intl", api_format: "openai", base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max", models: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long", "qwen-vl-max", "qwen-vl-plus"] },
-  { label: "Qwen (国内)", value: "qwen-cn", api_format: "openai", base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model_name: "qwen-max", models: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen-long", "qwen-vl-max", "qwen-vl-plus"] },
-  { label: "Moonshot / Kimi", value: "moonshot", api_format: "openai", base_url: "https://api.moonshot.ai/v1", model_name: "kimi-k2", models: ["kimi-k2", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"] },
-  { label: "Yi", value: "yi", api_format: "openai", base_url: "https://api.lingyiwanwu.com/v1", model_name: "yi-large", models: ["yi-large", "yi-medium", "yi-spark"] },
-  { label: "自定义", value: "custom", models: [] as string[] },
 ];
 
 const SEARCH_PRESETS = [
@@ -65,6 +57,9 @@ function parseMcpEnvJson(text: string): { env: Record<string, string>; error: st
 
 interface Props {
   onClose: () => void;
+  showDevModelSetupTools?: boolean;
+  onDevResetFirstUseOnboarding?: () => void;
+  onDevOpenQuickModelSetup?: () => void;
 }
 
 interface RoutingSettings {
@@ -97,19 +92,24 @@ const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   translation_model_id: "",
 };
 
-export function SettingsView({ onClose }: Props) {
+const DEFAULT_MODEL_PROVIDER = getModelProviderCatalogItem(DEFAULT_MODEL_PROVIDER_ID);
+
+export function SettingsView({
+  onClose,
+  showDevModelSetupTools = false,
+  onDevResetFirstUseOnboarding,
+  onDevOpenQuickModelSetup,
+}: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
+  const [selectedModelProviderId, setSelectedModelProviderId] = useState(DEFAULT_MODEL_PROVIDER.id);
   const [form, setForm] = useState({
-    name: "",
-    api_format: "openai",
-    base_url: "https://open.bigmodel.cn/api/paas/v4",
-    model_name: "glm-4-flash",
+    ...buildModelFormFromCatalogItem(DEFAULT_MODEL_PROVIDER),
     api_key: "",
   });
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<boolean | null>(null);
-  const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
+  const [modelSuggestions, setModelSuggestions] = useState<string[]>(DEFAULT_MODEL_PROVIDER.models);
 
   // 编辑状态 + API Key 可见性
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
@@ -186,6 +186,37 @@ export function SettingsView({ onClose }: Props) {
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [runtimePreferencesError, setRuntimePreferencesError] = useState("");
+  const selectedModelProvider = getModelProviderCatalogItem(selectedModelProviderId);
+
+  function resetModelForm(providerId = DEFAULT_MODEL_PROVIDER_ID) {
+    const provider = getModelProviderCatalogItem(providerId);
+    setSelectedModelProviderId(provider.id);
+    setForm({
+      ...buildModelFormFromCatalogItem(provider),
+      api_key: "",
+    });
+    setModelSuggestions(provider.models);
+    setEditingModelId(null);
+    setShowApiKey(false);
+    setError("");
+    setTestResult(null);
+  }
+
+  function validateModelForm() {
+    if (!form.name.trim()) {
+      return "请输入名称";
+    }
+    if (!form.base_url.trim()) {
+      return "请输入 Base URL";
+    }
+    if (!form.model_name.trim()) {
+      return "请输入模型名称";
+    }
+    if (!form.api_key.trim()) {
+      return "请输入 API Key";
+    }
+    return null;
+  }
 
   function inferConnectionKey(baseUrl: string, apiFormat: string): string {
     const normalized = (baseUrl || "").toLowerCase();
@@ -656,20 +687,23 @@ export function SettingsView({ onClose }: Props) {
   async function handleEditModel(m: ModelConfig) {
     try {
       const apiKey = await invoke<string>("get_model_api_key", { modelId: m.id });
+      const provider = resolveCatalogItemForConfig({
+        api_format: m.api_format === "anthropic" ? "anthropic" : "openai",
+        base_url: m.base_url,
+      });
       setForm({
         name: m.name,
-        api_format: m.api_format,
+        api_format: m.api_format === "anthropic" ? "anthropic" : "openai",
         base_url: m.base_url,
         model_name: m.model_name,
         api_key: apiKey,
       });
+      setSelectedModelProviderId(provider.id);
       setEditingModelId(m.id);
       setShowApiKey(false);
       setError("");
       setTestResult(null);
-      // 更新模型建议列表
-      const preset = PROVIDER_PRESETS.find((p) => p.api_format === m.api_format && p.base_url === m.base_url);
-      setModelSuggestions(preset?.models || []);
+      setModelSuggestions(provider.models);
     } catch (e) {
       setError("加载配置失败: " + String(e));
     }
@@ -696,24 +730,28 @@ export function SettingsView({ onClose }: Props) {
   }
 
   async function handleSave() {
+    const validationError = validateModelForm();
+    if (validationError) {
+      setError(validationError);
+      setTestResult(null);
+      return;
+    }
     setError("");
     try {
       await invoke("save_model_config", {
         config: {
           id: editingModelId || "",
-          name: form.name,
+          name: form.name.trim(),
           api_format: form.api_format,
-          base_url: form.base_url,
-          model_name: form.model_name,
+          base_url: form.base_url.trim(),
+          model_name: form.model_name.trim(),
           is_default: editingModelId
             ? models.find((m) => m.id === editingModelId)?.is_default ?? false
             : models.length === 0,
         },
-        apiKey: form.api_key,
+        apiKey: form.api_key.trim(),
       });
-      setForm({ name: "", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", api_key: "" });
-      setEditingModelId(null);
-      setShowApiKey(false);
+      resetModelForm();
       await loadModels();
     } catch (e: unknown) {
       setError(String(e));
@@ -721,19 +759,26 @@ export function SettingsView({ onClose }: Props) {
   }
 
   async function handleTest() {
+    const validationError = validateModelForm();
+    if (validationError) {
+      setError(validationError);
+      setTestResult(null);
+      return;
+    }
+    setError("");
     setTesting(true);
     setTestResult(null);
     try {
       const ok = await invoke<boolean>("test_connection_cmd", {
         config: {
           id: "",
-          name: form.name,
+          name: form.name.trim(),
           api_format: form.api_format,
-          base_url: form.base_url,
-          model_name: form.model_name,
+          base_url: form.base_url.trim(),
+          model_name: form.model_name.trim(),
           is_default: false,
         },
-        apiKey: form.api_key,
+        apiKey: form.api_key.trim(),
       });
       setTestResult(ok);
     } catch (e: unknown) {
@@ -745,18 +790,16 @@ export function SettingsView({ onClose }: Props) {
   }
 
   function applyPreset(value: string) {
-    const preset = PROVIDER_PRESETS.find((p) => p.value === value);
-    if (!preset || !preset.api_format) {
-      setModelSuggestions([]);
-      return;
-    }
+    const preset = getModelProviderCatalogItem(value);
     setForm((f) => ({
       ...f,
-      api_format: preset.api_format!,
-      base_url: preset.base_url!,
-      model_name: preset.model_name!,
+      ...buildModelFormFromCatalogItem(preset),
+      api_key: f.api_key,
     }));
+    setSelectedModelProviderId(preset.id);
     setModelSuggestions(preset.models);
+    setError("");
+    setTestResult(null);
   }
 
   function applyMcpPreset(value: string) {
@@ -794,11 +837,7 @@ export function SettingsView({ onClose }: Props) {
     await invoke("delete_provider_config", { providerId: id }).catch(() => null);
     // 若删除的是当前编辑项，重置表单
     if (editingModelId === id) {
-      setEditingModelId(null);
-      setShowApiKey(false);
-      setForm({ name: "", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", api_key: "" });
-      setError("");
-      setTestResult(null);
+      resetModelForm();
     }
     await loadModels();
   }
@@ -1041,13 +1080,7 @@ export function SettingsView({ onClose }: Props) {
           </div>
           {editingModelId && (
             <button
-              onClick={() => {
-                setEditingModelId(null);
-                setShowApiKey(false);
-                setForm({ name: "", api_format: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4", model_name: "glm-4-flash", api_key: "" });
-                setError("");
-                setTestResult(null);
-              }}
+              onClick={() => resetModelForm()}
               className="text-xs text-gray-400 hover:text-gray-600"
             >
               取消编辑
@@ -1057,33 +1090,56 @@ export function SettingsView({ onClose }: Props) {
         <div>
           <label className={labelCls}>快速选择模型服务</label>
           <select
+            data-testid="settings-model-provider-preset"
             className={inputCls}
-            defaultValue=""
+            value={selectedModelProviderId}
             onChange={(e) => applyPreset(e.target.value)}
           >
-            {PROVIDER_PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
+            {MODEL_PROVIDER_CATALOG.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
             ))}
           </select>
         </div>
         <div>
           <label className={labelCls}>名称</label>
-          <input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <input
+            data-testid="settings-model-provider-name"
+            className={inputCls}
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
         </div>
         <div>
           <label className={labelCls}>API 格式</label>
-          <select className={inputCls} value={form.api_format} onChange={(e) => setForm({ ...form, api_format: e.target.value })}>
+          <select
+            className={inputCls}
+            value={form.api_format}
+            disabled
+          >
             <option value="openai">OpenAI 兼容</option>
             <option value="anthropic">Anthropic (Claude)</option>
           </select>
         </div>
         <div>
           <label className={labelCls}>Base URL</label>
-          <input className={inputCls} value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} />
+          <input
+            data-testid="settings-model-provider-base-url"
+            className={inputCls}
+            value={form.base_url}
+            placeholder={selectedModelProvider.baseUrlPlaceholder}
+            onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+          />
         </div>
         <div>
           <label className={labelCls}>模型名称</label>
-          <input className={inputCls} list="model-suggestions" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} />
+          <input
+            data-testid="settings-model-provider-model-name"
+            className={inputCls}
+            list="model-suggestions"
+            value={form.model_name}
+            placeholder={selectedModelProvider.modelNamePlaceholder}
+            onChange={(e) => setForm({ ...form, model_name: e.target.value })}
+          />
           {modelSuggestions.length > 0 && (
             <datalist id="model-suggestions">
               {modelSuggestions.map((m) => (
@@ -1092,10 +1148,61 @@ export function SettingsView({ onClose }: Props) {
             </datalist>
           )}
         </div>
+        <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-medium text-gray-800">{selectedModelProvider.label}</div>
+                <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-blue-700">
+                  {selectedModelProvider.protocolLabel}
+                </span>
+              </div>
+              <div className="mt-2 text-xs leading-5 text-gray-500">{selectedModelProvider.helper}</div>
+            </div>
+            {selectedModelProvider.officialConsoleUrl ? (
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={selectedModelProvider.officialConsoleUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="sm-btn rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  {selectedModelProvider.officialConsoleLabel ?? "获取 API Key"}
+                </a>
+                {selectedModelProvider.officialDocsUrl ? (
+                  <a
+                    href={selectedModelProvider.officialDocsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="sm-btn rounded-xl border border-transparent px-4 py-2 text-sm text-gray-500 hover:bg-white hover:text-gray-700"
+                  >
+                    {selectedModelProvider.officialDocsLabel ?? "查看文档"}
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {selectedModelProvider.isCustom ? (
+            <div
+              data-testid="settings-model-provider-custom-guidance"
+              className="mt-3 rounded-2xl border border-dashed border-gray-200 bg-white px-3 py-3"
+            >
+              <div className="text-xs font-semibold text-gray-800">
+                {selectedModelProvider.customGuidanceTitle}
+              </div>
+              <div className="mt-2 space-y-1.5 text-[12px] leading-5 text-gray-500">
+                {selectedModelProvider.customGuidanceLines?.map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
         <div>
           <label className={labelCls}>API Key</label>
           <div className="relative">
             <input
+              data-testid="settings-model-provider-api-key"
               className={inputCls + " pr-10"}
               type={showApiKey ? "text" : "password"}
               value={form.api_key}
@@ -1126,6 +1233,7 @@ export function SettingsView({ onClose }: Props) {
             {testing ? "测试中..." : "测试连接"}
           </button>
           <button
+            data-testid="settings-model-provider-save"
             onClick={handleSave}
             className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
           >
@@ -1277,6 +1385,37 @@ export function SettingsView({ onClose }: Props) {
           {runtimePreferencesSaveState === "saving" ? "保存中..." : "保存语言与翻译设置"}
         </button>
       </div>
+
+      {showDevModelSetupTools && (
+        <div
+          data-testid="model-setup-dev-tools"
+          className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4"
+        >
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">
+            Dev Only
+          </div>
+          <div className="mt-1 text-sm font-medium text-amber-950">首次引导调试入口</div>
+          <div className="mt-1 text-xs leading-5 text-amber-800/80">
+            用于在开发阶段反复测试首次连接引导，不会在正式环境展示。
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={onDevResetFirstUseOnboarding}
+              className="sm-btn rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm text-amber-900 hover:bg-amber-100"
+            >
+              重置首次引导状态
+            </button>
+            <button
+              type="button"
+              onClick={onDevOpenQuickModelSetup}
+              className="sm-btn rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm text-amber-900 hover:bg-amber-100"
+            >
+              打开首次配置弹层
+            </button>
+          </div>
+        </div>
+      )}
       </>)}
 
       {SHOW_CAPABILITY_ROUTING_SETTINGS && activeTab === "capabilities" && (
