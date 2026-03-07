@@ -263,7 +263,9 @@ pub struct EmployeeGroupRunStep {
     pub step_type: String,
     pub assignee_employee_id: String,
     pub dispatch_source_employee_id: String,
+    pub attempt_no: i64,
     pub status: String,
+    pub output_summary: String,
     pub output: String,
 }
 
@@ -1292,7 +1294,9 @@ pub async fn start_employee_group_run_with_pool(
             step_type: step.step_type,
             assignee_employee_id: step.assignee_employee_id,
             dispatch_source_employee_id,
+            attempt_no: 1,
             status: step.status,
+            output_summary: step.output.chars().take(120).collect::<String>(),
             output: step.output,
         });
     }
@@ -2724,7 +2728,8 @@ pub async fn reassign_group_run_step_with_pool(
     }
 
     let step_row = sqlx::query(
-        "SELECT run_id, status, step_type, COALESCE(dispatch_source_employee_id, ''), COALESCE(assignee_employee_id, '')
+        "SELECT run_id, status, step_type, COALESCE(dispatch_source_employee_id, ''), COALESCE(assignee_employee_id, ''),
+                COALESCE(output_summary, ''), COALESCE(output, '')
          FROM group_run_steps
          WHERE id = ?",
     )
@@ -2738,6 +2743,8 @@ pub async fn reassign_group_run_step_with_pool(
     let step_type: String = step_row.try_get(2).map_err(|e| e.to_string())?;
     let dispatch_source_employee_id: String = step_row.try_get(3).map_err(|e| e.to_string())?;
     let previous_assignee_employee_id: String = step_row.try_get(4).map_err(|e| e.to_string())?;
+    let previous_output_summary: String = step_row.try_get(5).map_err(|e| e.to_string())?;
+    let previous_output: String = step_row.try_get(6).map_err(|e| e.to_string())?;
     if step_type != "execute" {
         return Err("only execute steps can be reassigned".to_string());
     }
@@ -2853,6 +2860,11 @@ pub async fn reassign_group_run_step_with_pool(
             "assignee_employee_id": new_assignee,
             "dispatch_source_employee_id": dispatch_source_employee_id,
             "previous_assignee_employee_id": previous_assignee_employee_id,
+            "previous_output_summary": if previous_output_summary.trim().is_empty() {
+                previous_output.chars().take(120).collect::<String>()
+            } else {
+                previous_output_summary
+            },
         })
         .to_string(),
     )
@@ -2902,7 +2914,8 @@ pub async fn get_employee_group_run_snapshot_with_pool(
 
     let step_rows = sqlx::query(
         "SELECT id, round_no, step_type, assignee_employee_id,
-                COALESCE(dispatch_source_employee_id, ''), status, output
+                COALESCE(dispatch_source_employee_id, ''), COALESCE(attempt_no, 1), status,
+                COALESCE(output_summary, ''), output
          FROM group_run_steps
          WHERE run_id = ?
          ORDER BY round_no ASC, started_at ASC, id ASC",
@@ -2921,8 +2934,10 @@ pub async fn get_employee_group_run_snapshot_with_pool(
                 .try_get("assignee_employee_id")
                 .map_err(|e| e.to_string())?,
             dispatch_source_employee_id: row.try_get(4).map_err(|e| e.to_string())?,
-            status: row.try_get(5).map_err(|e| e.to_string())?,
-            output: row.try_get(6).map_err(|e| e.to_string())?,
+            attempt_no: row.try_get(5).map_err(|e| e.to_string())?,
+            status: row.try_get(6).map_err(|e| e.to_string())?,
+            output_summary: row.try_get(7).map_err(|e| e.to_string())?,
+            output: row.try_get(8).map_err(|e| e.to_string())?,
         });
     }
     let event_rows = sqlx::query(

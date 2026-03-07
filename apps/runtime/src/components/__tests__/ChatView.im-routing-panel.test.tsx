@@ -1561,6 +1561,7 @@ describe("ChatView IM routing panel", () => {
                 round_no: 1,
                 step_type: "execute",
                 assignee_employee_id: "工部",
+                attempt_no: 2,
                 status: "completed",
                 output: "MOCK_RESPONSE",
               },
@@ -1587,7 +1588,7 @@ describe("ChatView IM routing panel", () => {
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
                 payload_json:
-                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\",\"previous_assignee_employee_id\":\"兵部\"}",
+                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\",\"previous_assignee_employee_id\":\"兵部\",\"previous_output_summary\":\"超时\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1611,7 +1612,9 @@ describe("ChatView IM routing panel", () => {
               round_no: 1,
               step_type: "execute",
               assignee_employee_id: "兵部",
+              attempt_no: 1,
               status: "failed",
+              output_summary: "超时",
               output: "超时",
             },
             {
@@ -1657,14 +1660,15 @@ describe("ChatView IM routing panel", () => {
           waiting_for_user: false,
           final_report: "计划：共 3 步\n执行：改派后完成。\n汇报：团队协作已完成。",
           steps: [
-            {
-              id: "step-failed-reassign",
-              round_no: 1,
-              step_type: "execute",
-              assignee_employee_id: "工部",
-              status: "completed",
-              output: "MOCK_RESPONSE",
-            },
+              {
+                id: "step-failed-reassign",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "工部",
+                attempt_no: 2,
+                status: "completed",
+                output: "MOCK_RESPONSE",
+              },
             {
               id: "step-other-member",
               round_no: 1,
@@ -1688,7 +1692,7 @@ describe("ChatView IM routing panel", () => {
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
                 payload_json:
-                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\",\"previous_assignee_employee_id\":\"兵部\"}",
+                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\",\"previous_assignee_employee_id\":\"兵部\",\"previous_output_summary\":\"超时\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1728,6 +1732,15 @@ describe("ChatView IM routing panel", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "改派给礼部" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "改派给工部" })).toBeInTheDocument();
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "当前状态：失败",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "尝试次数：1",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "最近失败：超时",
+      );
     });
 
     fireEvent.click(screen.getByRole("button", { name: "改派给工部" }));
@@ -1746,6 +1759,15 @@ describe("ChatView IM routing panel", () => {
       );
       expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
         "原负责人：兵部",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "当前状态：已完成",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "尝试次数：2",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "最近失败：超时",
       );
       expect(invokeMock).toHaveBeenCalledWith("reassign_group_run_step", {
         stepId: "step-failed-reassign",

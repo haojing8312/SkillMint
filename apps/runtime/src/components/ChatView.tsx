@@ -1017,6 +1017,16 @@ export function ChatView({
     }
     return event.event_type;
   };
+  const formatGroupRunStepStatusLabel = (status?: string) => {
+    const normalized = (status || "").trim().toLowerCase();
+    if (normalized === "completed" || normalized === "done") return "已完成";
+    if (normalized === "failed") return "失败";
+    if (normalized === "running" || normalized === "executing") return "执行中";
+    if (normalized === "pending") return "待执行";
+    if (normalized === "paused") return "已暂停";
+    if (normalized === "cancelled") return "已取消";
+    return status?.trim() || "待执行";
+  };
   const groupRunExecuteStepCards = (groupRunSnapshot?.steps || [])
     .filter((step) => (step.step_type || "").trim().toLowerCase() === "execute")
     .map((step) => {
@@ -1030,11 +1040,23 @@ export function ChatView({
       const previousAssigneeEmployeeId = String(
         reassignPayload.previous_assignee_employee_id || "",
       ).trim();
+      const latestFailureSummary = String(
+        reassignPayload.previous_output_summary ||
+          (String(step.status || "").trim().toLowerCase() === "failed"
+            ? step.output_summary || step.output || ""
+            : ""),
+      ).trim();
+      const attemptNo =
+        typeof step.attempt_no === "number" && Number.isFinite(step.attempt_no) && step.attempt_no > 0
+          ? step.attempt_no
+          : 1;
       return {
         step,
         currentAssigneeEmployeeId,
         dispatchSourceEmployeeId,
         previousAssigneeEmployeeId,
+        latestFailureSummary,
+        attemptNo,
       };
     });
   const groupRunExecuteRuleTargets = (dispatchSourceEmployeeId?: string) => {
@@ -1654,6 +1676,8 @@ export function ChatView({
                       currentAssigneeEmployeeId,
                       dispatchSourceEmployeeId,
                       previousAssigneeEmployeeId,
+                      latestFailureSummary,
+                      attemptNo,
                     }) => (
                       <div
                         key={step.id}
@@ -1662,10 +1686,15 @@ export function ChatView({
                       >
                         <div className="text-[11px] font-medium text-indigo-800">
                           {step.assignee_employee_id || step.id}
-                          {` · ${step.status || "pending"}`}
                         </div>
                         <div className="mt-1 text-[10px] text-indigo-700/80">
                           {`当前负责人：${currentAssigneeEmployeeId || "未分配"}`}
+                        </div>
+                        <div className="mt-1 text-[10px] text-indigo-700/80">
+                          {`当前状态：${formatGroupRunStepStatusLabel(step.status)}`}
+                        </div>
+                        <div className="mt-1 text-[10px] text-indigo-700/80">
+                          {`尝试次数：${attemptNo}`}
                         </div>
                         {dispatchSourceEmployeeId && (
                           <div className="mt-1 text-[10px] text-indigo-700/80">
@@ -1679,6 +1708,11 @@ export function ChatView({
                               {`原负责人：${previousAssigneeEmployeeId}`}
                             </div>
                           )}
+                        {latestFailureSummary && (
+                          <div className="mt-1 text-[10px] text-amber-700/90">
+                            {`最近失败：${latestFailureSummary}`}
+                          </div>
+                        )}
                       </div>
                     ),
                   )}

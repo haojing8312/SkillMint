@@ -1931,6 +1931,7 @@ async fn reassign_failed_group_step_updates_assignee_and_resets_status() {
     assert_eq!(event_step_id, step_id);
     assert!(payload_json.contains("\"assignee_employee_id\":\"gongbu\""));
     assert!(payload_json.contains("\"previous_assignee_employee_id\":\"bingbu\""));
+    assert!(payload_json.contains("\"previous_output_summary\":\"原负责人失败\""));
 }
 
 #[tokio::test]
@@ -2097,6 +2098,7 @@ async fn reassign_specific_failed_step_keeps_other_failed_steps_blocking_run() {
     assert!(payload_json.contains("\"assignee_employee_id\":\"gongbu\""));
     assert!(payload_json.contains("\"dispatch_source_employee_id\":\"shangshu\""));
     assert!(payload_json.contains("\"previous_assignee_employee_id\":\"libu\""));
+    assert!(payload_json.contains("\"previous_output_summary\":\"礼部失败\""));
 }
 
 #[tokio::test]
