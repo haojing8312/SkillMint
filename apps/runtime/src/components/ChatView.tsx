@@ -1996,13 +1996,15 @@ export function ChatView({
                                       }
                                     },
                                     "data-testid": `group-run-step-card-${step.id}-event-${eventId || index}`,
+                                    "data-group-run-step-event-linkable":
+                                      linkedSessionId && onOpenSession ? "true" : "false",
                                     "data-group-run-step-event-highlighted": isGroupRunEventFocusTarget ? "true" : "false",
                                     className:
-                                      "rounded px-1.5 py-1 transition-all " +
+                                      "rounded px-1.5 py-1 transition-all flex items-center justify-between gap-2 " +
                                       (isGroupRunEventFocusTarget ? "bg-amber-100 ring-1 ring-amber-300 " : "") +
                                       (linkedSessionId && onOpenSession
-                                        ? " w-full text-left underline underline-offset-2 hover:text-indigo-900"
-                                        : ""),
+                                        ? " w-full text-left border border-sky-200 bg-white text-sky-900 underline underline-offset-2 hover:bg-sky-50"
+                                        : " border border-indigo-100 bg-white/60 text-indigo-700/90"),
                                   } as const;
                                   return linkedSessionId && onOpenSession ? (
                                     <button
@@ -2021,10 +2023,18 @@ export function ChatView({
                                         })
                                       }
                                     >
-                                      {eventLabel}
+                                      <span className="min-w-0 flex-1 truncate">{eventLabel}</span>
+                                      <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700">
+                                        执行会话
+                                      </span>
                                     </button>
                                   ) : (
-                                    <div key={eventKey} {...commonProps}>{eventLabel}</div>
+                                    <div key={eventKey} {...commonProps}>
+                                      <span className="min-w-0 flex-1 truncate">{eventLabel}</span>
+                                      <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-medium text-indigo-700">
+                                        日志
+                                      </span>
+                                    </div>
                                   );
                                 })}
                               </div>
