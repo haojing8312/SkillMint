@@ -1535,7 +1535,7 @@ describe("ChatView IM routing panel", () => {
     });
   });
 
-  test("reassigns failed step from orchestration board", async () => {
+  test("reassigns failed step to selected candidate from orchestration board", async () => {
     let snapshotState = "failed";
     invokeMock.mockImplementation((command: string, payload?: any) => {
       if (command === "get_messages") return Promise.resolve([]);
@@ -1560,7 +1560,7 @@ describe("ChatView IM routing panel", () => {
                 id: "step-failed-reassign",
                 round_no: 1,
                 step_type: "execute",
-                assignee_employee_id: "礼部",
+                assignee_employee_id: "工部",
                 status: "completed",
                 output: "MOCK_RESPONSE",
               },
@@ -1572,13 +1572,21 @@ describe("ChatView IM routing panel", () => {
                 status: "completed",
                 output: "",
               },
+              {
+                id: "step-other-member-2",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "礼部",
+                status: "completed",
+                output: "",
+              },
             ],
             events: [
               {
                 id: "evt-reassign",
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
-                payload_json: "{\"assignee_employee_id\":\"礼部\"}",
+                payload_json: "{\"assignee_employee_id\":\"工部\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1613,6 +1621,14 @@ describe("ChatView IM routing panel", () => {
               status: "pending",
               output: "",
             },
+            {
+              id: "step-other-member-2",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "工部",
+              status: "pending",
+              output: "",
+            },
           ],
           events: [],
         });
@@ -1620,7 +1636,7 @@ describe("ChatView IM routing panel", () => {
       if (command === "reassign_group_run_step") {
         expect(payload).toEqual({
           stepId: "step-failed-reassign",
-          assigneeEmployeeId: "礼部",
+          assigneeEmployeeId: "工部",
         });
         return Promise.resolve(null);
       }
@@ -1644,7 +1660,7 @@ describe("ChatView IM routing panel", () => {
               id: "step-failed-reassign",
               round_no: 1,
               step_type: "execute",
-              assignee_employee_id: "礼部",
+              assignee_employee_id: "工部",
               status: "completed",
               output: "MOCK_RESPONSE",
             },
@@ -1652,20 +1668,28 @@ describe("ChatView IM routing panel", () => {
               id: "step-other-member",
               round_no: 1,
               step_type: "execute",
-              assignee_employee_id: "兵部",
-              status: "completed",
-              output: "",
-            },
-          ],
-          events: [
-            {
-              id: "evt-reassign",
-              step_id: "step-failed-reassign",
-              event_type: "step_reassigned",
-              payload_json: "{\"assignee_employee_id\":\"礼部\"}",
-              created_at: "2026-03-07T00:07:00Z",
-            },
-          ],
+                assignee_employee_id: "兵部",
+                status: "completed",
+                output: "",
+              },
+              {
+                id: "step-other-member-2",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "礼部",
+                status: "completed",
+                output: "",
+              },
+            ],
+            events: [
+              {
+                id: "evt-reassign",
+                step_id: "step-failed-reassign",
+                event_type: "step_reassigned",
+                payload_json: "{\"assignee_employee_id\":\"工部\"}",
+                created_at: "2026-03-07T00:07:00Z",
+              },
+            ],
         });
       }
       if (command === "get_model_configs") return Promise.resolve([]);
@@ -1700,17 +1724,18 @@ describe("ChatView IM routing panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("group-run-reassign-failed")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "改派给礼部" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "改派给工部" })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId("group-run-reassign-failed"));
+    fireEvent.click(screen.getByRole("button", { name: "改派给工部" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：汇报");
-      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("礼部");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("工部");
       expect(invokeMock).toHaveBeenCalledWith("reassign_group_run_step", {
         stepId: "step-failed-reassign",
-        assigneeEmployeeId: "礼部",
+        assigneeEmployeeId: "工部",
       });
       expect(invokeMock).toHaveBeenCalledWith("continue_employee_group_run", {
         runId: "run-reassign-1",

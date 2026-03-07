@@ -930,20 +930,21 @@ export function ChatView({
         .filter((value) => value.length > 0),
     ),
   );
-  const defaultReassignEmployeeId =
-    primaryFailedGroupRunStep &&
-    groupRunAssignees.find(
-      (employeeId) =>
-        employeeId.trim().toLowerCase() !==
-        (primaryFailedGroupRunStep.assignee_employee_id || "").trim().toLowerCase(),
-    );
+  const reassignCandidateEmployeeIds =
+    primaryFailedGroupRunStep === null
+      ? []
+      : groupRunAssignees.filter(
+          (employeeId) =>
+            employeeId.trim().toLowerCase() !==
+            (primaryFailedGroupRunStep.assignee_employee_id || "").trim().toLowerCase(),
+        );
   const canPauseGroupRun =
     !!groupRunSnapshot &&
     !["paused", "done", "completed", "cancelled", "failed"].includes(groupRunState);
   const canResumeGroupRun = !!groupRunSnapshot && groupRunState === "paused";
   const canRetryFailedGroupRunSteps = failedGroupRunSteps.length > 0;
   const canReassignFailedGroupRunStep =
-    !!primaryFailedGroupRunStep && !!defaultReassignEmployeeId;
+    !!primaryFailedGroupRunStep && reassignCandidateEmployeeIds.length > 0;
   const groupMemberStatesFromSnapshot = (() => {
     const byRole = new Map<string, { status: string; stepType: string }>();
     for (const step of groupRunSnapshot?.steps || []) {
@@ -1423,18 +1424,23 @@ export function ChatView({
                     {groupRunActionLoading === "retry" ? "重试中..." : "重试失败步骤"}
                   </button>
                 )}
-                {canReassignFailedGroupRunStep && primaryFailedGroupRunStep && defaultReassignEmployeeId && (
-                  <button
-                    type="button"
-                    data-testid="group-run-reassign-failed"
-                    onClick={() =>
-                      void handleReassignFailedGroupRunStep(primaryFailedGroupRunStep.id, defaultReassignEmployeeId)
-                    }
-                    disabled={groupRunActionLoading !== null}
-                    className="rounded bg-fuchsia-600 px-2.5 py-1 text-[11px] text-white hover:bg-fuchsia-700 disabled:bg-fuchsia-300"
-                  >
-                    {groupRunActionLoading === "reassign" ? "改派中..." : `改派给${defaultReassignEmployeeId}`}
-                  </button>
+                {canReassignFailedGroupRunStep && primaryFailedGroupRunStep && (
+                  <>
+                    {reassignCandidateEmployeeIds.map((employeeId) => (
+                      <button
+                        key={employeeId}
+                        type="button"
+                        data-testid={`group-run-reassign-failed-${employeeId}`}
+                        onClick={() =>
+                          void handleReassignFailedGroupRunStep(primaryFailedGroupRunStep.id, employeeId)
+                        }
+                        disabled={groupRunActionLoading !== null}
+                        className="rounded bg-fuchsia-600 px-2.5 py-1 text-[11px] text-white hover:bg-fuchsia-700 disabled:bg-fuchsia-300"
+                      >
+                        {groupRunActionLoading === "reassign" ? "改派中..." : `改派给${employeeId}`}
+                      </button>
+                    ))}
+                  </>
                 )}
               </div>
             )}
