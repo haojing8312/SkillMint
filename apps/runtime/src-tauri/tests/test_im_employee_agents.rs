@@ -863,7 +863,7 @@ async fn execute_group_step_uses_target_employee_context() {
     let (pool, _tmp) = helpers::setup_test_db().await;
     sqlx::query(
         "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
-         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+         VALUES ('m1', 'default', 'openai', 'http://mock', 'gpt-4o-mini', 1, 'k')",
     )
     .execute(&pool)
     .await
@@ -977,6 +977,126 @@ async fn execute_group_step_uses_target_employee_context() {
             .expect("reload executed step");
     assert_eq!(step_status, "completed");
     assert_eq!(step_session_id, exec.session_id);
+
+    let messages: Vec<(String, String)> = sqlx::query_as(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&exec.session_id)
+    .fetch_all(&pool)
+    .await
+    .expect("load execution session messages");
+    assert!(
+        messages.len() >= 2,
+        "expected user and assistant messages in execution session"
+    );
+    assert_eq!(messages[0].0, "user");
+    assert!(messages[0].1.contains("执行交付方案"));
+    assert_eq!(messages[messages.len() - 1].0, "assistant");
+    assert!(messages[messages.len() - 1].1.contains("MOCK_RESPONSE"));
+    assert!(exec.output.contains("MOCK_RESPONSE"));
+    assert_ne!(exec.output, "bingbu 已基于员工上下文完成执行：执行交付方案");
+}
+
+#[tokio::test]
+async fn execute_group_step_completes_group_run_and_appends_summary_when_last_step_finishes() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'http://mock', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    for employee_id in ["shangshu", "bingbu"] {
+        upsert_agent_employee_with_pool(
+            &pool,
+            UpsertAgentEmployeeInput {
+                id: None,
+                employee_id: employee_id.to_string(),
+                name: employee_id.to_string(),
+                role_id: employee_id.to_string(),
+                persona: format!("{employee_id} 负责团队交付"),
+                feishu_open_id: "".to_string(),
+                feishu_app_id: "".to_string(),
+                feishu_app_secret: "".to_string(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: format!("E:/workspace/{employee_id}"),
+                openclaw_agent_id: employee_id.to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["app".to_string()],
+                enabled: true,
+                is_default: employee_id == "shangshu",
+                skill_ids: vec!["builtin-general".to_string()],
+            },
+        )
+        .await
+        .expect("seed group employee");
+    }
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "自动收口团队".to_string(),
+            coordinator_employee_id: "shangshu".to_string(),
+            member_employee_ids: vec!["shangshu".to_string(), "bingbu".to_string()],
+        },
+    )
+    .await
+    .expect("create group");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "完成复杂交付方案".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start group run");
+
+    let step_ids: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute'
+         ORDER BY round_no ASC, id ASC",
+    )
+    .bind(&outcome.run_id)
+    .fetch_all(&pool)
+    .await
+    .expect("load execute steps");
+    assert_eq!(step_ids.len(), 2);
+    for (step_id,) in step_ids {
+        run_group_step_with_pool(&pool, &step_id)
+            .await
+            .expect("run execute step");
+    }
+
+    let (state, current_phase): (String, String) =
+        sqlx::query_as("SELECT state, current_phase FROM group_runs WHERE id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("reload run state");
+    assert_eq!(state, "done");
+    assert_eq!(current_phase, "finalize");
+
+    let summary_messages: Vec<(String, String)> = sqlx::query_as(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+    )
+    .bind(&outcome.session_id)
+    .fetch_all(&pool)
+    .await
+    .expect("load coordinator session messages");
+    let last_assistant = summary_messages
+        .iter()
+        .rev()
+        .find(|(role, _)| role == "assistant")
+        .expect("assistant summary exists");
+    assert!(last_assistant.1.contains("团队协作已完成"));
+    assert!(last_assistant.1.contains("MOCK_RESPONSE"));
 }
 
 #[tokio::test]

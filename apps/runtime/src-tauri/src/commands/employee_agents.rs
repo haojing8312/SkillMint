@@ -1,7 +1,14 @@
 use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
+use crate::agent::permissions::PermissionMode;
+use crate::agent::skill_config::SkillConfig;
+use crate::agent::tools::{EmployeeManageTool, MemoryTool};
+use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::commands::skills::DbState;
 use crate::im::types::ImEvent;
+use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::{Manager, State};
 use uuid::Uuid;
 
@@ -1352,12 +1359,397 @@ async fn ensure_group_step_session_with_pool(
     Ok(session_id)
 }
 
+fn load_group_step_profile_markdown(employee: &AgentEmployee) -> String {
+    if employee.default_work_dir.trim().is_empty() {
+        return String::new();
+    }
+
+    let profile_dir = PathBuf::from(employee.default_work_dir.trim())
+        .join("openclaw")
+        .join(employee.employee_id.trim());
+    let mut sections = Vec::new();
+    for name in ["AGENTS.md", "SOUL.md", "USER.md"] {
+        let path = profile_dir.join(name);
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                sections.push(format!("## {name}\n{trimmed}"));
+            }
+        }
+    }
+    sections.join("\n\n")
+}
+
+fn build_group_step_system_prompt(
+    employee: &AgentEmployee,
+    session_skill_id: &str,
+) -> (String, Option<Vec<String>>, usize) {
+    let mut skill_config =
+        SkillConfig::parse(crate::builtin_skills::builtin_general_skill_markdown());
+    let base_prompt = if skill_config.system_prompt.trim().is_empty() {
+        "你是一名专业、可靠、注重交付结果的 AI 员工。".to_string()
+    } else {
+        skill_config.system_prompt.clone()
+    };
+    let profile_markdown = load_group_step_profile_markdown(employee);
+    let mut sections = vec![
+        base_prompt,
+        "---".to_string(),
+        "你当前正在复杂任务团队中，以真实员工身份执行内部步骤。".to_string(),
+        format!("- 员工名称: {}", employee.name),
+        format!("- employee_id: {}", employee.employee_id),
+        format!("- role_id: {}", employee.role_id),
+        format!(
+            "- primary_skill_id: {}",
+            if session_skill_id.trim().is_empty() {
+                "builtin-general"
+            } else {
+                session_skill_id.trim()
+            }
+        ),
+    ];
+    if !employee.default_work_dir.trim().is_empty() {
+        sections.push(format!("- 工作目录: {}", employee.default_work_dir.trim()));
+    }
+    if !employee.persona.trim().is_empty() {
+        sections.push(format!("- 员工人设: {}", employee.persona.trim()));
+    }
+    sections.push(
+        "执行要求:\n- 聚焦当前分配步骤\n- 先给结论，再给关键依据或产出\n- 如需进一步拆分，可调用 task 工具\n- 不要输出“模拟结果”或“占位结果”措辞".to_string(),
+    );
+    if !profile_markdown.is_empty() {
+        sections.push(format!("员工资料:\n{profile_markdown}"));
+    }
+    (
+        sections.join("\n"),
+        skill_config.allowed_tools.take(),
+        skill_config.max_iterations.unwrap_or(8),
+    )
+}
+
+fn build_group_step_user_prompt(
+    run_id: &str,
+    step_id: &str,
+    user_goal: &str,
+    step_input: &str,
+    employee: &AgentEmployee,
+) -> String {
+    let effective_input = if step_input.trim().is_empty() {
+        user_goal.trim()
+    } else {
+        step_input.trim()
+    };
+    format!(
+        "你正在执行多员工团队中的 execute 步骤。\n- run_id: {run_id}\n- step_id: {step_id}\n- 当前负责人: {} ({})\n- 用户总目标: {}\n- 当前步骤要求: {}\n\n请直接给出你的执行结果。如果信息不足，先指出缺口，再给最合理的下一步。",
+        employee.name,
+        employee.employee_id,
+        user_goal.trim(),
+        effective_input,
+    )
+}
+
+fn extract_assistant_text(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find_map(|message| {
+            if message["role"].as_str() != Some("assistant") {
+                return None;
+            }
+            if let Some(content) = message["content"].as_str() {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+            message["content"].as_array().map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|block| {
+                        if block["type"].as_str() == Some("text") {
+                            block["text"].as_str().map(str::trim).map(str::to_string)
+                        } else {
+                            None
+                        }
+                    })
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        })
+        .unwrap_or_default()
+}
+
+async fn execute_group_step_in_employee_context_with_pool(
+    pool: &SqlitePool,
+    run_id: &str,
+    step_id: &str,
+    session_id: &str,
+    assignee_employee_id: &str,
+    user_goal: &str,
+    step_input: &str,
+) -> Result<String, String> {
+    let session_row = sqlx::query(
+        "SELECT skill_id, model_id, COALESCE(work_dir, '')
+         FROM sessions
+         WHERE id = ?",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "group step session not found".to_string())?;
+
+    let session_skill_id: String = session_row.try_get(0).map_err(|e| e.to_string())?;
+    let model_id: String = session_row.try_get(1).map_err(|e| e.to_string())?;
+    let work_dir: String = session_row.try_get(2).map_err(|e| e.to_string())?;
+
+    let employee = list_agent_employees_with_pool(pool)
+        .await?
+        .into_iter()
+        .find(|item| {
+            item.employee_id.eq_ignore_ascii_case(assignee_employee_id)
+                || item.role_id.eq_ignore_ascii_case(assignee_employee_id)
+                || item.id.eq_ignore_ascii_case(assignee_employee_id)
+        })
+        .ok_or_else(|| "assignee employee not found".to_string())?;
+
+    let model_row = sqlx::query(
+        "SELECT api_format, base_url, model_name, api_key
+         FROM model_configs
+         WHERE id = ?",
+    )
+    .bind(&model_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "model config not found".to_string())?;
+    let api_format: String = model_row.try_get(0).map_err(|e| e.to_string())?;
+    let base_url: String = model_row.try_get(1).map_err(|e| e.to_string())?;
+    let model_name: String = model_row.try_get(2).map_err(|e| e.to_string())?;
+    let api_key: String = model_row.try_get(3).map_err(|e| e.to_string())?;
+
+    let (system_prompt, allowed_tools, max_iterations) =
+        build_group_step_system_prompt(&employee, &session_skill_id);
+    let user_prompt =
+        build_group_step_user_prompt(run_id, step_id, user_goal, step_input, &employee);
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at)
+         VALUES (?, ?, 'user', ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(&user_prompt)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let history_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let messages: Vec<Value> = history_rows
+        .into_iter()
+        .map(|(role, content)| json!({ "role": role, "content": content }))
+        .collect();
+
+    let registry = Arc::new(ToolRegistry::with_standard_tools());
+    let memory_root = if work_dir.trim().is_empty() {
+        std::env::temp_dir().join("workclaw-group-run-memory")
+    } else {
+        PathBuf::from(work_dir.trim())
+            .join("openclaw")
+            .join(employee.employee_id.trim())
+            .join("memory")
+    };
+    let memory_dir = memory_root.join(if session_skill_id.trim().is_empty() {
+        "builtin-general"
+    } else {
+        session_skill_id.trim()
+    });
+    std::fs::create_dir_all(&memory_dir).map_err(|e| e.to_string())?;
+    registry.register(Arc::new(MemoryTool::new(memory_dir)));
+    registry.register(Arc::new(EmployeeManageTool::new(pool.clone())));
+
+    let executor = AgentExecutor::with_max_iterations(Arc::clone(&registry), max_iterations);
+    let final_messages = executor
+        .execute_turn(
+            &api_format,
+            &base_url,
+            &api_key,
+            &model_name,
+            &system_prompt,
+            messages,
+            |_| {},
+            None,
+            None,
+            allowed_tools.as_deref(),
+            PermissionMode::Unrestricted,
+            None,
+            if work_dir.trim().is_empty() {
+                None
+            } else {
+                Some(work_dir.clone())
+            },
+            Some(max_iterations),
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let assistant_output = extract_assistant_text(&final_messages);
+    if assistant_output.trim().is_empty() {
+        return Err("employee step execution returned empty assistant output".to_string());
+    }
+
+    let finished_at = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at)
+         VALUES (?, ?, 'assistant', ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(&assistant_output)
+    .bind(&finished_at)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(assistant_output)
+}
+
+async fn maybe_finalize_group_run_with_pool(pool: &SqlitePool, run_id: &str) -> Result<(), String> {
+    let blocking_counts = sqlx::query(
+        "SELECT
+            SUM(CASE WHEN step_type = 'execute' AND status IN ('pending', 'running', 'failed') THEN 1 ELSE 0 END) AS execute_blocking,
+            SUM(CASE WHEN step_type = 'review' AND status IN ('pending', 'running') THEN 1 ELSE 0 END) AS review_blocking
+         FROM group_run_steps
+         WHERE run_id = ?",
+    )
+    .bind(run_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let execute_blocking = blocking_counts
+        .try_get::<Option<i64>, _>("execute_blocking")
+        .map_err(|e| e.to_string())?
+        .unwrap_or(0);
+    let review_blocking = blocking_counts
+        .try_get::<Option<i64>, _>("review_blocking")
+        .map_err(|e| e.to_string())?
+        .unwrap_or(0);
+    if execute_blocking > 0 || review_blocking > 0 {
+        return Ok(());
+    }
+
+    let run_row = sqlx::query(
+        "SELECT session_id, user_goal, state
+         FROM group_runs
+         WHERE id = ?",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "group run not found".to_string())?;
+    let session_id: String = run_row.try_get(0).map_err(|e| e.to_string())?;
+    let user_goal: String = run_row.try_get(1).map_err(|e| e.to_string())?;
+    let state: String = run_row.try_get(2).map_err(|e| e.to_string())?;
+    if state == "done" {
+        return Ok(());
+    }
+
+    let execute_rows = sqlx::query(
+        "SELECT assignee_employee_id, output
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute'
+         ORDER BY round_no ASC, finished_at ASC, id ASC",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut summary_lines = vec![
+        format!("计划：围绕“{}”的团队执行已完成。", user_goal.trim()),
+        "执行：".to_string(),
+    ];
+    for row in execute_rows {
+        let assignee_employee_id: String = row.try_get(0).map_err(|e| e.to_string())?;
+        let output: String = row.try_get(1).map_err(|e| e.to_string())?;
+        summary_lines.push(format!(
+            "- {}: {}",
+            assignee_employee_id,
+            output.trim()
+        ));
+    }
+    summary_lines.push("汇报：团队协作已完成，可继续进入人工复核或直接对外回复。".to_string());
+    let final_report = summary_lines.join("\n");
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at)
+         VALUES (?, ?, 'assistant', ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&session_id)
+    .bind(&final_report)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'done',
+             current_phase = 'finalize',
+             waiting_for_employee_id = '',
+             waiting_for_user = 0,
+             status_reason = '',
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(&now)
+    .bind(run_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
+         VALUES (?, ?, '', 'run_completed', ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(run_id)
+    .bind(
+        serde_json::json!({
+            "state": "done",
+            "phase": "finalize",
+            "summary": final_report,
+        })
+        .to_string(),
+    )
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub async fn run_group_step_with_pool(
     pool: &SqlitePool,
     step_id: &str,
 ) -> Result<GroupStepExecutionResult, String> {
     let row = sqlx::query(
-        "SELECT s.id, s.run_id, s.assignee_employee_id, s.step_type, COALESCE(s.session_id, ''), COALESCE(r.user_goal, '')
+        "SELECT s.id, s.run_id, s.assignee_employee_id, s.step_type, COALESCE(s.session_id, ''), COALESCE(s.input, ''), COALESCE(r.user_goal, '')
          FROM group_run_steps s
          INNER JOIN group_runs r ON r.id = s.run_id
          WHERE s.id = ?",
@@ -1373,7 +1765,8 @@ pub async fn run_group_step_with_pool(
     let assignee_employee_id: String = row.try_get(2).map_err(|e| e.to_string())?;
     let step_type: String = row.try_get(3).map_err(|e| e.to_string())?;
     let existing_session_id: String = row.try_get(4).map_err(|e| e.to_string())?;
-    let user_goal: String = row.try_get(5).map_err(|e| e.to_string())?;
+    let step_input: String = row.try_get(5).map_err(|e| e.to_string())?;
+    let user_goal: String = row.try_get(6).map_err(|e| e.to_string())?;
 
     if step_type != "execute" {
         return Err("only execute steps can be run".to_string());
@@ -1385,11 +1778,134 @@ pub async fn run_group_step_with_pool(
     } else {
         existing_session_id
     };
-    let output = format!(
-        "{} 已基于员工上下文完成执行：{}",
-        assignee_employee_id, user_goal
-    );
-    let output_summary = format!("{} 完成执行", assignee_employee_id);
+
+    let mut dispatch_tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'running',
+             session_id = ?,
+             started_at = CASE WHEN TRIM(started_at) = '' THEN ? ELSE started_at END,
+             phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
+         WHERE id = ?",
+    )
+    .bind(&session_id)
+    .bind(&now)
+    .bind(&step_id)
+    .execute(&mut *dispatch_tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
+         VALUES (?, ?, ?, 'step_dispatched', ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&run_id)
+    .bind(&step_id)
+    .bind(
+        serde_json::json!({
+            "step_id": step_id,
+            "session_id": session_id,
+            "assignee_employee_id": assignee_employee_id,
+        })
+        .to_string(),
+    )
+    .bind(&now)
+    .execute(&mut *dispatch_tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'executing',
+             current_phase = 'execute',
+             waiting_for_employee_id = ?,
+             status_reason = '',
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(&assignee_employee_id)
+    .bind(&now)
+    .bind(&run_id)
+    .execute(&mut *dispatch_tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    dispatch_tx.commit().await.map_err(|e| e.to_string())?;
+
+    let execution = execute_group_step_in_employee_context_with_pool(
+        pool,
+        &run_id,
+        &step_id,
+        &session_id,
+        &assignee_employee_id,
+        &user_goal,
+        &step_input,
+    )
+    .await;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let output = match execution {
+        Ok(output) => output,
+        Err(error) => {
+            let failed_summary = error.chars().take(120).collect::<String>();
+            let mut failed_tx = pool.begin().await.map_err(|e| e.to_string())?;
+            sqlx::query(
+                "UPDATE group_run_steps
+                 SET status = 'failed',
+                     output = ?,
+                     output_summary = ?,
+                     session_id = ?,
+                     finished_at = ?,
+                     phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
+                 WHERE id = ?",
+            )
+            .bind(&error)
+            .bind(&failed_summary)
+            .bind(&session_id)
+            .bind(&now)
+            .bind(&step_id)
+            .execute(&mut *failed_tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            sqlx::query(
+                "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
+                 VALUES (?, ?, ?, 'step_failed', ?, ?)",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&run_id)
+            .bind(&step_id)
+            .bind(
+                serde_json::json!({
+                    "step_id": step_id,
+                    "session_id": session_id,
+                    "status": "failed",
+                    "error": error,
+                })
+                .to_string(),
+            )
+            .bind(&now)
+            .execute(&mut *failed_tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            sqlx::query(
+                "UPDATE group_runs
+                 SET state = 'failed',
+                     current_phase = 'execute',
+                     waiting_for_employee_id = ?,
+                     status_reason = ?,
+                     updated_at = ?
+                 WHERE id = ?",
+            )
+            .bind(&assignee_employee_id)
+            .bind(&error)
+            .bind(&now)
+            .bind(&run_id)
+            .execute(&mut *failed_tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            failed_tx.commit().await.map_err(|e| e.to_string())?;
+            return Err(error);
+        }
+    };
+    let output_summary = output.chars().take(120).collect::<String>();
 
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     sqlx::query(
@@ -1398,7 +1914,6 @@ pub async fn run_group_step_with_pool(
              output = ?,
              output_summary = ?,
              session_id = ?,
-             started_at = CASE WHEN TRIM(started_at) = '' THEN ? ELSE started_at END,
              finished_at = ?,
              phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
          WHERE id = ?",
@@ -1407,51 +1922,37 @@ pub async fn run_group_step_with_pool(
     .bind(&output_summary)
     .bind(&session_id)
     .bind(&now)
-    .bind(&now)
     .bind(&step_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
 
-    for (event_type, payload_json) in [
-        (
-            "step_dispatched",
-            serde_json::json!({
-                "step_id": step_id,
-                "session_id": session_id,
-                "assignee_employee_id": assignee_employee_id,
-            })
-            .to_string(),
-        ),
-        (
-            "step_completed",
-            serde_json::json!({
-                "step_id": step_id,
-                "session_id": session_id,
-                "status": "completed",
-            })
-            .to_string(),
-        ),
-    ] {
-        sqlx::query(
-            "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(Uuid::new_v4().to_string())
-        .bind(&run_id)
-        .bind(&step_id)
-        .bind(event_type)
-        .bind(payload_json)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
+    sqlx::query(
+        "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
+         VALUES (?, ?, ?, 'step_completed', ?, ?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&run_id)
+    .bind(&step_id)
+    .bind(
+        serde_json::json!({
+            "step_id": step_id,
+            "session_id": session_id,
+            "status": "completed",
+            "output_summary": output_summary,
+        })
+        .to_string(),
+    )
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
 
     sqlx::query(
         "UPDATE group_runs
          SET state = 'executing',
              current_phase = 'execute',
+             status_reason = '',
              waiting_for_employee_id = '',
              updated_at = ?
          WHERE id = ?",
@@ -1463,6 +1964,7 @@ pub async fn run_group_step_with_pool(
     .map_err(|e| e.to_string())?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
+    maybe_finalize_group_run_with_pool(pool, &run_id).await?;
 
     Ok(GroupStepExecutionResult {
         step_id,
@@ -2463,6 +2965,14 @@ pub async fn start_employee_group_run(
     db: State<'_, DbState>,
 ) -> Result<EmployeeGroupRunResult, String> {
     start_employee_group_run_with_pool(&db.0, input).await
+}
+
+#[tauri::command]
+pub async fn run_group_step(
+    step_id: String,
+    db: State<'_, DbState>,
+) -> Result<GroupStepExecutionResult, String> {
+    run_group_step_with_pool(&db.0, step_id.trim()).await
 }
 
 #[tauri::command]
