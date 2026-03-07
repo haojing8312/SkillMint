@@ -88,6 +88,7 @@ fn group_rule_allows_execute_reassignment(rule: &EmployeeGroupRule) -> bool {
 async fn load_execute_reassignment_targets_with_pool(
     pool: &SqlitePool,
     run_id: &str,
+    dispatch_source_override: Option<&str>,
 ) -> Result<(Vec<String>, bool), String> {
     let row = sqlx::query(
         "SELECT g.id,
@@ -112,14 +113,23 @@ async fn load_execute_reassignment_targets_with_pool(
         .unwrap_or_default();
     let normalized_member_ids = normalize_member_employee_ids(&member_employee_ids);
     let member_set = normalized_member_ids.iter().cloned().collect::<std::collections::HashSet<_>>();
-    let dispatch_source_employee_id = if main_employee_id.trim().is_empty() {
+    let run_dispatch_source_employee_id = if main_employee_id.trim().is_empty() {
         coordinator_employee_id.trim().to_lowercase()
     } else {
         main_employee_id.trim().to_lowercase()
     };
+    let dispatch_source_employee_id = if let Some(dispatch_source_override) = dispatch_source_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        dispatch_source_override.to_lowercase()
+    } else {
+        run_dispatch_source_employee_id.clone()
+    };
 
     let rules = list_employee_group_rules_with_pool(pool, &group_id).await?;
     let mut exact_targets = Vec::new();
+    let mut run_exact_targets = Vec::new();
     let mut fallback_targets = Vec::new();
     let mut has_execute_rules = false;
     for rule in rules {
@@ -139,6 +149,15 @@ async fn load_execute_reassignment_targets_with_pool(
             && rule.from_employee_id.trim().eq_ignore_ascii_case(&dispatch_source_employee_id)
         {
             exact_targets.push(normalized_target);
+            continue;
+        }
+        if !run_dispatch_source_employee_id.is_empty()
+            && rule
+                .from_employee_id
+                .trim()
+                .eq_ignore_ascii_case(&run_dispatch_source_employee_id)
+        {
+            run_exact_targets.push(normalized_target.clone());
         }
     }
 
@@ -149,7 +168,11 @@ async fn load_execute_reassignment_targets_with_pool(
     let mut seen = std::collections::HashSet::new();
     Ok((
         (if exact_targets.is_empty() {
-            fallback_targets
+            if run_exact_targets.is_empty() {
+                fallback_targets
+            } else {
+                run_exact_targets
+            }
         } else {
             exact_targets
         })
@@ -239,6 +262,7 @@ pub struct EmployeeGroupRunStep {
     pub round_no: i64,
     pub step_type: String,
     pub assignee_employee_id: String,
+    pub dispatch_source_employee_id: String,
     pub status: String,
     pub output: String,
 }
@@ -1202,18 +1226,24 @@ pub async fn start_employee_group_run_with_pool(
     let mut steps = Vec::with_capacity(plan.steps.len());
     for step in plan.steps {
         let step_id = Uuid::new_v4().to_string();
+        let dispatch_source_employee_id = if step.step_type == "execute" {
+            coordinator_employee_id.clone()
+        } else {
+            String::new()
+        };
         sqlx::query(
             "INSERT INTO group_run_steps (
-                id, run_id, round_no, parent_step_id, assignee_employee_id, phase, step_type, step_kind,
-                input, input_summary, output, output_summary, status, requires_review, review_status,
-                attempt_no, session_id, visibility, started_at, finished_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, run_id, round_no, parent_step_id, assignee_employee_id, dispatch_source_employee_id,
+                phase, step_type, step_kind, input, input_summary, output, output_summary, status,
+                requires_review, review_status, attempt_no, session_id, visibility, started_at, finished_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&step_id)
         .bind(&run_id)
         .bind(step.round_no)
         .bind("")
         .bind(&step.assignee_employee_id)
+        .bind(&dispatch_source_employee_id)
         .bind(&step.phase)
         .bind(&step.step_type)
         .bind(&step.step_type)
@@ -1260,6 +1290,7 @@ pub async fn start_employee_group_run_with_pool(
             round_no: step.round_no,
             step_type: step.step_type,
             assignee_employee_id: step.assignee_employee_id,
+            dispatch_source_employee_id,
             status: step.status,
             output: step.output,
         });
@@ -2685,7 +2716,7 @@ pub async fn reassign_group_run_step_with_pool(
     }
 
     let step_row = sqlx::query(
-        "SELECT run_id, status, step_type
+        "SELECT run_id, status, step_type, COALESCE(dispatch_source_employee_id, '')
          FROM group_run_steps
          WHERE id = ?",
     )
@@ -2697,6 +2728,7 @@ pub async fn reassign_group_run_step_with_pool(
     let run_id: String = step_row.try_get(0).map_err(|e| e.to_string())?;
     let status: String = step_row.try_get(1).map_err(|e| e.to_string())?;
     let step_type: String = step_row.try_get(2).map_err(|e| e.to_string())?;
+    let dispatch_source_employee_id: String = step_row.try_get(3).map_err(|e| e.to_string())?;
     if step_type != "execute" {
         return Err("only execute steps can be reassigned".to_string());
     }
@@ -2718,7 +2750,12 @@ pub async fn reassign_group_run_step_with_pool(
         return Err("target employee not found".to_string());
     }
     let (eligible_targets, has_execute_rules) =
-        load_execute_reassignment_targets_with_pool(pool, &run_id).await?;
+        load_execute_reassignment_targets_with_pool(
+            pool,
+            &run_id,
+            Some(dispatch_source_employee_id.as_str()),
+        )
+        .await?;
     if has_execute_rules && !eligible_targets.iter().any(|candidate| candidate == &new_assignee) {
         return Err("target employee is not eligible for execute reassignment".to_string());
     }
@@ -2853,7 +2890,8 @@ pub async fn get_employee_group_run_snapshot_with_pool(
     let waiting_for_user = run_row.try_get::<i64, _>(10).map_err(|e| e.to_string())? != 0;
 
     let step_rows = sqlx::query(
-        "SELECT id, round_no, step_type, assignee_employee_id, status, output
+        "SELECT id, round_no, step_type, assignee_employee_id,
+                COALESCE(dispatch_source_employee_id, ''), status, output
          FROM group_run_steps
          WHERE run_id = ?
          ORDER BY round_no ASC, started_at ASC, id ASC",
@@ -2871,8 +2909,9 @@ pub async fn get_employee_group_run_snapshot_with_pool(
             assignee_employee_id: row
                 .try_get("assignee_employee_id")
                 .map_err(|e| e.to_string())?,
-            status: row.try_get("status").map_err(|e| e.to_string())?,
-            output: row.try_get("output").map_err(|e| e.to_string())?,
+            dispatch_source_employee_id: row.try_get(4).map_err(|e| e.to_string())?,
+            status: row.try_get(5).map_err(|e| e.to_string())?,
+            output: row.try_get(6).map_err(|e| e.to_string())?,
         });
     }
     let event_rows = sqlx::query(

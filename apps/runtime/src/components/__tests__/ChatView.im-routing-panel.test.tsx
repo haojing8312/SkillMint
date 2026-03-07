@@ -1982,6 +1982,134 @@ describe("ChatView IM routing panel", () => {
     });
   });
 
+  test("prefers failed step dispatch source over coordinator for reassign candidates", async () => {
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "list_employee_groups") {
+        return Promise.resolve([
+          {
+            id: "group-reassign-source-1",
+            name: "协作团队",
+            coordinator_employee_id: "尚书",
+            member_employee_ids: ["兵部", "礼部", "工部", "户部"],
+            member_count: 4,
+            template_id: "sansheng-liubu",
+            entry_employee_id: "尚书",
+            review_mode: "hard",
+            execution_mode: "parallel",
+            visibility_mode: "internal",
+            is_bootstrap_seeded: true,
+            config_json: "{}",
+            created_at: "2026-03-07T00:00:00Z",
+            updated_at: "2026-03-07T00:00:00Z",
+          },
+        ]);
+      }
+      if (command === "list_employee_group_rules") {
+        expect(payload).toEqual({ groupId: "group-reassign-source-1" });
+        return Promise.resolve([
+          {
+            id: "rule-source-shangshu-gongbu",
+            group_id: "group-reassign-source-1",
+            from_employee_id: "尚书",
+            to_employee_id: "工部",
+            relation_type: "delegate",
+            phase_scope: "execute",
+            required: false,
+            priority: 10,
+            created_at: "2026-03-07T00:00:00Z",
+          },
+          {
+            id: "rule-source-shangshu-hubu",
+            group_id: "group-reassign-source-1",
+            from_employee_id: "尚书",
+            to_employee_id: "户部",
+            relation_type: "delegate",
+            phase_scope: "execute",
+            required: false,
+            priority: 20,
+            created_at: "2026-03-07T00:00:00Z",
+          },
+          {
+            id: "rule-source-menxia-libu",
+            group_id: "group-reassign-source-1",
+            from_employee_id: "门下",
+            to_employee_id: "礼部",
+            relation_type: "delegate",
+            phase_scope: "execute",
+            required: false,
+            priority: 30,
+            created_at: "2026-03-07T00:00:00Z",
+          },
+        ]);
+      }
+      if (command === "get_employee_group_run_snapshot") {
+        return Promise.resolve({
+          run_id: "run-reassign-source-1",
+          group_id: "group-reassign-source-1",
+          session_id: "session-run-reassign-source",
+          state: "failed",
+          current_round: 1,
+          current_phase: "execute",
+          review_round: 0,
+          status_reason: "兵部执行失败",
+          waiting_for_employee_id: "兵部",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步",
+          steps: [
+            {
+              id: "step-failed-reassign-source",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              dispatch_source_employee_id: "门下",
+              status: "failed",
+              output: "超时",
+            },
+          ],
+          events: [],
+        });
+      }
+      if (command === "get_model_configs") return Promise.resolve([]);
+      if (command === "get_session_runtime_bindings") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-run-reassign-source"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "改派给礼部" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "改派给工部" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "改派给户部" })).not.toBeInTheDocument();
+    });
+  });
+
   test("reassigns a specific failed step from multiple failed steps", async () => {
     let snapshotState = "failed";
     invokeMock.mockImplementation((command: string, payload?: any) => {

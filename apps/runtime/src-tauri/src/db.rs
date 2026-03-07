@@ -385,6 +385,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             round_no INTEGER NOT NULL DEFAULT 0,
             parent_step_id TEXT NOT NULL DEFAULT '',
             assignee_employee_id TEXT NOT NULL DEFAULT '',
+            dispatch_source_employee_id TEXT NOT NULL DEFAULT '',
             phase TEXT NOT NULL DEFAULT '',
             step_type TEXT NOT NULL DEFAULT 'execute',
             step_kind TEXT NOT NULL DEFAULT 'execute',
@@ -737,6 +738,11 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         sqlx::query("ALTER TABLE group_run_steps ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
             .execute(&pool)
             .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN dispatch_source_employee_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
     let _ = sqlx::query(
         "ALTER TABLE group_run_steps ADD COLUMN input_summary TEXT NOT NULL DEFAULT ''",
     )

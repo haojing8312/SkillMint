@@ -976,14 +976,16 @@ export function ChatView({
         .filter((value) => value.length > 0),
     ),
   );
-  const groupRunExecuteRuleTargets = (() => {
+  const groupRunExecuteRuleTargets = (dispatchSourceEmployeeId?: string) => {
     const coordinatorEmployeeId = groupRunCoordinatorEmployeeId.trim().toLowerCase();
+    const normalizedDispatchSourceEmployeeId = (dispatchSourceEmployeeId || "").trim().toLowerCase();
     const memberSet = new Set(
       groupRunMemberEmployeeIds
         .map((value) => value.trim().toLowerCase())
         .filter((value) => value.length > 0),
     );
     const exactTargets = new Map<string, string>();
+    const coordinatorTargets = new Map<string, string>();
     const fallbackTargets = new Map<string, string>();
     for (const rule of groupRunRules) {
       const relationType = (rule.relation_type || "").trim().toLowerCase();
@@ -999,29 +1001,48 @@ export function ChatView({
         fallbackTargets.set(normalizedTargetEmployeeId, targetEmployeeId);
       }
       const fromEmployeeId = (rule.from_employee_id || "").trim().toLowerCase();
-      if (coordinatorEmployeeId && fromEmployeeId === coordinatorEmployeeId && !exactTargets.has(normalizedTargetEmployeeId)) {
+      if (
+        normalizedDispatchSourceEmployeeId &&
+        fromEmployeeId === normalizedDispatchSourceEmployeeId &&
+        !exactTargets.has(normalizedTargetEmployeeId)
+      ) {
         exactTargets.set(normalizedTargetEmployeeId, targetEmployeeId);
       }
+      if (
+        coordinatorEmployeeId &&
+        fromEmployeeId === coordinatorEmployeeId &&
+        !coordinatorTargets.has(normalizedTargetEmployeeId)
+      ) {
+        coordinatorTargets.set(normalizedTargetEmployeeId, targetEmployeeId);
+      }
     }
+    const preferredTargets =
+      exactTargets.size > 0
+        ? exactTargets
+        : coordinatorTargets.size > 0
+          ? coordinatorTargets
+          : fallbackTargets;
     return {
       hasExecuteRules: fallbackTargets.size > 0,
-      ids: Array.from((exactTargets.size > 0 ? exactTargets : fallbackTargets).values()),
+      ids: Array.from(preferredTargets.values()),
     };
-  })();
-  const groupRunCandidateEmployeeIds = Array.from(
-    new Set(
-      (groupRunExecuteRuleTargets.hasExecuteRules
-        ? groupRunExecuteRuleTargets.ids
-        : [...groupRunMemberEmployeeIds, ...groupRunAssignees]
-      )
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0),
-    ),
-  );
+  };
+  const groupRunCandidateEmployeeIds = (step?: EmployeeGroupRunSnapshot["steps"][number]) =>
+    Array.from(
+      new Set(
+        (
+          groupRunExecuteRuleTargets(step?.dispatch_source_employee_id).hasExecuteRules
+            ? groupRunExecuteRuleTargets(step?.dispatch_source_employee_id).ids
+            : [...groupRunMemberEmployeeIds, ...groupRunAssignees]
+        )
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
   const failedGroupRunReassignOptions = failedGroupRunSteps
     .map((step) => ({
       step,
-      candidateEmployeeIds: groupRunCandidateEmployeeIds.filter(
+      candidateEmployeeIds: groupRunCandidateEmployeeIds(step).filter(
         (employeeId) =>
           employeeId.trim().toLowerCase() !== (step.assignee_employee_id || "").trim().toLowerCase(),
       ),

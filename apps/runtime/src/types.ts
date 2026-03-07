@@ -374,6 +374,7 @@ export interface EmployeeGroupRunStep {
   round_no: number;
   step_type: string;
   assignee_employee_id: string;
+  dispatch_source_employee_id?: string;
   status: "running" | "completed" | "failed" | string;
   output: string;
 }
