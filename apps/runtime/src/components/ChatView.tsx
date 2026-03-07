@@ -138,7 +138,9 @@ export function ChatView({
   const [imRoleEvents, setImRoleEvents] = useState<ImRoleTimelineEvent[]>([]);
   const [imRouteDecisions, setImRouteDecisions] = useState<ImRouteDecisionEvent[]>([]);
   const [groupRunSnapshot, setGroupRunSnapshot] = useState<EmployeeGroupRunSnapshot | null>(null);
-  const [groupRunActionLoading, setGroupRunActionLoading] = useState<"approve" | "reject" | null>(null);
+  const [groupRunActionLoading, setGroupRunActionLoading] = useState<
+    "approve" | "reject" | "pause" | "resume" | "retry" | "reassign" | null
+  >(null);
 
   // File Upload: 读取文件为文本
   const readFileAsText = (file: File): Promise<string> => {
@@ -744,6 +746,17 @@ export function ChatView({
     }
   }
 
+  async function refreshGroupRunSnapshot(targetSessionId?: string) {
+    const snapshotSessionId = (targetSessionId || groupRunSnapshot?.session_id || sessionId || "").trim();
+    if (!snapshotSessionId) return;
+    const snapshot = await invoke<EmployeeGroupRunSnapshot | null>("get_employee_group_run_snapshot", {
+      sessionId: snapshotSessionId,
+    });
+    if (snapshot) {
+      setGroupRunSnapshot(snapshot);
+    }
+  }
+
   async function handleRejectGroupRunReview() {
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("reject");
@@ -759,6 +772,74 @@ export function ChatView({
       setGroupRunSnapshot(snapshot);
     } catch (e) {
       console.error("审核打回失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handlePauseGroupRun() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("pause");
+    try {
+      await invoke("pause_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+        reason: "前端人工暂停",
+      });
+      await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
+    } catch (e) {
+      console.error("暂停协作失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handleResumeGroupRun() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("resume");
+    try {
+      await invoke("resume_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      setGroupRunSnapshot(snapshot);
+    } catch (e) {
+      console.error("继续协作失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handleRetryFailedGroupRunSteps() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("retry");
+    try {
+      await invoke("retry_employee_group_run_failed_steps", {
+        runId: groupRunSnapshot.run_id,
+      });
+      await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
+    } catch (e) {
+      console.error("重试失败步骤失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handleReassignFailedGroupRunStep(stepId: string, assigneeEmployeeId: string) {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("reassign");
+    try {
+      await invoke("reassign_group_run_step", {
+        stepId,
+        assigneeEmployeeId,
+      });
+      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      setGroupRunSnapshot(snapshot);
+    } catch (e) {
+      console.error("改派失败步骤失败:", e);
     } finally {
       setGroupRunActionLoading(null);
     }
@@ -804,6 +885,9 @@ export function ChatView({
   const groupPhaseLabelFromSnapshot = (() => {
     const phase = (groupRunSnapshot?.current_phase || "").trim().toLowerCase();
     const state = (groupRunSnapshot?.state || "").trim().toLowerCase();
+    if (state === "paused") return "已暂停";
+    if (state === "failed") return "失败";
+    if (state === "cancelled") return "已取消";
     const normalized = phase || state;
     if (!normalized) return null;
     if (normalized === "intake" || normalized === "plan" || normalized === "planning") return "计划";
@@ -827,11 +911,39 @@ export function ChatView({
   })();
   const groupRoundFromSnapshot = groupRunSnapshot?.current_round || 0;
   const groupReviewRound = groupRunSnapshot?.review_round || 0;
+  const groupRunState = (groupRunSnapshot?.state || "").trim().toLowerCase();
   const groupWaitingLabel = groupRunSnapshot?.waiting_for_user
     ? "等待用户"
     : (groupRunSnapshot?.waiting_for_employee_id || "").trim();
   const groupStatusReason = (groupRunSnapshot?.status_reason || "").trim();
   const recentGroupEvents = (groupRunSnapshot?.events || []).slice(-4).reverse();
+  const failedGroupRunSteps = (groupRunSnapshot?.steps || []).filter(
+    (step) =>
+      ((step.status || "").trim().toLowerCase() === "failed") &&
+      ((step.step_type || "").trim().toLowerCase() === "execute"),
+  );
+  const primaryFailedGroupRunStep = failedGroupRunSteps[0] || null;
+  const groupRunAssignees = Array.from(
+    new Set(
+      (groupRunSnapshot?.steps || [])
+        .map((step) => (step.assignee_employee_id || "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
+  const defaultReassignEmployeeId =
+    primaryFailedGroupRunStep &&
+    groupRunAssignees.find(
+      (employeeId) =>
+        employeeId.trim().toLowerCase() !==
+        (primaryFailedGroupRunStep.assignee_employee_id || "").trim().toLowerCase(),
+    );
+  const canPauseGroupRun =
+    !!groupRunSnapshot &&
+    !["paused", "done", "completed", "cancelled", "failed"].includes(groupRunState);
+  const canResumeGroupRun = !!groupRunSnapshot && groupRunState === "paused";
+  const canRetryFailedGroupRunSteps = failedGroupRunSteps.length > 0;
+  const canReassignFailedGroupRunStep =
+    !!primaryFailedGroupRunStep && !!defaultReassignEmployeeId;
   const groupMemberStatesFromSnapshot = (() => {
     const byRole = new Map<string, { status: string; stepType: string }>();
     for (const step of groupRunSnapshot?.steps || []) {
@@ -1274,6 +1386,56 @@ export function ChatView({
                 >
                   {groupRunActionLoading === "approve" ? "通过中..." : "通过审议"}
                 </button>
+              </div>
+            )}
+            {groupRunSnapshot && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {canPauseGroupRun && (
+                  <button
+                    type="button"
+                    data-testid="group-run-pause"
+                    onClick={() => void handlePauseGroupRun()}
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-slate-600 px-2.5 py-1 text-[11px] text-white hover:bg-slate-700 disabled:bg-slate-300"
+                  >
+                    {groupRunActionLoading === "pause" ? "暂停中..." : "暂停协作"}
+                  </button>
+                )}
+                {canResumeGroupRun && (
+                  <button
+                    type="button"
+                    data-testid="group-run-resume"
+                    onClick={() => void handleResumeGroupRun()}
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-sky-600 px-2.5 py-1 text-[11px] text-white hover:bg-sky-700 disabled:bg-sky-300"
+                  >
+                    {groupRunActionLoading === "resume" ? "继续中..." : "继续协作"}
+                  </button>
+                )}
+                {canRetryFailedGroupRunSteps && (
+                  <button
+                    type="button"
+                    data-testid="group-run-retry-failed"
+                    onClick={() => void handleRetryFailedGroupRunSteps()}
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-amber-600 px-2.5 py-1 text-[11px] text-white hover:bg-amber-700 disabled:bg-amber-300"
+                  >
+                    {groupRunActionLoading === "retry" ? "重试中..." : "重试失败步骤"}
+                  </button>
+                )}
+                {canReassignFailedGroupRunStep && primaryFailedGroupRunStep && defaultReassignEmployeeId && (
+                  <button
+                    type="button"
+                    data-testid="group-run-reassign-failed"
+                    onClick={() =>
+                      void handleReassignFailedGroupRunStep(primaryFailedGroupRunStep.id, defaultReassignEmployeeId)
+                    }
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-fuchsia-600 px-2.5 py-1 text-[11px] text-white hover:bg-fuchsia-700 disabled:bg-fuchsia-300"
+                  >
+                    {groupRunActionLoading === "reassign" ? "改派中..." : `改派给${defaultReassignEmployeeId}`}
+                  </button>
+                )}
               </div>
             )}
             {groupMemberStates.length > 0 && (

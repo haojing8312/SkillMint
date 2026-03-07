@@ -1251,4 +1251,470 @@ describe("ChatView IM routing panel", () => {
       });
     });
   });
+
+  test("pauses and resumes group run from orchestration board", async () => {
+    let snapshotState = "running";
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "get_employee_group_run_snapshot") {
+        if (snapshotState === "paused") {
+          expect(payload).toEqual({ sessionId: "session-run-control" });
+          return Promise.resolve({
+            run_id: "run-control-1",
+            group_id: "group-control-1",
+            session_id: "session-run-control",
+            state: "paused",
+            current_round: 1,
+            current_phase: "execute",
+            review_round: 0,
+            status_reason: "前端人工暂停",
+            waiting_for_employee_id: "兵部",
+            waiting_for_user: false,
+            final_report: "计划：共 3 步",
+            steps: [
+              {
+                id: "step-execute-running",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "兵部",
+                status: "running",
+                output: "",
+              },
+            ],
+            events: [],
+          });
+        }
+        return Promise.resolve({
+          run_id: "run-control-1",
+          group_id: "group-control-1",
+          session_id: "session-run-control",
+          state: "executing",
+          current_round: 1,
+          current_phase: "execute",
+          review_round: 0,
+          status_reason: "",
+          waiting_for_employee_id: "兵部",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步",
+          steps: [
+            {
+              id: "step-execute-running",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              status: "running",
+              output: "",
+            },
+          ],
+          events: [],
+        });
+      }
+      if (command === "pause_employee_group_run") {
+        expect(payload).toEqual({
+          runId: "run-control-1",
+          reason: "前端人工暂停",
+        });
+        snapshotState = "paused";
+        return Promise.resolve(null);
+      }
+      if (command === "resume_employee_group_run") {
+        expect(payload).toEqual({ runId: "run-control-1" });
+        return Promise.resolve(null);
+      }
+      if (command === "continue_employee_group_run") {
+        expect(payload).toEqual({ runId: "run-control-1" });
+        snapshotState = "resumed";
+        return Promise.resolve({
+          run_id: "run-control-1",
+          group_id: "group-control-1",
+          session_id: "session-run-control",
+          state: "done",
+          current_round: 1,
+          current_phase: "finalize",
+          review_round: 0,
+          status_reason: "",
+          waiting_for_employee_id: "",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步\n执行：已完成 3 步。\n汇报：团队协作已完成。",
+          steps: [
+            {
+              id: "step-execute-running",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              status: "completed",
+              output: "MOCK_RESPONSE",
+            },
+          ],
+          events: [
+            {
+              id: "evt-run-resumed",
+              step_id: "",
+              event_type: "run_resumed",
+              payload_json: "{\"state\":\"executing\",\"phase\":\"execute\"}",
+              created_at: "2026-03-07T00:05:00Z",
+            },
+          ],
+        });
+      }
+      if (command === "get_model_configs") return Promise.resolve([]);
+      if (command === "get_session_runtime_bindings") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-run-control"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-run-pause")).toBeInTheDocument();
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：执行");
+    });
+
+    fireEvent.click(screen.getByTestId("group-run-pause"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-run-resume")).toBeInTheDocument();
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：已暂停");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("前端人工暂停");
+    });
+
+    fireEvent.click(screen.getByTestId("group-run-resume"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：汇报");
+      expect(invokeMock).toHaveBeenCalledWith("pause_employee_group_run", {
+        runId: "run-control-1",
+        reason: "前端人工暂停",
+      });
+      expect(invokeMock).toHaveBeenCalledWith("resume_employee_group_run", {
+        runId: "run-control-1",
+      });
+      expect(invokeMock).toHaveBeenCalledWith("continue_employee_group_run", {
+        runId: "run-control-1",
+      });
+    });
+  });
+
+  test("retries failed group run steps from orchestration board", async () => {
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "get_employee_group_run_snapshot") {
+        if (payload?.sessionId === "session-run-retry" && invokeMock.mock.calls.some(([name]) => name === "retry_employee_group_run_failed_steps")) {
+          return Promise.resolve({
+            run_id: "run-retry-1",
+            group_id: "group-retry-1",
+            session_id: "session-run-retry",
+            state: "done",
+            current_round: 2,
+            current_phase: "finalize",
+            review_round: 0,
+            status_reason: "",
+            waiting_for_employee_id: "",
+            waiting_for_user: false,
+            final_report: "计划：共 3 步\n执行：失败步骤已重试完成。\n汇报：团队协作已完成。",
+            steps: [
+              {
+                id: "step-failed-1",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "兵部",
+                status: "completed",
+                output: "重试后完成",
+              },
+            ],
+            events: [
+              {
+                id: "evt-retry",
+                step_id: "step-failed-1",
+                event_type: "step_completed",
+                payload_json: "{}",
+                created_at: "2026-03-07T00:06:00Z",
+              },
+            ],
+          });
+        }
+        return Promise.resolve({
+          run_id: "run-retry-1",
+          group_id: "group-retry-1",
+          session_id: "session-run-retry",
+          state: "failed",
+          current_round: 1,
+          current_phase: "execute",
+          review_round: 0,
+          status_reason: "兵部执行失败",
+          waiting_for_employee_id: "兵部",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步",
+          steps: [
+            {
+              id: "step-failed-1",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              status: "failed",
+              output: "超时",
+            },
+          ],
+          events: [],
+        });
+      }
+      if (command === "retry_employee_group_run_failed_steps") {
+        expect(payload).toEqual({ runId: "run-retry-1" });
+        return Promise.resolve(null);
+      }
+      if (command === "get_model_configs") return Promise.resolve([]);
+      if (command === "get_session_runtime_bindings") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-run-retry"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-run-retry-failed")).toBeInTheDocument();
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("兵部执行失败");
+    });
+
+    fireEvent.click(screen.getByTestId("group-run-retry-failed"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：汇报");
+      expect(invokeMock).toHaveBeenCalledWith("retry_employee_group_run_failed_steps", {
+        runId: "run-retry-1",
+      });
+    });
+  });
+
+  test("reassigns failed step from orchestration board", async () => {
+    let snapshotState = "failed";
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "get_employee_group_run_snapshot") {
+        if (snapshotState === "done") {
+          return Promise.resolve({
+            run_id: "run-reassign-1",
+            group_id: "group-reassign-1",
+            session_id: "session-run-reassign",
+            state: "done",
+            current_round: 1,
+            current_phase: "finalize",
+            review_round: 0,
+            status_reason: "",
+            waiting_for_employee_id: "",
+            waiting_for_user: false,
+            final_report: "计划：共 3 步\n执行：改派后完成。\n汇报：团队协作已完成。",
+            steps: [
+              {
+                id: "step-failed-reassign",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "礼部",
+                status: "completed",
+                output: "MOCK_RESPONSE",
+              },
+              {
+                id: "step-other-member",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "兵部",
+                status: "completed",
+                output: "",
+              },
+            ],
+            events: [
+              {
+                id: "evt-reassign",
+                step_id: "step-failed-reassign",
+                event_type: "step_reassigned",
+                payload_json: "{\"assignee_employee_id\":\"礼部\"}",
+                created_at: "2026-03-07T00:07:00Z",
+              },
+            ],
+          });
+        }
+        return Promise.resolve({
+          run_id: "run-reassign-1",
+          group_id: "group-reassign-1",
+          session_id: "session-run-reassign",
+          state: "failed",
+          current_round: 1,
+          current_phase: "execute",
+          review_round: 0,
+          status_reason: "兵部执行失败",
+          waiting_for_employee_id: "兵部",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步",
+          steps: [
+            {
+              id: "step-failed-reassign",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              status: "failed",
+              output: "超时",
+            },
+            {
+              id: "step-other-member",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "礼部",
+              status: "pending",
+              output: "",
+            },
+          ],
+          events: [],
+        });
+      }
+      if (command === "reassign_group_run_step") {
+        expect(payload).toEqual({
+          stepId: "step-failed-reassign",
+          assigneeEmployeeId: "礼部",
+        });
+        return Promise.resolve(null);
+      }
+      if (command === "continue_employee_group_run") {
+        expect(payload).toEqual({ runId: "run-reassign-1" });
+        snapshotState = "done";
+        return Promise.resolve({
+          run_id: "run-reassign-1",
+          group_id: "group-reassign-1",
+          session_id: "session-run-reassign",
+          state: "done",
+          current_round: 1,
+          current_phase: "finalize",
+          review_round: 0,
+          status_reason: "",
+          waiting_for_employee_id: "",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步\n执行：改派后完成。\n汇报：团队协作已完成。",
+          steps: [
+            {
+              id: "step-failed-reassign",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "礼部",
+              status: "completed",
+              output: "MOCK_RESPONSE",
+            },
+            {
+              id: "step-other-member",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              status: "completed",
+              output: "",
+            },
+          ],
+          events: [
+            {
+              id: "evt-reassign",
+              step_id: "step-failed-reassign",
+              event_type: "step_reassigned",
+              payload_json: "{\"assignee_employee_id\":\"礼部\"}",
+              created_at: "2026-03-07T00:07:00Z",
+            },
+          ],
+        });
+      }
+      if (command === "get_model_configs") return Promise.resolve([]);
+      if (command === "get_session_runtime_bindings") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-run-reassign"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-run-reassign-failed")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("group-run-reassign-failed"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：汇报");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("礼部");
+      expect(invokeMock).toHaveBeenCalledWith("reassign_group_run_step", {
+        stepId: "step-failed-reassign",
+        assigneeEmployeeId: "礼部",
+      });
+      expect(invokeMock).toHaveBeenCalledWith("continue_employee_group_run", {
+        runId: "run-reassign-1",
+      });
+    });
+  });
 });
