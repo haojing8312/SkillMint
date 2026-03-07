@@ -976,6 +976,37 @@ export function ChatView({
         .filter((value) => value.length > 0),
     ),
   );
+  const groupRunStepMap = new Map(
+    (groupRunSnapshot?.steps || []).map((step) => [step.id, step] as const),
+  );
+  const formatGroupRunEventLabel = (event: EmployeeGroupRunSnapshot["events"][number]) => {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = event.payload_json ? JSON.parse(event.payload_json) : {};
+    } catch {
+      payload = {};
+    }
+    const relatedStep = groupRunStepMap.get(event.step_id);
+    const assigneeEmployeeId = String(
+      payload.assignee_employee_id || relatedStep?.assignee_employee_id || "",
+    ).trim();
+    const dispatchSourceEmployeeId = String(
+      payload.dispatch_source_employee_id || relatedStep?.dispatch_source_employee_id || "",
+    ).trim();
+    if (
+      ["step_created", "step_dispatched", "step_completed", "step_failed", "step_reassigned"].includes(
+        event.event_type,
+      )
+    ) {
+      if (dispatchSourceEmployeeId && assigneeEmployeeId) {
+        return `${event.event_type} · ${dispatchSourceEmployeeId} -> ${assigneeEmployeeId}`;
+      }
+      if (assigneeEmployeeId) {
+        return `${event.event_type} · ${assigneeEmployeeId}`;
+      }
+    }
+    return event.event_type;
+  };
   const groupRunExecuteRuleTargets = (dispatchSourceEmployeeId?: string) => {
     const coordinatorEmployeeId = groupRunCoordinatorEmployeeId.trim().toLowerCase();
     const normalizedDispatchSourceEmployeeId = (dispatchSourceEmployeeId || "").trim().toLowerCase();
@@ -1544,6 +1575,11 @@ export function ChatView({
                         <div className="text-[11px] font-medium text-indigo-800">
                           {`失败步骤：${step.assignee_employee_id || step.id}`}
                         </div>
+                        {(step.dispatch_source_employee_id || "").trim().length > 0 && (
+                          <div className="mt-1 text-[10px] text-indigo-700/80">
+                            {`来源：${step.dispatch_source_employee_id}`}
+                          </div>
+                        )}
                         {(step.output || "").trim().length > 0 && (
                           <div className="mt-1 text-[10px] text-indigo-700/80">{step.output}</div>
                         )}
@@ -1584,7 +1620,7 @@ export function ChatView({
                 <div className="mt-1 space-y-1">
                   {recentGroupEvents.map((event) => (
                     <div key={event.id} className="text-[11px] text-indigo-800">
-                      {event.event_type}
+                      {formatGroupRunEventLabel(event)}
                     </div>
                   ))}
                 </div>

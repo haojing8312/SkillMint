@@ -716,6 +716,9 @@ async fn start_employee_group_run_persists_plan_steps_and_events() {
     assert!(outcome.final_report.contains("汇报"));
     assert!(outcome.steps.iter().any(|step| step.step_type == "plan"));
     assert!(outcome.steps.iter().any(|step| step.step_type == "execute"));
+    assert!(outcome.steps.iter().any(|step| {
+        step.step_type == "execute" && step.dispatch_source_employee_id == "project_manager"
+    }));
 
     let (run_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM group_runs WHERE id = ?")
         .bind(&outcome.run_id)
@@ -747,6 +750,36 @@ async fn start_employee_group_run_persists_plan_steps_and_events() {
     assert_eq!(snapshot.run_id, outcome.run_id);
     assert_eq!(snapshot.group_id, outcome.group_id);
     assert_eq!(snapshot.steps.len(), outcome.steps.len());
+    assert!(snapshot.steps.iter().any(|step| {
+        step.step_type == "execute" && step.dispatch_source_employee_id == "project_manager"
+    }));
+
+    let (execute_step_id, dispatch_source_employee_id): (String, String) = sqlx::query_as(
+        "SELECT id, dispatch_source_employee_id
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute'
+         ORDER BY round_no ASC, id ASC
+         LIMIT 1",
+    )
+    .bind(&outcome.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load execute step");
+    assert_eq!(dispatch_source_employee_id, "project_manager");
+
+    let (step_created_payload_json,): (String,) = sqlx::query_as(
+        "SELECT payload_json
+         FROM group_run_events
+         WHERE run_id = ? AND step_id = ? AND event_type = 'step_created'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(&outcome.run_id)
+    .bind(&execute_step_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load step_created event");
+    assert!(step_created_payload_json.contains("\"dispatch_source_employee_id\":\"project_manager\""));
 }
 
 #[tokio::test]
@@ -2047,6 +2080,7 @@ async fn reassign_specific_failed_step_keeps_other_failed_steps_blocking_run() {
     .expect("load reassign event");
     assert_eq!(event_step_id, libu_step_id);
     assert!(payload_json.contains("\"assignee_employee_id\":\"gongbu\""));
+    assert!(payload_json.contains("\"dispatch_source_employee_id\":\"shangshu\""));
 }
 
 #[tokio::test]

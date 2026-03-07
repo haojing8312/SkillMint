@@ -1270,6 +1270,7 @@ pub async fn start_employee_group_run_with_pool(
             "phase": step.phase,
             "step_type": step.step_type,
             "assignee_employee_id": step.assignee_employee_id,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
             "status": step.status
         })
         .to_string();
@@ -2189,7 +2190,8 @@ pub async fn run_group_step_with_pool(
     step_id: &str,
 ) -> Result<GroupStepExecutionResult, String> {
     let row = sqlx::query(
-        "SELECT s.id, s.run_id, s.assignee_employee_id, s.step_type, COALESCE(s.session_id, ''), COALESCE(s.input, ''), COALESCE(r.user_goal, '')
+        "SELECT s.id, s.run_id, s.assignee_employee_id, COALESCE(s.dispatch_source_employee_id, ''),
+                s.step_type, COALESCE(s.session_id, ''), COALESCE(s.input, ''), COALESCE(r.user_goal, '')
          FROM group_run_steps s
          INNER JOIN group_runs r ON r.id = s.run_id
          WHERE s.id = ?",
@@ -2203,10 +2205,11 @@ pub async fn run_group_step_with_pool(
     let step_id: String = row.try_get(0).map_err(|e| e.to_string())?;
     let run_id: String = row.try_get(1).map_err(|e| e.to_string())?;
     let assignee_employee_id: String = row.try_get(2).map_err(|e| e.to_string())?;
-    let step_type: String = row.try_get(3).map_err(|e| e.to_string())?;
-    let existing_session_id: String = row.try_get(4).map_err(|e| e.to_string())?;
-    let step_input: String = row.try_get(5).map_err(|e| e.to_string())?;
-    let user_goal: String = row.try_get(6).map_err(|e| e.to_string())?;
+    let dispatch_source_employee_id: String = row.try_get(3).map_err(|e| e.to_string())?;
+    let step_type: String = row.try_get(4).map_err(|e| e.to_string())?;
+    let existing_session_id: String = row.try_get(5).map_err(|e| e.to_string())?;
+    let step_input: String = row.try_get(6).map_err(|e| e.to_string())?;
+    let user_goal: String = row.try_get(7).map_err(|e| e.to_string())?;
 
     if step_type != "execute" {
         return Err("only execute steps can be run".to_string());
@@ -2246,6 +2249,7 @@ pub async fn run_group_step_with_pool(
             "step_id": step_id,
             "session_id": session_id,
             "assignee_employee_id": assignee_employee_id,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
         })
         .to_string(),
     )
@@ -2318,6 +2322,8 @@ pub async fn run_group_step_with_pool(
                     "session_id": session_id,
                     "status": "failed",
                     "error": error,
+                    "assignee_employee_id": assignee_employee_id,
+                    "dispatch_source_employee_id": dispatch_source_employee_id,
                 })
                 .to_string(),
             )
@@ -2380,6 +2386,8 @@ pub async fn run_group_step_with_pool(
             "session_id": session_id,
             "status": "completed",
             "output_summary": output_summary,
+            "assignee_employee_id": assignee_employee_id,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
         })
         .to_string(),
     )
@@ -2842,6 +2850,7 @@ pub async fn reassign_group_run_step_with_pool(
     .bind(
         serde_json::json!({
             "assignee_employee_id": new_assignee,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
         })
         .to_string(),
     )

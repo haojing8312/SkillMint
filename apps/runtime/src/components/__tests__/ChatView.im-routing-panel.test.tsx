@@ -1586,7 +1586,8 @@ describe("ChatView IM routing panel", () => {
                 id: "evt-reassign",
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
-                payload_json: "{\"assignee_employee_id\":\"工部\"}",
+                payload_json:
+                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1686,7 +1687,8 @@ describe("ChatView IM routing panel", () => {
                 id: "evt-reassign",
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
-                payload_json: "{\"assignee_employee_id\":\"工部\"}",
+                payload_json:
+                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1733,6 +1735,9 @@ describe("ChatView IM routing panel", () => {
     await waitFor(() => {
       expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：汇报");
       expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("工部");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent(
+        "step_reassigned · 门下 -> 工部",
+      );
       expect(invokeMock).toHaveBeenCalledWith("reassign_group_run_step", {
         stepId: "step-failed-reassign",
         assigneeEmployeeId: "工部",
@@ -2107,6 +2112,7 @@ describe("ChatView IM routing panel", () => {
       expect(screen.getByRole("button", { name: "改派给礼部" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "改派给工部" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "改派给户部" })).not.toBeInTheDocument();
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("来源：门下");
     });
   });
 
