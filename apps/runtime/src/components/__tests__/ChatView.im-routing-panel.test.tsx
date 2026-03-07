@@ -792,4 +792,100 @@ describe("ChatView IM routing panel", () => {
       expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("测试团队");
     });
   });
+
+  test("renders current phase, review round, waiting owner and recent events from backend snapshot", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "get_employee_group_run_snapshot") {
+        return Promise.resolve({
+          run_id: "run-review-1",
+          group_id: "group-review-1",
+          session_id: "session-review-1",
+          state: "waiting_review",
+          current_round: 2,
+          current_phase: "review",
+          review_round: 2,
+          status_reason: "缺少回滚方案",
+          waiting_for_employee_id: "门下省",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步",
+          steps: [
+            {
+              id: "step-plan",
+              round_no: 2,
+              step_type: "plan",
+              assignee_employee_id: "中书省",
+              status: "completed",
+              output: "",
+            },
+            {
+              id: "step-review",
+              round_no: 2,
+              step_type: "review",
+              assignee_employee_id: "门下省",
+              status: "blocked",
+              output: "",
+            },
+          ],
+          events: [
+            {
+              id: "evt-1",
+              step_id: "step-review",
+              event_type: "review_requested",
+              payload_json: "{\"comment\":\"请审议\"}",
+              created_at: "2026-03-07T00:00:00Z",
+            },
+            {
+              id: "evt-2",
+              step_id: "step-plan",
+              event_type: "step_completed",
+              payload_json: "{\"phase\":\"plan\"}",
+              created_at: "2026-03-07T00:01:00Z",
+            },
+          ],
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-review-1"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("阶段：审核");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("轮次：第 2 轮");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("审议轮次：2");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("等待：门下省");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("缺少回滚方案");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("中书省");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("门下省");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("review_requested");
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("step_completed");
+    });
+  });
 });

@@ -356,10 +356,7 @@ pub async fn create_session(
     } else {
         normalized_work_dir
     };
-    let normalized_title = title
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let normalized_title = title.unwrap_or_default().trim().to_string();
     let resolved_title = if normalized_title.is_empty() {
         "New Chat".to_string()
     } else {
@@ -419,12 +416,14 @@ pub async fn send_message(
 
     if msg_count.0 <= 1 {
         let title: String = user_message.chars().take(20).collect();
-        sqlx::query("UPDATE sessions SET title = ? WHERE id = ? AND (title = 'New Chat' OR title = '')")
-            .bind(&title)
-            .bind(&session_id)
-            .execute(&db.0)
-            .await
-            .map_err(|e| e.to_string())?;
+        sqlx::query(
+            "UPDATE sessions SET title = ? WHERE id = ? AND (title = 'New Chat' OR title = '')",
+        )
+        .bind(&title)
+        .bind(&session_id)
+        .execute(&db.0)
+        .await
+        .map_err(|e| e.to_string())?;
     }
 
     // 加载会话信息（含权限模式和工作目录）
@@ -1366,7 +1365,17 @@ pub async fn list_sessions(db: State<'_, DbState>) -> Result<Vec<serde_json::Val
     Ok(rows
         .iter()
         .map(
-            |(id, title, created_at, model_id, work_dir, employee_id, permission_mode, source_channel, source_label)| {
+            |(
+                id,
+                title,
+                created_at,
+                model_id,
+                work_dir,
+                employee_id,
+                permission_mode,
+                source_channel,
+                source_label,
+            )| {
                 json!({
                     "id": id,
                     "title": title,
@@ -1398,11 +1407,10 @@ pub async fn get_sessions(
 mod tests {
     use super::{
         build_group_orchestrator_report_preview, classify_model_route_error,
-        extract_skill_prompt_from_decrypted_files,
-        infer_capability_from_user_message, is_supported_protocol,
-        normalize_permission_mode_for_storage, parse_fallback_chain_targets, parse_permission_mode,
-        permission_mode_label_for_display, retry_backoff_ms, retry_budget_for_error,
-        should_retry_same_candidate, ModelRouteErrorKind,
+        extract_skill_prompt_from_decrypted_files, infer_capability_from_user_message,
+        is_supported_protocol, normalize_permission_mode_for_storage, parse_fallback_chain_targets,
+        parse_permission_mode, permission_mode_label_for_display, retry_backoff_ms,
+        retry_budget_for_error, should_retry_same_candidate, ModelRouteErrorKind,
     };
     use crate::agent::permissions::PermissionMode;
     use std::collections::HashMap;
@@ -1593,6 +1601,7 @@ mod tests {
             crate::agent::group_orchestrator::GroupRunRequest {
                 group_id: "group-1".to_string(),
                 coordinator_employee_id: "project_manager".to_string(),
+                reviewer_employee_id: None,
                 member_employee_ids: vec![
                     "project_manager".to_string(),
                     "dev_team".to_string(),
@@ -1679,18 +1688,32 @@ pub async fn search_sessions_global(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|(id, title, created_at, model_id, work_dir, employee_id, source_channel, source_label)| {
-        json!({
-            "id": id,
-            "title": title,
-            "created_at": created_at,
-            "model_id": model_id,
-            "work_dir": work_dir,
-            "employee_id": employee_id,
-            "source_channel": source_channel,
-            "source_label": source_label
-        })
-    }).collect())
+    Ok(rows
+        .iter()
+        .map(
+            |(
+                id,
+                title,
+                created_at,
+                model_id,
+                work_dir,
+                employee_id,
+                source_channel,
+                source_label,
+            )| {
+                json!({
+                    "id": id,
+                    "title": title,
+                    "created_at": created_at,
+                    "model_id": model_id,
+                    "work_dir": work_dir,
+                    "employee_id": employee_id,
+                    "source_channel": source_channel,
+                    "source_label": source_label
+                })
+            },
+        )
+        .collect())
 }
 
 #[tauri::command]

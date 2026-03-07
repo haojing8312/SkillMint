@@ -6,6 +6,7 @@ mod db;
 pub mod im;
 pub mod providers;
 pub mod sidecar;
+pub mod team_templates;
 
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
@@ -341,12 +342,18 @@ pub fn run() {
             commands::im_routing::delete_im_routing_binding,
             commands::employee_agents::list_agent_employees,
             commands::employee_agents::create_employee_group,
+            commands::employee_agents::clone_employee_group_template,
             commands::employee_agents::list_employee_groups,
+            commands::employee_agents::list_employee_group_rules,
             commands::employee_agents::delete_employee_group,
             commands::employee_agents::start_employee_group_run,
             commands::employee_agents::get_employee_group_run_snapshot,
             commands::employee_agents::cancel_employee_group_run,
             commands::employee_agents::retry_employee_group_run_failed_steps,
+            commands::employee_agents::review_group_run_step,
+            commands::employee_agents::pause_employee_group_run,
+            commands::employee_agents::resume_employee_group_run,
+            commands::employee_agents::reassign_group_run_step,
             commands::employee_agents::upsert_agent_employee,
             commands::employee_agents::delete_agent_employee,
             commands::employee_agents::get_employee_memory_stats,

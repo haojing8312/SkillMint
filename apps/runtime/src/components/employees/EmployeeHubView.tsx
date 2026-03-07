@@ -4,6 +4,7 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   AgentEmployee,
   EmployeeGroup,
+  EmployeeGroupRule,
   EmployeeGroupRunResult,
   AgentProfileFilesView,
   EmployeeMemoryExport,
@@ -32,6 +33,15 @@ interface Props {
   onDismissHighlight?: () => void;
 }
 
+type GroupTemplateRole = {
+  role_type?: string;
+  employee_key?: string;
+};
+
+type GroupTemplateConfig = {
+  roles?: GroupTemplateRole[];
+};
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   if (bytes < 1024) return `${Math.round(bytes)} B`;
@@ -41,6 +51,33 @@ function formatBytes(bytes: number): string {
 
 function employeeKey(employee: AgentEmployee): string {
   return (employee.employee_id || employee.role_id || "").trim();
+}
+
+function parseGroupTemplateConfig(raw?: string | null): GroupTemplateConfig {
+  if (!raw?.trim()) return {};
+  try {
+    return JSON.parse(raw) as GroupTemplateConfig;
+  } catch {
+    return {};
+  }
+}
+
+function groupRoleLabel(roleType: string): string {
+  const normalized = roleType.trim().toLowerCase();
+  switch (normalized) {
+    case "entry":
+      return "入口";
+    case "planner":
+      return "规划";
+    case "reviewer":
+      return "审议";
+    case "coordinator":
+      return "协调";
+    case "executor":
+      return "执行";
+    default:
+      return normalized || "角色";
+  }
 }
 
 export function EmployeeHubView({
@@ -87,6 +124,8 @@ export function EmployeeHubView({
   const [groupRunGoalById, setGroupRunGoalById] = useState<Record<string, string>>({});
   const [groupRunSubmittingId, setGroupRunSubmittingId] = useState<string | null>(null);
   const [groupRunReportById, setGroupRunReportById] = useState<Record<string, string>>({});
+  const [groupRulesById, setGroupRulesById] = useState<Record<string, EmployeeGroupRule[]>>({});
+  const [cloningGroupId, setCloningGroupId] = useState<string | null>(null);
 
   const selectedEmployee = useMemo(
     () => employees.find((item) => item.id === selectedEmployeeId) ?? null,
@@ -117,6 +156,15 @@ export function EmployeeHubView({
     }
     return Array.from(ids.values()).map((id) => ({ id, name: skillNameById.get(id) || id }));
   }, [selectedEmployee, skillNameById]);
+  const employeeLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of employees) {
+      const key = employeeKey(item).toLowerCase();
+      if (!key) continue;
+      map.set(key, item.name || key);
+    }
+    return map;
+  }, [employees]);
 
   useEffect(() => {
     (async () => {
@@ -140,9 +188,28 @@ export function EmployeeHubView({
   async function loadEmployeeGroups() {
     try {
       const groups = await invoke<EmployeeGroup[]>("list_employee_groups");
-      setEmployeeGroups(Array.isArray(groups) ? groups : []);
+      const normalizedGroups = Array.isArray(groups) ? groups : [];
+      setEmployeeGroups(normalizedGroups);
+      if (normalizedGroups.length === 0) {
+        setGroupRulesById({});
+        return;
+      }
+      const entries = await Promise.all(
+        normalizedGroups.map(async (group) => {
+          try {
+            const rules = await invoke<EmployeeGroupRule[]>("list_employee_group_rules", {
+              groupId: group.id,
+            });
+            return [group.id, Array.isArray(rules) ? rules : []] as const;
+          } catch {
+            return [group.id, []] as const;
+          }
+        }),
+      );
+      setGroupRulesById(Object.fromEntries(entries));
     } catch {
       setEmployeeGroups([]);
+      setGroupRulesById({});
     }
   }
 
@@ -441,6 +508,11 @@ export function EmployeeHubView({
         delete next[groupId];
         return next;
       });
+      setGroupRulesById((prev) => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
       await loadEmployeeGroups();
       setMessage("协作群组已删除");
     } catch (e) {
@@ -478,6 +550,27 @@ export function EmployeeHubView({
       setMessage(`发起协作失败: ${String(e)}`);
     } finally {
       setGroupRunSubmittingId(null);
+    }
+  }
+
+  async function cloneEmployeeGroup(group: EmployeeGroup) {
+    if (!group.id || cloningGroupId) return;
+    const cloneName = `${group.name}（副本）`;
+    setCloningGroupId(group.id);
+    setMessage("");
+    try {
+      await invoke<string>("clone_employee_group_template", {
+        input: {
+          source_group_id: group.id,
+          name: cloneName,
+        },
+      });
+      await loadEmployeeGroups();
+      setMessage(`已复制团队：${cloneName}`);
+    } catch (e) {
+      setMessage(`复制团队失败: ${String(e)}`);
+    } finally {
+      setCloningGroupId(null);
     }
   }
 
@@ -529,6 +622,11 @@ export function EmployeeHubView({
     : `确定清空${clearMemoryScopeLabel}下的长期记忆吗？`;
   const clearMemoryDialogImpact = selectedEmployeeMemoryId ? `员工编号: ${selectedEmployeeMemoryId}` : undefined;
   const selectedEmployeeFeishuStatus = selectedEmployee ? resolveFeishuStatus(selectedEmployee) : null;
+  const resolveEmployeeDisplayName = (employeeId: string) => {
+    const normalized = employeeId.trim().toLowerCase();
+    if (!normalized) return "未设置";
+    return employeeLabelById.get(normalized) || employeeId.trim();
+  };
 
   return (
     <div className="h-full overflow-y-auto bg-gray-50">
@@ -632,21 +730,98 @@ export function EmployeeHubView({
             ) : (
               employeeGroups.map((group) => (
                 <div key={group.id} data-testid={`employee-group-item-${group.id}`} className="rounded border border-gray-200 px-2 py-1.5 space-y-2">
+                  {(() => {
+                    const templateId = group.template_id?.trim() || "";
+                    const entryEmployeeId = group.entry_employee_id?.trim() || group.coordinator_employee_id;
+                    const reviewMode = group.review_mode?.trim() || "none";
+                    const executionMode = group.execution_mode?.trim() || "sequential";
+                    const visibilityMode = group.visibility_mode?.trim() || "internal";
+                    const groupConfig = parseGroupTemplateConfig(group.config_json);
+                    const groupRules = groupRulesById[group.id] || [];
+                    return (
+                      <>
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs text-gray-700">
                       <span className="font-medium">{group.name}</span>
                       <span className="text-gray-500"> · 协调员 {group.coordinator_employee_id} · {group.member_count} 人</span>
                     </div>
-                    <button
-                      type="button"
-                      data-testid={`employee-group-delete-${group.id}`}
-                      onClick={() => deleteEmployeeGroup(group.id)}
-                      disabled={groupDeletingId === group.id}
-                      className="h-7 px-2 rounded border border-red-200 hover:bg-red-50 disabled:bg-gray-100 text-red-600 text-xs"
-                    >
-                      {groupDeletingId === group.id ? "删除中..." : "删除"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        data-testid={`employee-team-clone-${group.id}`}
+                        onClick={() => cloneEmployeeGroup(group)}
+                        disabled={cloningGroupId === group.id}
+                        className="h-7 px-2 rounded border border-blue-200 hover:bg-blue-50 disabled:bg-gray-100 text-blue-700 text-xs"
+                      >
+                        {cloningGroupId === group.id ? "复制中..." : "复制模板"}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`employee-group-delete-${group.id}`}
+                        onClick={() => deleteEmployeeGroup(group.id)}
+                        disabled={groupDeletingId === group.id}
+                        className="h-7 px-2 rounded border border-red-200 hover:bg-red-50 disabled:bg-gray-100 text-red-600 text-xs"
+                      >
+                        {groupDeletingId === group.id ? "删除中..." : "删除"}
+                      </button>
+                    </div>
                   </div>
+                  {(group.is_bootstrap_seeded || templateId) && (
+                    <div
+                      data-testid={`employee-team-seeded-banner-${group.id}`}
+                      className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800"
+                    >
+                      已预置默认团队 · 模板 {templateId || "custom"}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 text-[11px] text-gray-700">
+                    <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5">
+                      入口：{resolveEmployeeDisplayName(entryEmployeeId)}
+                    </span>
+                    <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5">
+                      协调：{resolveEmployeeDisplayName(group.coordinator_employee_id)}
+                    </span>
+                    <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5">
+                      审核：{reviewMode}
+                    </span>
+                    <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5">
+                      执行：{executionMode}
+                    </span>
+                    <span className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5">
+                      可见性：{visibilityMode}
+                    </span>
+                  </div>
+                  {groupConfig.roles?.length ? (
+                    <div className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5 text-[11px] text-gray-700">
+                      <div className="text-gray-500 mb-1">角色分工</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(groupConfig.roles || []).map((role, index) => (
+                          <span
+                            key={`${group.id}-role-${role.role_type || "role"}-${role.employee_key || index}`}
+                            className="rounded border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-indigo-700"
+                          >
+                            {groupRoleLabel(role.role_type || "")}：{resolveEmployeeDisplayName(role.employee_key || "")}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {groupRules.length > 0 && (
+                    <div className="rounded border border-gray-100 bg-white px-2 py-1.5">
+                      <div className="text-[11px] text-gray-500 mb-1">协作规则</div>
+                      <div className="space-y-1">
+                        {groupRules.map((rule) => (
+                          <div
+                            key={rule.id}
+                            data-testid={`employee-group-rule-${group.id}-${rule.id}`}
+                            className="text-[11px] text-gray-700"
+                          >
+                            {resolveEmployeeDisplayName(rule.from_employee_id)} -&gt; {resolveEmployeeDisplayName(rule.to_employee_id)} · {rule.relation_type} · {rule.phase_scope || "all"}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <input
                       data-testid={`employee-group-run-goal-${group.id}`}
@@ -675,6 +850,9 @@ export function EmployeeHubView({
                       {groupRunReportById[group.id]}
                     </div>
                   )}
+                      </>
+                    );
+                  })()}
                 </div>
               ))
             )}

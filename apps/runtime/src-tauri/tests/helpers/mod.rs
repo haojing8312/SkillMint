@@ -312,6 +312,13 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             coordinator_employee_id TEXT NOT NULL,
             member_employee_ids_json TEXT NOT NULL DEFAULT '[]',
             member_count INTEGER NOT NULL DEFAULT 1 CHECK (member_count >= 1 AND member_count <= 10),
+            template_id TEXT NOT NULL DEFAULT '',
+            entry_employee_id TEXT NOT NULL DEFAULT '',
+            review_mode TEXT NOT NULL DEFAULT 'none',
+            execution_mode TEXT NOT NULL DEFAULT 'sequential',
+            visibility_mode TEXT NOT NULL DEFAULT 'internal',
+            is_bootstrap_seeded INTEGER NOT NULL DEFAULT 0,
+            config_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
@@ -328,6 +335,14 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             user_goal TEXT NOT NULL DEFAULT '',
             state TEXT NOT NULL DEFAULT 'planning',
             current_round INTEGER NOT NULL DEFAULT 0,
+            current_phase TEXT NOT NULL DEFAULT 'plan',
+            entry_session_id TEXT NOT NULL DEFAULT '',
+            main_employee_id TEXT NOT NULL DEFAULT '',
+            review_round INTEGER NOT NULL DEFAULT 0,
+            status_reason TEXT NOT NULL DEFAULT '',
+            template_version TEXT NOT NULL DEFAULT '',
+            waiting_for_employee_id TEXT NOT NULL DEFAULT '',
+            waiting_for_user INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
@@ -341,13 +356,68 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             id TEXT PRIMARY KEY,
             run_id TEXT NOT NULL,
             round_no INTEGER NOT NULL DEFAULT 0,
+            parent_step_id TEXT NOT NULL DEFAULT '',
             assignee_employee_id TEXT NOT NULL DEFAULT '',
+            phase TEXT NOT NULL DEFAULT '',
             step_type TEXT NOT NULL DEFAULT 'execute',
+            step_kind TEXT NOT NULL DEFAULT 'execute',
             input TEXT NOT NULL DEFAULT '',
+            input_summary TEXT NOT NULL DEFAULT '',
             output TEXT NOT NULL DEFAULT '',
+            output_summary TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
+            requires_review INTEGER NOT NULL DEFAULT 0,
+            review_status TEXT NOT NULL DEFAULT 'not_required',
+            attempt_no INTEGER NOT NULL DEFAULT 0,
+            session_id TEXT NOT NULL DEFAULT '',
+            visibility TEXT NOT NULL DEFAULT 'internal',
             started_at TEXT NOT NULL DEFAULT '',
             finished_at TEXT NOT NULL DEFAULT ''
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS employee_group_rules (
+            id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            from_employee_id TEXT NOT NULL,
+            to_employee_id TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            phase_scope TEXT NOT NULL DEFAULT '',
+            required INTEGER NOT NULL DEFAULT 0,
+            priority INTEGER NOT NULL DEFAULT 100,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS group_run_events (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            step_id TEXT NOT NULL DEFAULT '',
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS seeded_team_templates (
+            template_id TEXT PRIMARY KEY,
+            template_version TEXT NOT NULL,
+            instance_group_id TEXT NOT NULL DEFAULT '',
+            instance_employee_ids_json TEXT NOT NULL DEFAULT '[]',
+            seed_mode TEXT NOT NULL DEFAULT 'first_run',
+            seeded_at TEXT NOT NULL
         )",
     )
     .execute(&pool)
@@ -402,6 +472,18 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_employee_group_rules_group_id ON employee_group_rules(group_id)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_group_run_events_run_id ON group_run_events(run_id)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_group_run_steps_run_id ON group_run_steps(run_id)")
         .execute(&pool)
         .await

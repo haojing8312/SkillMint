@@ -1,5 +1,16 @@
 mod helpers;
 
+async fn table_columns(pool: &sqlx::SqlitePool, table_name: &str) -> Vec<String> {
+    let pragma_sql = format!("SELECT name FROM pragma_table_info('{table_name}')");
+    sqlx::query_as::<_, (String,)>(&pragma_sql)
+        .fetch_all(pool)
+        .await
+        .expect("query pragma_table_info")
+        .into_iter()
+        .map(|row| row.0)
+        .collect()
+}
+
 #[tokio::test]
 async fn group_orchestrator_tables_exist() {
     let (pool, _tmp) = helpers::setup_test_db().await;
@@ -14,6 +25,131 @@ async fn group_orchestrator_tables_exist() {
     .expect("query sqlite_master");
 
     assert_eq!(count, 3, "expected employee group orchestration tables");
+}
+
+#[tokio::test]
+async fn team_template_rule_and_event_tables_exist_and_accept_rows() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'table'
+         AND name IN ('employee_group_rules', 'group_run_events', 'seeded_team_templates')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query sqlite_master for team template tables");
+
+    assert_eq!(count, 3, "expected team template support tables");
+
+    sqlx::query(
+        "INSERT INTO employee_group_rules (
+            id, group_id, from_employee_id, to_employee_id, relation_type, phase_scope, required, priority, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("rule-1")
+    .bind("group-1")
+    .bind("zhongshu")
+    .bind("menxia")
+    .bind("review")
+    .bind("plan")
+    .bind(1_i64)
+    .bind(100_i64)
+    .bind("2026-03-07T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("insert employee group rule");
+
+    sqlx::query(
+        "INSERT INTO group_run_events (
+            id, run_id, step_id, event_type, payload_json, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind("event-1")
+    .bind("run-1")
+    .bind("step-1")
+    .bind("step_created")
+    .bind(r#"{"phase":"plan"}"#)
+    .bind("2026-03-07T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("insert group run event");
+
+    sqlx::query(
+        "INSERT INTO seeded_team_templates (
+            template_id, template_version, instance_group_id, instance_employee_ids_json, seed_mode, seeded_at
+         ) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind("sansheng-liubu")
+    .bind("1.0.0")
+    .bind("group-1")
+    .bind(r#"["taizi","zhongshu","menxia","shangshu"]"#)
+    .bind("first_run")
+    .bind("2026-03-07T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("insert seeded team template");
+}
+
+#[tokio::test]
+async fn team_template_runtime_columns_exist_on_group_tables() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    let employee_group_columns = table_columns(&pool, "employee_groups").await;
+    for required in [
+        "template_id",
+        "entry_employee_id",
+        "review_mode",
+        "execution_mode",
+        "visibility_mode",
+        "is_bootstrap_seeded",
+        "config_json",
+    ] {
+        assert!(
+            employee_group_columns
+                .iter()
+                .any(|column| column == required),
+            "missing employee_groups column: {required}"
+        );
+    }
+
+    let group_run_columns = table_columns(&pool, "group_runs").await;
+    for required in [
+        "current_phase",
+        "entry_session_id",
+        "main_employee_id",
+        "review_round",
+        "status_reason",
+        "template_version",
+        "waiting_for_employee_id",
+        "waiting_for_user",
+    ] {
+        assert!(
+            group_run_columns.iter().any(|column| column == required),
+            "missing group_runs column: {required}"
+        );
+    }
+
+    let group_run_step_columns = table_columns(&pool, "group_run_steps").await;
+    for required in [
+        "parent_step_id",
+        "phase",
+        "step_kind",
+        "requires_review",
+        "review_status",
+        "attempt_no",
+        "session_id",
+        "input_summary",
+        "output_summary",
+        "visibility",
+    ] {
+        assert!(
+            group_run_step_columns
+                .iter()
+                .any(|column| column == required),
+            "missing group_run_steps column: {required}"
+        );
+    }
 }
 
 #[tokio::test]

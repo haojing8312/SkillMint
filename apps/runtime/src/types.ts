@@ -346,13 +346,33 @@ export interface EmployeeGroup {
   coordinator_employee_id: string;
   member_employee_ids: string[];
   member_count: number;
+  template_id: string;
+  entry_employee_id: string;
+  review_mode: string;
+  execution_mode: string;
+  visibility_mode: string;
+  is_bootstrap_seeded: boolean;
+  config_json: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface EmployeeGroupRule {
+  id: string;
+  group_id: string;
+  from_employee_id: string;
+  to_employee_id: string;
+  relation_type: string;
+  phase_scope: string;
+  required: boolean;
+  priority: number;
+  created_at: string;
 }
 
 export interface EmployeeGroupRunStep {
   id: string;
   round_no: number;
+  step_type: string;
   assignee_employee_id: string;
   status: "running" | "completed" | "failed" | string;
   output: string;
@@ -375,8 +395,22 @@ export interface EmployeeGroupRunSnapshot {
   session_id: string;
   state: string;
   current_round: number;
+  current_phase: string;
+  review_round: number;
+  status_reason: string;
+  waiting_for_employee_id: string;
+  waiting_for_user: boolean;
   final_report: string;
   steps: EmployeeGroupRunStep[];
+  events: EmployeeGroupRunEvent[];
+}
+
+export interface EmployeeGroupRunEvent {
+  id: string;
+  step_id: string;
+  event_type: string;
+  payload_json: string;
+  created_at: string;
 }
 
 export interface EmployeeMemorySkillStats {

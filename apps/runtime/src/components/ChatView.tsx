@@ -754,11 +754,25 @@ export function ChatView({
     : null;
   const groupRoundFromEvents = delegationCards.length > 0 ? Math.max(1, Math.ceil(delegationCards.length / 3)) : 0;
   const groupMemberStatesFromEvents = (() => {
-    const byRole = new Map<string, "running" | "completed" | "failed">();
+    const byRole = new Map<string, { status: "running" | "completed" | "failed"; stepType: string }>();
     for (const card of delegationCards) {
-      byRole.set(card.toRole, card.status);
+      byRole.set(card.toRole, { status: card.status, stepType: "execute" });
     }
-    return Array.from(byRole.entries()).map(([role, status]) => ({ role, status }));
+    return Array.from(byRole.entries()).map(([role, info]) => ({ role, status: info.status, stepType: info.stepType }));
+  })();
+  const groupPhaseLabelFromSnapshot = (() => {
+    const phase = (groupRunSnapshot?.current_phase || "").trim().toLowerCase();
+    const state = (groupRunSnapshot?.state || "").trim().toLowerCase();
+    const normalized = phase || state;
+    if (!normalized) return null;
+    if (normalized === "intake" || normalized === "plan" || normalized === "planning") return "计划";
+    if (normalized === "review" || normalized === "waiting_review") return "审核";
+    if (normalized === "dispatch" || normalized === "execute" || normalized === "executing") return "执行";
+    if (normalized === "synthesize" || normalized === "finalize" || normalized === "done" || normalized === "completed") return "汇报";
+    if (normalized === "failed") return "失败";
+    if (normalized === "paused") return "已暂停";
+    if (normalized === "cancelled") return "已取消";
+    return "执行";
   })();
   const groupPhaseFromSnapshot = (() => {
     const state = (groupRunSnapshot?.state || "").trim().toLowerCase();
@@ -771,19 +785,32 @@ export function ChatView({
     return "执行";
   })();
   const groupRoundFromSnapshot = groupRunSnapshot?.current_round || 0;
+  const groupReviewRound = groupRunSnapshot?.review_round || 0;
+  const groupWaitingLabel = groupRunSnapshot?.waiting_for_user
+    ? "等待用户"
+    : (groupRunSnapshot?.waiting_for_employee_id || "").trim();
+  const groupStatusReason = (groupRunSnapshot?.status_reason || "").trim();
+  const recentGroupEvents = (groupRunSnapshot?.events || []).slice(-4).reverse();
   const groupMemberStatesFromSnapshot = (() => {
-    const byRole = new Map<string, "running" | "completed" | "failed" | string>();
+    const byRole = new Map<string, { status: string; stepType: string }>();
     for (const step of groupRunSnapshot?.steps || []) {
       const role = (step.assignee_employee_id || "").trim();
       if (!role) continue;
-      byRole.set(role, step.status || "running");
+      byRole.set(role, {
+        status: step.status || "running",
+        stepType: (step.step_type || "").trim(),
+      });
     }
-    return Array.from(byRole.entries()).map(([role, status]) => ({ role, status }));
+    return Array.from(byRole.entries()).map(([role, info]) => ({
+      role,
+      status: info.status,
+      stepType: info.stepType,
+    }));
   })();
-  const groupPhaseLabel = groupPhaseFromEvents || groupPhaseFromSnapshot;
-  const groupRound = groupRoundFromEvents || groupRoundFromSnapshot;
+  const groupPhaseLabel = groupPhaseLabelFromSnapshot || groupPhaseFromSnapshot || groupPhaseFromEvents;
+  const groupRound = groupRoundFromSnapshot || groupRoundFromEvents;
   const groupMemberStates =
-    groupMemberStatesFromEvents.length > 0 ? groupMemberStatesFromEvents : groupMemberStatesFromSnapshot;
+    groupMemberStatesFromSnapshot.length > 0 ? groupMemberStatesFromSnapshot : groupMemberStatesFromEvents;
   const collaborationStatusText =
     mainSummaryDelivered
       ? `${mainRoleName || "主员工"} 已输出最终汇总`
@@ -1176,20 +1203,37 @@ export function ChatView({
             )}
           </div>
         )}
-        {(groupPhaseLabel || groupMemberStates.length > 0) && (
+        {(groupPhaseLabel || groupMemberStates.length > 0 || groupRunSnapshot) && (
           <div
             data-testid="group-orchestration-board"
             className="sticky top-0 z-10 max-w-[80%] rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs text-indigo-900"
           >
             <div className="font-medium">{`阶段：${groupPhaseLabel || "计划"}`}</div>
             <div className="mt-1">{`轮次：第 ${groupRound || 1} 轮`}</div>
+            {groupReviewRound > 0 && <div className="mt-1">{`审议轮次：${groupReviewRound}`}</div>}
+            {groupWaitingLabel && <div className="mt-1">{`等待：${groupWaitingLabel}`}</div>}
+            {groupStatusReason && <div className="mt-1 text-amber-700">{groupStatusReason}</div>}
             {groupMemberStates.length > 0 && (
               <div className="mt-2 space-y-1">
                 {groupMemberStates.map((member) => (
                   <div key={member.role} className="text-[11px] text-indigo-800">
-                    {member.role} · {member.status}
+                    {member.role}
+                    {member.stepType ? ` · ${member.stepType}` : ""}
+                    {` · ${member.status}`}
                   </div>
                 ))}
+              </div>
+            )}
+            {recentGroupEvents.length > 0 && (
+              <div className="mt-2 border-t border-indigo-100 pt-2">
+                <div className="text-[11px] font-medium text-indigo-800">最近事件</div>
+                <div className="mt-1 space-y-1">
+                  {recentGroupEvents.map((event) => (
+                    <div key={event.id} className="text-[11px] text-indigo-800">
+                      {event.event_type}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

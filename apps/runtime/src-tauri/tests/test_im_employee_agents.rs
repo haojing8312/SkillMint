@@ -1,12 +1,16 @@
 mod helpers;
 
 use runtime_lib::commands::employee_agents::{
-    cancel_employee_group_run_with_pool, create_employee_group_with_pool,
-    delete_employee_group_with_pool, ensure_employee_sessions_for_event_with_pool,
-    get_employee_group_run_snapshot_with_pool, link_inbound_event_to_session_with_pool,
-    list_agent_employees_with_pool, list_employee_groups_with_pool, resolve_target_employees_for_event,
-    retry_employee_group_run_failed_steps_with_pool, start_employee_group_run_with_pool,
-    upsert_agent_employee_with_pool, CreateEmployeeGroupInput, StartEmployeeGroupRunInput,
+    cancel_employee_group_run_with_pool, clone_employee_group_template_with_pool,
+    create_employee_group_with_pool, delete_employee_group_with_pool,
+    ensure_employee_sessions_for_event_with_pool, get_employee_group_run_snapshot_with_pool,
+    link_inbound_event_to_session_with_pool, list_agent_employees_with_pool,
+    list_employee_group_rules_with_pool, list_employee_groups_with_pool,
+    pause_employee_group_run_with_pool, reassign_group_run_step_with_pool,
+    resolve_target_employees_for_event, resume_employee_group_run_with_pool,
+    retry_employee_group_run_failed_steps_with_pool, review_group_run_step_with_pool,
+    run_group_step_with_pool, start_employee_group_run_with_pool, upsert_agent_employee_with_pool,
+    CloneEmployeeGroupTemplateInput, CreateEmployeeGroupInput, StartEmployeeGroupRunInput,
     UpsertAgentEmployeeInput,
 };
 use runtime_lib::im::types::{ImEvent, ImEventType};
@@ -462,7 +466,9 @@ async fn create_list_delete_employee_group_with_constraints() {
     .await
     .expect("create group");
 
-    let groups = list_employee_groups_with_pool(&pool).await.expect("list groups");
+    let groups = list_employee_groups_with_pool(&pool)
+        .await
+        .expect("list groups");
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].id, group_id);
     assert_eq!(groups[0].coordinator_employee_id, "project_manager");
@@ -472,8 +478,127 @@ async fn create_list_delete_employee_group_with_constraints() {
         .await
         .expect("delete group");
 
-    let groups_after_delete = list_employee_groups_with_pool(&pool).await.expect("list groups");
+    let groups_after_delete = list_employee_groups_with_pool(&pool)
+        .await
+        .expect("list groups");
     assert!(groups_after_delete.is_empty());
+}
+
+#[tokio::test]
+async fn list_employee_group_rules_returns_review_relationships() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "审议团队".to_string(),
+            coordinator_employee_id: "zhongshu".to_string(),
+            member_employee_ids: vec!["zhongshu".to_string(), "menxia".to_string()],
+        },
+    )
+    .await
+    .expect("create group");
+
+    sqlx::query(
+        "INSERT INTO employee_group_rules (
+            id, group_id, from_employee_id, to_employee_id, relation_type, phase_scope, required, priority, created_at
+         ) VALUES ('rule-review-list', ?, 'zhongshu', 'menxia', 'review', 'plan', 1, 100, '2026-03-07T00:00:00Z')",
+    )
+    .bind(&group_id)
+    .execute(&pool)
+    .await
+    .expect("insert review rule");
+
+    let rules = list_employee_group_rules_with_pool(&pool, &group_id)
+        .await
+        .expect("list group rules");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].relation_type, "review");
+    assert_eq!(rules[0].from_employee_id, "zhongshu");
+    assert_eq!(rules[0].to_employee_id, "menxia");
+}
+
+#[tokio::test]
+async fn clone_employee_group_template_preserves_rules_and_template_metadata() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    let source_group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "默认复杂任务团队".to_string(),
+            coordinator_employee_id: "shangshu".to_string(),
+            member_employee_ids: vec![
+                "taizi".to_string(),
+                "zhongshu".to_string(),
+                "menxia".to_string(),
+                "shangshu".to_string(),
+            ],
+        },
+    )
+    .await
+    .expect("create source group");
+
+    sqlx::query(
+        "UPDATE employee_groups
+         SET template_id = 'sansheng-liubu',
+             entry_employee_id = 'taizi',
+             review_mode = 'hard',
+             execution_mode = 'parallel',
+             visibility_mode = 'team_only',
+             is_bootstrap_seeded = 1,
+             config_json = '{\"roles\":[{\"role_type\":\"entry\",\"employee_key\":\"taizi\"}]}'
+         WHERE id = ?",
+    )
+    .bind(&source_group_id)
+    .execute(&pool)
+    .await
+    .expect("update source group metadata");
+
+    sqlx::query(
+        "INSERT INTO employee_group_rules (
+            id, group_id, from_employee_id, to_employee_id, relation_type, phase_scope, required, priority, created_at
+         ) VALUES ('rule-clone-1', ?, 'zhongshu', 'menxia', 'review', 'plan', 1, 100, '2026-03-07T00:00:00Z')",
+    )
+    .bind(&source_group_id)
+    .execute(&pool)
+    .await
+    .expect("insert source rule");
+
+    let cloned_group_id = clone_employee_group_template_with_pool(
+        &pool,
+        CloneEmployeeGroupTemplateInput {
+            source_group_id: source_group_id.clone(),
+            name: "默认复杂任务团队（副本）".to_string(),
+        },
+    )
+    .await
+    .expect("clone team template");
+
+    assert_ne!(cloned_group_id, source_group_id);
+
+    let cloned_groups = list_employee_groups_with_pool(&pool)
+        .await
+        .expect("list groups after clone");
+    let cloned = cloned_groups
+        .iter()
+        .find(|group| group.id == cloned_group_id)
+        .expect("cloned group should exist");
+    assert_eq!(cloned.name, "默认复杂任务团队（副本）");
+    assert_eq!(cloned.template_id, "sansheng-liubu");
+    assert_eq!(cloned.entry_employee_id, "taizi");
+    assert_eq!(cloned.review_mode, "hard");
+    assert_eq!(cloned.execution_mode, "parallel");
+    assert_eq!(cloned.visibility_mode, "team_only");
+    assert!(!cloned.is_bootstrap_seeded);
+
+    let rules = list_employee_group_rules_with_pool(&pool, &cloned_group_id)
+        .await
+        .expect("list cloned rules");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].group_id, cloned_group_id);
+    assert_eq!(rules[0].relation_type, "review");
+    assert_eq!(rules[0].from_employee_id, "zhongshu");
+    assert_eq!(rules[0].to_employee_id, "menxia");
 }
 
 #[tokio::test]
@@ -518,7 +643,7 @@ async fn create_employee_group_rejects_more_than_ten_members_and_missing_coordin
 }
 
 #[tokio::test]
-async fn start_employee_group_run_persists_run_and_steps() {
+async fn start_employee_group_run_persists_plan_steps_and_events() {
     let (pool, _tmp) = helpers::setup_test_db().await;
     sqlx::query(
         "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
@@ -581,14 +706,15 @@ async fn start_employee_group_run_persists_run_and_steps() {
     .expect("start run");
 
     assert_eq!(outcome.group_id, group_id);
-    assert_eq!(outcome.state, "done");
+    assert_eq!(outcome.state, "planning");
     assert!(!outcome.session_id.is_empty());
     assert!(!outcome.session_skill_id.is_empty());
     assert!(outcome.current_round >= 1);
     assert!(outcome.final_report.contains("计划"));
     assert!(outcome.final_report.contains("执行"));
     assert!(outcome.final_report.contains("汇报"));
-    assert_eq!(outcome.steps.len(), 3);
+    assert!(outcome.steps.iter().any(|step| step.step_type == "plan"));
+    assert!(outcome.steps.iter().any(|step| step.step_type == "execute"));
 
     let (run_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM group_runs WHERE id = ?")
         .bind(&outcome.run_id)
@@ -597,12 +723,21 @@ async fn start_employee_group_run_persists_run_and_steps() {
         .expect("count group run");
     assert_eq!(run_count, 1);
 
-    let (step_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM group_run_steps WHERE run_id = ?")
-        .bind(&outcome.run_id)
-        .fetch_one(&pool)
-        .await
-        .expect("count run steps");
-    assert_eq!(step_count, 3);
+    let (step_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM group_run_steps WHERE run_id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count run steps");
+    assert_eq!(step_count, outcome.steps.len() as i64);
+
+    let (event_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM group_run_events WHERE run_id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count run events");
+    assert!(event_count > 0);
 
     let snapshot = get_employee_group_run_snapshot_with_pool(&pool, &outcome.session_id)
         .await
@@ -610,7 +745,7 @@ async fn start_employee_group_run_persists_run_and_steps() {
         .expect("snapshot should exist");
     assert_eq!(snapshot.run_id, outcome.run_id);
     assert_eq!(snapshot.group_id, outcome.group_id);
-    assert_eq!(snapshot.steps.len(), 3);
+    assert_eq!(snapshot.steps.len(), outcome.steps.len());
 }
 
 #[tokio::test]
@@ -653,10 +788,7 @@ async fn cancel_and_retry_failed_group_run_steps_work() {
         CreateEmployeeGroupInput {
             name: "交付战队".to_string(),
             coordinator_employee_id: "project_manager".to_string(),
-            member_employee_ids: vec![
-                "project_manager".to_string(),
-                "dev_team".to_string(),
-            ],
+            member_employee_ids: vec!["project_manager".to_string(), "dev_team".to_string()],
         },
     )
     .await
@@ -680,6 +812,21 @@ async fn cancel_and_retry_failed_group_run_steps_work() {
         .execute(&pool)
         .await
         .expect("force run state for cancel test");
+
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'failed', output = '开发任务超时'
+         WHERE id = (
+             SELECT id FROM group_run_steps
+             WHERE run_id = ? AND step_type = 'execute'
+             ORDER BY round_no ASC, id ASC
+             LIMIT 1
+         )",
+    )
+    .bind(&outcome.run_id)
+    .execute(&pool)
+    .await
+    .expect("seed failed execute step");
 
     cancel_employee_group_run_with_pool(&pool, &outcome.run_id)
         .await
@@ -709,4 +856,606 @@ async fn cancel_and_retry_failed_group_run_steps_work() {
     .await
     .expect("count failed after retry");
     assert_eq!(failed_count_after_retry.0, 0);
+}
+
+#[tokio::test]
+async fn execute_group_step_uses_target_employee_context() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "shangshu".to_string(),
+            name: "尚书省".to_string(),
+            role_id: "shangshu".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "E:/workspace/shangshu".to_string(),
+            openclaw_agent_id: "shangshu".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: true,
+            skill_ids: vec!["builtin-general".to_string()],
+        },
+    )
+    .await
+    .expect("seed coordinator employee");
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "bingbu".to_string(),
+            name: "兵部".to_string(),
+            role_id: "bingbu".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "delivery-skill".to_string(),
+            default_work_dir: "E:/workspace/bingbu".to_string(),
+            openclaw_agent_id: "bingbu".to_string(),
+            routing_priority: 90,
+            enabled_scopes: vec!["app".to_string()],
+            enabled: true,
+            is_default: false,
+            skill_ids: vec!["delivery-skill".to_string()],
+        },
+    )
+    .await
+    .expect("seed execute employee");
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "默认复杂任务团队".to_string(),
+            coordinator_employee_id: "shangshu".to_string(),
+            member_employee_ids: vec!["shangshu".to_string(), "bingbu".to_string()],
+        },
+    )
+    .await
+    .expect("create group");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "执行交付方案".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start group run");
+
+    let (step_id,): (String,) = sqlx::query_as(
+        "SELECT id FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute' AND assignee_employee_id = 'bingbu'
+         LIMIT 1",
+    )
+    .bind(&outcome.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load execute step");
+
+    let exec = run_group_step_with_pool(&pool, &step_id)
+        .await
+        .expect("run group step");
+
+    assert_eq!(exec.assignee_employee_id, "bingbu");
+    assert_eq!(exec.status, "completed");
+    assert!(!exec.session_id.is_empty());
+
+    let (skill_id, work_dir, employee_id): (String, String, String) =
+        sqlx::query_as("SELECT skill_id, work_dir, employee_id FROM sessions WHERE id = ?")
+            .bind(&exec.session_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load execution session");
+    assert_eq!(skill_id, "delivery-skill");
+    assert_eq!(work_dir, "E:/workspace/bingbu");
+    assert_eq!(employee_id, "bingbu");
+
+    let (step_status, step_session_id): (String, String) =
+        sqlx::query_as("SELECT status, session_id FROM group_run_steps WHERE id = ?")
+            .bind(&step_id)
+            .fetch_one(&pool)
+            .await
+            .expect("reload executed step");
+    assert_eq!(step_status, "completed");
+    assert_eq!(step_session_id, exec.session_id);
+}
+
+#[tokio::test]
+async fn hard_review_reject_moves_run_back_to_previous_phase() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    for employee_id in ["zhongshu", "menxia"] {
+        upsert_agent_employee_with_pool(
+            &pool,
+            UpsertAgentEmployeeInput {
+                id: None,
+                employee_id: employee_id.to_string(),
+                name: employee_id.to_string(),
+                role_id: employee_id.to_string(),
+                persona: "".to_string(),
+                feishu_open_id: "".to_string(),
+                feishu_app_id: "".to_string(),
+                feishu_app_secret: "".to_string(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: format!("E:/workspace/{employee_id}"),
+                openclaw_agent_id: employee_id.to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["app".to_string()],
+                enabled: true,
+                is_default: employee_id == "zhongshu",
+                skill_ids: vec!["builtin-general".to_string()],
+            },
+        )
+        .await
+        .expect("seed reviewable employee");
+    }
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "审议团队".to_string(),
+            coordinator_employee_id: "zhongshu".to_string(),
+            member_employee_ids: vec!["zhongshu".to_string(), "menxia".to_string()],
+        },
+    )
+    .await
+    .expect("create reviewable group");
+
+    sqlx::query(
+        "UPDATE employee_groups
+         SET review_mode = 'hard', entry_employee_id = 'zhongshu'
+         WHERE id = ?",
+    )
+    .bind(&group_id)
+    .execute(&pool)
+    .await
+    .expect("enable hard review");
+    sqlx::query(
+        "INSERT INTO employee_group_rules (
+            id, group_id, from_employee_id, to_employee_id, relation_type, phase_scope, required, priority, created_at
+         ) VALUES (?, ?, ?, ?, 'review', 'plan', 1, 100, ?)",
+    )
+    .bind("rule-review-1")
+    .bind(&group_id)
+    .bind("zhongshu")
+    .bind("menxia")
+    .bind("2026-03-07T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("seed review rule");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "输出复杂方案".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start reviewable run");
+
+    review_group_run_step_with_pool(&pool, &outcome.run_id, "reject", "缺少回滚方案")
+        .await
+        .expect("reject review");
+
+    let (current_phase, review_round, state): (String, i64, String) =
+        sqlx::query_as("SELECT current_phase, review_round, state FROM group_runs WHERE id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("reload run state");
+    assert_eq!(current_phase, "plan");
+    assert_eq!(review_round, 1);
+    assert_eq!(state, "planning");
+}
+
+#[tokio::test]
+async fn hard_review_approve_advances_run_to_execute_phase() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    for employee_id in ["zhongshu", "menxia"] {
+        upsert_agent_employee_with_pool(
+            &pool,
+            UpsertAgentEmployeeInput {
+                id: None,
+                employee_id: employee_id.to_string(),
+                name: employee_id.to_string(),
+                role_id: employee_id.to_string(),
+                persona: "".to_string(),
+                feishu_open_id: "".to_string(),
+                feishu_app_id: "".to_string(),
+                feishu_app_secret: "".to_string(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: format!("E:/workspace/{employee_id}"),
+                openclaw_agent_id: employee_id.to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["app".to_string()],
+                enabled: true,
+                is_default: employee_id == "zhongshu",
+                skill_ids: vec!["builtin-general".to_string()],
+            },
+        )
+        .await
+        .expect("seed reviewable employee");
+    }
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "审议团队".to_string(),
+            coordinator_employee_id: "zhongshu".to_string(),
+            member_employee_ids: vec!["zhongshu".to_string(), "menxia".to_string()],
+        },
+    )
+    .await
+    .expect("create reviewable group");
+
+    sqlx::query(
+        "UPDATE employee_groups
+         SET review_mode = 'hard', entry_employee_id = 'zhongshu'
+         WHERE id = ?",
+    )
+    .bind(&group_id)
+    .execute(&pool)
+    .await
+    .expect("enable hard review");
+    sqlx::query(
+        "INSERT INTO employee_group_rules (
+            id, group_id, from_employee_id, to_employee_id, relation_type, phase_scope, required, priority, created_at
+         ) VALUES (?, ?, ?, ?, 'review', 'plan', 1, 100, ?)",
+    )
+    .bind("rule-review-approve-1")
+    .bind(&group_id)
+    .bind("zhongshu")
+    .bind("menxia")
+    .bind("2026-03-07T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("seed review rule");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "输出复杂方案".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start reviewable run");
+
+    review_group_run_step_with_pool(&pool, &outcome.run_id, "approve", "方案通过")
+        .await
+        .expect("approve review");
+
+    let (current_phase, state): (String, String) =
+        sqlx::query_as("SELECT current_phase, state FROM group_runs WHERE id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("reload run state");
+    assert_eq!(current_phase, "execute");
+    assert_eq!(state, "planning");
+}
+
+#[tokio::test]
+async fn group_run_snapshot_exposes_phase_review_and_events() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    for employee_id in ["zhongshu", "menxia"] {
+        upsert_agent_employee_with_pool(
+            &pool,
+            UpsertAgentEmployeeInput {
+                id: None,
+                employee_id: employee_id.to_string(),
+                name: employee_id.to_string(),
+                role_id: employee_id.to_string(),
+                persona: "".to_string(),
+                feishu_open_id: "".to_string(),
+                feishu_app_id: "".to_string(),
+                feishu_app_secret: "".to_string(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: format!("E:/workspace/{employee_id}"),
+                openclaw_agent_id: employee_id.to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["app".to_string()],
+                enabled: true,
+                is_default: employee_id == "zhongshu",
+                skill_ids: vec!["builtin-general".to_string()],
+            },
+        )
+        .await
+        .expect("seed reviewable employee");
+    }
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "审议团队".to_string(),
+            coordinator_employee_id: "zhongshu".to_string(),
+            member_employee_ids: vec!["zhongshu".to_string(), "menxia".to_string()],
+        },
+    )
+    .await
+    .expect("create reviewable group");
+
+    sqlx::query(
+        "UPDATE employee_groups
+         SET review_mode = 'hard', entry_employee_id = 'zhongshu'
+         WHERE id = ?",
+    )
+    .bind(&group_id)
+    .execute(&pool)
+    .await
+    .expect("enable hard review");
+    sqlx::query(
+        "INSERT INTO employee_group_rules (
+            id, group_id, from_employee_id, to_employee_id, relation_type, phase_scope, required, priority, created_at
+         ) VALUES ('rule-review-snapshot', ?, 'zhongshu', 'menxia', 'review', 'plan', 1, 100, '2026-03-07T00:00:00Z')",
+    )
+    .bind(&group_id)
+    .execute(&pool)
+    .await
+    .expect("seed review rule");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "输出复杂方案".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start reviewable run");
+
+    let snapshot = get_employee_group_run_snapshot_with_pool(&pool, &outcome.session_id)
+        .await
+        .expect("get snapshot")
+        .expect("snapshot exists");
+    assert_eq!(snapshot.current_phase, "review");
+    assert_eq!(snapshot.review_round, 0);
+    assert!(snapshot.events.iter().any(|event| event.event_type == "run_created"));
+    assert!(snapshot.events.iter().any(|event| event.event_type == "phase_started"));
+}
+
+#[tokio::test]
+async fn pause_and_resume_group_run_updates_state() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "project_manager".to_string(),
+            name: "项目经理".to_string(),
+            role_id: "project_manager".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "".to_string(),
+            openclaw_agent_id: "project_manager".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: true,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("seed coordinator employee");
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "交付战队".to_string(),
+            coordinator_employee_id: "project_manager".to_string(),
+            member_employee_ids: vec!["project_manager".to_string(), "dev_team".to_string()],
+        },
+    )
+    .await
+    .expect("create group");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "完成版本发布方案".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start run");
+
+    sqlx::query("UPDATE group_runs SET state = 'executing', current_phase = 'execute' WHERE id = ?")
+        .bind(&outcome.run_id)
+        .execute(&pool)
+        .await
+        .expect("force run executing");
+
+    pause_employee_group_run_with_pool(&pool, &outcome.run_id, "人工介入")
+        .await
+        .expect("pause run");
+    let paused: (String, String) =
+        sqlx::query_as("SELECT state, status_reason FROM group_runs WHERE id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load paused run");
+    assert_eq!(paused.0, "paused");
+    assert_eq!(paused.1, "人工介入");
+
+    resume_employee_group_run_with_pool(&pool, &outcome.run_id)
+        .await
+        .expect("resume run");
+    let resumed: (String, String) =
+        sqlx::query_as("SELECT state, current_phase FROM group_runs WHERE id = ?")
+            .bind(&outcome.run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load resumed run");
+    assert_eq!(resumed.0, "executing");
+    assert_eq!(resumed.1, "execute");
+}
+
+#[tokio::test]
+async fn reassign_failed_group_step_updates_assignee_and_resets_status() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    for employee_id in ["shangshu", "bingbu", "gongbu"] {
+        upsert_agent_employee_with_pool(
+            &pool,
+            UpsertAgentEmployeeInput {
+                id: None,
+                employee_id: employee_id.to_string(),
+                name: employee_id.to_string(),
+                role_id: employee_id.to_string(),
+                persona: "".to_string(),
+                feishu_open_id: "".to_string(),
+                feishu_app_id: "".to_string(),
+                feishu_app_secret: "".to_string(),
+                primary_skill_id: "builtin-general".to_string(),
+                default_work_dir: format!("E:/workspace/{employee_id}"),
+                openclaw_agent_id: employee_id.to_string(),
+                routing_priority: 100,
+                enabled_scopes: vec!["app".to_string()],
+                enabled: true,
+                is_default: employee_id == "shangshu",
+                skill_ids: vec!["builtin-general".to_string()],
+            },
+        )
+        .await
+        .expect("seed reassign employee");
+    }
+
+    let group_id = create_employee_group_with_pool(
+        &pool,
+        CreateEmployeeGroupInput {
+            name: "改派团队".to_string(),
+            coordinator_employee_id: "shangshu".to_string(),
+            member_employee_ids: vec![
+                "shangshu".to_string(),
+                "bingbu".to_string(),
+                "gongbu".to_string(),
+            ],
+        },
+    )
+    .await
+    .expect("create group");
+
+    let outcome = start_employee_group_run_with_pool(
+        &pool,
+        StartEmployeeGroupRunInput {
+            group_id,
+            user_goal: "推进执行".to_string(),
+            execution_window: 2,
+            max_retry_per_step: 1,
+            timeout_employee_ids: vec![],
+        },
+    )
+    .await
+    .expect("start run");
+
+    let (step_id,): (String,) = sqlx::query_as(
+        "SELECT id FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute' AND assignee_employee_id = 'bingbu'
+         LIMIT 1",
+    )
+    .bind(&outcome.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load failed step");
+
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'failed', output = '原负责人失败', session_id = 'session-old'
+         WHERE id = ?",
+    )
+    .bind(&step_id)
+    .execute(&pool)
+    .await
+    .expect("mark step failed");
+
+    reassign_group_run_step_with_pool(&pool, &step_id, "gongbu")
+        .await
+        .expect("reassign step");
+
+    let (assignee_employee_id, status, session_id, output): (String, String, String, String) =
+        sqlx::query_as(
+            "SELECT assignee_employee_id, status, session_id, output
+             FROM group_run_steps WHERE id = ?",
+        )
+        .bind(&step_id)
+        .fetch_one(&pool)
+        .await
+        .expect("reload reassigned step");
+    assert_eq!(assignee_employee_id, "gongbu");
+    assert_eq!(status, "pending");
+    assert_eq!(session_id, "");
+    assert_eq!(output, "");
 }

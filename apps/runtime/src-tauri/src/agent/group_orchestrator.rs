@@ -2,6 +2,7 @@
 pub struct GroupRunRequest {
     pub group_id: String,
     pub coordinator_employee_id: String,
+    pub reviewer_employee_id: Option<String>,
     pub member_employee_ids: Vec<String>,
     pub user_goal: String,
     pub execution_window: usize,
@@ -55,6 +56,168 @@ pub struct GroupRunOutcome {
     pub final_report: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupRunStepDraft {
+    pub round_no: i64,
+    pub assignee_employee_id: String,
+    pub phase: String,
+    pub step_type: String,
+    pub status: String,
+    pub input: String,
+    pub output: String,
+    pub requires_review: bool,
+    pub review_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupRunEventDraft {
+    pub event_type: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupRunPlan {
+    pub state: String,
+    pub current_phase: String,
+    pub current_round: i64,
+    pub steps: Vec<GroupRunStepDraft>,
+    pub events: Vec<GroupRunEventDraft>,
+    pub final_report: String,
+}
+
+pub fn build_group_run_plan(request: GroupRunRequest) -> GroupRunPlan {
+    let members = normalize_members(
+        request.coordinator_employee_id.as_str(),
+        &request.member_employee_ids,
+    );
+    let review_required = request
+        .reviewer_employee_id
+        .as_ref()
+        .is_some_and(|employee_id| !employee_id.trim().is_empty());
+
+    if members.is_empty() {
+        return GroupRunPlan {
+            state: GroupRunState::Failed.as_str().to_string(),
+            current_phase: "plan".to_string(),
+            current_round: 0,
+            steps: Vec::new(),
+            events: vec![GroupRunEventDraft {
+                event_type: "run_created".to_string(),
+                payload_json: serde_json::json!({
+                    "group_id": request.group_id,
+                    "current_phase": "plan",
+                    "status": "failed",
+                    "reason": "no_members"
+                })
+                .to_string(),
+            }],
+            final_report: "计划：无可用成员\n执行：待调度\n汇报：执行失败，原因=无可用成员"
+                .to_string(),
+        };
+    }
+
+    let window = request.execution_window.clamp(1, 10);
+    let max_round = ((members.len().saturating_sub(1) / window) as i64) + 1;
+    let mut steps = Vec::with_capacity(members.len() + 2);
+
+    steps.push(GroupRunStepDraft {
+        round_no: 0,
+        assignee_employee_id: request.coordinator_employee_id.clone(),
+        phase: "plan".to_string(),
+        step_type: "plan".to_string(),
+        status: "completed".to_string(),
+        input: request.user_goal.clone(),
+        output: format!("已完成任务拆解：{}", request.user_goal),
+        requires_review: review_required,
+        review_status: if review_required {
+            "pending".to_string()
+        } else {
+            "not_required".to_string()
+        },
+    });
+
+    if let Some(reviewer_employee_id) = request
+        .reviewer_employee_id
+        .as_ref()
+        .map(|employee_id| employee_id.trim())
+        .filter(|employee_id| !employee_id.is_empty())
+    {
+        steps.push(GroupRunStepDraft {
+            round_no: 0,
+            assignee_employee_id: reviewer_employee_id.to_string(),
+            phase: "review".to_string(),
+            step_type: "review".to_string(),
+            status: "pending".to_string(),
+            input: request.user_goal.clone(),
+            output: "等待审核计划".to_string(),
+            requires_review: false,
+            review_status: "pending".to_string(),
+        });
+    }
+
+    for (idx, assignee_employee_id) in members.iter().enumerate() {
+        let round_no = ((idx / window) as i64) + 1;
+        steps.push(GroupRunStepDraft {
+            round_no,
+            assignee_employee_id: assignee_employee_id.clone(),
+            phase: "execute".to_string(),
+            step_type: "execute".to_string(),
+            status: "pending".to_string(),
+            input: request.user_goal.clone(),
+            output: String::new(),
+            requires_review: false,
+            review_status: "not_required".to_string(),
+        });
+    }
+
+    let current_phase = if review_required {
+        "review"
+    } else {
+        "dispatch"
+    }
+    .to_string();
+    let state = if review_required {
+        "waiting_review".to_string()
+    } else {
+        GroupRunState::Planning.as_str().to_string()
+    };
+    let final_report = format!(
+        "计划：已生成 {} 个阶段步骤，协调员={}。\n执行：待分派 {} 名员工进入执行。\n汇报：当前阶段={}，等待下一步推进。",
+        steps.len(),
+        request.coordinator_employee_id,
+        members.len(),
+        current_phase
+    );
+    let events = vec![
+        GroupRunEventDraft {
+            event_type: "run_created".to_string(),
+            payload_json: serde_json::json!({
+                "group_id": request.group_id,
+                "current_phase": current_phase,
+                "state": state
+            })
+            .to_string(),
+        },
+        GroupRunEventDraft {
+            event_type: "phase_started".to_string(),
+            payload_json: serde_json::json!({
+                "phase": if review_required { "review" } else { "plan" },
+                "review_required": review_required
+            })
+            .to_string(),
+        },
+    ];
+
+    GroupRunPlan {
+        state,
+        current_phase,
+        current_round: max_round,
+        steps,
+        events,
+        final_report,
+    }
+}
+
 pub fn simulate_group_run(request: GroupRunRequest) -> GroupRunOutcome {
     let members = normalize_members(
         request.coordinator_employee_id.as_str(),
@@ -63,13 +226,11 @@ pub fn simulate_group_run(request: GroupRunRequest) -> GroupRunOutcome {
 
     if members.is_empty() {
         return GroupRunOutcome {
-            states: vec![
-                GroupRunState::Planning,
-                GroupRunState::Failed,
-            ],
+            states: vec![GroupRunState::Planning, GroupRunState::Failed],
             plan: Vec::new(),
             execution: Vec::new(),
-            final_report: "计划：无可用成员\n执行：未开始\n汇报：执行失败，原因=无可用成员".to_string(),
+            final_report: "计划：无可用成员\n执行：未开始\n汇报：执行失败，原因=无可用成员"
+                .to_string(),
         };
     }
 
@@ -183,6 +344,7 @@ mod tests {
         let outcome = simulate_group_run(GroupRunRequest {
             group_id: "g1".to_string(),
             coordinator_employee_id: "project_manager".to_string(),
+            reviewer_employee_id: None,
             member_employee_ids: vec![
                 "project_manager".to_string(),
                 "dev_team".to_string(),
