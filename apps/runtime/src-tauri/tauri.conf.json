@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WorkClaw",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "identifier": "dev.workclaw.runtime",
   "build": {
     "beforeDevCommand": "pnpm dev:tauri",
@@ -53,7 +53,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ3NEE5MzM2NjMwODcwREUKUldUZWNBaGpOcE5LUjFRUUFWTU1sTmEzK0hVWE1aaEJ4Z0lKYmMxcTNabXZ4UXpuNHhUaXg4K3IK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRDQzNGNEQwRTEzNUI3NDcKUldSSHR6WGgwUFREVElnZ0RYNVZGYW1OL3ZkQ3hQalpPSXkxejFEZkZweHZLeWtMUGh1Qm9RMDQK",
       "endpoints": [
         "https://github.com/haojing8312/WorkClaw/releases/latest/download/latest.json"
       ],
