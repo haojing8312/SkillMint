@@ -2450,6 +2450,13 @@ describe("ChatView IM routing panel", () => {
             {
               id: "evt-open-session-1",
               step_id: "step-open-session-1",
+              event_type: "step_created",
+              payload_json: "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"尚书\"}",
+              created_at: "2026-03-07T00:59:00Z",
+            },
+            {
+              id: "evt-open-session-2",
+              step_id: "step-open-session-1",
               event_type: "step_dispatched",
               payload_json: "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"尚书\"}",
               created_at: "2026-03-07T01:00:00Z",
@@ -2507,6 +2514,16 @@ describe("ChatView IM routing panel", () => {
       sourceStepId: "step-open-session-1",
       sourceEmployeeId: "尚书",
       assigneeEmployeeId: "工部",
+      sourceStepTimeline: [
+        {
+          label: "step_created · 尚书 -> 工部",
+          createdAt: "2026-03-07T00:59:00Z",
+        },
+        {
+          label: "step_dispatched · 尚书 -> 工部",
+          createdAt: "2026-03-07T01:00:00Z",
+        },
+      ],
     });
   });
 
@@ -2611,6 +2628,16 @@ describe("ChatView IM routing panel", () => {
           sourceStepId: "step-open-session-1",
           sourceEmployeeId: "尚书",
           assigneeEmployeeId: "工部",
+          sourceStepTimeline: [
+            {
+              label: "step_created · 尚书 -> 工部",
+              createdAt: "2026-03-07T00:59:00Z",
+            },
+            {
+              label: "step_dispatched · 尚书 -> 工部",
+              createdAt: "2026-03-07T01:00:00Z",
+            },
+          ],
         }}
         onReturnToSourceSession={handleReturnToSourceSession}
       />
@@ -2621,6 +2648,12 @@ describe("ChatView IM routing panel", () => {
       expect(screen.getByTestId("chat-session-execution-context-bar")).toHaveTextContent("来源员工：尚书");
       expect(screen.getByTestId("chat-session-execution-context-bar")).toHaveTextContent("当前负责人：工部");
       expect(screen.getByRole("button", { name: "返回协作看板" })).toBeInTheDocument();
+      expect(screen.getByTestId("chat-session-execution-context-timeline")).toHaveTextContent(
+        "step_created · 尚书 -> 工部",
+      );
+      expect(screen.getByTestId("chat-session-execution-context-timeline")).toHaveTextContent(
+        "step_dispatched · 尚书 -> 工部",
+      );
     });
 
     fireEvent.click(screen.getByRole("button", { name: "返回协作看板" }));

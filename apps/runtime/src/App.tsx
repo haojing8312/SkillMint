@@ -240,6 +240,7 @@ export default function App() {
     sourceStepId: string;
     sourceEmployeeId?: string;
     assigneeEmployeeId?: string;
+    sourceStepTimeline?: Array<{ label: string; createdAt?: string }>;
   } | null>(null);
   const [employeeAssistantSessionContexts, setEmployeeAssistantSessionContexts] = useState<
     Record<string, EmployeeAssistantSessionContext>
@@ -2102,6 +2103,12 @@ export default function App() {
                   );
                   const sourceSessionId = (options?.sourceSessionId || "").trim();
                   const sourceStepId = (options?.sourceStepId || "").trim();
+                  const sourceStepTimeline = (options?.sourceStepTimeline || [])
+                    .map((item) => ({
+                      label: (item?.label || "").trim(),
+                      createdAt: (item?.createdAt || "").trim() || undefined,
+                    }))
+                    .filter((item) => item.label.length > 0);
                   setPendingSessionExecutionContext(
                     sourceSessionId && sourceStepId
                       ? {
@@ -2110,6 +2117,7 @@ export default function App() {
                           sourceStepId,
                           sourceEmployeeId: (options?.sourceEmployeeId || "").trim() || undefined,
                           assigneeEmployeeId: (options?.assigneeEmployeeId || "").trim() || undefined,
+                          sourceStepTimeline: sourceStepTimeline.length > 0 ? sourceStepTimeline : undefined,
                         }
                       : null,
                   );
@@ -2132,6 +2140,7 @@ export default function App() {
                         sourceStepId: pendingSessionExecutionContext.sourceStepId,
                         sourceEmployeeId: pendingSessionExecutionContext.sourceEmployeeId,
                         assigneeEmployeeId: pendingSessionExecutionContext.assigneeEmployeeId,
+                        sourceStepTimeline: pendingSessionExecutionContext.sourceStepTimeline,
                       }
                     : undefined
                 }

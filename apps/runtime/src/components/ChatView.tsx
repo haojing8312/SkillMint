@@ -20,12 +20,18 @@ type ClawhubInstallCandidate = {
   sourceUrl?: string | null;
 };
 
+type ChatSessionTimelineItem = {
+  label: string;
+  createdAt?: string;
+};
+
 type ChatSessionOpenOptions = {
   focusHint?: string;
   sourceSessionId?: string;
   sourceStepId?: string;
   sourceEmployeeId?: string;
   assigneeEmployeeId?: string;
+  sourceStepTimeline?: ChatSessionTimelineItem[];
 };
 
 type ChatSessionExecutionContext = {
@@ -33,6 +39,7 @@ type ChatSessionExecutionContext = {
   sourceStepId: string;
   sourceEmployeeId?: string;
   assigneeEmployeeId?: string;
+  sourceStepTimeline?: ChatSessionTimelineItem[];
 };
 
 interface Props {
@@ -1113,6 +1120,24 @@ export function ChatView({
     if (normalized === "cancelled") return "已取消";
     return status?.trim() || "待执行";
   };
+  const groupRunEventTimelineByStepId = (() => {
+    const byStepId = new Map<string, ChatSessionTimelineItem[]>();
+    for (const event of groupRunSnapshot?.events || []) {
+      if (!event.step_id) continue;
+      const label = formatGroupRunEventLabel(event).trim();
+      if (!label) continue;
+      const list = byStepId.get(event.step_id) || [];
+      list.push({
+        label,
+        createdAt: String(event.created_at || "").trim() || undefined,
+      });
+      byStepId.set(event.step_id, list);
+    }
+    for (const [stepId, items] of byStepId.entries()) {
+      byStepId.set(stepId, items.slice(-3));
+    }
+    return byStepId;
+  })();
   const groupRunExecuteStepCards = (groupRunSnapshot?.steps || [])
     .filter((step) => (step.step_type || "").trim().toLowerCase() === "execute")
     .map((step) => {
@@ -1143,6 +1168,7 @@ export function ChatView({
         step.output_summary || latestEventPayload.output_summary || step.output || "",
       ).trim();
       const latestEventCreatedAt = String(latestEvent?.created_at || "").trim();
+      const sourceStepTimeline = groupRunEventTimelineByStepId.get(step.id) || [];
       return {
         step,
         currentAssigneeEmployeeId,
@@ -1153,6 +1179,7 @@ export function ChatView({
         detailSessionId,
         detailOutputSummary,
         latestEventCreatedAt,
+        sourceStepTimeline,
       };
     });
   const toggleGroupRunStepDetails = (stepId: string) => {
@@ -1606,13 +1633,30 @@ export function ChatView({
           data-testid="chat-session-execution-context-bar"
           className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-100 bg-sky-50/80 px-6 py-2 text-[11px] text-sky-900"
         >
-          <div className="flex flex-wrap items-center gap-3">
-            <span>{`来源 step：${sessionExecutionContext.sourceStepId}`}</span>
-            {sessionExecutionContext.sourceEmployeeId && (
-              <span>{`来源员工：${sessionExecutionContext.sourceEmployeeId}`}</span>
-            )}
-            {sessionExecutionContext.assigneeEmployeeId && (
-              <span>{`当前负责人：${sessionExecutionContext.assigneeEmployeeId}`}</span>
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-3">
+              <span>{`来源 step：${sessionExecutionContext.sourceStepId}`}</span>
+              {sessionExecutionContext.sourceEmployeeId && (
+                <span>{`来源员工：${sessionExecutionContext.sourceEmployeeId}`}</span>
+              )}
+              {sessionExecutionContext.assigneeEmployeeId && (
+                <span>{`当前负责人：${sessionExecutionContext.assigneeEmployeeId}`}</span>
+              )}
+            </div>
+            {(sessionExecutionContext.sourceStepTimeline || []).length > 0 && (
+              <div
+                data-testid="chat-session-execution-context-timeline"
+                className="space-y-1 text-[10px] text-sky-800/90"
+              >
+                {(sessionExecutionContext.sourceStepTimeline || []).map((item, index) => (
+                  <div
+                    key={`${item.label}-${item.createdAt || index}`}
+                    data-testid={`chat-session-execution-context-timeline-item-${index}`}
+                  >
+                    {item.createdAt ? `${item.label} · ${item.createdAt}` : item.label}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
           <button
@@ -1806,6 +1850,7 @@ export function ChatView({
                       detailSessionId,
                       detailOutputSummary,
                       latestEventCreatedAt,
+                      sourceStepTimeline,
                     }) => (
                       <div
                         key={step.id}
@@ -1868,6 +1913,8 @@ export function ChatView({
                                 sourceStepId: step.id,
                                 sourceEmployeeId: dispatchSourceEmployeeId || undefined,
                                 assigneeEmployeeId: currentAssigneeEmployeeId || undefined,
+                                sourceStepTimeline:
+                                  sourceStepTimeline.length > 0 ? sourceStepTimeline : undefined,
                               })
                             }
                             className="text-[10px] text-indigo-700 underline underline-offset-2 hover:text-indigo-800"

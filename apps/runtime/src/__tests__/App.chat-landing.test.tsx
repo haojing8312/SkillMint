@@ -44,6 +44,10 @@ vi.mock("../components/ChatView", () => ({
             {props.sessionExecutionContext.sourceEmployeeId || ""}
             {"|"}
             {props.sessionExecutionContext.assigneeEmployeeId || ""}
+            {"|"}
+            {(props.sessionExecutionContext.sourceStepTimeline || [])
+              .map((item: any) => item.label)
+              .join(",")}
           </div>
         ) : null}
         <button
@@ -54,6 +58,16 @@ vi.mock("../components/ChatView", () => ({
               sourceStepId: "step-open-session-1",
               sourceEmployeeId: "尚书",
               assigneeEmployeeId: "工部",
+              sourceStepTimeline: [
+                {
+                  label: "step_created · 尚书 -> 工部",
+                  createdAt: "2026-03-07T00:59:00Z",
+                },
+                {
+                  label: "step_dispatched · 尚书 -> 工部",
+                  createdAt: "2026-03-07T01:00:00Z",
+                },
+              ],
             })
           }
         >
@@ -220,7 +234,7 @@ describe("App chat landing", () => {
     await waitFor(() => {
       expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
       expect(screen.getByTestId("chat-view-session-execution-context")).toHaveTextContent(
-        "session-run-open-step|step-open-session-1|尚书|工部",
+        "session-run-open-step|step-open-session-1|尚书|工部|step_created · 尚书 -> 工部,step_dispatched · 尚书 -> 工部",
       );
     });
 
