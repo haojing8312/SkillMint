@@ -979,13 +979,23 @@ export function ChatView({
   const groupRunStepMap = new Map(
     (groupRunSnapshot?.steps || []).map((step) => [step.id, step] as const),
   );
-  const formatGroupRunEventLabel = (event: EmployeeGroupRunSnapshot["events"][number]) => {
-    let payload: Record<string, unknown> = {};
+  const parseGroupRunEventPayload = (event: EmployeeGroupRunSnapshot["events"][number]) => {
     try {
-      payload = event.payload_json ? JSON.parse(event.payload_json) : {};
+      return event.payload_json ? (JSON.parse(event.payload_json) as Record<string, unknown>) : {};
     } catch {
-      payload = {};
+      return {};
     }
+  };
+  const latestStepReassignPayloadByStepId = (() => {
+    const byStepId = new Map<string, Record<string, unknown>>();
+    for (const event of groupRunSnapshot?.events || []) {
+      if (event.event_type !== "step_reassigned" || !event.step_id) continue;
+      byStepId.set(event.step_id, parseGroupRunEventPayload(event));
+    }
+    return byStepId;
+  })();
+  const formatGroupRunEventLabel = (event: EmployeeGroupRunSnapshot["events"][number]) => {
+    const payload = parseGroupRunEventPayload(event);
     const relatedStep = groupRunStepMap.get(event.step_id);
     const assigneeEmployeeId = String(
       payload.assignee_employee_id || relatedStep?.assignee_employee_id || "",
@@ -1007,6 +1017,26 @@ export function ChatView({
     }
     return event.event_type;
   };
+  const groupRunExecuteStepCards = (groupRunSnapshot?.steps || [])
+    .filter((step) => (step.step_type || "").trim().toLowerCase() === "execute")
+    .map((step) => {
+      const reassignPayload = latestStepReassignPayloadByStepId.get(step.id) || {};
+      const currentAssigneeEmployeeId = String(
+        reassignPayload.assignee_employee_id || step.assignee_employee_id || "",
+      ).trim();
+      const dispatchSourceEmployeeId = String(
+        reassignPayload.dispatch_source_employee_id || step.dispatch_source_employee_id || "",
+      ).trim();
+      const previousAssigneeEmployeeId = String(
+        reassignPayload.previous_assignee_employee_id || "",
+      ).trim();
+      return {
+        step,
+        currentAssigneeEmployeeId,
+        dispatchSourceEmployeeId,
+        previousAssigneeEmployeeId,
+      };
+    });
   const groupRunExecuteRuleTargets = (dispatchSourceEmployeeId?: string) => {
     const coordinatorEmployeeId = groupRunCoordinatorEmployeeId.trim().toLowerCase();
     const normalizedDispatchSourceEmployeeId = (dispatchSourceEmployeeId || "").trim().toLowerCase();
@@ -1612,6 +1642,47 @@ export function ChatView({
                     {` · ${member.status}`}
                   </div>
                 ))}
+              </div>
+            )}
+            {groupRunExecuteStepCards.length > 0 && (
+              <div className="mt-2 border-t border-indigo-100 pt-2">
+                <div className="text-[11px] font-medium text-indigo-800">步骤链路</div>
+                <div className="mt-1 space-y-1.5">
+                  {groupRunExecuteStepCards.map(
+                    ({
+                      step,
+                      currentAssigneeEmployeeId,
+                      dispatchSourceEmployeeId,
+                      previousAssigneeEmployeeId,
+                    }) => (
+                      <div
+                        key={step.id}
+                        data-testid={`group-run-step-card-${step.id}`}
+                        className="rounded border border-indigo-200 bg-white/70 px-2.5 py-2"
+                      >
+                        <div className="text-[11px] font-medium text-indigo-800">
+                          {step.assignee_employee_id || step.id}
+                          {` · ${step.status || "pending"}`}
+                        </div>
+                        <div className="mt-1 text-[10px] text-indigo-700/80">
+                          {`当前负责人：${currentAssigneeEmployeeId || "未分配"}`}
+                        </div>
+                        {dispatchSourceEmployeeId && (
+                          <div className="mt-1 text-[10px] text-indigo-700/80">
+                            {`来源人：${dispatchSourceEmployeeId}`}
+                          </div>
+                        )}
+                        {previousAssigneeEmployeeId &&
+                          previousAssigneeEmployeeId.toLowerCase() !==
+                            currentAssigneeEmployeeId.toLowerCase() && (
+                            <div className="mt-1 text-[10px] text-indigo-700/80">
+                              {`原负责人：${previousAssigneeEmployeeId}`}
+                            </div>
+                          )}
+                      </div>
+                    ),
+                  )}
+                </div>
               </div>
             )}
             {recentGroupEvents.length > 0 && (

@@ -2724,7 +2724,7 @@ pub async fn reassign_group_run_step_with_pool(
     }
 
     let step_row = sqlx::query(
-        "SELECT run_id, status, step_type, COALESCE(dispatch_source_employee_id, '')
+        "SELECT run_id, status, step_type, COALESCE(dispatch_source_employee_id, ''), COALESCE(assignee_employee_id, '')
          FROM group_run_steps
          WHERE id = ?",
     )
@@ -2737,6 +2737,7 @@ pub async fn reassign_group_run_step_with_pool(
     let status: String = step_row.try_get(1).map_err(|e| e.to_string())?;
     let step_type: String = step_row.try_get(2).map_err(|e| e.to_string())?;
     let dispatch_source_employee_id: String = step_row.try_get(3).map_err(|e| e.to_string())?;
+    let previous_assignee_employee_id: String = step_row.try_get(4).map_err(|e| e.to_string())?;
     if step_type != "execute" {
         return Err("only execute steps can be reassigned".to_string());
     }
@@ -2851,6 +2852,7 @@ pub async fn reassign_group_run_step_with_pool(
         serde_json::json!({
             "assignee_employee_id": new_assignee,
             "dispatch_source_employee_id": dispatch_source_employee_id,
+            "previous_assignee_employee_id": previous_assignee_employee_id,
         })
         .to_string(),
     )

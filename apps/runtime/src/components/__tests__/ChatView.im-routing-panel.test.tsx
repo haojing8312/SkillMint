@@ -1587,7 +1587,7 @@ describe("ChatView IM routing panel", () => {
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
                 payload_json:
-                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\"}",
+                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\",\"previous_assignee_employee_id\":\"兵部\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1688,7 +1688,7 @@ describe("ChatView IM routing panel", () => {
                 step_id: "step-failed-reassign",
                 event_type: "step_reassigned",
                 payload_json:
-                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\"}",
+                  "{\"assignee_employee_id\":\"工部\",\"dispatch_source_employee_id\":\"门下\",\"previous_assignee_employee_id\":\"兵部\"}",
                 created_at: "2026-03-07T00:07:00Z",
               },
             ],
@@ -1737,6 +1737,15 @@ describe("ChatView IM routing panel", () => {
       expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("工部");
       expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent(
         "step_reassigned · 门下 -> 工部",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "当前负责人：工部",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "来源人：门下",
+      );
+      expect(screen.getByTestId("group-run-step-card-step-failed-reassign")).toHaveTextContent(
+        "原负责人：兵部",
       );
       expect(invokeMock).toHaveBeenCalledWith("reassign_group_run_step", {
         stepId: "step-failed-reassign",

@@ -1916,6 +1916,21 @@ async fn reassign_failed_group_step_updates_assignee_and_resets_status() {
     assert_eq!(status, "pending");
     assert_eq!(session_id, "");
     assert_eq!(output, "");
+
+    let (event_step_id, payload_json): (String, String) = sqlx::query_as(
+        "SELECT step_id, payload_json
+         FROM group_run_events
+         WHERE run_id = ? AND event_type = 'step_reassigned'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(&outcome.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load reassign event");
+    assert_eq!(event_step_id, step_id);
+    assert!(payload_json.contains("\"assignee_employee_id\":\"gongbu\""));
+    assert!(payload_json.contains("\"previous_assignee_employee_id\":\"bingbu\""));
 }
 
 #[tokio::test]
@@ -2081,6 +2096,7 @@ async fn reassign_specific_failed_step_keeps_other_failed_steps_blocking_run() {
     assert_eq!(event_step_id, libu_step_id);
     assert!(payload_json.contains("\"assignee_employee_id\":\"gongbu\""));
     assert!(payload_json.contains("\"dispatch_source_employee_id\":\"shangshu\""));
+    assert!(payload_json.contains("\"previous_assignee_employee_id\":\"libu\""));
 }
 
 #[tokio::test]
