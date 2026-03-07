@@ -2500,6 +2500,69 @@ describe("ChatView IM routing panel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "查看执行会话" }));
 
-    expect(handleOpenSession).toHaveBeenCalledWith("session-step-gongbu-1");
+    expect(handleOpenSession).toHaveBeenCalledWith("session-step-gongbu-1", {
+      focusHint: "正在整理交付清单",
+    });
+  });
+
+  test("highlights the matched assistant message when a session focus request is provided", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            role: "user",
+            content: "请整理交付清单",
+            created_at: "2026-03-07T01:10:00Z",
+          },
+          {
+            role: "assistant",
+            content: "已收到。正在整理交付清单，并补充执行明细。",
+            created_at: "2026-03-07T01:10:10Z",
+          },
+          {
+            role: "assistant",
+            content: "这是另一条无关输出。",
+            created_at: "2026-03-07T01:10:20Z",
+          },
+        ]);
+      }
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "get_employee_group_run_snapshot") return Promise.resolve(null);
+      if (command === "get_model_configs") return Promise.resolve([]);
+      if (command === "get_session_runtime_bindings") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-focus-1"
+        sessionFocusRequest={{ nonce: 1, snippet: "正在整理交付清单" }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-message-1")).toHaveAttribute("data-session-focus-highlighted", "true");
+    });
   });
 });

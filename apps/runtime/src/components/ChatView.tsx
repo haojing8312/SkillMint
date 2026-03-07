@@ -25,7 +25,8 @@ interface Props {
   models: ModelConfig[];
   sessionId: string;
   workDir?: string;
-  onOpenSession?: (sessionId: string) => Promise<void> | void;
+  onOpenSession?: (sessionId: string, options?: { focusHint?: string }) => Promise<void> | void;
+  sessionFocusRequest?: { nonce: number; snippet: string };
   onSessionUpdate?: () => void;
   initialMessage?: string;
   onInitialMessageConsumed?: () => void;
@@ -48,6 +49,7 @@ export function ChatView({
   sessionId,
   workDir,
   onOpenSession,
+  sessionFocusRequest,
   onSessionUpdate,
   initialMessage,
   onInitialMessageConsumed,
@@ -113,6 +115,7 @@ export function ChatView({
   const [subAgentRoleName, setSubAgentRoleName] = useState("");
   const [mainRoleName, setMainRoleName] = useState("");
   const [mainSummaryDelivered, setMainSummaryDelivered] = useState(false);
+  const [highlightedMessageIndex, setHighlightedMessageIndex] = useState<number | null>(null);
   const [showDelegationHistory, setShowDelegationHistory] = useState(false);
   const [delegationCards, setDelegationCards] = useState<
     Array<{
@@ -127,6 +130,8 @@ export function ChatView({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
   const mainRoleNameRef = useRef("");
+  const lastHandledSessionFocusNonceRef = useRef<number | null>(null);
+  const messageElementRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   // File Upload: 附件状态
   const [attachedFiles, setAttachedFiles] = useState<FileAttachment[]>([]);
@@ -255,12 +260,62 @@ export function ChatView({
     setGroupRunCoordinatorEmployeeId("");
     setGroupRunRules([]);
     setExpandedGroupRunStepIds([]);
+    setHighlightedMessageIndex(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamItems, askUserQuestion, toolConfirm]);
+
+  useEffect(() => {
+    if (!sessionFocusRequest || !sessionFocusRequest.snippet.trim()) {
+      return;
+    }
+    if (messages.length === 0) {
+      return;
+    }
+    if (lastHandledSessionFocusNonceRef.current === sessionFocusRequest.nonce) {
+      return;
+    }
+
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const normalizedSnippet = normalize(sessionFocusRequest.snippet);
+    const fallbackSnippet = normalizedSnippet.slice(0, 16);
+    const assistantMessageIndexes = messages
+      .map((message, index) => ({ message, index }))
+      .filter(({ message }) => message.role === "assistant");
+
+    let matchedIndex = -1;
+    for (let i = assistantMessageIndexes.length - 1; i >= 0; i -= 1) {
+      const candidate = assistantMessageIndexes[i];
+      const normalizedContent = normalize(candidate.message.content || "");
+      if (!normalizedContent) continue;
+      if (
+        normalizedContent.includes(normalizedSnippet) ||
+        normalizedSnippet.includes(normalizedContent) ||
+        (fallbackSnippet.length > 0 && normalizedContent.includes(fallbackSnippet))
+      ) {
+        matchedIndex = candidate.index;
+        break;
+      }
+    }
+    if (matchedIndex < 0 && assistantMessageIndexes.length > 0) {
+      matchedIndex = assistantMessageIndexes[assistantMessageIndexes.length - 1].index;
+    }
+
+    lastHandledSessionFocusNonceRef.current = sessionFocusRequest.nonce;
+    if (matchedIndex < 0) {
+      return;
+    }
+
+    setHighlightedMessageIndex(matchedIndex);
+    messageElementRefs.current[matchedIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = setTimeout(() => {
+      setHighlightedMessageIndex((current) => (current === matchedIndex ? null : current));
+    }, 2400);
+    return () => clearTimeout(timer);
+  }, [messages, sessionFocusRequest, sessionId]);
 
   // stream-token 事件监听
   useEffect(() => {
@@ -1763,7 +1818,11 @@ export function ChatView({
                               <button
                                 type="button"
                                 data-testid={`group-run-step-card-${step.id}-open-session`}
-                                onClick={() => void onOpenSession(detailSessionId)}
+                                onClick={() =>
+                                  void onOpenSession(detailSessionId, {
+                                    focusHint: detailOutputSummary || undefined,
+                                  })
+                                }
                                 className="text-[10px] text-indigo-700 underline underline-offset-2 hover:text-indigo-800"
                               >
                                 查看执行会话
@@ -1837,9 +1896,15 @@ export function ChatView({
         )}
         {messages.map((m, i) => {
           const isLatest = i === messages.length - 1;
+          const isSessionFocusTarget = highlightedMessageIndex === i;
           return (
             <motion.div
               key={i}
+              ref={(node) => {
+                messageElementRefs.current[i] = node;
+              }}
+              data-testid={`chat-message-${i}`}
+              data-session-focus-highlighted={isSessionFocusTarget ? "true" : "false"}
               initial={isLatest ? { opacity: 0, x: m.role === "user" ? 20 : -20 } : false}
               animate={{ opacity: 1, x: 0 }}
               transition={{ type: "spring", stiffness: 300, damping: 24 }}
@@ -1847,7 +1912,8 @@ export function ChatView({
             >
               <div
                 className={
-                  "max-w-[80%] rounded-2xl px-5 py-3 text-sm " +
+                  "max-w-[80%] rounded-2xl px-5 py-3 text-sm transition-all " +
+                  (isSessionFocusTarget ? "ring-2 ring-amber-300 bg-amber-50/80 " : "") +
                   (m.role === "user"
                     ? "bg-blue-500 text-white"
                     : "bg-white text-gray-800 shadow-sm border border-gray-100")

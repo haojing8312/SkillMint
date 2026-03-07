@@ -229,6 +229,11 @@ export default function App() {
     sessionId: string;
     message: string;
   } | null>(null);
+  const [pendingSessionFocusRequest, setPendingSessionFocusRequest] = useState<{
+    sessionId: string;
+    snippet: string;
+    nonce: number;
+  } | null>(null);
   const [employeeAssistantSessionContexts, setEmployeeAssistantSessionContexts] = useState<
     Record<string, EmployeeAssistantSessionContext>
   >({});
@@ -2077,7 +2082,28 @@ export default function App() {
                 models={models}
                 sessionId={selectedSessionId}
                 workDir={selectedSession?.work_dir}
-                onOpenSession={(nextSessionId) => handleOpenGroupRunSession(nextSessionId, selectedSkill.id)}
+                onOpenSession={(nextSessionId, options) => {
+                  const focusHint = (options?.focusHint || "").trim();
+                  setPendingSessionFocusRequest(
+                    focusHint
+                      ? {
+                          sessionId: nextSessionId,
+                          snippet: focusHint,
+                          nonce: Date.now(),
+                        }
+                      : null,
+                  );
+                  return handleOpenGroupRunSession(nextSessionId, selectedSkill.id);
+                }}
+                sessionFocusRequest={
+                  pendingSessionFocusRequest &&
+                  pendingSessionFocusRequest.sessionId === selectedSessionId
+                    ? {
+                        nonce: pendingSessionFocusRequest.nonce,
+                        snippet: pendingSessionFocusRequest.snippet,
+                      }
+                    : undefined
+                }
                 sessionSourceChannel={selectedSession?.source_channel}
                 sessionSourceLabel={selectedSession?.source_label}
                 onSessionUpdate={handleSessionRefresh}
