@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, SkillRouteEvent, ImRoleTimelineEvent, ImRoleDispatchRequest, ImRouteDecisionEvent, EmployeeGroupRunSnapshot } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, SkillRouteEvent, ImRoleTimelineEvent, ImRoleDispatchRequest, ImRouteDecisionEvent, EmployeeGroupRunSnapshot, EmployeeGroup } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
@@ -138,6 +138,7 @@ export function ChatView({
   const [imRoleEvents, setImRoleEvents] = useState<ImRoleTimelineEvent[]>([]);
   const [imRouteDecisions, setImRouteDecisions] = useState<ImRouteDecisionEvent[]>([]);
   const [groupRunSnapshot, setGroupRunSnapshot] = useState<EmployeeGroupRunSnapshot | null>(null);
+  const [groupRunMemberEmployeeIds, setGroupRunMemberEmployeeIds] = useState<string[]>([]);
   const [groupRunActionLoading, setGroupRunActionLoading] = useState<
     "approve" | "reject" | "pause" | "resume" | "retry" | "reassign" | null
   >(null);
@@ -245,6 +246,7 @@ export function ChatView({
     setImRoleEvents([]);
     setImRouteDecisions([]);
     setGroupRunSnapshot(null);
+    setGroupRunMemberEmployeeIds([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -475,6 +477,38 @@ export function ChatView({
       clearInterval(timer);
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    let disposed = false;
+    const groupId = (groupRunSnapshot?.group_id || "").trim();
+    if (!groupId) {
+      setGroupRunMemberEmployeeIds([]);
+      return () => {
+        disposed = true;
+      };
+    }
+    const loadGroupMembers = async () => {
+      try {
+        const groups = await invoke<EmployeeGroup[] | null>("list_employee_groups");
+        if (disposed) return;
+        const matchedGroup = Array.isArray(groups)
+          ? groups.find((group) => (group.id || "").trim() === groupId)
+          : null;
+        const memberIds = (matchedGroup?.member_employee_ids || [])
+          .map((value) => (value || "").trim())
+          .filter((value) => value.length > 0);
+        setGroupRunMemberEmployeeIds(memberIds);
+      } catch {
+        if (!disposed) {
+          setGroupRunMemberEmployeeIds([]);
+        }
+      }
+    };
+    void loadGroupMembers();
+    return () => {
+      disposed = true;
+    };
+  }, [groupRunSnapshot?.group_id]);
 
   // ask-user-event 事件监听
   useEffect(() => {
@@ -929,10 +963,17 @@ export function ChatView({
         .filter((value) => value.length > 0),
     ),
   );
+  const groupRunCandidateEmployeeIds = Array.from(
+    new Set(
+      [...groupRunMemberEmployeeIds, ...groupRunAssignees]
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
   const failedGroupRunReassignOptions = failedGroupRunSteps
     .map((step) => ({
       step,
-      candidateEmployeeIds: groupRunAssignees.filter(
+      candidateEmployeeIds: groupRunCandidateEmployeeIds.filter(
         (employeeId) =>
           employeeId.trim().toLowerCase() !== (step.assignee_employee_id || "").trim().toLowerCase(),
       ),

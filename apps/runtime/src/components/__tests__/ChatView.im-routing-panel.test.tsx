@@ -1743,6 +1743,205 @@ describe("ChatView IM routing panel", () => {
     });
   });
 
+  test("includes team members outside current steps as reassign candidates", async () => {
+    let snapshotState = "failed";
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "list_employee_groups") {
+        return Promise.resolve([
+          {
+            id: "group-reassign-members-1",
+            name: "协作团队",
+            coordinator_employee_id: "尚书",
+            member_employee_ids: ["兵部", "礼部", "工部", "户部"],
+            member_count: 4,
+            template_id: "sansheng-liubu",
+            entry_employee_id: "尚书",
+            review_mode: "hard",
+            execution_mode: "parallel",
+            visibility_mode: "internal",
+            is_bootstrap_seeded: true,
+            config_json: "{}",
+            created_at: "2026-03-07T00:00:00Z",
+            updated_at: "2026-03-07T00:00:00Z",
+          },
+        ]);
+      }
+      if (command === "get_employee_group_run_snapshot") {
+        if (snapshotState === "done") {
+          return Promise.resolve({
+            run_id: "run-reassign-members-1",
+            group_id: "group-reassign-members-1",
+            session_id: "session-run-reassign-members",
+            state: "done",
+            current_round: 1,
+            current_phase: "finalize",
+            review_round: 0,
+            status_reason: "",
+            waiting_for_employee_id: "",
+            waiting_for_user: false,
+            final_report: "计划：共 3 步\n执行：改派后完成。\n汇报：团队协作已完成。",
+            steps: [
+              {
+                id: "step-failed-reassign-members",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "户部",
+                status: "completed",
+                output: "MOCK_RESPONSE",
+              },
+              {
+                id: "step-other-member-members",
+                round_no: 1,
+                step_type: "execute",
+                assignee_employee_id: "工部",
+                status: "completed",
+                output: "",
+              },
+            ],
+            events: [
+              {
+                id: "evt-reassign-members",
+                step_id: "step-failed-reassign-members",
+                event_type: "step_reassigned",
+                payload_json: "{\"assignee_employee_id\":\"户部\"}",
+                created_at: "2026-03-07T00:07:00Z",
+              },
+            ],
+          });
+        }
+        return Promise.resolve({
+          run_id: "run-reassign-members-1",
+          group_id: "group-reassign-members-1",
+          session_id: "session-run-reassign-members",
+          state: "failed",
+          current_round: 1,
+          current_phase: "execute",
+          review_round: 0,
+          status_reason: "兵部执行失败",
+          waiting_for_employee_id: "兵部",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步",
+          steps: [
+            {
+              id: "step-failed-reassign-members",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "兵部",
+              status: "failed",
+              output: "超时",
+            },
+            {
+              id: "step-other-member-members",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "工部",
+              status: "pending",
+              output: "",
+            },
+          ],
+          events: [],
+        });
+      }
+      if (command === "reassign_group_run_step") {
+        expect(payload).toEqual({
+          stepId: "step-failed-reassign-members",
+          assigneeEmployeeId: "户部",
+        });
+        return Promise.resolve(null);
+      }
+      if (command === "continue_employee_group_run") {
+        expect(payload).toEqual({ runId: "run-reassign-members-1" });
+        snapshotState = "done";
+        return Promise.resolve({
+          run_id: "run-reassign-members-1",
+          group_id: "group-reassign-members-1",
+          session_id: "session-run-reassign-members",
+          state: "done",
+          current_round: 1,
+          current_phase: "finalize",
+          review_round: 0,
+          status_reason: "",
+          waiting_for_employee_id: "",
+          waiting_for_user: false,
+          final_report: "计划：共 3 步\n执行：改派后完成。\n汇报：团队协作已完成。",
+          steps: [
+            {
+              id: "step-failed-reassign-members",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "户部",
+              status: "completed",
+              output: "MOCK_RESPONSE",
+            },
+            {
+              id: "step-other-member-members",
+              round_no: 1,
+              step_type: "execute",
+              assignee_employee_id: "工部",
+              status: "completed",
+              output: "",
+            },
+          ],
+          events: [
+            {
+              id: "evt-reassign-members",
+              step_id: "step-failed-reassign-members",
+              event_type: "step_reassigned",
+              payload_json: "{\"assignee_employee_id\":\"户部\"}",
+              created_at: "2026-03-07T00:07:00Z",
+            },
+          ],
+        });
+      }
+      if (command === "get_model_configs") return Promise.resolve([]);
+      if (command === "get_session_runtime_bindings") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-run-reassign-members"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "改派给户部" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "改派给户部" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("reassign_group_run_step", {
+        stepId: "step-failed-reassign-members",
+        assigneeEmployeeId: "户部",
+      });
+      expect(screen.getByTestId("group-orchestration-board")).toHaveTextContent("户部");
+    });
+  });
+
   test("reassigns a specific failed step from multiple failed steps", async () => {
     let snapshotState = "failed";
     invokeMock.mockImplementation((command: string, payload?: any) => {
