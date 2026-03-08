@@ -3,6 +3,24 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 
+fn mock_response_text(model: &str, messages: &[Value]) -> String {
+    let last_user = messages
+        .iter()
+        .rev()
+        .find_map(|message| {
+            if message["role"].as_str() == Some("user") {
+                message["content"]
+                    .as_str()
+                    .map(|content| content.trim().to_string())
+                    .filter(|content| !content.is_empty())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "未提供任务".to_string());
+    format!("MOCK_RESPONSE [{}] {}", model, last_user)
+}
+
 /// Strip <think>…</think> spans from a streaming token chunk.
 /// `in_think` carries state across chunk boundaries.
 fn filter_thinking(input: &str, in_think: &mut bool) -> String {
@@ -64,6 +82,12 @@ pub async fn chat_stream_with_tools(
     mut on_token: impl FnMut(String) + Send,
 ) -> Result<crate::agent::types::LLMResponse> {
     use crate::agent::types::{LLMResponse, ToolCall};
+
+    if base_url.trim().eq_ignore_ascii_case("http://mock") {
+        let mock_text = mock_response_text(model, &messages);
+        on_token(mock_text.clone());
+        return Ok(LLMResponse::Text(mock_text));
+    }
 
     let client = Client::new();
 

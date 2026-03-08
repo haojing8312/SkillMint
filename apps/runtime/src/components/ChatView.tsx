@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, SkillRouteEvent, ImRoleTimelineEvent, ImRoleDispatchRequest, ImRouteDecisionEvent, EmployeeGroupRunSnapshot } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, SkillRouteEvent, ImRoleTimelineEvent, ImRoleDispatchRequest, ImRouteDecisionEvent, EmployeeGroupRunSnapshot, EmployeeGroup, EmployeeGroupRule } from "../types";
 import { motion, AnimatePresence } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
@@ -20,11 +20,42 @@ type ClawhubInstallCandidate = {
   sourceUrl?: string | null;
 };
 
+type ChatSessionTimelineItem = {
+  eventId?: string;
+  linkedSessionId?: string;
+  label: string;
+  createdAt?: string;
+};
+
+type ChatSessionOpenOptions = {
+  focusHint?: string;
+  groupRunStepFocusId?: string;
+  groupRunEventFocusId?: string;
+  sourceSessionId?: string;
+  sourceStepId?: string;
+  sourceEmployeeId?: string;
+  assigneeEmployeeId?: string;
+  sourceStepTimeline?: ChatSessionTimelineItem[];
+};
+
+type ChatSessionExecutionContext = {
+  sourceSessionId: string;
+  sourceStepId: string;
+  sourceEmployeeId?: string;
+  assigneeEmployeeId?: string;
+  sourceStepTimeline?: ChatSessionTimelineItem[];
+};
+
 interface Props {
   skill: SkillManifest;
   models: ModelConfig[];
   sessionId: string;
   workDir?: string;
+  onOpenSession?: (sessionId: string, options?: ChatSessionOpenOptions) => Promise<void> | void;
+  sessionFocusRequest?: { nonce: number; snippet: string };
+  groupRunStepFocusRequest?: { nonce: number; stepId: string; eventId?: string };
+  sessionExecutionContext?: ChatSessionExecutionContext;
+  onReturnToSourceSession?: (sessionId: string) => Promise<void> | void;
   onSessionUpdate?: () => void;
   initialMessage?: string;
   onInitialMessageConsumed?: () => void;
@@ -46,6 +77,11 @@ export function ChatView({
   models,
   sessionId,
   workDir,
+  onOpenSession,
+  sessionFocusRequest,
+  groupRunStepFocusRequest,
+  sessionExecutionContext,
+  onReturnToSourceSession,
   onSessionUpdate,
   initialMessage,
   onInitialMessageConsumed,
@@ -111,6 +147,9 @@ export function ChatView({
   const [subAgentRoleName, setSubAgentRoleName] = useState("");
   const [mainRoleName, setMainRoleName] = useState("");
   const [mainSummaryDelivered, setMainSummaryDelivered] = useState(false);
+  const [highlightedMessageIndex, setHighlightedMessageIndex] = useState<number | null>(null);
+  const [highlightedGroupRunStepId, setHighlightedGroupRunStepId] = useState<string | null>(null);
+  const [highlightedGroupRunStepEventId, setHighlightedGroupRunStepEventId] = useState<string | null>(null);
   const [showDelegationHistory, setShowDelegationHistory] = useState(false);
   const [delegationCards, setDelegationCards] = useState<
     Array<{
@@ -125,6 +164,11 @@ export function ChatView({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
   const mainRoleNameRef = useRef("");
+  const lastHandledSessionFocusNonceRef = useRef<number | null>(null);
+  const messageElementRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const lastHandledGroupRunStepFocusNonceRef = useRef<number | null>(null);
+  const groupRunStepElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const groupRunStepEventElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // File Upload: 附件状态
   const [attachedFiles, setAttachedFiles] = useState<FileAttachment[]>([]);
@@ -138,6 +182,13 @@ export function ChatView({
   const [imRoleEvents, setImRoleEvents] = useState<ImRoleTimelineEvent[]>([]);
   const [imRouteDecisions, setImRouteDecisions] = useState<ImRouteDecisionEvent[]>([]);
   const [groupRunSnapshot, setGroupRunSnapshot] = useState<EmployeeGroupRunSnapshot | null>(null);
+  const [groupRunMemberEmployeeIds, setGroupRunMemberEmployeeIds] = useState<string[]>([]);
+  const [groupRunCoordinatorEmployeeId, setGroupRunCoordinatorEmployeeId] = useState("");
+  const [groupRunRules, setGroupRunRules] = useState<EmployeeGroupRule[]>([]);
+  const [expandedGroupRunStepIds, setExpandedGroupRunStepIds] = useState<string[]>([]);
+  const [groupRunActionLoading, setGroupRunActionLoading] = useState<
+    "approve" | "reject" | "pause" | "resume" | "retry" | "reassign" | null
+  >(null);
 
   // File Upload: 读取文件为文本
   const readFileAsText = (file: File): Promise<string> => {
@@ -242,12 +293,101 @@ export function ChatView({
     setImRoleEvents([]);
     setImRouteDecisions([]);
     setGroupRunSnapshot(null);
+    setGroupRunMemberEmployeeIds([]);
+    setGroupRunCoordinatorEmployeeId("");
+    setGroupRunRules([]);
+    setExpandedGroupRunStepIds([]);
+    setHighlightedMessageIndex(null);
+    setHighlightedGroupRunStepId(null);
+    setHighlightedGroupRunStepEventId(null);
+    lastHandledGroupRunStepFocusNonceRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamItems, askUserQuestion, toolConfirm]);
+
+  useEffect(() => {
+    if (!sessionFocusRequest || !sessionFocusRequest.snippet.trim()) {
+      return;
+    }
+    if (messages.length === 0) {
+      return;
+    }
+    if (lastHandledSessionFocusNonceRef.current === sessionFocusRequest.nonce) {
+      return;
+    }
+
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const normalizedSnippet = normalize(sessionFocusRequest.snippet);
+    const fallbackSnippet = normalizedSnippet.slice(0, 16);
+    const assistantMessageIndexes = messages
+      .map((message, index) => ({ message, index }))
+      .filter(({ message }) => message.role === "assistant");
+
+    let matchedIndex = -1;
+    for (let i = assistantMessageIndexes.length - 1; i >= 0; i -= 1) {
+      const candidate = assistantMessageIndexes[i];
+      const normalizedContent = normalize(candidate.message.content || "");
+      if (!normalizedContent) continue;
+      if (
+        normalizedContent.includes(normalizedSnippet) ||
+        normalizedSnippet.includes(normalizedContent) ||
+        (fallbackSnippet.length > 0 && normalizedContent.includes(fallbackSnippet))
+      ) {
+        matchedIndex = candidate.index;
+        break;
+      }
+    }
+    if (matchedIndex < 0 && assistantMessageIndexes.length > 0) {
+      matchedIndex = assistantMessageIndexes[assistantMessageIndexes.length - 1].index;
+    }
+
+    lastHandledSessionFocusNonceRef.current = sessionFocusRequest.nonce;
+    if (matchedIndex < 0) {
+      return;
+    }
+
+    setHighlightedMessageIndex(matchedIndex);
+    messageElementRefs.current[matchedIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = setTimeout(() => {
+      setHighlightedMessageIndex((current) => (current === matchedIndex ? null : current));
+    }, 2400);
+    return () => clearTimeout(timer);
+  }, [messages, sessionFocusRequest, sessionId]);
+
+  useEffect(() => {
+    const targetStepId = (groupRunStepFocusRequest?.stepId || "").trim();
+    if (!targetStepId || !groupRunSnapshot) {
+      return;
+    }
+    if (lastHandledGroupRunStepFocusNonceRef.current === groupRunStepFocusRequest?.nonce) {
+      return;
+    }
+    const matchedStep = (groupRunSnapshot.steps || []).find((step) => (step.id || "").trim() === targetStepId);
+    if (!matchedStep) {
+      return;
+    }
+    const targetEventId = (groupRunStepFocusRequest?.eventId || "").trim();
+    if (targetEventId && !expandedGroupRunStepIds.includes(targetStepId)) {
+      setExpandedGroupRunStepIds((prev) => (prev.includes(targetStepId) ? prev : [...prev, targetStepId]));
+      return;
+    }
+
+    lastHandledGroupRunStepFocusNonceRef.current = groupRunStepFocusRequest?.nonce ?? null;
+    setHighlightedGroupRunStepId(targetStepId);
+    setHighlightedGroupRunStepEventId(targetEventId || null);
+    const targetElement =
+      (targetEventId ? groupRunStepEventElementRefs.current[targetEventId] : null) ||
+      groupRunStepElementRefs.current[targetStepId];
+    targetElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = setTimeout(() => {
+      setHighlightedGroupRunStepId((current) => (current === targetStepId ? null : current));
+      setHighlightedGroupRunStepEventId((current) => (current === targetEventId ? null : current));
+    }, 2400);
+    return () => clearTimeout(timer);
+  }, [expandedGroupRunStepIds, groupRunSnapshot, groupRunStepFocusRequest, sessionId]);
 
   // stream-token 事件监听
   useEffect(() => {
@@ -472,6 +612,47 @@ export function ChatView({
       clearInterval(timer);
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    let disposed = false;
+    const groupId = (groupRunSnapshot?.group_id || "").trim();
+    if (!groupId) {
+      setGroupRunMemberEmployeeIds([]);
+      setGroupRunCoordinatorEmployeeId("");
+      setGroupRunRules([]);
+      return () => {
+        disposed = true;
+      };
+    }
+    const loadGroupMembers = async () => {
+      try {
+        const [groups, rules] = await Promise.all([
+          invoke<EmployeeGroup[] | null>("list_employee_groups"),
+          invoke<EmployeeGroupRule[] | null>("list_employee_group_rules", { groupId }),
+        ]);
+        if (disposed) return;
+        const matchedGroup = Array.isArray(groups)
+          ? groups.find((group) => (group.id || "").trim() === groupId)
+          : null;
+        const memberIds = (matchedGroup?.member_employee_ids || [])
+          .map((value) => (value || "").trim())
+          .filter((value) => value.length > 0);
+        setGroupRunMemberEmployeeIds(memberIds);
+        setGroupRunCoordinatorEmployeeId((matchedGroup?.coordinator_employee_id || "").trim());
+        setGroupRunRules(Array.isArray(rules) ? rules : []);
+      } catch {
+        if (!disposed) {
+          setGroupRunMemberEmployeeIds([]);
+          setGroupRunCoordinatorEmployeeId("");
+          setGroupRunRules([]);
+        }
+      }
+    };
+    void loadGroupMembers();
+    return () => {
+      disposed = true;
+    };
+  }, [groupRunSnapshot?.group_id]);
 
   // ask-user-event 事件监听
   useEffect(() => {
@@ -723,6 +904,125 @@ export function ChatView({
     setToolConfirm(null);
   }
 
+  async function handleApproveGroupRunReview() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("approve");
+    try {
+      await invoke("review_group_run_step", {
+        runId: groupRunSnapshot.run_id,
+        action: "approve",
+        comment: "前端确认通过",
+      });
+      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      setGroupRunSnapshot(snapshot);
+    } catch (e) {
+      console.error("审核通过失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function refreshGroupRunSnapshot(targetSessionId?: string) {
+    const snapshotSessionId = (targetSessionId || groupRunSnapshot?.session_id || sessionId || "").trim();
+    if (!snapshotSessionId) return;
+    const snapshot = await invoke<EmployeeGroupRunSnapshot | null>("get_employee_group_run_snapshot", {
+      sessionId: snapshotSessionId,
+    });
+    if (snapshot) {
+      setGroupRunSnapshot(snapshot);
+    }
+  }
+
+  async function handleRejectGroupRunReview() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("reject");
+    try {
+      await invoke("review_group_run_step", {
+        runId: groupRunSnapshot.run_id,
+        action: "reject",
+        comment: "前端要求补充方案",
+      });
+      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      setGroupRunSnapshot(snapshot);
+    } catch (e) {
+      console.error("审核打回失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handlePauseGroupRun() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("pause");
+    try {
+      await invoke("pause_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+        reason: "前端人工暂停",
+      });
+      await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
+    } catch (e) {
+      console.error("暂停协作失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handleResumeGroupRun() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("resume");
+    try {
+      await invoke("resume_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      setGroupRunSnapshot(snapshot);
+    } catch (e) {
+      console.error("继续协作失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handleRetryFailedGroupRunSteps() {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("retry");
+    try {
+      await invoke("retry_employee_group_run_failed_steps", {
+        runId: groupRunSnapshot.run_id,
+      });
+      await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
+    } catch (e) {
+      console.error("重试失败步骤失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
+  async function handleReassignFailedGroupRunStep(stepId: string, assigneeEmployeeId: string) {
+    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
+    setGroupRunActionLoading("reassign");
+    try {
+      await invoke("reassign_group_run_step", {
+        stepId,
+        assigneeEmployeeId,
+      });
+      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
+        runId: groupRunSnapshot.run_id,
+      });
+      setGroupRunSnapshot(snapshot);
+    } catch (e) {
+      console.error("改派失败步骤失败:", e);
+    } finally {
+      setGroupRunActionLoading(null);
+    }
+  }
+
   // 从 models 查找当前会话的模型名称
   const currentModel = models[0];
   const installedSkillSet = new Set(installedSkillIds);
@@ -754,11 +1054,28 @@ export function ChatView({
     : null;
   const groupRoundFromEvents = delegationCards.length > 0 ? Math.max(1, Math.ceil(delegationCards.length / 3)) : 0;
   const groupMemberStatesFromEvents = (() => {
-    const byRole = new Map<string, "running" | "completed" | "failed">();
+    const byRole = new Map<string, { status: "running" | "completed" | "failed"; stepType: string }>();
     for (const card of delegationCards) {
-      byRole.set(card.toRole, card.status);
+      byRole.set(card.toRole, { status: card.status, stepType: "execute" });
     }
-    return Array.from(byRole.entries()).map(([role, status]) => ({ role, status }));
+    return Array.from(byRole.entries()).map(([role, info]) => ({ role, status: info.status, stepType: info.stepType }));
+  })();
+  const groupPhaseLabelFromSnapshot = (() => {
+    const phase = (groupRunSnapshot?.current_phase || "").trim().toLowerCase();
+    const state = (groupRunSnapshot?.state || "").trim().toLowerCase();
+    if (state === "paused") return "已暂停";
+    if (state === "failed") return "失败";
+    if (state === "cancelled") return "已取消";
+    const normalized = phase || state;
+    if (!normalized) return null;
+    if (normalized === "intake" || normalized === "plan" || normalized === "planning") return "计划";
+    if (normalized === "review" || normalized === "waiting_review") return "审核";
+    if (normalized === "dispatch" || normalized === "execute" || normalized === "executing") return "执行";
+    if (normalized === "synthesize" || normalized === "finalize" || normalized === "done" || normalized === "completed") return "汇报";
+    if (normalized === "failed") return "失败";
+    if (normalized === "paused") return "已暂停";
+    if (normalized === "cancelled") return "已取消";
+    return "执行";
   })();
   const groupPhaseFromSnapshot = (() => {
     const state = (groupRunSnapshot?.state || "").trim().toLowerCase();
@@ -771,19 +1088,253 @@ export function ChatView({
     return "执行";
   })();
   const groupRoundFromSnapshot = groupRunSnapshot?.current_round || 0;
+  const groupReviewRound = groupRunSnapshot?.review_round || 0;
+  const groupRunState = (groupRunSnapshot?.state || "").trim().toLowerCase();
+  const groupWaitingLabel = groupRunSnapshot?.waiting_for_user
+    ? "等待用户"
+    : (groupRunSnapshot?.waiting_for_employee_id || "").trim();
+  const groupStatusReason = (groupRunSnapshot?.status_reason || "").trim();
+  const recentGroupEvents = (groupRunSnapshot?.events || []).slice(-4).reverse();
+  const failedGroupRunSteps = (groupRunSnapshot?.steps || []).filter(
+    (step) =>
+      ((step.status || "").trim().toLowerCase() === "failed") &&
+      ((step.step_type || "").trim().toLowerCase() === "execute"),
+  );
+  const groupRunAssignees = Array.from(
+    new Set(
+      (groupRunSnapshot?.steps || [])
+        .map((step) => (step.assignee_employee_id || "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
+  const groupRunStepMap = new Map(
+    (groupRunSnapshot?.steps || []).map((step) => [step.id, step] as const),
+  );
+  const parseGroupRunEventPayload = (event: EmployeeGroupRunSnapshot["events"][number]) => {
+    try {
+      return event.payload_json ? (JSON.parse(event.payload_json) as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  };
+  const latestStepReassignPayloadByStepId = (() => {
+    const byStepId = new Map<string, Record<string, unknown>>();
+    for (const event of groupRunSnapshot?.events || []) {
+      if (event.event_type !== "step_reassigned" || !event.step_id) continue;
+      byStepId.set(event.step_id, parseGroupRunEventPayload(event));
+    }
+    return byStepId;
+  })();
+  const latestGroupEventByStepId = (() => {
+    const byStepId = new Map<string, EmployeeGroupRunSnapshot["events"][number]>();
+    for (const event of groupRunSnapshot?.events || []) {
+      if (!event.step_id) continue;
+      byStepId.set(event.step_id, event);
+    }
+    return byStepId;
+  })();
+  const formatGroupRunEventLabel = (event: EmployeeGroupRunSnapshot["events"][number]) => {
+    const payload = parseGroupRunEventPayload(event);
+    const relatedStep = groupRunStepMap.get(event.step_id);
+    const assigneeEmployeeId = String(
+      payload.assignee_employee_id || relatedStep?.assignee_employee_id || "",
+    ).trim();
+    const dispatchSourceEmployeeId = String(
+      payload.dispatch_source_employee_id || relatedStep?.dispatch_source_employee_id || "",
+    ).trim();
+    if (
+      ["step_created", "step_dispatched", "step_completed", "step_failed", "step_reassigned"].includes(
+        event.event_type,
+      )
+    ) {
+      if (dispatchSourceEmployeeId && assigneeEmployeeId) {
+        return `${event.event_type} · ${dispatchSourceEmployeeId} -> ${assigneeEmployeeId}`;
+      }
+      if (assigneeEmployeeId) {
+        return `${event.event_type} · ${assigneeEmployeeId}`;
+      }
+    }
+    return event.event_type;
+  };
+  const formatGroupRunStepStatusLabel = (status?: string) => {
+    const normalized = (status || "").trim().toLowerCase();
+    if (normalized === "completed" || normalized === "done") return "已完成";
+    if (normalized === "failed") return "失败";
+    if (normalized === "running" || normalized === "executing") return "执行中";
+    if (normalized === "pending") return "待执行";
+    if (normalized === "paused") return "已暂停";
+    if (normalized === "cancelled") return "已取消";
+    return status?.trim() || "待执行";
+  };
+  const groupRunEventTimelineByStepId = (() => {
+    const byStepId = new Map<string, ChatSessionTimelineItem[]>();
+    for (const event of groupRunSnapshot?.events || []) {
+      if (!event.step_id) continue;
+      const label = formatGroupRunEventLabel(event).trim();
+      if (!label) continue;
+      const payload = parseGroupRunEventPayload(event);
+      const relatedStep = groupRunStepMap.get(event.step_id);
+      const list = byStepId.get(event.step_id) || [];
+      list.push({
+        eventId: String(event.id || "").trim() || undefined,
+        linkedSessionId: String(payload.session_id || relatedStep?.session_id || "").trim() || undefined,
+        label,
+        createdAt: String(event.created_at || "").trim() || undefined,
+      });
+      byStepId.set(event.step_id, list);
+    }
+    for (const [stepId, items] of byStepId.entries()) {
+      byStepId.set(stepId, items.slice(-3));
+    }
+    return byStepId;
+  })();
+  const groupRunExecuteStepCards = (groupRunSnapshot?.steps || [])
+    .filter((step) => (step.step_type || "").trim().toLowerCase() === "execute")
+    .map((step) => {
+      const reassignPayload = latestStepReassignPayloadByStepId.get(step.id) || {};
+      const latestEvent = latestGroupEventByStepId.get(step.id) || null;
+      const latestEventPayload = latestEvent ? parseGroupRunEventPayload(latestEvent) : {};
+      const currentAssigneeEmployeeId = String(
+        reassignPayload.assignee_employee_id || step.assignee_employee_id || "",
+      ).trim();
+      const dispatchSourceEmployeeId = String(
+        reassignPayload.dispatch_source_employee_id || step.dispatch_source_employee_id || "",
+      ).trim();
+      const previousAssigneeEmployeeId = String(
+        reassignPayload.previous_assignee_employee_id || "",
+      ).trim();
+      const latestFailureSummary = String(
+        reassignPayload.previous_output_summary ||
+          (String(step.status || "").trim().toLowerCase() === "failed"
+            ? step.output_summary || step.output || ""
+            : ""),
+      ).trim();
+      const attemptNo =
+        typeof step.attempt_no === "number" && Number.isFinite(step.attempt_no) && step.attempt_no > 0
+          ? step.attempt_no
+          : 1;
+      const detailSessionId = String(step.session_id || latestEventPayload.session_id || "").trim();
+      const detailOutputSummary = String(
+        step.output_summary || latestEventPayload.output_summary || step.output || "",
+      ).trim();
+      const latestEventCreatedAt = String(latestEvent?.created_at || "").trim();
+      const sourceStepTimeline = groupRunEventTimelineByStepId.get(step.id) || [];
+      return {
+        step,
+        currentAssigneeEmployeeId,
+        dispatchSourceEmployeeId,
+        previousAssigneeEmployeeId,
+        latestFailureSummary,
+        attemptNo,
+        detailSessionId,
+        detailOutputSummary,
+        latestEventCreatedAt,
+        sourceStepTimeline,
+      };
+    });
+  const toggleGroupRunStepDetails = (stepId: string) => {
+    setExpandedGroupRunStepIds((prev) =>
+      prev.includes(stepId) ? prev.filter((id) => id !== stepId) : [...prev, stepId],
+    );
+  };
+  const groupRunExecuteRuleTargets = (dispatchSourceEmployeeId?: string) => {
+    const coordinatorEmployeeId = groupRunCoordinatorEmployeeId.trim().toLowerCase();
+    const normalizedDispatchSourceEmployeeId = (dispatchSourceEmployeeId || "").trim().toLowerCase();
+    const memberSet = new Set(
+      groupRunMemberEmployeeIds
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    );
+    const exactTargets = new Map<string, string>();
+    const coordinatorTargets = new Map<string, string>();
+    const fallbackTargets = new Map<string, string>();
+    for (const rule of groupRunRules) {
+      const relationType = (rule.relation_type || "").trim().toLowerCase();
+      const phaseScope = (rule.phase_scope || "").trim().toLowerCase();
+      if (!["delegate", "handoff"].includes(relationType)) continue;
+      if (phaseScope.length > 0 && !["execute", "all", "*"].includes(phaseScope)) continue;
+      const targetEmployeeId = (rule.to_employee_id || "").trim();
+      const normalizedTargetEmployeeId = targetEmployeeId.toLowerCase();
+      if (!targetEmployeeId || (memberSet.size > 0 && !memberSet.has(normalizedTargetEmployeeId))) {
+        continue;
+      }
+      if (!fallbackTargets.has(normalizedTargetEmployeeId)) {
+        fallbackTargets.set(normalizedTargetEmployeeId, targetEmployeeId);
+      }
+      const fromEmployeeId = (rule.from_employee_id || "").trim().toLowerCase();
+      if (
+        normalizedDispatchSourceEmployeeId &&
+        fromEmployeeId === normalizedDispatchSourceEmployeeId &&
+        !exactTargets.has(normalizedTargetEmployeeId)
+      ) {
+        exactTargets.set(normalizedTargetEmployeeId, targetEmployeeId);
+      }
+      if (
+        coordinatorEmployeeId &&
+        fromEmployeeId === coordinatorEmployeeId &&
+        !coordinatorTargets.has(normalizedTargetEmployeeId)
+      ) {
+        coordinatorTargets.set(normalizedTargetEmployeeId, targetEmployeeId);
+      }
+    }
+    const preferredTargets =
+      exactTargets.size > 0
+        ? exactTargets
+        : coordinatorTargets.size > 0
+          ? coordinatorTargets
+          : fallbackTargets;
+    return {
+      hasExecuteRules: fallbackTargets.size > 0,
+      ids: Array.from(preferredTargets.values()),
+    };
+  };
+  const groupRunCandidateEmployeeIds = (step?: EmployeeGroupRunSnapshot["steps"][number]) =>
+    Array.from(
+      new Set(
+        (
+          groupRunExecuteRuleTargets(step?.dispatch_source_employee_id).hasExecuteRules
+            ? groupRunExecuteRuleTargets(step?.dispatch_source_employee_id).ids
+            : [...groupRunMemberEmployeeIds, ...groupRunAssignees]
+        )
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+  const failedGroupRunReassignOptions = failedGroupRunSteps
+    .map((step) => ({
+      step,
+      candidateEmployeeIds: groupRunCandidateEmployeeIds(step).filter(
+        (employeeId) =>
+          employeeId.trim().toLowerCase() !== (step.assignee_employee_id || "").trim().toLowerCase(),
+      ),
+    }))
+    .filter((entry) => entry.candidateEmployeeIds.length > 0);
+  const canPauseGroupRun =
+    !!groupRunSnapshot &&
+    !["paused", "done", "completed", "cancelled", "failed"].includes(groupRunState);
+  const canResumeGroupRun = !!groupRunSnapshot && groupRunState === "paused";
+  const canRetryFailedGroupRunSteps = failedGroupRunSteps.length > 0;
+  const canReassignFailedGroupRunStep = failedGroupRunReassignOptions.length > 0;
   const groupMemberStatesFromSnapshot = (() => {
-    const byRole = new Map<string, "running" | "completed" | "failed" | string>();
+    const byRole = new Map<string, { status: string; stepType: string }>();
     for (const step of groupRunSnapshot?.steps || []) {
       const role = (step.assignee_employee_id || "").trim();
       if (!role) continue;
-      byRole.set(role, step.status || "running");
+      byRole.set(role, {
+        status: step.status || "running",
+        stepType: (step.step_type || "").trim(),
+      });
     }
-    return Array.from(byRole.entries()).map(([role, status]) => ({ role, status }));
+    return Array.from(byRole.entries()).map(([role, info]) => ({
+      role,
+      status: info.status,
+      stepType: info.stepType,
+    }));
   })();
-  const groupPhaseLabel = groupPhaseFromEvents || groupPhaseFromSnapshot;
-  const groupRound = groupRoundFromEvents || groupRoundFromSnapshot;
+  const groupPhaseLabel = groupPhaseLabelFromSnapshot || groupPhaseFromSnapshot || groupPhaseFromEvents;
+  const groupRound = groupRoundFromSnapshot || groupRoundFromEvents;
   const groupMemberStates =
-    groupMemberStatesFromEvents.length > 0 ? groupMemberStatesFromEvents : groupMemberStatesFromSnapshot;
+    groupMemberStatesFromSnapshot.length > 0 ? groupMemberStatesFromSnapshot : groupMemberStatesFromEvents;
   const collaborationStatusText =
     mainSummaryDelivered
       ? `${mainRoleName || "主员工"} 已输出最终汇总`
@@ -1127,6 +1678,65 @@ export function ChatView({
           )}
         </div>
       </div>
+      {sessionExecutionContext && (
+        <div
+          data-testid="chat-session-execution-context-bar"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-100 bg-sky-50/80 px-6 py-2 text-[11px] text-sky-900"
+        >
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-3">
+              <span>{`来源 step：${sessionExecutionContext.sourceStepId}`}</span>
+              {sessionExecutionContext.sourceEmployeeId && (
+                <span>{`来源员工：${sessionExecutionContext.sourceEmployeeId}`}</span>
+              )}
+              {sessionExecutionContext.assigneeEmployeeId && (
+                <span>{`当前负责人：${sessionExecutionContext.assigneeEmployeeId}`}</span>
+              )}
+            </div>
+            {(sessionExecutionContext.sourceStepTimeline || []).length > 0 && (
+              <div
+                data-testid="chat-session-execution-context-timeline"
+                className="space-y-1 text-[10px] text-sky-800/90"
+              >
+                {(sessionExecutionContext.sourceStepTimeline || []).map((item, index) => {
+                  const label = item.createdAt ? `${item.label} · ${item.createdAt}` : item.label;
+                  return onOpenSession ? (
+                    <button
+                      key={`${item.label}-${item.createdAt || index}`}
+                      type="button"
+                      data-testid={`chat-session-execution-context-timeline-item-${index}`}
+                      onClick={() =>
+                        void onOpenSession(sessionExecutionContext.sourceSessionId, {
+                          groupRunStepFocusId: sessionExecutionContext.sourceStepId,
+                          groupRunEventFocusId: item.eventId,
+                        })
+                      }
+                      className="block text-left underline underline-offset-2 hover:text-sky-900"
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    <div
+                      key={`${item.label}-${item.createdAt || index}`}
+                      data-testid={`chat-session-execution-context-timeline-item-${index}`}
+                    >
+                      {label}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            data-testid="chat-session-execution-context-back"
+            onClick={() => void onReturnToSourceSession?.(sessionExecutionContext.sourceSessionId)}
+            className="text-[11px] font-medium text-sky-700 underline underline-offset-2 hover:text-sky-800"
+          >
+            返回协作看板
+          </button>
+        </div>
+      )}
 
       {/* 主内容区：消息列表 + 右侧面板 */}
       <div className="flex-1 flex overflow-hidden">
@@ -1176,20 +1786,298 @@ export function ChatView({
             )}
           </div>
         )}
-        {(groupPhaseLabel || groupMemberStates.length > 0) && (
+        {(groupPhaseLabel || groupMemberStates.length > 0 || groupRunSnapshot) && (
           <div
             data-testid="group-orchestration-board"
             className="sticky top-0 z-10 max-w-[80%] rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs text-indigo-900"
           >
             <div className="font-medium">{`阶段：${groupPhaseLabel || "计划"}`}</div>
             <div className="mt-1">{`轮次：第 ${groupRound || 1} 轮`}</div>
+            {groupReviewRound > 0 && <div className="mt-1">{`审议轮次：${groupReviewRound}`}</div>}
+            {groupWaitingLabel && <div className="mt-1">{`等待：${groupWaitingLabel}`}</div>}
+            {groupStatusReason && <div className="mt-1 text-amber-700">{groupStatusReason}</div>}
+            {groupRunSnapshot && (groupRunSnapshot.state || "").trim().toLowerCase() === "waiting_review" && (
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="group-run-review-reject"
+                  onClick={() => void handleRejectGroupRunReview()}
+                  disabled={groupRunActionLoading !== null}
+                  className="rounded bg-rose-600 px-2.5 py-1 text-[11px] text-white hover:bg-rose-700 disabled:bg-rose-300"
+                >
+                  {groupRunActionLoading === "reject" ? "打回中..." : "打回重审"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="group-run-review-approve"
+                  onClick={() => void handleApproveGroupRunReview()}
+                  disabled={groupRunActionLoading !== null}
+                  className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] text-white hover:bg-emerald-700 disabled:bg-emerald-300"
+                >
+                  {groupRunActionLoading === "approve" ? "通过中..." : "通过审议"}
+                </button>
+              </div>
+            )}
+            {groupRunSnapshot && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {canPauseGroupRun && (
+                  <button
+                    type="button"
+                    data-testid="group-run-pause"
+                    onClick={() => void handlePauseGroupRun()}
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-slate-600 px-2.5 py-1 text-[11px] text-white hover:bg-slate-700 disabled:bg-slate-300"
+                  >
+                    {groupRunActionLoading === "pause" ? "暂停中..." : "暂停协作"}
+                  </button>
+                )}
+                {canResumeGroupRun && (
+                  <button
+                    type="button"
+                    data-testid="group-run-resume"
+                    onClick={() => void handleResumeGroupRun()}
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-sky-600 px-2.5 py-1 text-[11px] text-white hover:bg-sky-700 disabled:bg-sky-300"
+                  >
+                    {groupRunActionLoading === "resume" ? "继续中..." : "继续协作"}
+                  </button>
+                )}
+                {canRetryFailedGroupRunSteps && (
+                  <button
+                    type="button"
+                    data-testid="group-run-retry-failed"
+                    onClick={() => void handleRetryFailedGroupRunSteps()}
+                    disabled={groupRunActionLoading !== null}
+                    className="rounded bg-amber-600 px-2.5 py-1 text-[11px] text-white hover:bg-amber-700 disabled:bg-amber-300"
+                  >
+                    {groupRunActionLoading === "retry" ? "重试中..." : "重试失败步骤"}
+                  </button>
+                )}
+                {canReassignFailedGroupRunStep && (
+                  <div className="w-full space-y-1.5">
+                    {failedGroupRunReassignOptions.map(({ step, candidateEmployeeIds }) => (
+                      <div
+                        key={step.id}
+                        data-testid={`group-run-reassign-row-${step.id}`}
+                        className="rounded border border-indigo-200 bg-white/70 px-2.5 py-2"
+                      >
+                        <div className="text-[11px] font-medium text-indigo-800">
+                          {`失败步骤：${step.assignee_employee_id || step.id}`}
+                        </div>
+                        {(step.dispatch_source_employee_id || "").trim().length > 0 && (
+                          <div className="mt-1 text-[10px] text-indigo-700/80">
+                            {`来源：${step.dispatch_source_employee_id}`}
+                          </div>
+                        )}
+                        {(step.output || "").trim().length > 0 && (
+                          <div className="mt-1 text-[10px] text-indigo-700/80">{step.output}</div>
+                        )}
+                        <div className="mt-1.5 flex flex-wrap gap-2">
+                          {candidateEmployeeIds.map((employeeId) => (
+                            <button
+                              key={`${step.id}-${employeeId}`}
+                              type="button"
+                              data-testid={`group-run-reassign-${step.id}-${employeeId}`}
+                              onClick={() => void handleReassignFailedGroupRunStep(step.id, employeeId)}
+                              disabled={groupRunActionLoading !== null}
+                              className="rounded bg-fuchsia-600 px-2.5 py-1 text-[11px] text-white hover:bg-fuchsia-700 disabled:bg-fuchsia-300"
+                            >
+                              {groupRunActionLoading === "reassign" ? "改派中..." : `改派给${employeeId}`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {groupMemberStates.length > 0 && (
               <div className="mt-2 space-y-1">
                 {groupMemberStates.map((member) => (
                   <div key={member.role} className="text-[11px] text-indigo-800">
-                    {member.role} · {member.status}
+                    {member.role}
+                    {member.stepType ? ` · ${member.stepType}` : ""}
+                    {` · ${member.status}`}
                   </div>
                 ))}
+              </div>
+            )}
+            {groupRunExecuteStepCards.length > 0 && (
+              <div className="mt-2 border-t border-indigo-100 pt-2">
+                <div className="text-[11px] font-medium text-indigo-800">步骤链路</div>
+                <div className="mt-1 space-y-1.5">
+                  {groupRunExecuteStepCards.map(
+                    ({
+                      step,
+                      currentAssigneeEmployeeId,
+                      dispatchSourceEmployeeId,
+                      previousAssigneeEmployeeId,
+                      latestFailureSummary,
+                      attemptNo,
+                      detailSessionId,
+                      detailOutputSummary,
+                      latestEventCreatedAt,
+                      sourceStepTimeline,
+                    }) => {
+                      const isGroupRunStepFocusTarget = highlightedGroupRunStepId === step.id;
+                      return (
+                      <div
+                        key={step.id}
+                        ref={(node) => {
+                          groupRunStepElementRefs.current[step.id] = node;
+                        }}
+                        data-testid={`group-run-step-card-${step.id}`}
+                        data-group-run-step-highlighted={isGroupRunStepFocusTarget ? "true" : "false"}
+                        className={
+                          "rounded border border-indigo-200 bg-white/70 px-2.5 py-2 transition-all " +
+                          (isGroupRunStepFocusTarget ? "ring-2 ring-amber-300 bg-amber-50/80 " : "")
+                        }
+                      >
+                        <div className="text-[11px] font-medium text-indigo-800">
+                          {step.assignee_employee_id || step.id}
+                        </div>
+                        <div className="mt-1 text-[10px] text-indigo-700/80">
+                          {`当前负责人：${currentAssigneeEmployeeId || "未分配"}`}
+                        </div>
+                        <div className="mt-1 text-[10px] text-indigo-700/80">
+                          {`当前状态：${formatGroupRunStepStatusLabel(step.status)}`}
+                        </div>
+                        <div className="mt-1 text-[10px] text-indigo-700/80">
+                          {`尝试次数：${attemptNo}`}
+                        </div>
+                        {dispatchSourceEmployeeId && (
+                          <div className="mt-1 text-[10px] text-indigo-700/80">
+                            {`来源人：${dispatchSourceEmployeeId}`}
+                          </div>
+                        )}
+                        {previousAssigneeEmployeeId &&
+                          previousAssigneeEmployeeId.toLowerCase() !==
+                            currentAssigneeEmployeeId.toLowerCase() && (
+                            <div className="mt-1 text-[10px] text-indigo-700/80">
+                              {`原负责人：${previousAssigneeEmployeeId}`}
+                            </div>
+                          )}
+                        {latestFailureSummary && (
+                          <div className="mt-1 text-[10px] text-amber-700/90">
+                            {`最近失败：${latestFailureSummary}`}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          data-testid={`group-run-step-card-${step.id}-toggle`}
+                          onClick={() => toggleGroupRunStepDetails(step.id)}
+                          className="mt-2 text-[10px] text-indigo-700 underline underline-offset-2 hover:text-indigo-800"
+                        >
+                          {expandedGroupRunStepIds.includes(step.id) ? "收起详情" : "查看详情"}
+                        </button>
+                        {expandedGroupRunStepIds.includes(step.id) && (
+                          <div
+                            data-testid={`group-run-step-card-${step.id}-details`}
+                            className="mt-2 space-y-1 rounded border border-indigo-100 bg-indigo-50/60 px-2 py-1.5 text-[10px] text-indigo-800"
+                          >
+                            <div>{`session_id：${detailSessionId || "暂无"}`}</div>
+                            <div>{`输出摘要：${detailOutputSummary || "暂无"}`}</div>
+                            <div>{`最近事件时间：${latestEventCreatedAt || "暂无"}`}</div>
+                            {sourceStepTimeline.length > 0 && (
+                              <div className="space-y-1">
+                                <div className="font-medium text-indigo-800">步骤事件</div>
+                                {sourceStepTimeline.map((item, index) => {
+                                  const eventId = (item.eventId || "").trim();
+                                  const linkedSessionId = (item.linkedSessionId || "").trim();
+                                  const isGroupRunEventFocusTarget =
+                                    eventId.length > 0 && highlightedGroupRunStepEventId === eventId;
+                                  const eventLabel = item.createdAt ? `${item.label} · ${item.createdAt}` : item.label;
+                                  const eventKey = `${eventId || item.label}-${item.createdAt || index}`;
+                                  const commonProps = {
+                                    ref: (node: HTMLDivElement | HTMLButtonElement | null) => {
+                                      if (eventId) {
+                                        groupRunStepEventElementRefs.current[eventId] = node as HTMLDivElement | null;
+                                      }
+                                    },
+                                    "data-testid": `group-run-step-card-${step.id}-event-${eventId || index}`,
+                                    "data-group-run-step-event-linkable":
+                                      linkedSessionId && onOpenSession ? "true" : "false",
+                                    "data-group-run-step-event-highlighted": isGroupRunEventFocusTarget ? "true" : "false",
+                                    className:
+                                      "rounded px-1.5 py-1 transition-all flex items-center justify-between gap-2 " +
+                                      (isGroupRunEventFocusTarget ? "bg-amber-100 ring-1 ring-amber-300 " : "") +
+                                      (linkedSessionId && onOpenSession
+                                        ? " w-full text-left border border-sky-200 bg-white text-sky-900 underline underline-offset-2 hover:bg-sky-50"
+                                        : " border border-indigo-100 bg-white/60 text-indigo-700/90"),
+                                  } as const;
+                                  return linkedSessionId && onOpenSession ? (
+                                    <button
+                                      key={eventKey}
+                                      {...commonProps}
+                                      type="button"
+                                      onClick={() =>
+                                        void onOpenSession(linkedSessionId, {
+                                          focusHint: detailOutputSummary || item.label || undefined,
+                                          sourceSessionId: sessionId,
+                                          sourceStepId: step.id,
+                                          sourceEmployeeId: dispatchSourceEmployeeId || undefined,
+                                          assigneeEmployeeId: currentAssigneeEmployeeId || undefined,
+                                          sourceStepTimeline:
+                                            sourceStepTimeline.length > 0 ? sourceStepTimeline : undefined,
+                                        })
+                                      }
+                                    >
+                                      <span className="min-w-0 flex-1 truncate">{eventLabel}</span>
+                                      <span className="shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-700">
+                                        执行会话
+                                      </span>
+                                    </button>
+                                  ) : (
+                                    <div key={eventKey} {...commonProps}>
+                                      <span className="min-w-0 flex-1 truncate">{eventLabel}</span>
+                                      <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-medium text-indigo-700">
+                                        日志
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {onOpenSession && detailSessionId && (
+                              <button
+                                type="button"
+                            data-testid={`group-run-step-card-${step.id}-open-session`}
+                            onClick={() =>
+                              void onOpenSession(detailSessionId, {
+                                focusHint: detailOutputSummary || undefined,
+                                sourceSessionId: sessionId,
+                                sourceStepId: step.id,
+                                sourceEmployeeId: dispatchSourceEmployeeId || undefined,
+                                assigneeEmployeeId: currentAssigneeEmployeeId || undefined,
+                                sourceStepTimeline:
+                                  sourceStepTimeline.length > 0 ? sourceStepTimeline : undefined,
+                              })
+                            }
+                            className="text-[10px] text-indigo-700 underline underline-offset-2 hover:text-indigo-800"
+                          >
+                                查看执行会话
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                    },
+                  )}
+                </div>
+              </div>
+            )}
+            {recentGroupEvents.length > 0 && (
+              <div className="mt-2 border-t border-indigo-100 pt-2">
+                <div className="text-[11px] font-medium text-indigo-800">最近事件</div>
+                <div className="mt-1 space-y-1">
+                  {recentGroupEvents.map((event) => (
+                    <div key={event.id} className="text-[11px] text-indigo-800">
+                      {formatGroupRunEventLabel(event)}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1240,9 +2128,15 @@ export function ChatView({
         )}
         {messages.map((m, i) => {
           const isLatest = i === messages.length - 1;
+          const isSessionFocusTarget = highlightedMessageIndex === i;
           return (
             <motion.div
               key={i}
+              ref={(node) => {
+                messageElementRefs.current[i] = node;
+              }}
+              data-testid={`chat-message-${i}`}
+              data-session-focus-highlighted={isSessionFocusTarget ? "true" : "false"}
               initial={isLatest ? { opacity: 0, x: m.role === "user" ? 20 : -20 } : false}
               animate={{ opacity: 1, x: 0 }}
               transition={{ type: "spring", stiffness: 300, damping: 24 }}
@@ -1250,7 +2144,8 @@ export function ChatView({
             >
               <div
                 className={
-                  "max-w-[80%] rounded-2xl px-5 py-3 text-sm " +
+                  "max-w-[80%] rounded-2xl px-5 py-3 text-sm transition-all " +
+                  (isSessionFocusTarget ? "ring-2 ring-amber-300 bg-amber-50/80 " : "") +
                   (m.role === "user"
                     ? "bg-blue-500 text-white"
                     : "bg-white text-gray-800 shadow-sm border border-gray-100")

@@ -51,10 +51,19 @@ WorkClaw also benchmarks against Claude Cowork-style desktop agent experiences w
 - **Start tasks in one sentence**: Use the landing page to start local automation and coding tasks quickly.
 - **Agent + tools in one chat loop**: The assistant can read/write files, run commands, and show tool traces while responding.
 - **Employee-scoped long-term memory**: Memory is isolated by `employee_id + skill_id`, so each employee agent keeps its own context over time.
+- **Default team templates**: On first launch, WorkClaw seeds a built-in "Three Departments and Six Ministries" team that users can run directly or clone into a custom team.
 - **Expert Skills workflow**: Create reusable local skills with guided input and real-time `SKILL.md` preview.
 - **Built-in packaging flow**: Package skills from the app for secure sharing and distribution.
 - **Unified settings control**: Manage models, provider routing, search providers, MCP servers, and runtime options.
 - **Default language + immersive translation**: After choosing a default language, English content in Skill Library / Find Skills / chat install candidates can be translated automatically for display.
+
+## Default Multi-Employee Team
+
+WorkClaw now includes a built-in complex-task team template and automatically instantiates it for new users on first launch:
+
+- **Seeded on first launch**: the app creates the default "Three Departments and Six Ministries" team, its members, and the baseline collaboration rules automatically.
+- **Template vs. instance**: the built-in definition stays system-owned, while the instantiated team in the user's workspace is editable and can be cloned into new variants.
+- **Observable runtime**: team runs expose phase, review round, waiting owner, step status, and event history instead of a single generated summary.
 
 ## Product Screenshots
 
@@ -98,6 +107,7 @@ The integrated environment where users can package, install, and run encrypted S
 - ✅ **Browser Automation**: Playwright integration for web scraping and automation (via Sidecar)
 - ✅ **MCP Integration**: Model Context Protocol server support for extended capabilities
 - ✅ **Multi-Agent System**: Sub-Agent task distribution with isolated contexts
+- ✅ **Team-template runtime**: First-launch team seeding, cloneable team instances, and phase-driven collaboration across `plan / review / execute / synthesize`
 - ✅ **Layered Memory Management**: TodoWrite tracking + long-term isolation by `employee_id + skill_id`
 - ✅ **Web Search**: DuckDuckGo integration for real-time information
 - ✅ **Permission System**: Multi-layer security validation
@@ -129,6 +139,7 @@ Creators can develop Skills with **Claude Code** or **VS Code**, then package di
 ### Agent Capabilities
 - **ReAct Loop Engine**: Advanced reasoning and action planning
 - **Sub-Agent System**: Parallel task execution with isolated contexts
+- **Team templates + runtime state**: Seeded teams can be cloned into custom variants, with visible phase, review round, waiting owner, and event history
 - **Context Compression**: Smart truncation to stay within token limits
 - **Tool Registry**: Dynamic tool registration including MCP servers
 - **Long-Term Memory Isolation**: Employee sessions persist by `employee_id + skill_id`, while non-employee sessions keep the legacy path

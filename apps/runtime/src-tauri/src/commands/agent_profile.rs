@@ -126,27 +126,11 @@ fn resolve_profile_dir(employee: &AgentEmployee, fallback_base: &str) -> PathBuf
         .join(employee.employee_id.trim())
 }
 
-pub async fn generate_agent_profile_draft_with_pool(
-    pool: &SqlitePool,
-    payload: AgentProfilePayload,
-) -> Result<AgentProfileDraft, String> {
-    let employee = find_employee_with_pool(pool, payload.employee_db_id.trim()).await?;
-    Ok(render_markdown(&employee, &payload.answers))
-}
-
-pub async fn apply_agent_profile_with_pool(
-    pool: &SqlitePool,
-    payload: AgentProfilePayload,
+fn write_profile_files(
+    profile_dir: &std::path::Path,
+    draft: AgentProfileDraft,
 ) -> Result<ApplyAgentProfileResult, String> {
-    let employee = find_employee_with_pool(pool, payload.employee_db_id.trim()).await?;
-    let draft = render_markdown(&employee, &payload.answers);
-    let fallback_base = if employee.default_work_dir.trim().is_empty() {
-        resolve_default_work_dir_with_pool(pool).await?
-    } else {
-        String::new()
-    };
-    let profile_dir = resolve_profile_dir(&employee, &fallback_base);
-    std::fs::create_dir_all(&profile_dir)
+    std::fs::create_dir_all(profile_dir)
         .map_err(|e| format!("failed to create profile dir: {e}"))?;
 
     let mut files = Vec::with_capacity(3);
@@ -174,6 +158,38 @@ pub async fn apply_agent_profile_with_pool(
     }
 
     Ok(ApplyAgentProfileResult { files })
+}
+
+pub async fn generate_agent_profile_draft_with_pool(
+    pool: &SqlitePool,
+    payload: AgentProfilePayload,
+) -> Result<AgentProfileDraft, String> {
+    let employee = find_employee_with_pool(pool, payload.employee_db_id.trim()).await?;
+    Ok(render_markdown(&employee, &payload.answers))
+}
+
+pub async fn apply_agent_profile_draft_with_pool(
+    pool: &SqlitePool,
+    employee_db_id: &str,
+    draft: AgentProfileDraft,
+) -> Result<ApplyAgentProfileResult, String> {
+    let employee = find_employee_with_pool(pool, employee_db_id.trim()).await?;
+    let fallback_base = if employee.default_work_dir.trim().is_empty() {
+        resolve_default_work_dir_with_pool(pool).await?
+    } else {
+        String::new()
+    };
+    let profile_dir = resolve_profile_dir(&employee, &fallback_base);
+    write_profile_files(&profile_dir, draft)
+}
+
+pub async fn apply_agent_profile_with_pool(
+    pool: &SqlitePool,
+    payload: AgentProfilePayload,
+) -> Result<ApplyAgentProfileResult, String> {
+    let employee = find_employee_with_pool(pool, payload.employee_db_id.trim()).await?;
+    let draft = render_markdown(&employee, &payload.answers);
+    apply_agent_profile_draft_with_pool(pool, &employee.id, draft).await
 }
 
 pub async fn get_agent_profile_files_with_pool(

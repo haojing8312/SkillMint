@@ -14,6 +14,7 @@ fn group_orchestrator_transitions_across_required_phases() {
     let outcome = simulate_group_run(GroupRunRequest {
         group_id: "group-1".to_string(),
         coordinator_employee_id: "project_manager".to_string(),
+        reviewer_employee_id: None,
         member_employee_ids: vec![
             "project_manager".to_string(),
             "dev_team".to_string(),
@@ -36,7 +37,10 @@ fn group_orchestrator_transitions_across_required_phases() {
     );
 
     assert!(!outcome.plan.is_empty(), "plan should not be empty");
-    assert!(!outcome.execution.is_empty(), "execution should not be empty");
+    assert!(
+        !outcome.execution.is_empty(),
+        "execution should not be empty"
+    );
     assert!(outcome.final_report.contains("计划"));
     assert!(outcome.final_report.contains("执行"));
     assert!(outcome.final_report.contains("汇报"));
@@ -47,6 +51,7 @@ fn group_orchestrator_uses_round_robin_with_concurrency_window() {
     let outcome = simulate_group_run(GroupRunRequest {
         group_id: "group-window".to_string(),
         coordinator_employee_id: "project_manager".to_string(),
+        reviewer_employee_id: None,
         member_employee_ids: vec![
             "project_manager".to_string(),
             "dev_1".to_string(),
@@ -67,7 +72,11 @@ fn group_orchestrator_uses_round_robin_with_concurrency_window() {
         *round_counts.entry(item.round_no).or_insert(0) += 1;
     }
 
-    assert_eq!(round_counts.len(), 3, "7 members with window=3 should be 3 rounds");
+    assert_eq!(
+        round_counts.len(),
+        3,
+        "7 members with window=3 should be 3 rounds"
+    );
     assert_eq!(round_counts.get(&1).copied().unwrap_or(0), 3);
     assert_eq!(round_counts.get(&2).copied().unwrap_or(0), 3);
     assert_eq!(round_counts.get(&3).copied().unwrap_or(0), 1);
@@ -78,6 +87,7 @@ fn group_orchestrator_retries_timeout_once_and_degrades_report() {
     let outcome = simulate_group_run(GroupRunRequest {
         group_id: "group-retry".to_string(),
         coordinator_employee_id: "project_manager".to_string(),
+        reviewer_employee_id: None,
         member_employee_ids: vec![
             "project_manager".to_string(),
             "dev_team".to_string(),

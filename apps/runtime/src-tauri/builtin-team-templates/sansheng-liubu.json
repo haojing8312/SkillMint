@@ -1,0 +1,224 @@
+{
+  "template_id": "sansheng-liubu",
+  "template_version": "1.0.0",
+  "seed_on_first_run": true,
+  "name": "默认复杂任务团队",
+  "description": "A built-in multi-employee team template for planning, review, dispatch, and execution.",
+  "default_entry_employee_key": "taizi",
+  "roles": [
+    {
+      "role_type": "entry",
+      "employee_key": "taizi"
+    },
+    {
+      "role_type": "planner",
+      "employee_key": "zhongshu"
+    },
+    {
+      "role_type": "reviewer",
+      "employee_key": "menxia"
+    },
+    {
+      "role_type": "coordinator",
+      "employee_key": "shangshu"
+    }
+  ],
+  "employees": [
+    {
+      "employee_key": "taizi",
+      "employee_id": "taizi",
+      "name": "太子",
+      "persona": "负责接收复杂任务、澄清目标，并把需求提交给中书省。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app",
+        "feishu"
+      ],
+      "outward_facing": true,
+      "profile_templates": {
+        "agents_md_template": "# 太子\\n你负责承接复杂任务，整理输入并向中书省发起规划。",
+        "soul_md_template": "# 工作准则\\n先理解目标，再进入团队协作。",
+        "user_md_template": "# 对外角色\\n我是复杂任务团队的入口员工。"
+      }
+    },
+    {
+      "employee_key": "zhongshu",
+      "employee_id": "zhongshu",
+      "name": "中书省",
+      "persona": "负责拆解问题、制定计划，并把计划提交给门下省审议。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ],
+      "profile_templates": {
+        "agents_md_template": "# 中书省\\n你负责规划、拆解和产出结构化执行方案。 "
+      }
+    },
+    {
+      "employee_key": "menxia",
+      "employee_id": "menxia",
+      "name": "门下省",
+      "persona": "负责评审计划质量、补齐风险和回滚方案，必要时打回。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    },
+    {
+      "employee_key": "shangshu",
+      "employee_id": "shangshu",
+      "name": "尚书省",
+      "persona": "负责分派执行任务、收集结果并汇总最终答复。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app",
+        "feishu"
+      ],
+      "profile_templates": {
+        "agents_md_template": "# 尚书省\\n你负责调度执行员工，汇总结果并形成对外输出。"
+      }
+    },
+    {
+      "employee_key": "libu_personnel",
+      "employee_id": "libu_personnel",
+      "name": "吏部",
+      "persona": "负责人力、角色安排、人员分工建议。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    },
+    {
+      "employee_key": "hubu",
+      "employee_id": "hubu",
+      "name": "户部",
+      "persona": "负责资源、预算、排期和成本测算。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    },
+    {
+      "employee_key": "libu_rites",
+      "employee_id": "libu_rites",
+      "name": "礼部",
+      "persona": "负责对外呈现、沟通、文案和对齐口径。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    },
+    {
+      "employee_key": "bingbu",
+      "employee_id": "bingbu",
+      "name": "兵部",
+      "persona": "负责执行推进、技术落地和攻坚方案。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    },
+    {
+      "employee_key": "xingbu",
+      "employee_id": "xingbu",
+      "name": "刑部",
+      "persona": "负责风险审计、问题追踪和约束校验。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    },
+    {
+      "employee_key": "gongbu",
+      "employee_id": "gongbu",
+      "name": "工部",
+      "persona": "负责工具、流程、实现细节和交付收尾。",
+      "primary_skill_id": "builtin-general",
+      "enabled_scopes": [
+        "app"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "from_employee_id": "taizi",
+      "to_employee_id": "zhongshu",
+      "relation_type": "delegate",
+      "phase_scope": "intake",
+      "required": true,
+      "priority": 100
+    },
+    {
+      "from_employee_id": "zhongshu",
+      "to_employee_id": "menxia",
+      "relation_type": "review",
+      "phase_scope": "plan",
+      "required": true,
+      "priority": 110
+    },
+    {
+      "from_employee_id": "menxia",
+      "to_employee_id": "zhongshu",
+      "relation_type": "reject",
+      "phase_scope": "review",
+      "required": false,
+      "priority": 120
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "bingbu",
+      "relation_type": "delegate",
+      "phase_scope": "execute",
+      "required": true,
+      "priority": 130
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "hubu",
+      "relation_type": "delegate",
+      "phase_scope": "execute",
+      "required": false,
+      "priority": 140
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "libu_personnel",
+      "relation_type": "delegate",
+      "phase_scope": "execute",
+      "required": false,
+      "priority": 150
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "libu_rites",
+      "relation_type": "delegate",
+      "phase_scope": "execute",
+      "required": false,
+      "priority": 160
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "xingbu",
+      "relation_type": "delegate",
+      "phase_scope": "execute",
+      "required": false,
+      "priority": 170
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "gongbu",
+      "relation_type": "delegate",
+      "phase_scope": "execute",
+      "required": false,
+      "priority": 180
+    },
+    {
+      "from_employee_id": "shangshu",
+      "to_employee_id": "taizi",
+      "relation_type": "report",
+      "phase_scope": "finalize",
+      "required": true,
+      "priority": 190
+    }
+  ]
+}

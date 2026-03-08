@@ -280,7 +280,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
-        )"
+        )",
     )
     .execute(&pool)
     .await?;
@@ -341,6 +341,13 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             coordinator_employee_id TEXT NOT NULL,
             member_employee_ids_json TEXT NOT NULL DEFAULT '[]',
             member_count INTEGER NOT NULL DEFAULT 1 CHECK (member_count >= 1 AND member_count <= 10),
+            template_id TEXT NOT NULL DEFAULT '',
+            entry_employee_id TEXT NOT NULL DEFAULT '',
+            review_mode TEXT NOT NULL DEFAULT 'none',
+            execution_mode TEXT NOT NULL DEFAULT 'sequential',
+            visibility_mode TEXT NOT NULL DEFAULT 'internal',
+            is_bootstrap_seeded INTEGER NOT NULL DEFAULT 0,
+            config_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
@@ -356,6 +363,14 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             user_goal TEXT NOT NULL DEFAULT '',
             state TEXT NOT NULL DEFAULT 'planning',
             current_round INTEGER NOT NULL DEFAULT 0,
+            current_phase TEXT NOT NULL DEFAULT 'plan',
+            entry_session_id TEXT NOT NULL DEFAULT '',
+            main_employee_id TEXT NOT NULL DEFAULT '',
+            review_round INTEGER NOT NULL DEFAULT 0,
+            status_reason TEXT NOT NULL DEFAULT '',
+            template_version TEXT NOT NULL DEFAULT '',
+            waiting_for_employee_id TEXT NOT NULL DEFAULT '',
+            waiting_for_user INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )",
@@ -368,13 +383,66 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             id TEXT PRIMARY KEY,
             run_id TEXT NOT NULL,
             round_no INTEGER NOT NULL DEFAULT 0,
+            parent_step_id TEXT NOT NULL DEFAULT '',
             assignee_employee_id TEXT NOT NULL DEFAULT '',
+            dispatch_source_employee_id TEXT NOT NULL DEFAULT '',
+            phase TEXT NOT NULL DEFAULT '',
             step_type TEXT NOT NULL DEFAULT 'execute',
+            step_kind TEXT NOT NULL DEFAULT 'execute',
             input TEXT NOT NULL DEFAULT '',
+            input_summary TEXT NOT NULL DEFAULT '',
             output TEXT NOT NULL DEFAULT '',
+            output_summary TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
+            requires_review INTEGER NOT NULL DEFAULT 0,
+            review_status TEXT NOT NULL DEFAULT 'not_required',
+            attempt_no INTEGER NOT NULL DEFAULT 0,
+            session_id TEXT NOT NULL DEFAULT '',
+            visibility TEXT NOT NULL DEFAULT 'internal',
             started_at TEXT NOT NULL DEFAULT '',
             finished_at TEXT NOT NULL DEFAULT ''
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS employee_group_rules (
+            id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            from_employee_id TEXT NOT NULL,
+            to_employee_id TEXT NOT NULL,
+            relation_type TEXT NOT NULL,
+            phase_scope TEXT NOT NULL DEFAULT '',
+            required INTEGER NOT NULL DEFAULT 0,
+            priority INTEGER NOT NULL DEFAULT 100,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS group_run_events (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            step_id TEXT NOT NULL DEFAULT '',
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS seeded_team_templates (
+            template_id TEXT PRIMARY KEY,
+            template_version TEXT NOT NULL,
+            instance_group_id TEXT NOT NULL DEFAULT '',
+            instance_employee_ids_json TEXT NOT NULL DEFAULT '[]',
+            seed_mode TEXT NOT NULL DEFAULT 'first_run',
+            seeded_at TEXT NOT NULL
         )",
     )
     .execute(&pool)
@@ -545,19 +613,148 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     )
     .execute(&pool)
     .await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_group_runs_group_id ON group_runs(group_id)")
-        .execute(&pool)
-        .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_employee_group_rules_group_id ON employee_group_rules(group_id)",
+    )
+    .execute(&pool)
+    .await;
     let _ =
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_group_runs_state ON group_runs(state)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_group_runs_group_id ON group_runs(group_id)")
             .execute(&pool)
             .await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_group_runs_state ON group_runs(state)")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_group_run_events_run_id ON group_run_events(run_id)",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_group_run_steps_run_id ON group_run_steps(run_id)",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_group_run_steps_round_no ON group_run_steps(round_no)",
+    )
+    .execute(&pool)
+    .await;
     let _ =
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_group_run_steps_run_id ON group_run_steps(run_id)")
+        sqlx::query("ALTER TABLE employee_groups ADD COLUMN template_id TEXT NOT NULL DEFAULT ''")
             .execute(&pool)
             .await;
     let _ = sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_group_run_steps_round_no ON group_run_steps(round_no)",
+        "ALTER TABLE employee_groups ADD COLUMN entry_employee_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE employee_groups ADD COLUMN review_mode TEXT NOT NULL DEFAULT 'none'",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE employee_groups ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'sequential'",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE employee_groups ADD COLUMN visibility_mode TEXT NOT NULL DEFAULT 'internal'",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE employee_groups ADD COLUMN is_bootstrap_seeded INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE employee_groups ADD COLUMN config_json TEXT NOT NULL DEFAULT '{}'",
+    )
+    .execute(&pool)
+    .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_runs ADD COLUMN current_phase TEXT NOT NULL DEFAULT 'plan'")
+            .execute(&pool)
+            .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_runs ADD COLUMN entry_session_id TEXT NOT NULL DEFAULT ''")
+            .execute(&pool)
+            .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_runs ADD COLUMN main_employee_id TEXT NOT NULL DEFAULT ''")
+            .execute(&pool)
+            .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_runs ADD COLUMN review_round INTEGER NOT NULL DEFAULT 0")
+            .execute(&pool)
+            .await;
+    let _ = sqlx::query("ALTER TABLE group_runs ADD COLUMN status_reason TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_runs ADD COLUMN template_version TEXT NOT NULL DEFAULT ''")
+            .execute(&pool)
+            .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_runs ADD COLUMN waiting_for_employee_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_runs ADD COLUMN waiting_for_user INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN parent_step_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query("ALTER TABLE group_run_steps ADD COLUMN phase TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN step_kind TEXT NOT NULL DEFAULT 'execute'",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN requires_review INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN review_status TEXT NOT NULL DEFAULT 'not_required'",
+    )
+    .execute(&pool)
+    .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_run_steps ADD COLUMN attempt_no INTEGER NOT NULL DEFAULT 0")
+            .execute(&pool)
+            .await;
+    let _ =
+        sqlx::query("ALTER TABLE group_run_steps ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+            .execute(&pool)
+            .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN dispatch_source_employee_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN input_summary TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN output_summary TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE group_run_steps ADD COLUMN visibility TEXT NOT NULL DEFAULT 'internal'",
     )
     .execute(&pool)
     .await;
@@ -619,6 +816,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
 
     // 内置 Skill：始终存在，无需用户安装，且每次启动同步最新 metadata
     let _ = sync_builtin_skills(&pool).await;
+    crate::team_templates::seed_builtin_team_templates_with_root(&pool, &app_dir).await?;
 
     Ok(pool)
 }
