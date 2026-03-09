@@ -2,8 +2,8 @@
   "name": "workclaw",
   "private": true,
   "scripts": {
-    "app": "pnpm --dir apps/runtime/sidecar build && pnpm --filter runtime tauri dev",
-    "runtime": "pnpm --dir apps/runtime/sidecar build && pnpm --filter runtime tauri dev",
+    "app": "node scripts/start-runtime-dev.mjs",
+    "runtime": "node scripts/start-runtime-dev.mjs",
     "build:app": "pnpm --dir apps/runtime/sidecar build && pnpm --filter runtime tauri build --no-sign",
     "build:runtime": "pnpm --dir apps/runtime/sidecar build && pnpm --filter runtime tauri build --no-sign",
     "doctor:windows": "node scripts/doctor-windows.mjs",

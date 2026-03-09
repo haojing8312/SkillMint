@@ -4,12 +4,54 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const projectRoot = process.cwd();
+const packageJsonPath = path.join(projectRoot, "package.json");
+const startScriptPath = path.join(projectRoot, "scripts", "start-runtime-dev.mjs");
 const cmdScriptPath = path.join(projectRoot, "tmp-start-app.cmd");
 const vbsScriptPath = path.join(projectRoot, "tmp-start-app.vbs");
 
 function readScript(scriptPath) {
   return readFileSync(scriptPath, "utf8");
 }
+
+test("root desktop app script uses the cross-platform runtime launcher", () => {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+
+  assert.equal(
+    pkg.scripts?.app,
+    "node scripts/start-runtime-dev.mjs",
+    "Expected pnpm app to delegate to the shared runtime launcher",
+  );
+  assert.equal(
+    pkg.scripts?.runtime,
+    "node scripts/start-runtime-dev.mjs",
+    "Expected pnpm runtime to delegate to the shared runtime launcher",
+  );
+});
+
+test("runtime launcher prefers environment-driven cargo resolution over hardcoded paths", () => {
+  const script = readScript(startScriptPath);
+
+  assert.match(
+    script,
+    /\.CARGO_HOME/,
+    "Expected launcher to read CARGO_HOME from the environment first",
+  );
+  assert.match(
+    script,
+    /\.RUSTUP_HOME/,
+    "Expected launcher to read RUSTUP_HOME from the environment first",
+  );
+  assert.match(
+    script,
+    /\[\s*"which"\s*,\s*"cargo"\s*\]/i,
+    "Expected launcher to fall back to rustup which cargo when PATH is incomplete",
+  );
+  assert.doesNotMatch(
+    script,
+    /tmp-start-app\.(cmd|vbs)/i,
+    "Expected launcher not to depend on the Windows-only temporary startup helpers",
+  );
+});
 
 test("local start cmd script derives Rust paths from environment", () => {
   const script = readScript(cmdScriptPath);
