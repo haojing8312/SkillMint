@@ -1297,12 +1297,26 @@ export default function App() {
     setQuickModelError("");
     setQuickModelTestResult(null);
     setQuickModelApiKeyVisible(false);
+    // 重置搜索引擎引导状态
+    setHasCompletedInitialSearchSetup(false);
+    setDismissedSearchSetupHint(false);
+    setShowQuickSearchSetup(false);
+    setQuickSearchPresetKey(DEFAULT_SEARCH_PROVIDER?.id || "");
+    setQuickSearchForm({
+      ...buildSearchFormFromCatalogItem(DEFAULT_SEARCH_PROVIDER),
+      api_key: "",
+    });
+    setQuickSearchError("");
+    setQuickSearchTestResult(null);
+    setQuickSearchApiKeyVisible(false);
     if (typeof window === "undefined") {
       return;
     }
     try {
       window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
       window.localStorage.removeItem(MODEL_SETUP_HINT_DISMISSED_KEY);
+      window.localStorage.removeItem(INITIAL_SEARCH_SETUP_COMPLETED_KEY);
+      window.localStorage.removeItem(SEARCH_SETUP_HINT_DISMISSED_KEY);
     } catch {
       // ignore
     }
