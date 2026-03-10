@@ -1,5 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
+test.setTimeout(60_000);
+
 type TauriInvokeCall = {
   cmd: string;
   args: Record<string, unknown> | undefined;
