@@ -9,6 +9,12 @@ import {
   resolveCatalogItemForConfig,
 } from "../model-provider-catalog";
 import { openExternalUrl } from "../utils/openExternalUrl";
+import { SearchConfigForm } from "./SearchConfigForm";
+import {
+  applySearchPresetToForm,
+  EMPTY_SEARCH_CONFIG_FORM,
+  validateSearchConfigForm,
+} from "../lib/search-config";
 import {
   CapabilityRouteTemplateInfo,
   CapabilityRoutingPolicy,
@@ -31,15 +37,6 @@ const MCP_PRESETS = [
   { label: "Memory", value: "memory", name: "memory", command: "npx", args: "-y @anthropic/mcp-server-memory", env: "" },
   { label: "Puppeteer", value: "puppeteer", name: "puppeteer", command: "npx", args: "-y @anthropic/mcp-server-puppeteer", env: "" },
   { label: "Fetch", value: "fetch", name: "fetch", command: "npx", args: "-y @anthropic/mcp-server-fetch", env: "" },
-];
-
-const SEARCH_PRESETS = [
-  { label: "— 快速选择 —", value: "", api_format: "", base_url: "", model_name: "" },
-  { label: "Brave Search (国际首选)", value: "brave", api_format: "search_brave", base_url: "https://api.search.brave.com", model_name: "" },
-  { label: "Tavily (AI 专用)", value: "tavily", api_format: "search_tavily", base_url: "https://api.tavily.com", model_name: "" },
-  { label: "秘塔搜索 (中文首选)", value: "metaso", api_format: "search_metaso", base_url: "https://metaso.cn", model_name: "" },
-  { label: "博查搜索 (中文 AI)", value: "bocha", api_format: "search_bocha", base_url: "https://api.bochaai.com", model_name: "" },
-  { label: "SerpAPI (多引擎)", value: "serpapi", api_format: "search_serpapi", base_url: "https://serpapi.com", model_name: "google" },
 ];
 
 function parseMcpEnvJson(text: string): { env: Record<string, string>; error: string | null } {
@@ -163,7 +160,7 @@ export function SettingsView({
 
   // 搜索引擎配置
   const [searchConfigs, setSearchConfigs] = useState<ModelConfig[]>([]);
-  const [searchForm, setSearchForm] = useState({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+  const [searchForm, setSearchForm] = useState(EMPTY_SEARCH_CONFIG_FORM);
   const [searchError, setSearchError] = useState("");
   const [searchTesting, setSearchTesting] = useState(false);
   const [searchTestResult, setSearchTestResult] = useState<boolean | null>(null);
@@ -1033,15 +1030,7 @@ export function SettingsView({
   }
 
   function applySearchPreset(value: string) {
-    const preset = SEARCH_PRESETS.find((p) => p.value === value);
-    if (!preset || !preset.value) return;
-    setSearchForm((f) => ({
-      ...f,
-      name: preset.label.replace(/ \(.*\)/, ""),
-      api_format: preset.api_format,
-      base_url: preset.base_url,
-      model_name: preset.model_name,
-    }));
+    setSearchForm((current) => applySearchPresetToForm(value, current));
   }
 
   async function handleDelete(id: string) {
@@ -1093,6 +1082,12 @@ export function SettingsView({
   }
 
   async function handleSaveSearch() {
+    const validationError = validateSearchConfigForm(searchForm);
+    if (validationError) {
+      setSearchError(validationError);
+      setSearchTestResult(null);
+      return;
+    }
     setSearchError("");
     try {
       await invoke("save_model_config", {
@@ -1108,7 +1103,7 @@ export function SettingsView({
         },
         apiKey: searchForm.api_key,
       });
-      setSearchForm({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+      setSearchForm(EMPTY_SEARCH_CONFIG_FORM);
       setEditingSearchId(null);
       setShowSearchApiKey(false);
       loadSearchConfigs();
@@ -1152,7 +1147,7 @@ export function SettingsView({
     if (editingSearchId === id) {
       setEditingSearchId(null);
       setShowSearchApiKey(false);
-      setSearchForm({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+      setSearchForm(EMPTY_SEARCH_CONFIG_FORM);
       setSearchError("");
       setSearchTestResult(null);
     }
@@ -2528,7 +2523,7 @@ export function SettingsView({
                 onClick={() => {
                   setEditingSearchId(null);
                   setShowSearchApiKey(false);
-                  setSearchForm({ name: "", api_format: "", base_url: "", model_name: "", api_key: "" });
+                  setSearchForm(EMPTY_SEARCH_CONFIG_FORM);
                   setSearchError("");
                   setSearchTestResult(null);
                 }}
@@ -2538,69 +2533,24 @@ export function SettingsView({
               </button>
             )}
           </div>
-          <div>
-            <label className={labelCls}>快速选择搜索引擎</label>
-            <select className={inputCls} defaultValue="" onChange={(e) => applySearchPreset(e.target.value)}>
-              {SEARCH_PRESETS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className={labelCls}>名称</label>
-            <input className={inputCls} value={searchForm.name} onChange={(e) => setSearchForm({ ...searchForm, name: e.target.value })} />
-          </div>
-          <div>
-            <label className={labelCls}>API Key</label>
-            <div className="relative">
-              <input
-                className={inputCls + " pr-10"}
-                type={showSearchApiKey ? "text" : "password"}
-                value={searchForm.api_key}
-                onChange={(e) => setSearchForm({ ...searchForm, api_key: e.target.value })}
-              />
-              <button
-                type="button"
-                onClick={() => setShowSearchApiKey(!showSearchApiKey)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
-                title={showSearchApiKey ? "隐藏" : "显示"}
-              >
-                {showSearchApiKey ? <EyeSlashIcon /> : <EyeOpenIcon />}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>Base URL（可选自定义）</label>
-            <input className={inputCls} value={searchForm.base_url} onChange={(e) => setSearchForm({ ...searchForm, base_url: e.target.value })} />
-          </div>
-          {searchForm.api_format === "search_serpapi" && (
-            <div>
-              <label className={labelCls}>搜索引擎 (google/baidu/bing)</label>
-              <input className={inputCls} value={searchForm.model_name} onChange={(e) => setSearchForm({ ...searchForm, model_name: e.target.value })} />
-            </div>
-          )}
-          {searchError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{searchError}</div>}
-          {searchTestResult !== null && (
-            <div className={"text-xs px-2 py-1 rounded " + (searchTestResult ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600")}>
-              {searchTestResult ? "连接成功" : "连接失败，请检查配置"}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={handleTestSearch}
-              disabled={searchTesting || !searchForm.api_format}
-              className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
-            >
-              {searchTesting ? "测试中..." : "测试连接"}
-            </button>
-            <button
-              onClick={handleSaveSearch}
-              disabled={!searchForm.name || !searchForm.api_format || !searchForm.api_key}
-              className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
-            >
-              {editingSearchId ? "保存修改" : "保存"}
-            </button>
-          </div>
+          <SearchConfigForm
+            form={searchForm}
+            onFormChange={setSearchForm}
+            onApplyPreset={applySearchPreset}
+            showApiKey={showSearchApiKey}
+            onToggleApiKey={() => setShowSearchApiKey((value) => !value)}
+            error={searchError}
+            testResult={searchTestResult}
+            testing={searchTesting}
+            saving={false}
+            onTest={handleTestSearch}
+            onSave={handleSaveSearch}
+            labelClassName={labelCls}
+            inputClassName={inputCls}
+            panelClassName="space-y-3"
+            actionClassName="flex gap-2 pt-1"
+            saveLabel={editingSearchId ? "保存修改" : "保存"}
+          />
         </div>
       </>)}
 

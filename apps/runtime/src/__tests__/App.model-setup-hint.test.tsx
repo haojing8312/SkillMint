@@ -13,6 +13,14 @@ let mockModels: Array<{
   model_name: string;
   is_default: boolean;
 }> = [];
+let mockSearchConfigs: Array<{
+  id: string;
+  name: string;
+  api_format: string;
+  base_url: string;
+  model_name: string;
+  is_default: boolean;
+}> = [];
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -80,6 +88,7 @@ describe("App model setup hint", () => {
     invokeMock.mockReset();
     window.localStorage.clear();
     mockModels = [];
+    mockSearchConfigs = [];
 
     invokeMock.mockImplementation((command: string, payload?: any) => {
       if (command === "list_skills") {
@@ -99,6 +108,9 @@ describe("App model setup hint", () => {
       if (command === "list_model_configs") {
         return Promise.resolve(mockModels);
       }
+      if (command === "list_search_configs") {
+        return Promise.resolve(mockSearchConfigs);
+      }
       if (command === "get_sessions") {
         return Promise.resolve([]);
       }
@@ -107,19 +119,35 @@ describe("App model setup hint", () => {
       }
       if (command === "save_model_config") {
         const savedConfig = payload?.config;
-        mockModels = [
-          {
-            id: "model-quick",
-            name: savedConfig?.name ?? "Quick Setup",
-            api_format: savedConfig?.api_format ?? "openai",
-            base_url: savedConfig?.base_url ?? "https://open.bigmodel.cn/api/paas/v4",
-            model_name: savedConfig?.model_name ?? "glm-4-flash",
-            is_default: true,
-          },
-        ];
+        if (typeof savedConfig?.api_format === "string" && savedConfig.api_format.startsWith("search_")) {
+          mockSearchConfigs = [
+            {
+              id: "search-quick",
+              name: savedConfig?.name ?? "Quick Search",
+              api_format: savedConfig?.api_format ?? "search_brave",
+              base_url: savedConfig?.base_url ?? "https://api.search.brave.com",
+              model_name: savedConfig?.model_name ?? "",
+              is_default: true,
+            },
+          ];
+        } else {
+          mockModels = [
+            {
+              id: "model-quick",
+              name: savedConfig?.name ?? "Quick Setup",
+              api_format: savedConfig?.api_format ?? "openai",
+              base_url: savedConfig?.base_url ?? "https://open.bigmodel.cn/api/paas/v4",
+              model_name: savedConfig?.model_name ?? "glm-4-flash",
+              is_default: true,
+            },
+          ];
+        }
         return Promise.resolve(null);
       }
       if (command === "test_connection_cmd") {
+        return Promise.resolve(true);
+      }
+      if (command === "test_search_connection") {
         return Promise.resolve(true);
       }
       return Promise.resolve(null);
@@ -167,7 +195,7 @@ describe("App model setup hint", () => {
     });
   });
 
-  test("clears dismissal marker once any model is configured", async () => {
+  test("clears dismissal marker once model and search are both configured", async () => {
     window.localStorage.setItem(MODEL_SETUP_HINT_DISMISSED_KEY, "1");
     mockModels = [
       {
@@ -176,6 +204,16 @@ describe("App model setup hint", () => {
         api_format: "openai",
         base_url: "https://example.com",
         model_name: "gpt-4o-mini",
+        is_default: true,
+      },
+    ];
+    mockSearchConfigs = [
+      {
+        id: "search-a",
+        name: "Brave Search",
+        api_format: "search_brave",
+        base_url: "https://api.search.brave.com",
+        model_name: "",
         is_default: true,
       },
     ];
@@ -188,7 +226,7 @@ describe("App model setup hint", () => {
     expect(screen.queryByTestId("model-setup-hint")).not.toBeInTheDocument();
   });
 
-  test("supports quick setup from hint and persists model config", async () => {
+  test("advances to the search step after saving model config from quick setup", async () => {
     window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
     render(<App />);
 
@@ -221,10 +259,9 @@ describe("App model setup hint", () => {
       );
     });
 
-    await waitFor(() => {
-      expect(screen.queryByTestId("quick-model-setup-dialog")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("model-setup-hint")).not.toBeInTheDocument();
-    });
+    expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    expect(screen.getByText("搜索引擎")).toBeInTheDocument();
+    expect(screen.getByText("快速选择搜索引擎")).toBeInTheDocument();
   });
 
   test("supports testing quick setup connection before save", async () => {
@@ -434,7 +471,7 @@ describe("App model setup hint", () => {
     expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
   });
 
-  test("enforces first-launch model setup gate until at least one model is configured", async () => {
+  test("enforces first-launch onboarding until both model and search are configured", async () => {
     render(<App />);
 
     await waitFor(() => {
@@ -468,8 +505,65 @@ describe("App model setup hint", () => {
       );
     });
 
+    expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("model-setup-gate")).toBeInTheDocument();
+    expect(screen.getByText("快速选择搜索引擎")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("快速选择搜索引擎"), {
+      target: { value: "brave" },
+    });
+    fireEvent.change(screen.getByLabelText("名称"), {
+      target: { value: "Brave Search" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "bs-test-first-launch-gate" },
+    });
+    fireEvent.click(screen.getByText("保存搜索配置"));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_model_config",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            api_format: "search_brave",
+          }),
+          apiKey: "bs-test-first-launch-gate",
+        }),
+      );
+    });
+
     await waitFor(() => {
       expect(screen.queryByTestId("model-setup-gate")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("quick-model-setup-dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  test("allows skipping the search step when quick setup is opened manually from settings", async () => {
+    window.localStorage.setItem(INITIAL_MODEL_SETUP_COMPLETED_KEY, "1");
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-hint-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("quick-model-setup-api-key"), {
+      target: { value: "sk-test-manual-123" },
+    });
+    fireEvent.click(screen.getByTestId("quick-model-setup-save"));
+
+    await waitFor(() => {
+      expect(screen.getByText("快速选择搜索引擎")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("稍后配置搜索"));
+
+    await waitFor(() => {
       expect(screen.queryByTestId("quick-model-setup-dialog")).not.toBeInTheDocument();
     });
   });

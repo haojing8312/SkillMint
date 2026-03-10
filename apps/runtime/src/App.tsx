@@ -25,6 +25,7 @@ import { PackagingView } from "./components/packaging/PackagingView";
 import { NewSessionLanding } from "./components/NewSessionLanding";
 import { ExpertsView } from "./components/experts/ExpertsView";
 import { EmployeeHubView } from "./components/employees/EmployeeHubView";
+import { SearchConfigForm } from "./components/SearchConfigForm";
 import {
   DEFAULT_MODEL_PROVIDER_ID,
   MODEL_PROVIDER_CATALOG,
@@ -32,10 +33,10 @@ import {
   getModelProviderCatalogItem,
 } from "./model-provider-catalog";
 import {
-  SEARCH_PROVIDER_CATALOG,
-  buildSearchFormFromCatalogItem,
-  getSearchProviderCatalogItem,
-} from "./search-provider-catalog";
+  applySearchPresetToForm,
+  EMPTY_SEARCH_CONFIG_FORM,
+  validateSearchConfigForm,
+} from "./lib/search-config";
 import { openExternalUrl } from "./utils/openExternalUrl";
 import {
   ExpertCreatePayload,
@@ -62,9 +63,6 @@ const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 const BUILTIN_EMPLOYEE_CREATOR_SKILL_ID = "builtin-employee-creator";
 const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
 const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
-const SEARCH_SETUP_HINT_DISMISSED_KEY = "workclaw:search-setup-hint-dismissed";
-const INITIAL_SEARCH_SETUP_COMPLETED_KEY = "workclaw:initial-search-setup-completed";
-const DEFAULT_SEARCH_PROVIDER = SEARCH_PROVIDER_CATALOG[0];
 const EMPLOYEE_ASSISTANT_DISPLAY_NAME = "智能体员工助手";
 const EMPLOYEE_CREATOR_STARTER_PROMPT =
   "请帮我创建一个新的智能体员工。先问我 1-2 个关键问题，再给出配置草案，确认后再执行创建。";
@@ -108,8 +106,8 @@ const MODEL_SETUP_STEPS: Array<{ title: string; description: string }> = [
     description: "首次接入只需要这一步，其他字段后续都能在设置里细调。",
   },
   {
-    title: "测试连接并开始",
-    description: "验证通过后就能立即创建会话、执行技能和驱动员工协作。",
+    title: "补齐搜索引擎",
+    description: "模型保存成功后继续配置搜索，让智能体开箱即可联网检索。",
   },
 ];
 
@@ -225,8 +223,7 @@ export default function App() {
     }
   });
   const [showQuickModelSetup, setShowQuickModelSetup] = useState(false);
-  // 强制显示首次引导大门（用于开发调试）
-  const [forceShowModelSetupGate, setForceShowModelSetupGate] = useState(false);
+  const [quickSetupStep, setQuickSetupStep] = useState<"model" | "search">("model");
   const [quickModelPresetKey, setQuickModelPresetKey] = useState(DEFAULT_QUICK_MODEL_PROVIDER.id);
   const [quickModelForm, setQuickModelForm] = useState(() => ({
     ...buildModelFormFromCatalogItem(DEFAULT_QUICK_MODEL_PROVIDER),
@@ -237,41 +234,13 @@ export default function App() {
   const [quickModelTestResult, setQuickModelTestResult] = useState<boolean | null>(null);
   const [quickModelError, setQuickModelError] = useState("");
   const [quickModelApiKeyVisible, setQuickModelApiKeyVisible] = useState(false);
-
-  // 搜索引擎首次引导状态
   const [searchConfigs, setSearchConfigs] = useState<ModelConfig[]>([]);
-  const [dismissedSearchSetupHint, setDismissedSearchSetupHint] = useState(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    try {
-      return window.localStorage.getItem(SEARCH_SETUP_HINT_DISMISSED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [hasCompletedInitialSearchSetup, setHasCompletedInitialSearchSetup] = useState(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    try {
-      return window.localStorage.getItem(INITIAL_SEARCH_SETUP_COMPLETED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [showQuickSearchSetup, setShowQuickSearchSetup] = useState(false);
-  const [quickSearchPresetKey, setQuickSearchPresetKey] = useState(DEFAULT_SEARCH_PROVIDER?.id || "");
-  const [quickSearchForm, setQuickSearchForm] = useState(() => ({
-    ...buildSearchFormFromCatalogItem(DEFAULT_SEARCH_PROVIDER),
-    api_key: "",
-  }));
+  const [quickSearchForm, setQuickSearchForm] = useState(EMPTY_SEARCH_CONFIG_FORM);
   const [quickSearchSaving, setQuickSearchSaving] = useState(false);
   const [quickSearchTesting, setQuickSearchTesting] = useState(false);
   const [quickSearchTestResult, setQuickSearchTestResult] = useState<boolean | null>(null);
   const [quickSearchError, setQuickSearchError] = useState("");
   const [quickSearchApiKeyVisible, setQuickSearchApiKeyVisible] = useState(false);
-
   const [pendingInitialMessage, setPendingInitialMessage] = useState<{
     sessionId: string;
     message: string;
@@ -301,13 +270,11 @@ export default function App() {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const employeesRef = useRef<AgentEmployee[]>([]);
   const quickModelApiKeyInputRef = useRef<HTMLInputElement | null>(null);
-  const isBlockingInitialModelSetup = models.length === 0 && !showSettings && !hasCompletedInitialModelSetup;
-  const isBlockingInitialSearchSetup = searchConfigs.length === 0 && !showSettings && !hasCompletedInitialSearchSetup;
-  const isBlockingInitialSetup = isBlockingInitialModelSetup || isBlockingInitialSearchSetup;
-  const canDismissQuickModelSetup = !quickModelSaving && !quickModelTesting && !isBlockingInitialModelSetup;
-  const canDismissQuickSearchSetup = !quickSearchSaving && !quickSearchTesting && !isBlockingInitialSetup;
+  const isBlockingInitialModelSetup = !showSettings && !hasCompletedInitialModelSetup;
+  const isQuickSetupBusy =
+    quickModelSaving || quickModelTesting || quickSearchSaving || quickSearchTesting;
+  const canDismissQuickModelSetup = !isQuickSetupBusy && !isBlockingInitialModelSetup;
   const selectedQuickModelProvider = getModelProviderCatalogItem(quickModelPresetKey);
-  const selectedQuickSearchProvider = getSearchProviderCatalogItem(quickSearchPresetKey);
 
   function navigate(view: MainView) {
     setActiveMainView(view);
@@ -343,40 +310,17 @@ export default function App() {
     loadSearchConfigs();
     loadEmployees();
     loadEmployeeGroups();
-
-    // 检查 URL 参数是否需要重置首次引导
-    if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get("reset-onboarding") === "1") {
-        // 重置首次引导状态
-        setHasCompletedInitialModelSetup(false);
-        setDismissedModelSetupHint(false);
-        setHasCompletedInitialSearchSetup(false);
-        setDismissedSearchSetupHint(false);
-        try {
-          window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
-          window.localStorage.removeItem(MODEL_SETUP_HINT_DISMISSED_KEY);
-          window.localStorage.removeItem(INITIAL_SEARCH_SETUP_COMPLETED_KEY);
-          window.localStorage.removeItem(SEARCH_SETUP_HINT_DISMISSED_KEY);
-        } catch {
-          // ignore
-        }
-        // 清除 URL 参数
-        window.history.replaceState({}, "", window.location.pathname);
-      }
-
-      if (window.location.hash) {
-        const raw = window.location.hash.replace(/^#\//, "");
-        if (raw === "experts" || raw === "experts-new" || raw === "packaging" || raw === "start-task" || raw === "employees") {
-          setActiveMainView(raw);
-        }
+    if (typeof window !== "undefined" && window.location.hash) {
+      const raw = window.location.hash.replace(/^#\//, "");
+      if (raw === "experts" || raw === "experts-new" || raw === "packaging" || raw === "start-task" || raw === "employees") {
+        setActiveMainView(raw);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (models.length === 0) {
+    if (models.length === 0 || searchConfigs.length === 0) {
       return;
     }
     setHasCompletedInitialModelSetup(true);
@@ -390,25 +334,7 @@ export default function App() {
     } catch {
       // ignore
     }
-  }, [models.length]);
-
-  // 搜索引擎配置完成时更新状态
-  useEffect(() => {
-    if (searchConfigs.length === 0) {
-      return;
-    }
-    setHasCompletedInitialSearchSetup(true);
-    setDismissedSearchSetupHint(false);
-    if (typeof window === "undefined") {
-      return;
-    }
-    try {
-      window.localStorage.setItem(INITIAL_SEARCH_SETUP_COMPLETED_KEY, "1");
-      window.localStorage.removeItem(SEARCH_SETUP_HINT_DISMISSED_KEY);
-    } catch {
-      // ignore
-    }
-  }, [searchConfigs.length]);
+  }, [models.length, searchConfigs.length]);
 
   useEffect(() => {
     employeesRef.current = employees;
@@ -438,10 +364,7 @@ export default function App() {
         return;
       }
       event.preventDefault();
-      setShowQuickModelSetup(false);
-      setQuickModelError("");
-      setQuickModelTestResult(null);
-      setQuickModelApiKeyVisible(false);
+      closeQuickModelSetup();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -764,9 +687,8 @@ export default function App() {
   }
 
   async function loadSearchConfigs() {
-    const raw = await invoke<ModelConfig[] | null>("list_search_configs");
-    const list = Array.isArray(raw) ? raw : [];
-    setSearchConfigs(list);
+    const list = await invoke<ModelConfig[]>("list_search_configs");
+    setSearchConfigs(Array.isArray(list) ? list : []);
   }
 
   async function loadEmployees(): Promise<AgentEmployee[]> {
@@ -785,13 +707,15 @@ export default function App() {
     }
   }
 
-  async function loadEmployeeGroups(): Promise<void> {
+  async function loadEmployeeGroups(): Promise<EmployeeGroup[]> {
     try {
       const raw = await invoke<EmployeeGroup[] | null>("list_employee_groups");
       const list = Array.isArray(raw) ? raw : [];
       setEmployeeGroups(list);
+      return list;
     } catch {
       setEmployeeGroups([]);
+      return [];
     }
   }
 
@@ -1321,26 +1245,12 @@ export default function App() {
     setQuickModelError("");
     setQuickModelTestResult(null);
     setQuickModelApiKeyVisible(false);
-    // 重置搜索引擎引导状态
-    setHasCompletedInitialSearchSetup(false);
-    setDismissedSearchSetupHint(false);
-    setShowQuickSearchSetup(false);
-    setQuickSearchPresetKey(DEFAULT_SEARCH_PROVIDER?.id || "");
-    setQuickSearchForm({
-      ...buildSearchFormFromCatalogItem(DEFAULT_SEARCH_PROVIDER),
-      api_key: "",
-    });
-    setQuickSearchError("");
-    setQuickSearchTestResult(null);
-    setQuickSearchApiKeyVisible(false);
     if (typeof window === "undefined") {
       return;
     }
     try {
       window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
       window.localStorage.removeItem(MODEL_SETUP_HINT_DISMISSED_KEY);
-      window.localStorage.removeItem(INITIAL_SEARCH_SETUP_COMPLETED_KEY);
-      window.localStorage.removeItem(SEARCH_SETUP_HINT_DISMISSED_KEY);
     } catch {
       // ignore
     }
@@ -1348,29 +1258,27 @@ export default function App() {
 
   function openSettingsForModelSetup() {
     setShowQuickModelSetup(false);
+    setQuickSetupStep("model");
     setQuickModelError("");
     setQuickModelTestResult(null);
     setQuickModelApiKeyVisible(false);
+    setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
+    setQuickSearchError("");
+    setQuickSearchTestResult(null);
+    setQuickSearchApiKeyVisible(false);
     setShowSettings(true);
   }
 
   function openQuickModelSetup() {
     setShowQuickModelSetup(true);
+    setQuickSetupStep("model");
     setQuickModelError("");
     setQuickModelTestResult(null);
     setQuickModelApiKeyVisible(false);
-  }
-
-  // 打开首次引导大门（首次启动必做一步的大弹层）
-  function openInitialModelSetupGate() {
-    // 强制显示首次引导大门
-    setForceShowModelSetupGate(true);
-    // 关闭设置页
-    setShowSettings(false);
-    // 重置状态
-    window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
-    setHasCompletedInitialModelSetup(false);
-    setDismissedModelSetupHint(false);
+    setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
+    setQuickSearchError("");
+    setQuickSearchTestResult(null);
+    setQuickSearchApiKeyVisible(false);
   }
 
   function closeQuickModelSetup() {
@@ -1378,9 +1286,14 @@ export default function App() {
       return;
     }
     setShowQuickModelSetup(false);
+    setQuickSetupStep("model");
     setQuickModelError("");
     setQuickModelTestResult(null);
     setQuickModelApiKeyVisible(false);
+    setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
+    setQuickSearchError("");
+    setQuickSearchTestResult(null);
+    setQuickSearchApiKeyVisible(false);
   }
 
   function applyQuickModelPreset(presetKey: string) {
@@ -1393,6 +1306,12 @@ export default function App() {
     }));
     setQuickModelTestResult(null);
     setQuickModelError("");
+  }
+
+  function applyQuickSearchPreset(presetKey: string) {
+    setQuickSearchForm((current) => applySearchPresetToForm(presetKey, current));
+    setQuickSearchError("");
+    setQuickSearchTestResult(null);
   }
 
   function getQuickModelConfig(isDefault: boolean) {
@@ -1417,6 +1336,10 @@ export default function App() {
       return "请输入 API Key";
     }
     return null;
+  }
+
+  function validateQuickSearchSetup() {
+    return validateSearchConfigForm(quickSearchForm);
   }
 
   async function testQuickModelSetupConnection() {
@@ -1465,67 +1388,15 @@ export default function App() {
         apiKey,
       });
       await loadModels();
-      await loadSearchConfigs();
-      setShowQuickModelSetup(false);
-      // 清除强制显示首次引导大门的状态
-      setForceShowModelSetupGate(false);
       setQuickModelForm((prev) => ({ ...prev, api_key: "" }));
       setQuickModelTestResult(null);
       setQuickModelApiKeyVisible(false);
+      setQuickSetupStep("search");
     } catch (e) {
       setQuickModelError(String(e));
     } finally {
       setQuickModelSaving(false);
     }
-  }
-
-  // 搜索引擎快速配置处理函数
-  function openQuickSearchSetup() {
-    setShowQuickSearchSetup(true);
-    setQuickSearchError("");
-    setQuickSearchTestResult(null);
-    setQuickSearchApiKeyVisible(false);
-  }
-
-  function closeQuickSearchSetup() {
-    if (!canDismissQuickSearchSetup) {
-      return;
-    }
-    setShowQuickSearchSetup(false);
-    setQuickSearchError("");
-    setQuickSearchTestResult(null);
-    setQuickSearchApiKeyVisible(false);
-  }
-
-  function applyQuickSearchPreset(presetKey: string) {
-    const provider = getSearchProviderCatalogItem(presetKey);
-    if (!provider) return;
-    setQuickSearchPresetKey(provider.id);
-    setQuickSearchForm((prev) => ({
-      ...prev,
-      ...buildSearchFormFromCatalogItem(provider),
-      api_key: prev.api_key,
-    }));
-    setQuickSearchTestResult(null);
-    setQuickSearchError("");
-  }
-
-  function getQuickSearchConfig() {
-    return {
-      id: "",
-      name: quickSearchForm.name.trim() || "快速配置搜索引擎",
-      api_format: quickSearchForm.api_format,
-      base_url: quickSearchForm.base_url.trim(),
-      model_name: quickSearchForm.model_name.trim(),
-      is_default: true,
-    };
-  }
-
-  function validateQuickSearchSetup() {
-    if (!quickSearchForm.api_key.trim()) {
-      return "请输入 API Key";
-    }
-    return null;
   }
 
   async function testQuickSearchSetupConnection() {
@@ -1536,21 +1407,27 @@ export default function App() {
       setQuickSearchTestResult(null);
       return;
     }
-    const apiKey = quickSearchForm.api_key.trim();
     setQuickSearchTesting(true);
     setQuickSearchError("");
     setQuickSearchTestResult(null);
     try {
       const ok = await invoke<boolean>("test_search_connection", {
-        config: getQuickSearchConfig(),
-        apiKey,
+        config: {
+          id: "",
+          name: quickSearchForm.name.trim(),
+          api_format: quickSearchForm.api_format,
+          base_url: quickSearchForm.base_url.trim(),
+          model_name: quickSearchForm.model_name.trim(),
+          is_default: searchConfigs.length === 0,
+        },
+        apiKey: quickSearchForm.api_key.trim(),
       });
       setQuickSearchTestResult(ok);
       if (!ok) {
-        setQuickSearchError("连接失败，请检查配置后重试");
+        setQuickSearchError("连接失败，请检查配置");
       }
-    } catch (e) {
-      setQuickSearchError(String(e));
+    } catch (error) {
+      setQuickSearchError(extractErrorMessage(error, "搜索连接测试失败"));
       setQuickSearchTestResult(false);
     } finally {
       setQuickSearchTesting(false);
@@ -1565,24 +1442,43 @@ export default function App() {
       setQuickSearchTestResult(null);
       return;
     }
-    const apiKey = quickSearchForm.api_key.trim();
     setQuickSearchSaving(true);
     setQuickSearchError("");
     try {
       await invoke("save_model_config", {
-        config: getQuickSearchConfig(),
-        apiKey,
+        config: {
+          id: "",
+          name: quickSearchForm.name.trim(),
+          api_format: quickSearchForm.api_format,
+          base_url: quickSearchForm.base_url.trim(),
+          model_name: quickSearchForm.model_name.trim(),
+          is_default: searchConfigs.length === 0,
+        },
+        apiKey: quickSearchForm.api_key.trim(),
       });
       await loadSearchConfigs();
-      setShowQuickSearchSetup(false);
-      setQuickSearchForm((prev) => ({ ...prev, api_key: "" }));
+      setShowQuickModelSetup(false);
+      setQuickSetupStep("model");
+      setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
       setQuickSearchTestResult(null);
       setQuickSearchApiKeyVisible(false);
-    } catch (e) {
-      setQuickSearchError(String(e));
+    } catch (error) {
+      setQuickSearchError(extractErrorMessage(error, "保存搜索配置失败"));
     } finally {
       setQuickSearchSaving(false);
     }
+  }
+
+  function skipQuickSearchSetup() {
+    if (isBlockingInitialModelSetup || quickSearchSaving || quickSearchTesting) {
+      return;
+    }
+    setShowQuickModelSetup(false);
+    setQuickSetupStep("model");
+    setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
+    setQuickSearchError("");
+    setQuickSearchTestResult(null);
+    setQuickSearchApiKeyVisible(false);
   }
 
   async function handleStartTaskWithEmployee(employeeId: string) {
@@ -1759,14 +1655,10 @@ export default function App() {
     };
   })();
   const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
-  const shouldShowModelSetupGate = isBlockingInitialModelSetup || forceShowModelSetupGate;
-  const shouldShowSearchSetupHint =
-    searchConfigs.length === 0 &&
-    hasCompletedInitialModelSetup &&
-    !dismissedSearchSetupHint;
+  const shouldShowModelSetupGate = isBlockingInitialModelSetup;
   const shouldShowModelSetupHint =
     !showSettings &&
-    models.length === 0 &&
+    (models.length === 0 || searchConfigs.length === 0) &&
     hasCompletedInitialModelSetup &&
     !dismissedModelSetupHint;
 
@@ -1867,78 +1759,6 @@ export default function App() {
             </div>
           </div>
         )}
-        {shouldShowSearchSetupHint && (
-          <div className="px-4 pt-4">
-            <div
-              data-testid="search-setup-hint"
-              className="relative overflow-hidden rounded-[28px] border border-[var(--sm-primary-soft)] bg-white px-5 py-5 shadow-[0_18px_60px_rgba(37,99,235,0.12)]"
-            >
-              <div className="absolute inset-y-0 right-0 hidden w-72 bg-[radial-gradient(circle_at_center,_rgba(37,99,235,0.16),_transparent_72%)] md:block" />
-              <div className="relative flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                <div className="min-w-0">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-[var(--sm-primary-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--sm-primary-strong)]">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    首次引导
-                  </div>
-                  <div className="mt-3 text-lg font-semibold text-[var(--sm-text)]">配置搜索引擎，获取实时信息</div>
-                  <div className="mt-2 max-w-2xl text-sm leading-6 text-[var(--sm-text-muted)]">
-                    搜索引擎让智能体能够获取实时网络信息。配置后可搜索最新资讯、验证信息等。
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-3 py-1.5 text-xs text-[var(--sm-text-muted)]">
-                      <BadgeCheck className="h-3.5 w-3.5 text-[var(--sm-primary)]" />
-                      实时网络搜索
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-3 py-1.5 text-xs text-[var(--sm-text-muted)]">
-                      <BadgeCheck className="h-3.5 w-3.5 text-[var(--sm-primary)]" />
-                      信息验证
-                    </span>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-3 xl:min-w-[320px]">
-                  <div className="rounded-2xl border border-[var(--sm-border)] bg-[var(--sm-surface-muted)] px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm font-medium text-[var(--sm-text)]">
-                      <Bot className="h-4 w-4 text-[var(--sm-primary)]" />
-                      推荐使用国内搜索引擎
-                    </div>
-                    <div className="mt-1 text-xs leading-5 text-[var(--sm-text-muted)]">
-                      秘塔搜索、博查搜索等国内引擎效果好，无需翻墙。
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                    <button
-                      data-testid="search-setup-hint-open-quick-setup"
-                      onClick={openQuickSearchSetup}
-                      className="sm-btn sm-btn-primary min-h-11 flex-1 rounded-xl px-4 text-sm"
-                    >
-                      快速配置
-                    </button>
-                    <button
-                      data-testid="search-setup-hint-open-settings"
-                      onClick={() => {
-                        navigate("start-task");
-                        setShowSettings(true);
-                      }}
-                      className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm"
-                    >
-                      打开设置
-                    </button>
-                    <button
-                      data-testid="search-setup-hint-dismiss"
-                      onClick={() => {
-                        setDismissedSearchSetupHint(true);
-                        window.localStorage.setItem(SEARCH_SETUP_HINT_DISMISSED_KEY, "1");
-                      }}
-                      className="sm-btn sm-btn-ghost min-h-11 rounded-xl px-4 text-sm"
-                    >
-                      稍后再说
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
         {showQuickModelSetup && (
           <div
             data-testid="quick-model-setup-dialog"
@@ -2002,10 +1822,12 @@ export default function App() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div id="quick-model-setup-title" className="text-xl font-semibold text-[var(--sm-text)]">
-                        快速配置模型
+                        {quickSetupStep === "model" ? "快速配置模型" : "搜索引擎"}
                       </div>
                       <div className="mt-2 text-sm leading-6 text-[var(--sm-text-muted)]">
-                        填好 API Key 即可完成首次配置，后续可在设置里细调。
+                        {quickSetupStep === "model"
+                          ? "先完成模型接入，保存后自动进入搜索引擎配置。"
+                          : "补齐搜索配置后，智能体即可在首次使用时直接联网检索。"}
                       </div>
                     </div>
                     <button
@@ -2024,6 +1846,34 @@ export default function App() {
                     data-testid="quick-model-setup-scroll-region"
                     className="min-h-0 flex-1 overflow-y-auto pr-1"
                   >
+                  {quickSetupStep === "search" && (
+                    <div className="mt-6">
+                      <SearchConfigForm
+                        form={quickSearchForm}
+                        onFormChange={(next) => {
+                          setQuickSearchForm(next);
+                          setQuickSearchError("");
+                          setQuickSearchTestResult(null);
+                        }}
+                        onApplyPreset={applyQuickSearchPreset}
+                        showApiKey={quickSearchApiKeyVisible}
+                        onToggleApiKey={() => setQuickSearchApiKeyVisible((value) => !value)}
+                        error={quickSearchError}
+                        testResult={quickSearchTestResult}
+                        testing={quickSearchTesting}
+                        saving={quickSearchSaving}
+                        onTest={testQuickSearchSetupConnection}
+                        onSave={saveQuickSearchSetup}
+                        panelClassName="space-y-3"
+                        actionClassName="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3"
+                        saveLabel="保存搜索配置"
+                        onSecondaryAction={!isBlockingInitialModelSetup ? skipQuickSearchSetup : undefined}
+                        secondaryActionLabel={!isBlockingInitialModelSetup ? "稍后配置搜索" : undefined}
+                      />
+                    </div>
+                  )}
+                  {quickSetupStep === "model" && (
+                  <div>
                   <div className="mt-6">
                     <div className="flex items-center justify-between gap-3">
                       <div className="sm-field-label mb-0">推荐模板</div>
@@ -2239,11 +2089,13 @@ export default function App() {
                   )}
 
                   </div>
+                  )}
+                  </div>
 
                   <div className="mt-6 border-t border-[var(--sm-border)] pt-4">
                     <div className="text-xs leading-5 text-[var(--sm-text-muted)]">
                       {isBlockingInitialModelSetup
-                        ? "首次使用至少完成一次模型接入后，才能关闭这个向导。"
+                        ? "首次使用至少完成模型与搜索配置后，才能关闭这个向导。"
                         : "按 Esc 或点击遮罩可以关闭此弹窗。"}
                     </div>
                     <div data-testid="quick-model-setup-actions" className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -2259,149 +2111,34 @@ export default function App() {
                       <button
                         type="button"
                         onClick={openSettingsForModelSetup}
-                        disabled={quickModelSaving || quickModelTesting}
+                        disabled={isQuickSetupBusy}
                         className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
                       >
                         <Settings2 className="h-4 w-4" />
                         打开设置
                       </button>
-                      <button
-                        data-testid="quick-model-setup-test-connection"
-                        onClick={testQuickModelSetupConnection}
-                        disabled={quickModelSaving || quickModelTesting}
-                        className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
-                      >
-                        {quickModelTesting ? "测试中..." : "测试连接"}
-                      </button>
-                      <button
-                        data-testid="quick-model-setup-save"
-                        onClick={saveQuickModelSetup}
-                        disabled={quickModelSaving || quickModelTesting}
-                        className="sm-btn sm-btn-primary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                        {quickModelSaving ? "保存中..." : "保存并开始"}
-                      </button>
+                      {quickSetupStep === "model" && (
+                        <>
+                          <button
+                            data-testid="quick-model-setup-test-connection"
+                            onClick={testQuickModelSetupConnection}
+                            disabled={quickModelSaving || quickModelTesting}
+                            className="sm-btn sm-btn-secondary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
+                          >
+                            {quickModelTesting ? "测试中..." : "测试连接"}
+                          </button>
+                          <button
+                            data-testid="quick-model-setup-save"
+                            onClick={saveQuickModelSetup}
+                            disabled={quickModelSaving || quickModelTesting}
+                            className="sm-btn sm-btn-primary min-h-11 rounded-xl px-4 text-sm disabled:opacity-60"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                            {quickModelSaving ? "保存中..." : "保存并继续"}
+                          </button>
+                        </>
+                      )}
                     </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        {showQuickSearchSetup && (
-          <div
-            data-testid="quick-search-setup-dialog"
-            className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-950/30 px-4 py-4 backdrop-blur-sm sm:py-6"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) {
-                closeQuickSearchSetup();
-              }
-            }}
-          >
-            <div
-              data-testid="quick-search-setup-panel"
-              role="dialog"
-              aria-modal="true"
-              className="h-[calc(100vh-2rem)] w-full max-w-[640px] max-h-[640px] overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_36px_120px_rgba(15,23,42,0.24)]"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <div className="flex h-full min-h-0 flex-col">
-                <div className="relative overflow-hidden bg-[linear-gradient(180deg,#eff6ff_0%,#f8fafc_100%)] p-6 sm:p-7">
-                  <div className="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.18),_transparent_72%)]" />
-                  <div className="relative">
-                    <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-[var(--sm-primary-strong)] shadow-[var(--sm-shadow-sm)]">
-                      <Wand2 className="h-3.5 w-3.5" />
-                      配置搜索引擎
-                    </div>
-                    <div className="mt-4 text-2xl font-semibold tracking-tight text-[var(--sm-text)]">配置搜索引擎</div>
-                    <div className="mt-3 text-sm leading-6 text-[var(--sm-text-muted)]">
-                      选择搜索引擎并填写 API Key，让智能体能够搜索实时信息。
-                    </div>
-                    {selectedQuickSearchProvider?.officialConsoleUrl && (
-                      <a
-                        href={selectedQuickSearchProvider.officialConsoleUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-3 inline-flex items-center gap-1 text-sm text-[var(--sm-primary)] hover:underline"
-                      >
-                        点击获取 API Key
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-6">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="sm-field-label">快速选择搜索引擎</label>
-                      <select
-                        className="sm-field-input"
-                        value={quickSearchPresetKey}
-                        onChange={(e) => applyQuickSearchPreset(e.target.value)}
-                      >
-                        {SEARCH_PROVIDER_CATALOG.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="sm-field-label">API Key</label>
-                      <div className="relative">
-                        <input
-                          className="sm-field-input pr-10"
-                          type={quickSearchApiKeyVisible ? "text" : "password"}
-                          value={quickSearchForm.api_key}
-                          onChange={(e) => setQuickSearchForm((s) => ({ ...s, api_key: e.target.value }))}
-                          placeholder="请输入 API Key"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setQuickSearchApiKeyVisible(!quickSearchApiKeyVisible)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
-                        >
-                          {quickSearchApiKeyVisible ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                        </button>
-                      </div>
-                    </div>
-                    {quickSearchError && <div className="bg-red-50 text-red-600 text-xs px-3 py-2 rounded-lg">{quickSearchError}</div>}
-                    {quickSearchTestResult !== null && (
-                      <div className={"text-xs px-3 py-2 rounded-lg " + (quickSearchTestResult ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600")}>
-                        {quickSearchTestResult ? "连接成功" : "连接失败，请检查配置"}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 border-t border-[var(--sm-border)] p-4 sm:flex-row sm:justify-between">
-                  <div className="text-sm text-[var(--sm-text-muted)]">
-                    {isBlockingInitialSearchSetup ? "配置完成后可关闭" : ""}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={closeQuickSearchSetup}
-                      disabled={!canDismissQuickSearchSetup}
-                      className="sm-btn sm-btn-secondary min-h-10 rounded-xl px-4 text-sm"
-                    >
-                      取消
-                    </button>
-                    <button
-                      onClick={testQuickSearchSetupConnection}
-                      disabled={quickSearchSaving || quickSearchTesting || !quickSearchForm.api_key.trim()}
-                      className="sm-btn sm-btn-secondary min-h-10 rounded-xl px-4 text-sm"
-                    >
-                      {quickSearchTesting ? "测试中..." : "测试连接"}
-                    </button>
-                    <button
-                      onClick={saveQuickSearchSetup}
-                      disabled={quickSearchSaving || quickSearchTesting || !quickSearchForm.api_key.trim()}
-                      className="sm-btn sm-btn-primary min-h-10 rounded-xl px-4 text-sm"
-                    >
-                      {quickSearchSaving ? "保存中..." : "保存"}
-                    </button>
                   </div>
                 </div>
               </div>
@@ -2511,7 +2248,7 @@ export default function App() {
                 }}
                 showDevModelSetupTools={SHOW_DEV_MODEL_SETUP_TOOLS}
                 onDevResetFirstUseOnboarding={resetFirstUseOnboardingForDevelopment}
-                onDevOpenQuickModelSetup={openInitialModelSetupGate}
+                onDevOpenQuickModelSetup={openQuickModelSetup}
               />
             </motion.div>
           ) : activeMainView === "packaging" ? (
