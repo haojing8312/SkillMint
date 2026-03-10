@@ -1710,7 +1710,7 @@ export default function App() {
   const shouldShowSearchSetupHint =
     !showSettings &&
     searchConfigs.length === 0 &&
-    hasCompletedInitialSearchSetup &&
+    hasCompletedInitialModelSetup &&
     !dismissedSearchSetupHint;
   const shouldShowModelSetupHint =
     !showSettings &&
