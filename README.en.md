@@ -57,6 +57,70 @@ WorkClaw also benchmarks against Claude Cowork-style desktop agent experiences w
 - **Unified settings control**: Manage models, provider routing, search providers, MCP servers, and runtime options.
 - **Default language + immersive translation**: After choosing a default language, English content in Skill Library / Find Skills / chat install candidates can be translated automatically for display.
 
+## Comparison with Commercial Desktop Agents
+
+In early 2026, major companies worldwide have launched desktop AI agent products. Here's a comparison between mainstream commercial products and WorkClaw:
+
+| Product | Vendor | Core Positioning | Key Highlights | Pricing |
+|---------|--------|------------------|----------------|---------|
+| QClaw (Tencent Security) | Tencent | Personal "Lobster" one-click package | 3-min install + QR bind, WeChat/QQ integration | Free (premium skill packs paid) |
+| WorkBuddy (Tencent Cloud) | Tencent Cloud | Enterprise AI desktop assistant | No deployment, 1-min WeCom binding | Free for individuals, per-seat for enterprise |
+| Yuanqi AI Bot | Cheetah Mobile (Fu Sheng team) | Domestic OpenClaw alternative | One-click install, free tier only for trial | Paid membership required |
+| MiniMax Agent Desktop | MiniMax | AI-native workspace | One-click install, auto-config, built-in expert agents | Free + paid membership |
+| ClawX | Valuecell Team | OpenClaw visual client | GUI, zero CLI, 50+ built-in skills | Free basic, $99/year pro |
+| LobsterAI (Youdao Lobster) | NetEase Youdao | Chinese-localized OpenClaw | Full Chinese UI, Feishu/DingTalk integration | Free + paid membership |
+| MonsterClaw | Independent team | Lightweight OpenClaw wrapper | Minimal install, auto-config environment | Free basic, premium paid |
+| **WorkClaw (打工虾)** | **Open Source** | **OpenClaw Desktop Agent Distribution** | **Open source, local-only data, no cloud, encrypted packaging for sales** | **Completely free (Apache 2.0)** |
+
+### WorkClaw's Unique Advantages
+
+As a **fully open-source** desktop AI agent, WorkClaw offers key differences from commercial products:
+
+#### 1. Complete Local Data, No Cloud Servers
+- All chat logs, employee memories, and skill data stored locally on user devices
+- Commercial products typically upload data to cloud, posing privacy risks
+- Safe for sensitive industries (finance, healthcare, government)
+
+#### 2. Open Source, Auditable Code
+- Source code is completely transparent; you can verify security and privacy
+- Commercial products are closed-source; no way to verify data handling
+- Enterprises can compile and deploy themselves for full control
+
+#### 3. Encrypted Skill Packaging, Build Your Business
+- Built-in **AES-256-GCM** encryption and packaging
+- Developers can create skills, encrypt them, and distribute as commercial solutions
+- Recipients need username to decrypt and use, protecting IP
+- This capability is absent in commercial products
+
+#### 4. Free Choice of LLMs, Pay-Per-Use
+- Supports **9 model providers, 15+ large models**
+- Including Claude 4.6, GPT-5.3, o1, MiniMax M2.5, GLM-4, DeepSeek V3, Qwen 2.5, Kimi, and more
+- Commercial products usually have fixed built-in models with no flexibility
+- Pay model providers directly per usage, no middleman markup
+
+#### 5. Completely Free, No Hidden Fees
+- Apache 2.0 open source license
+- No paywalls, no feature limits
+- Free to modify and redistribute
+
+#### 6. Customizable and Forkable
+- Based on Tauri + React + Rust tech stack
+- Full source code, customizable for specific needs
+- Ideal for software companies to OEM B2B products
+
+> **Note**: Some commercial products (like Yuanqi AI Bot) claim "local data storage," but their implementation and auditability cannot match fully open-source WorkClaw. WorkClaw's open-source nature means anyone can verify data processing logic.
+
+### Recommended Scenarios
+
+| Scenario | Recommended |
+|----------|-------------|
+| Need local data for enterprise/personal | ✅ WorkClaw |
+| Need encrypted skill packaging for sales | ✅ WorkClaw |
+| Need code audit and security verification | ✅ WorkClaw |
+| Need completely free, no paywalls | ✅ WorkClaw |
+| Light users wanting quick setup | Commercial options |
+| Need official commercial support | Commercial options |
+
 ## Default Multi-Employee Team
 
 WorkClaw now includes a built-in complex-task team template and automatically instantiates it for new users on first launch:
