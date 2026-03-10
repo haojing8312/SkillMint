@@ -759,15 +759,13 @@ export default function App() {
     }
   }
 
-  async function loadEmployeeGroups(): Promise<EmployeeGroup[]> {
+  async function loadEmployeeGroups(): Promise<void> {
     try {
       const raw = await invoke<EmployeeGroup[] | null>("list_employee_groups");
       const list = Array.isArray(raw) ? raw : [];
       setEmployeeGroups(list);
-      return list;
     } catch {
       setEmployeeGroups([]);
-      return [];
     }
   }
 
@@ -2571,7 +2569,7 @@ export default function App() {
                 onSetAsMainAndEnter={handleSetAsMainAndEnter}
                 onStartTaskWithEmployee={handleStartTaskWithEmployee}
                 onOpenGroupRunSession={handleOpenGroupRunSession}
-                onEmployeeGroupsChanged={loadEmployeeGroups}
+                onEmployeeGroupsChanged={() => loadEmployeeGroups()}
                 onOpenEmployeeCreatorSkill={handleOpenEmployeeCreatorSkill}
               />
             </motion.div>
