@@ -399,7 +399,7 @@ git push origin v0.1.0
 - 拓展生态连接：IM 远程调用、市场兼容与移动端协作。
 
 ### Later（长期方向）
-- 企业能力：多租户、RBAC、审计、SSO、配额计费。
+- 企业能力：多租户、SSO / RBAC 权限管控、白名单技能安装、受控工作目录、统一审计、企业级 Token 中转与配额限流。
 - Agent 进化：EvoMap / GEP / A2A 集成与可追溯演进。
 - 开放生态：持续与 OpenClaw / ClawHub 协同兼容。
 

@@ -363,7 +363,7 @@ If you only want to install and use WorkClaw, choose the `.exe` installer first.
 - Expand ecosystem connectivity: IM remote control, marketplace compatibility, and mobile collaboration.
 
 ### Later
-- Enterprise capabilities: multi-tenant, RBAC, audit, SSO, quotas, and billing.
+- Enterprise capabilities: multi-tenancy, SSO and RBAC, allowlisted Skill installation, controlled work directories, centralized auditing, and enterprise-managed token relay with quotas and rate limits.
 - Agent evolution: EvoMap / GEP / A2A integration with traceable evolution.
 - Open ecosystem: ongoing compatibility with OpenClaw / ClawHub.
 
