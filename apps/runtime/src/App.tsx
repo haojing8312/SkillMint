@@ -1464,7 +1464,10 @@ export default function App() {
         apiKey,
       });
       await loadModels();
+      await loadSearchConfigs();
       setShowQuickModelSetup(false);
+      // 清除强制显示首次引导大门的状态
+      setForceShowModelSetupGate(false);
       setQuickModelForm((prev) => ({ ...prev, api_key: "" }));
       setQuickModelTestResult(null);
       setQuickModelApiKeyVisible(false);
