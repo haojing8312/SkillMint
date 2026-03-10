@@ -81,6 +81,54 @@ async fn test_react_loop_openai_format_network_error() {
     assert!(!err_msg.contains("not yet implemented"));
 }
 
+#[tokio::test]
+async fn test_react_loop_stops_repeated_invalid_write_file_calls() {
+    let registry = Arc::new(ToolRegistry::with_file_tools());
+    let executor = AgentExecutor::with_max_iterations(Arc::clone(&registry), 8);
+
+    let messages = vec![json!({
+        "role": "user",
+        "content": "请生成一个 HTML 网页版本的简报"
+    })];
+
+    let result = executor
+        .execute_turn(
+            "openai",
+            "http://mock-repeat-invalid-write-file",
+            "mock-key",
+            "gpt-4",
+            "You are a helpful assistant.",
+            messages,
+            |_token| {},
+            None,
+            None,
+            None,
+            PermissionMode::Unrestricted,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "重复的无效 write_file 调用应被熔断，而不是耗尽迭代: {:?}",
+        result
+    );
+
+    let messages = result.unwrap();
+    let last = messages.last().expect("assistant summary message");
+    let content = last["content"].as_str().unwrap_or_default();
+    assert!(
+        content.contains("重复调用") || content.contains("write_file"),
+        "应返回针对重复无效工具调用的说明，实际: {}",
+        content
+    );
+}
+
 #[test]
 fn router_uses_fallback_on_primary_error() {
     let policy = RoutingPolicy {

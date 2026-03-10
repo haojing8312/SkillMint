@@ -13,6 +13,15 @@ use uuid::Uuid;
 
 /// 单次工具输出允许的最大字符数
 const MAX_TOOL_OUTPUT_CHARS: usize = 30_000;
+const REPEATED_TOOL_FAILURE_THRESHOLD: usize = 3;
+const TOOL_CALL_PARSE_ERROR_KEY: &str = "__tool_call_parse_error";
+
+#[derive(Debug, Clone, Default)]
+struct ToolFailureStreak {
+    signature: String,
+    error: String,
+    count: usize,
+}
 
 /// 截断过长的工具输出
 ///
@@ -28,6 +37,47 @@ pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
         output.len(),
         max_chars
     )
+}
+
+fn stable_tool_input_signature(input: &Value) -> String {
+    serde_json::to_string(input).unwrap_or_else(|_| "<unserializable>".to_string())
+}
+
+fn extract_tool_call_parse_error(input: &Value) -> Option<String> {
+    input
+        .get(TOOL_CALL_PARSE_ERROR_KEY)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn update_tool_failure_streak(
+    streak: &mut Option<ToolFailureStreak>,
+    tool_name: &str,
+    input: &Value,
+    error: &str,
+) -> Option<String> {
+    let signature = format!("{}:{}", tool_name, stable_tool_input_signature(input));
+    match streak {
+        Some(current) if current.signature == signature && current.error == error => {
+            current.count += 1;
+            if current.count >= REPEATED_TOOL_FAILURE_THRESHOLD {
+                Some(format!(
+                    "检测到同一工具重复调用且持续失败，已停止自动重试。工具: {}，错误: {}",
+                    tool_name, error
+                ))
+            } else {
+                None
+            }
+        }
+        _ => {
+            *streak = Some(ToolFailureStreak {
+                signature,
+                error: error.to_string(),
+                count: 1,
+            });
+            None
+        }
+    }
 }
 
 const CHARS_PER_TOKEN: usize = 4;
@@ -318,6 +368,7 @@ impl AgentExecutor {
         let route_retry_count = route_retry_count.unwrap_or(0).clamp(0, 2);
         let mut iteration = 0;
         let route_run_id = Uuid::new_v4().to_string();
+        let mut tool_failure_streak: Option<ToolFailureStreak> = None;
 
         loop {
             // 检查取消标志
@@ -502,6 +553,7 @@ impl AgentExecutor {
 
                     // 执行所有工具调用
                     let mut tool_results = vec![];
+                    let mut repeated_failure_summary: Option<String> = None;
                     for (call_index, call) in tool_calls.iter().enumerate() {
                         let skill_name = call
                             .input
@@ -654,15 +706,72 @@ impl AgentExecutor {
                         let mut attempt = 0usize;
                         let (result, is_error) = loop {
                             attempt += 1;
-                            let (result, is_error) = match self.registry.get(&call.name) {
-                                Some(tool) => {
-                                    // 检查白名单：若设置了白名单但工具不在其中，拒绝执行
-                                    if let Some(whitelist) = allowed_tools {
-                                        if !whitelist.iter().any(|w| w == &call.name) {
-                                            (
-                                                format!("此 Skill 不允许使用工具: {}", call.name),
-                                                true,
-                                            )
+                            let (result, is_error) = if let Some(parse_error) =
+                                extract_tool_call_parse_error(&call.input)
+                            {
+                                (
+                                    format!(
+                                        "工具参数错误: {}。请提供完整且合法的 JSON 参数后再重试。",
+                                        parse_error
+                                    ),
+                                    true,
+                                )
+                            } else {
+                                match self.registry.get(&call.name) {
+                                    Some(tool) => {
+                                        // 检查白名单：若设置了白名单但工具不在其中，拒绝执行
+                                        if let Some(whitelist) = allowed_tools {
+                                            if !whitelist.iter().any(|w| w == &call.name) {
+                                                (
+                                                    format!(
+                                                        "此 Skill 不允许使用工具: {}",
+                                                        call.name
+                                                    ),
+                                                    true,
+                                                )
+                                            } else {
+                                                let tool_clone = Arc::clone(&tool);
+                                                let input_clone = call.input.clone();
+                                                let ctx_clone = tool_ctx.clone();
+                                                let handle =
+                                                    tokio::task::spawn_blocking(move || {
+                                                        tool_clone.execute(input_clone, &ctx_clone)
+                                                    });
+                                                let cancel_flag_ref = cancel_flag.clone();
+                                                let exec_future = async move {
+                                                    tokio::select! {
+                                                        res = handle => {
+                                                            match res {
+                                                                Ok(Ok(output)) => (output, false),
+                                                                Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
+                                                                Err(e) => (format!("工具执行线程异常: {}", e), true),
+                                                            }
+                                                        }
+                                                        _ = Self::wait_for_cancel(&cancel_flag_ref) => {
+                                                            ("工具执行被用户取消".to_string(), true)
+                                                        }
+                                                    }
+                                                };
+                                                if is_skill_call {
+                                                    match tokio::time::timeout(
+                                                        std::time::Duration::from_secs(
+                                                            route_node_timeout_secs,
+                                                        ),
+                                                        exec_future,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(v) => v,
+                                                        Err(_) => (
+                                                            "TIMEOUT: 子 Skill 执行超时"
+                                                                .to_string(),
+                                                            true,
+                                                        ),
+                                                    }
+                                                } else {
+                                                    exec_future.await
+                                                }
+                                            }
                                         } else {
                                             let tool_clone = Arc::clone(&tool);
                                             let input_clone = call.input.clone();
@@ -704,56 +813,16 @@ impl AgentExecutor {
                                                 exec_future.await
                                             }
                                         }
-                                    } else {
-                                        let tool_clone = Arc::clone(&tool);
-                                        let input_clone = call.input.clone();
-                                        let ctx_clone = tool_ctx.clone();
-                                        let handle = tokio::task::spawn_blocking(move || {
-                                            tool_clone.execute(input_clone, &ctx_clone)
-                                        });
-                                        let cancel_flag_ref = cancel_flag.clone();
-                                        let exec_future = async move {
-                                            tokio::select! {
-                                                res = handle => {
-                                                    match res {
-                                                        Ok(Ok(output)) => (output, false),
-                                                        Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
-                                                        Err(e) => (format!("工具执行线程异常: {}", e), true),
-                                                    }
-                                                }
-                                                _ = Self::wait_for_cancel(&cancel_flag_ref) => {
-                                                    ("工具执行被用户取消".to_string(), true)
-                                                }
-                                            }
-                                        };
-                                        if is_skill_call {
-                                            match tokio::time::timeout(
-                                                std::time::Duration::from_secs(
-                                                    route_node_timeout_secs,
-                                                ),
-                                                exec_future,
-                                            )
-                                            .await
-                                            {
-                                                Ok(v) => v,
-                                                Err(_) => {
-                                                    ("TIMEOUT: 子 Skill 执行超时".to_string(), true)
-                                                }
-                                            }
-                                        } else {
-                                            exec_future.await
-                                        }
                                     }
-                                }
-                                None => {
-                                    // 列出可用工具，引导 LLM 使用正确的工具
-                                    let available: Vec<String> = self
-                                        .registry
-                                        .get_tool_definitions()
-                                        .iter()
-                                        .filter_map(|t| t["name"].as_str().map(String::from))
-                                        .collect();
-                                    (
+                                    None => {
+                                        // 列出可用工具，引导 LLM 使用正确的工具
+                                        let available: Vec<String> = self
+                                            .registry
+                                            .get_tool_definitions()
+                                            .iter()
+                                            .filter_map(|t| t["name"].as_str().map(String::from))
+                                            .collect();
+                                        (
                                         format!(
                                             "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
                                             call.name,
@@ -761,6 +830,7 @@ impl AgentExecutor {
                                         ),
                                         true,
                                     )
+                                    }
                                 }
                             };
                             if !is_error || attempt >= max_attempts {
@@ -769,6 +839,19 @@ impl AgentExecutor {
                         };
                         // 截断过长的工具输出，防止超出上下文窗口
                         let result = truncate_tool_output(&result, MAX_TOOL_OUTPUT_CHARS);
+
+                        if is_error {
+                            if let Some(summary) = update_tool_failure_streak(
+                                &mut tool_failure_streak,
+                                &call.name,
+                                &call.input,
+                                &result,
+                            ) {
+                                repeated_failure_summary = Some(summary);
+                            }
+                        } else {
+                            tool_failure_streak = None;
+                        }
 
                         // 发送工具完成事件
                         if let (Some(app), Some(sid)) = (app_handle, session_id) {
@@ -818,6 +901,10 @@ impl AgentExecutor {
                             tool_use_id: call.id.clone(),
                             content: result,
                         });
+
+                        if repeated_failure_summary.is_some() {
+                            break;
+                        }
                     }
 
                     // 添加工具调用和结果到消息历史（包含伴随文本）
@@ -876,6 +963,25 @@ impl AgentExecutor {
                                 "content": tr.content,
                             }));
                         }
+                    }
+
+                    if let Some(summary) = repeated_failure_summary {
+                        messages.push(json!({
+                            "role": "assistant",
+                            "content": summary
+                        }));
+                        if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                            let _ = app.emit(
+                                "agent-state-event",
+                                AgentStateEvent {
+                                    session_id: sid.to_string(),
+                                    state: "finished".to_string(),
+                                    detail: Some("重复工具失败已熔断".to_string()),
+                                    iteration,
+                                },
+                            );
+                        }
+                        return Ok(messages);
                     }
 
                     // 继续下一轮迭代

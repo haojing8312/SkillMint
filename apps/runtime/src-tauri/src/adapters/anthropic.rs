@@ -31,6 +31,15 @@ fn is_mock_tool_loop_base_url(base_url: &str) -> bool {
         .eq_ignore_ascii_case("http://mock-tool-loop")
 }
 
+fn parse_tool_call_arguments(args_str: &str) -> Result<Value> {
+    let trimmed = args_str.trim();
+    if trimmed.is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(trimmed)
+        .map_err(|e| anyhow!("工具参数 JSON 解析失败: {}; raw={}", e, trimmed))
+}
+
 pub async fn chat_stream_with_tools(
     base_url: &str,
     api_key: &str,
@@ -123,8 +132,14 @@ pub async fn chat_stream_with_tools(
                         "content_block_stop" => {
                             if let Some(mut call) = current_tool_call.take() {
                                 if !current_tool_input.is_empty() {
-                                    call.input = serde_json::from_str(&current_tool_input)
-                                        .unwrap_or(json!({}));
+                                    call.input =
+                                        match parse_tool_call_arguments(&current_tool_input) {
+                                            Ok(value) => value,
+                                            Err(err) => json!({
+                                                "__tool_call_parse_error": err.to_string(),
+                                                "__raw_arguments": current_tool_input,
+                                            }),
+                                        };
                                 }
                                 tool_calls.push(call);
                             }

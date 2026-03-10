@@ -31,6 +31,21 @@ fn is_mock_tool_loop_base_url(base_url: &str) -> bool {
         .eq_ignore_ascii_case("http://mock-tool-loop")
 }
 
+fn is_mock_repeat_invalid_write_file_base_url(base_url: &str) -> bool {
+    base_url
+        .trim()
+        .eq_ignore_ascii_case("http://mock-repeat-invalid-write-file")
+}
+
+fn parse_tool_call_arguments(args_str: &str) -> Result<Value> {
+    let trimmed = args_str.trim();
+    if trimmed.is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(trimmed)
+        .map_err(|e| anyhow!("工具参数 JSON 解析失败: {}; raw={}", e, trimmed))
+}
+
 /// Strip <think>…</think> spans from a streaming token chunk.
 /// `in_think` carries state across chunk boundaries.
 fn filter_thinking(input: &str, in_think: &mut bool) -> String {
@@ -100,6 +115,13 @@ pub async fn chat_stream_with_tools(
     }
     if is_mock_tool_loop_base_url(base_url) {
         return Err(anyhow!("达到最大迭代次数 8"));
+    }
+    if is_mock_repeat_invalid_write_file_base_url(base_url) {
+        return Ok(LLMResponse::ToolCalls(vec![ToolCall {
+            id: "mock-write-file-empty".to_string(),
+            name: "write_file".to_string(),
+            input: json!({}),
+        }]));
     }
 
     let client = Client::new();
@@ -232,7 +254,13 @@ pub async fn chat_stream_with_tools(
             .into_iter()
             .map(|idx| {
                 let (id, name, args_str) = tool_calls_map.remove(&idx).unwrap();
-                let input = serde_json::from_str(&args_str).unwrap_or(json!({}));
+                let input = match parse_tool_call_arguments(&args_str) {
+                    Ok(value) => value,
+                    Err(err) => json!({
+                        "__tool_call_parse_error": err.to_string(),
+                        "__raw_arguments": args_str,
+                    }),
+                };
                 ToolCall { id, name, input }
             })
             .collect();
@@ -248,7 +276,10 @@ pub async fn chat_stream_with_tools(
 }
 
 pub async fn test_connection(base_url: &str, api_key: &str, model: &str) -> Result<bool> {
-    if is_mock_text_base_url(base_url) || is_mock_tool_loop_base_url(base_url) {
+    if is_mock_text_base_url(base_url)
+        || is_mock_tool_loop_base_url(base_url)
+        || is_mock_repeat_invalid_write_file_base_url(base_url)
+    {
         return Ok(true);
     }
     let client = Client::new();
@@ -265,4 +296,15 @@ pub async fn test_connection(base_url: &str, api_key: &str, model: &str) -> Resu
         .send()
         .await?;
     Ok(resp.status().is_success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_tool_arguments_should_not_silently_become_empty_object() {
+        let parsed = parse_tool_call_arguments(r#"{"path":"brief.html""#);
+        assert!(parsed.is_err(), "损坏的 tool arguments 应返回错误");
+    }
 }
