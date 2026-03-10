@@ -1358,6 +1358,15 @@ export default function App() {
     setQuickModelApiKeyVisible(false);
   }
 
+  // 打开首次引导大门（首次启动必做一步的大弹层）
+  function openInitialModelSetupGate() {
+    // 关闭设置页，显示首次引导大门
+    setShowSettings(false);
+    // 重置状态以确保显示引导大门
+    setHasCompletedInitialModelSetup(false);
+    setDismissedModelSetupHint(false);
+  }
+
   function closeQuickModelSetup() {
     if (!canDismissQuickModelSetup) {
       return;
@@ -1743,7 +1752,6 @@ export default function App() {
   const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
   const shouldShowModelSetupGate = isBlockingInitialModelSetup;
   const shouldShowSearchSetupHint =
-    !showSettings &&
     searchConfigs.length === 0 &&
     hasCompletedInitialModelSetup &&
     !dismissedSearchSetupHint;
@@ -2494,7 +2502,7 @@ export default function App() {
                 }}
                 showDevModelSetupTools={SHOW_DEV_MODEL_SETUP_TOOLS}
                 onDevResetFirstUseOnboarding={resetFirstUseOnboardingForDevelopment}
-                onDevOpenQuickModelSetup={openQuickModelSetup}
+                onDevOpenQuickModelSetup={openInitialModelSetupGate}
               />
             </motion.div>
           ) : activeMainView === "packaging" ? (
