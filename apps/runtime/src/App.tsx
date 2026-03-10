@@ -341,10 +341,33 @@ export default function App() {
     loadSearchConfigs();
     loadEmployees();
     loadEmployeeGroups();
-    if (typeof window !== "undefined" && window.location.hash) {
-      const raw = window.location.hash.replace(/^#\//, "");
-      if (raw === "experts" || raw === "experts-new" || raw === "packaging" || raw === "start-task" || raw === "employees") {
-        setActiveMainView(raw);
+
+    // 检查 URL 参数是否需要重置首次引导
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("reset-onboarding") === "1") {
+        // 重置首次引导状态
+        setHasCompletedInitialModelSetup(false);
+        setDismissedModelSetupHint(false);
+        setHasCompletedInitialSearchSetup(false);
+        setDismissedSearchSetupHint(false);
+        try {
+          window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
+          window.localStorage.removeItem(MODEL_SETUP_HINT_DISMISSED_KEY);
+          window.localStorage.removeItem(INITIAL_SEARCH_SETUP_COMPLETED_KEY);
+          window.localStorage.removeItem(SEARCH_SETUP_HINT_DISMISSED_KEY);
+        } catch {
+          // ignore
+        }
+        // 清除 URL 参数
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+
+      if (window.location.hash) {
+        const raw = window.location.hash.replace(/^#\//, "");
+        if (raw === "experts" || raw === "experts-new" || raw === "packaging" || raw === "start-task" || raw === "employees") {
+          setActiveMainView(raw);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
