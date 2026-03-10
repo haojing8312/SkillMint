@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-> Chinese product name: 打工虾
+> Chinese product name: 卧龙AI
 
 <p align="center">
   <img src="docs/workclaw_logo_w.png" alt="WorkClaw Logo" width="140" />
@@ -70,7 +70,7 @@ In early 2026, major companies worldwide have launched desktop AI agent products
 | ClawX | Valuecell Team | OpenClaw visual client | GUI, zero CLI, 50+ built-in skills | Free basic, $99/year pro |
 | LobsterAI (Youdao Lobster) | NetEase Youdao | Chinese-localized OpenClaw | Full Chinese UI, Feishu/DingTalk integration | Free + paid membership |
 | MonsterClaw | Independent team | Lightweight OpenClaw wrapper | Minimal install, auto-config environment | Free basic, premium paid |
-| **WorkClaw (打工虾)** | **Open Source** | **OpenClaw Desktop Agent Distribution** | **Open source, local-only data, no cloud, encrypted packaging for sales** | **Completely free (Apache 2.0)** |
+| **WorkClaw (卧龙AI)** | **Open Source** | **OpenClaw Desktop Agent Distribution** | **Open source, local-only data, no cloud, encrypted packaging for sales** | **Completely free (Apache 2.0)** |
 
 ### WorkClaw's Unique Advantages
 
@@ -373,6 +373,8 @@ Detailed planning and execution logs are maintained in [docs/plans/](docs/plans/
 
 **Work**: Focuses on real task execution, delivery, and team collaboration  
 **Claw**: Draws from the OpenClaw ecosystem and the "lobster crew" metaphor for controllable AI workers
+
+The Chinese brand name **Wolong AI (卧龙AI)** is meant to convey strategic intelligence held in reserve, aligned with the product's positioning as an AI employee team you can direct.
 
 Think of it as **"putting your AI employee team to work under your command."**
 
