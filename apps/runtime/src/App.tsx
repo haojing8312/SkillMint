@@ -2184,7 +2184,9 @@ export default function App() {
                 onSetAsMainAndEnter={handleSetAsMainAndEnter}
                 onStartTaskWithEmployee={handleStartTaskWithEmployee}
                 onOpenGroupRunSession={handleOpenGroupRunSession}
-                onEmployeeGroupsChanged={loadEmployeeGroups}
+                onEmployeeGroupsChanged={() => {
+                  void loadEmployeeGroups();
+                }}
                 onOpenEmployeeCreatorSkill={handleOpenEmployeeCreatorSkill}
               />
             </motion.div>
