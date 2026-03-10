@@ -225,6 +225,8 @@ export default function App() {
     }
   });
   const [showQuickModelSetup, setShowQuickModelSetup] = useState(false);
+  // 强制显示首次引导大门（用于开发调试）
+  const [forceShowModelSetupGate, setForceShowModelSetupGate] = useState(false);
   const [quickModelPresetKey, setQuickModelPresetKey] = useState(DEFAULT_QUICK_MODEL_PROVIDER.id);
   const [quickModelForm, setQuickModelForm] = useState(() => ({
     ...buildModelFormFromCatalogItem(DEFAULT_QUICK_MODEL_PROVIDER),
@@ -1360,9 +1362,12 @@ export default function App() {
 
   // 打开首次引导大门（首次启动必做一步的大弹层）
   function openInitialModelSetupGate() {
-    // 关闭设置页，显示首次引导大门
+    // 强制显示首次引导大门
+    setForceShowModelSetupGate(true);
+    // 关闭设置页
     setShowSettings(false);
-    // 重置状态以确保显示引导大门
+    // 重置状态
+    window.localStorage.removeItem(INITIAL_MODEL_SETUP_COMPLETED_KEY);
     setHasCompletedInitialModelSetup(false);
     setDismissedModelSetupHint(false);
   }
@@ -1750,7 +1755,7 @@ export default function App() {
     };
   })();
   const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
-  const shouldShowModelSetupGate = isBlockingInitialModelSetup;
+  const shouldShowModelSetupGate = isBlockingInitialModelSetup || forceShowModelSetupGate;
   const shouldShowSearchSetupHint =
     searchConfigs.length === 0 &&
     hasCompletedInitialModelSetup &&
