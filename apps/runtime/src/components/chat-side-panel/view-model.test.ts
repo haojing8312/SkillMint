@@ -318,6 +318,7 @@ describe("chat side panel view-model", () => {
     expect(model.totalTasks).toBe(2);
     expect(model.completedTasks).toBe(2);
     expect(model.inProgressTasks).toBe(0);
-    expect(model.currentTaskTitle).toContain("bash");
+    expect(model.currentTaskTitle).toContain("执行命令");
+    expect(model.currentTaskTitle).toContain("npm cache clean");
   });
 });
