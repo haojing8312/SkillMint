@@ -223,6 +223,7 @@ export default function App() {
     }
   });
   const [showQuickModelSetup, setShowQuickModelSetup] = useState(false);
+  const [forceShowModelSetupGate, setForceShowModelSetupGate] = useState(false);
   const [quickSetupStep, setQuickSetupStep] = useState<"model" | "search">("model");
   const [quickModelPresetKey, setQuickModelPresetKey] = useState(DEFAULT_QUICK_MODEL_PROVIDER.id);
   const [quickModelForm, setQuickModelForm] = useState(() => ({
@@ -1258,6 +1259,7 @@ export default function App() {
 
   function openSettingsForModelSetup() {
     setShowQuickModelSetup(false);
+    setForceShowModelSetupGate(false);
     setQuickSetupStep("model");
     setQuickModelError("");
     setQuickModelTestResult(null);
@@ -1281,11 +1283,17 @@ export default function App() {
     setQuickSearchApiKeyVisible(false);
   }
 
+  function openInitialModelSetupGate() {
+    setForceShowModelSetupGate(true);
+    openQuickModelSetup();
+  }
+
   function closeQuickModelSetup() {
     if (!canDismissQuickModelSetup) {
       return;
     }
     setShowQuickModelSetup(false);
+    setForceShowModelSetupGate(false);
     setQuickSetupStep("model");
     setQuickModelError("");
     setQuickModelTestResult(null);
@@ -1458,6 +1466,7 @@ export default function App() {
       });
       await loadSearchConfigs();
       setShowQuickModelSetup(false);
+      setForceShowModelSetupGate(false);
       setQuickSetupStep("model");
       setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
       setQuickSearchTestResult(null);
@@ -1655,7 +1664,7 @@ export default function App() {
     };
   })();
   const selectedSessionImManaged = selectedSessionId ? imManagedSessionIds.includes(selectedSessionId) : false;
-  const shouldShowModelSetupGate = isBlockingInitialModelSetup;
+  const shouldShowModelSetupGate = isBlockingInitialModelSetup || forceShowModelSetupGate;
   const shouldShowModelSetupHint =
     !showSettings &&
     (models.length === 0 || searchConfigs.length === 0) &&
@@ -2248,7 +2257,7 @@ export default function App() {
                 }}
                 showDevModelSetupTools={SHOW_DEV_MODEL_SETUP_TOOLS}
                 onDevResetFirstUseOnboarding={resetFirstUseOnboardingForDevelopment}
-                onDevOpenQuickModelSetup={openQuickModelSetup}
+                onDevOpenQuickModelSetup={openInitialModelSetupGate}
               />
             </motion.div>
           ) : activeMainView === "packaging" ? (
