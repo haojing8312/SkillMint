@@ -3,6 +3,7 @@ import {
   detectCurrentFeishuPage,
   extractFeishuCredentials,
   getFeishuBrowserSetupSessionId,
+  installFeishuCredentialReporter,
   maybeReportFeishuCredentialsToExtension,
 } from "../content";
 
@@ -121,5 +122,54 @@ describe("chrome extension content helpers", () => {
       appId: "cli_message_123",
       appSecret: "sec_message_456",
     });
+  });
+
+  it("watches for later credential page transitions and reports only once", async () => {
+    document.body.innerHTML = `<div>飞书开放平台</div>`;
+
+    const sendMessage = vi.fn(async () => undefined);
+    const stop = installFeishuCredentialReporter(
+      {
+        href: "https://open.feishu.cn/?workclaw_session_id=sess-watch-1",
+      } as Location,
+      document,
+      {
+        runtime: {
+          sendMessage,
+        },
+      },
+    );
+
+    document.body.innerHTML = `
+      <section>
+        <div>凭证与基础信息</div>
+        <div class="form-row">
+          <label>App ID</label>
+          <div><input readonly value="cli_watch_123" /></div>
+        </div>
+        <div class="form-row">
+          <label>App Secret</label>
+          <div><input readonly value="sec_watch_456" /></div>
+        </div>
+      </section>
+    `;
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "workclaw.report-feishu-credentials",
+      sessionId: "sess-watch-1",
+      appId: "cli_watch_123",
+      appSecret: "sec_watch_456",
+    });
+
+    document.body.appendChild(document.createElement("div"));
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    stop();
   });
 });

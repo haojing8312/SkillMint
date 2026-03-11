@@ -65,12 +65,57 @@ export async function maybeReportFeishuCredentialsToExtension(
   return true;
 }
 
+export function installFeishuCredentialReporter(
+  locationLike: Pick<Location, "href"> = window.location,
+  doc: Document = document,
+  chromeLike: ChromeLike = globalThis as ChromeLike,
+): () => void {
+  const sessionId = getFeishuBrowserSetupSessionId(locationLike.href);
+  if (!sessionId) {
+    return () => {};
+  }
+
+  let disposed = false;
+  let reported = false;
+  const tryReport = async () => {
+    if (disposed || reported) {
+      return;
+    }
+
+    reported = await maybeReportFeishuCredentialsToExtension(locationLike, doc, chromeLike);
+    if (reported) {
+      observer.disconnect();
+    }
+  };
+
+  const observer = new MutationObserver(() => {
+    void tryReport();
+  });
+  const root = doc.documentElement ?? doc.body;
+  if (root) {
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    });
+  }
+
+  void tryReport();
+
+  return () => {
+    disposed = true;
+    observer.disconnect();
+  };
+}
+
 export async function initializeFeishuContentScript(
   locationLike: Pick<Location, "href"> = window.location,
   doc: Document = document,
   chromeLike: ChromeLike = globalThis as ChromeLike,
 ): Promise<boolean> {
-  return maybeReportFeishuCredentialsToExtension(locationLike, doc, chromeLike);
+  installFeishuCredentialReporter(locationLike, doc, chromeLike);
+  return false;
 }
 
 function findValueNearLabel(doc: Document, label: string): string {
