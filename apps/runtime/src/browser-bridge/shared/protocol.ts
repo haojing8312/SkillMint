@@ -8,7 +8,14 @@ export type BridgeResponse =
   | { type: "action.open"; url: string }
   | { type: "action.detect_step" }
   | { type: "action.collect_credentials" }
-  | { type: "action.pause"; reason: string };
+  | {
+      type: "action.pause";
+      reason: string;
+      step?: string;
+      title?: string;
+      instruction?: string;
+      ctaLabel?: string;
+    };
 
 export interface BridgeEnvelope<T> {
   version: 1;

@@ -1,5 +1,14 @@
 import { detectFeishuPage } from "./feishu-detector";
 
+type BrowserInstructionMessage = {
+  type: "workclaw.show-browser-setup-instruction";
+  sessionId: string;
+  step: string;
+  title: string;
+  instruction: string;
+  ctaLabel?: string;
+};
+
 export function detectCurrentFeishuPage(doc: Document = document) {
   return detectFeishuPage(doc);
 }
@@ -28,6 +37,9 @@ export function extractFeishuCredentials(doc: Document = document): {
 type ChromeLike = {
   runtime?: {
     sendMessage?: (message: unknown) => Promise<unknown> | unknown;
+    onMessage?: {
+      addListener?: (listener: (message: unknown) => unknown) => void;
+    };
   };
 };
 
@@ -115,7 +127,68 @@ export async function initializeFeishuContentScript(
   chromeLike: ChromeLike = globalThis as ChromeLike,
 ): Promise<boolean> {
   installFeishuCredentialReporter(locationLike, doc, chromeLike);
+  installFeishuInstructionListener(doc, chromeLike);
   return false;
+}
+
+export function renderFeishuBrowserSetupInstruction(
+  doc: Document,
+  instruction: {
+    sessionId: string;
+    step: string;
+    title: string;
+    instruction: string;
+    ctaLabel?: string;
+  },
+): HTMLElement {
+  const existing = doc.querySelector<HTMLElement>("[data-workclaw-feishu-setup-banner]");
+  const banner = existing ?? doc.createElement("aside");
+  banner.setAttribute("data-workclaw-feishu-setup-banner", "true");
+  banner.setAttribute("data-session-id", instruction.sessionId);
+  banner.setAttribute("data-step", instruction.step);
+  banner.style.position = "fixed";
+  banner.style.top = "16px";
+  banner.style.right = "16px";
+  banner.style.zIndex = "2147483647";
+  banner.style.maxWidth = "360px";
+  banner.style.padding = "14px 16px";
+  banner.style.borderRadius = "12px";
+  banner.style.border = "1px solid #c7d2fe";
+  banner.style.background = "#eef2ff";
+  banner.style.boxShadow = "0 12px 32px rgba(15, 23, 42, 0.18)";
+  banner.style.color = "#312e81";
+  banner.innerHTML = `
+    <div style="font-size:12px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;color:#4338ca;">飞书配置向导</div>
+    <div style="margin-top:6px;font-size:15px;font-weight:600;color:#1e1b4b;">${escapeHtml(instruction.title)}</div>
+    <div style="margin-top:8px;font-size:13px;line-height:1.5;color:#312e81;">${escapeHtml(instruction.instruction)}</div>
+    ${
+      instruction.ctaLabel
+        ? `<div style="margin-top:10px;font-size:12px;font-weight:600;color:#4338ca;">${escapeHtml(instruction.ctaLabel)}</div>`
+        : ""
+    }
+  `;
+
+  if (!existing) {
+    (doc.body ?? doc.documentElement)?.appendChild(banner);
+  }
+
+  return banner;
+}
+
+export function installFeishuInstructionListener(
+  doc: Document = document,
+  chromeLike: ChromeLike = globalThis as ChromeLike,
+): () => void {
+  const listener = (message: unknown) => {
+    if (!isBrowserInstructionMessage(message)) {
+      return false;
+    }
+    renderFeishuBrowserSetupInstruction(doc, message);
+    return true;
+  };
+
+  chromeLike.runtime?.onMessage?.addListener?.(listener);
+  return () => {};
 }
 
 function findValueNearLabel(doc: Document, label: string): string {
@@ -215,6 +288,29 @@ function readFieldValue(element: Element): string {
   }
 
   return "";
+}
+
+function isBrowserInstructionMessage(message: unknown): message is BrowserInstructionMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  const candidate = message as Partial<BrowserInstructionMessage>;
+  return (
+    candidate.type === "workclaw.show-browser-setup-instruction" &&
+    typeof candidate.sessionId === "string" &&
+    typeof candidate.step === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.instruction === "string"
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 void initializeFeishuContentScript().catch(() => {

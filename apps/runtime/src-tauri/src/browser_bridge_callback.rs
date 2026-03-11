@@ -128,7 +128,11 @@ async fn handle_browser_bridge_payload(
                 "kind": "response",
                 "payload": {
                     "type": "action.pause",
-                    "reason": "browser bridge credentials bound locally"
+                    "reason": "browser bridge credentials bound locally",
+                    "step": "ENABLE_LONG_CONNECTION",
+                    "title": "本地绑定已完成",
+                    "instruction": "请前往事件与回调，开启长连接接受事件。",
+                    "ctaLabel": "继续到事件与回调"
                 }
             }))
         }

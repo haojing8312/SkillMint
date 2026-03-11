@@ -32,6 +32,10 @@ test('browser bridge endpoint accepts credentials report envelopes', async () =>
     payload: {
       type: 'action.pause',
       reason: 'browser bridge credentials received',
+      step: 'ENABLE_LONG_CONNECTION',
+      title: '本地绑定已完成',
+      instruction: '请前往事件与回调，开启长连接接受事件。',
+      ctaLabel: '继续到事件与回调',
     },
   });
 });
@@ -72,6 +76,10 @@ test('browser bridge endpoint forwards credentials to callback url when configur
         payload: {
           type: 'action.pause',
           reason: 'forwarded-to-callback',
+          step: 'ENABLE_LONG_CONNECTION',
+          title: '本地绑定已完成',
+          instruction: '请前往事件与回调，开启长连接接受事件。',
+          ctaLabel: '继续到事件与回调',
         },
       }),
     );
@@ -121,6 +129,10 @@ test('browser bridge endpoint forwards credentials to callback url when configur
       payload: {
         type: 'action.pause',
         reason: 'forwarded-to-callback',
+        step: 'ENABLE_LONG_CONNECTION',
+        title: '本地绑定已完成',
+        instruction: '请前往事件与回调，开启长连接接受事件。',
+        ctaLabel: '继续到事件与回调',
       },
     });
   } finally {

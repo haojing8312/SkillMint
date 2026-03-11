@@ -33,6 +33,13 @@ async fn browser_bridge_callback_binds_credentials_and_advances_session() {
     let body: serde_json::Value = response.json().await.expect("decode callback response");
     assert_eq!(body["kind"], "response");
     assert_eq!(body["payload"]["type"], "action.pause");
+    assert_eq!(body["payload"]["step"], "ENABLE_LONG_CONNECTION");
+    assert_eq!(body["payload"]["title"], "本地绑定已完成");
+    assert_eq!(
+        body["payload"]["instruction"],
+        "请前往事件与回调，开启长连接接受事件。"
+    );
+    assert_eq!(body["payload"]["ctaLabel"], "继续到事件与回调");
 
     let updated = store
         .get_session(session.session_id)

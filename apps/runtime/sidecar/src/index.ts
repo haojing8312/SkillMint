@@ -108,12 +108,11 @@ async function defaultBrowserBridgeHandler(
       kind: 'response',
       payload: {
         type: 'action.pause',
-        page: undefined,
-        provider: undefined,
-        sessionId: undefined,
-        appId: undefined,
-        appSecret: undefined,
         reason: 'browser bridge credentials received',
+        step: 'ENABLE_LONG_CONNECTION',
+        title: '本地绑定已完成',
+        instruction: '请前往事件与回调，开启长连接接受事件。',
+        ctaLabel: '继续到事件与回调',
       } as BrowserBridgeResponse['payload'] & { reason: string },
     };
   }

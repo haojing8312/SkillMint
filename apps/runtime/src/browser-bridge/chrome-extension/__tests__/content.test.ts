@@ -4,7 +4,9 @@ import {
   extractFeishuCredentials,
   getFeishuBrowserSetupSessionId,
   installFeishuCredentialReporter,
+  installFeishuInstructionListener,
   maybeReportFeishuCredentialsToExtension,
+  renderFeishuBrowserSetupInstruction,
 } from "../content";
 
 describe("chrome extension content helpers", () => {
@@ -169,6 +171,62 @@ describe("chrome extension content helpers", () => {
     await Promise.resolve();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    stop();
+  });
+
+  it("renders a browser setup instruction banner and updates it in place", () => {
+    renderFeishuBrowserSetupInstruction(document, {
+      sessionId: "sess-banner-1",
+      step: "ENABLE_LONG_CONNECTION",
+      title: "本地绑定已完成",
+      instruction: "请前往事件与回调，开启长连接接受事件。",
+      ctaLabel: "继续到事件与回调",
+    });
+
+    expect(document.querySelector("[data-workclaw-feishu-setup-banner]")?.textContent).toContain(
+      "本地绑定已完成",
+    );
+    expect(document.body.textContent).toContain("请前往事件与回调，开启长连接接受事件。");
+
+    renderFeishuBrowserSetupInstruction(document, {
+      sessionId: "sess-banner-1",
+      step: "ENABLE_LONG_CONNECTION",
+      title: "下一步",
+      instruction: "请继续添加接受消息事件并发布版本。",
+      ctaLabel: "继续配置",
+    });
+
+    expect(document.querySelectorAll("[data-workclaw-feishu-setup-banner]")).toHaveLength(1);
+    expect(document.body.textContent).toContain("请继续添加接受消息事件并发布版本。");
+  });
+
+  it("registers a runtime listener that renders browser setup instructions", async () => {
+    const listeners: Array<(message: unknown) => unknown> = [];
+    const stop = installFeishuInstructionListener(document, {
+      runtime: {
+        onMessage: {
+          addListener(listener: (message: unknown) => unknown) {
+            listeners.push(listener);
+          },
+        },
+      },
+    } as never);
+
+    expect(listeners).toHaveLength(1);
+
+    listeners[0]?.({
+      type: "workclaw.show-browser-setup-instruction",
+      sessionId: "sess-banner-2",
+      step: "ENABLE_LONG_CONNECTION",
+      title: "本地绑定已完成",
+      instruction: "请前往事件与回调，开启长连接接受事件。",
+      ctaLabel: "继续到事件与回调",
+    });
+
+    expect(document.querySelector("[data-workclaw-feishu-setup-banner]")?.textContent).toContain(
+      "本地绑定已完成",
+    );
 
     stop();
   });

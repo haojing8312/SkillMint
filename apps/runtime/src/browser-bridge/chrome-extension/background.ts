@@ -20,6 +20,10 @@ type ChromeLike = {
       addListener: (listener: (message: unknown) => unknown) => void;
     };
   };
+  tabs?: {
+    query?: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number }>>;
+    sendMessage?: (tabId: number, message: unknown) => Promise<unknown> | unknown;
+  };
 };
 
 type FeishuCredentialReportMessage = {
@@ -126,6 +130,7 @@ export async function handleFeishuExtensionMessage(
     bridgeBaseUrl: string;
     sendViaNativeHost?: typeof forwardCredentialsViaNativeHost;
     sendViaLocalBridge?: typeof forwardCredentialsToLocalBridge;
+    broadcastInstruction?: typeof maybeBroadcastBridgeInstruction;
   },
 ): Promise<BridgeEnvelope<BridgeResponse> | null> {
   if (!isFeishuCredentialReportMessage(message)) {
@@ -139,12 +144,47 @@ export async function handleFeishuExtensionMessage(
     appId: message.appId,
     appSecret: message.appSecret,
   };
+  const broadcastInstruction = dependencies.broadcastInstruction ?? maybeBroadcastBridgeInstruction;
 
   try {
-    return await sendViaNativeHost(payload);
+    const response = await sendViaNativeHost(payload);
+    await broadcastInstruction(response);
+    return response;
   } catch {
-    return sendViaLocalBridge(payload, dependencies.bridgeBaseUrl);
+    const response = await sendViaLocalBridge(payload, dependencies.bridgeBaseUrl);
+    await broadcastInstruction(response);
+    return response;
   }
+}
+
+export async function maybeBroadcastBridgeInstruction(
+  response: BridgeEnvelope<BridgeResponse>,
+  chromeLike: ChromeLike = globalThis as ChromeLike,
+): Promise<void> {
+  if (response.kind !== "response" || response.payload.type !== "action.pause") {
+    return;
+  }
+  if (!response.payload.step || !response.payload.title || !response.payload.instruction) {
+    return;
+  }
+
+  const tabs = (await chromeLike.tabs?.query?.({
+    active: true,
+    currentWindow: true,
+  })) ?? [];
+  const tabId = tabs.find((tab) => typeof tab.id === "number")?.id;
+  if (typeof tabId !== "number") {
+    return;
+  }
+
+  await chromeLike.tabs?.sendMessage?.(tabId, {
+    type: "workclaw.show-browser-setup-instruction",
+    sessionId: response.sessionId,
+    step: response.payload.step,
+    title: response.payload.title,
+    instruction: response.payload.instruction,
+    ctaLabel: response.payload.ctaLabel,
+  });
 }
 
 export function registerFeishuBackgroundMessageHandler(

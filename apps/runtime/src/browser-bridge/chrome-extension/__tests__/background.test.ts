@@ -4,6 +4,7 @@ import {
   forwardCredentialsViaNativeHost,
   getNativeHostName,
   handleFeishuExtensionMessage,
+  maybeBroadcastBridgeInstruction,
   registerFeishuBackgroundMessageHandler,
   reportFeishuCredentialsFromDocument,
 } from "../background";
@@ -196,8 +197,15 @@ describe("chrome extension background bridge", () => {
       version: 1 as const,
       sessionId: "sess-5",
       kind: "response" as const,
-      payload: { type: "action.pause" as const, reason: "saved-from-message" },
+      payload: {
+        type: "action.pause" as const,
+        reason: "saved-from-message",
+        step: "ENABLE_LONG_CONNECTION",
+        title: "本地绑定已完成",
+        instruction: "请前往事件与回调，开启长连接接受事件。",
+      },
     }));
+    const broadcastInstruction = vi.fn();
 
     const response = await handleFeishuExtensionMessage(
       {
@@ -209,6 +217,7 @@ describe("chrome extension background bridge", () => {
       {
         bridgeBaseUrl: "http://127.0.0.1:4312",
         sendViaNativeHost,
+        broadcastInstruction,
       },
     );
 
@@ -219,8 +228,23 @@ describe("chrome extension background bridge", () => {
     });
     expect(response).toMatchObject({
       kind: "response",
-      payload: { type: "action.pause", reason: "saved-from-message" },
+      payload: {
+        type: "action.pause",
+        reason: "saved-from-message",
+        step: "ENABLE_LONG_CONNECTION",
+      },
     });
+    expect(broadcastInstruction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "sess-5",
+        kind: "response",
+        payload: expect.objectContaining({
+          type: "action.pause",
+          step: "ENABLE_LONG_CONNECTION",
+          title: "本地绑定已完成",
+        }),
+      }),
+    );
   });
 
   it("registers a runtime message listener that handles credential reports", async () => {
@@ -258,6 +282,46 @@ describe("chrome extension background bridge", () => {
     ).resolves.toMatchObject({
       kind: "response",
       payload: { type: "action.pause", reason: "saved-from-listener" },
+    });
+  });
+
+  it("broadcasts pause instructions to the active Feishu tab", async () => {
+    const query = vi.fn(async () => [{ id: 11 }]);
+    const sendMessage = vi.fn(async () => undefined);
+
+    await maybeBroadcastBridgeInstruction(
+      {
+        version: 1,
+        sessionId: "sess-7",
+        kind: "response",
+        payload: {
+          type: "action.pause",
+          reason: "browser bridge credentials bound locally",
+          step: "ENABLE_LONG_CONNECTION",
+          title: "本地绑定已完成",
+          instruction: "请前往事件与回调，开启长连接接受事件。",
+          ctaLabel: "继续到事件与回调",
+        },
+      },
+      {
+        tabs: {
+          query,
+          sendMessage,
+        },
+      } as never,
+    );
+
+    expect(query).toHaveBeenCalledWith({
+      active: true,
+      currentWindow: true,
+    });
+    expect(sendMessage).toHaveBeenCalledWith(11, {
+      type: "workclaw.show-browser-setup-instruction",
+      sessionId: "sess-7",
+      step: "ENABLE_LONG_CONNECTION",
+      title: "本地绑定已完成",
+      instruction: "请前往事件与回调，开启长连接接受事件。",
+      ctaLabel: "继续到事件与回调",
     });
   });
 });
