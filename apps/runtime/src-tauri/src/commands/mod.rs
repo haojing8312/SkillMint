@@ -13,5 +13,6 @@ pub mod models;
 pub mod openclaw_gateway;
 pub mod packaging;
 pub mod runtime_preferences;
+pub mod session_runs;
 pub mod skills;
 pub mod workspace_files;
