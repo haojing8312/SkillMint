@@ -17,9 +17,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 function buildMessages() {
   return [
     {
+      id: "assistant-1",
       role: "assistant",
       content: "任务和产出已整理。",
       created_at: new Date().toISOString(),
+      runId: "run-1",
       streamItems: [
         {
           type: "tool_call",
@@ -145,6 +147,52 @@ function buildMessages() {
   ];
 }
 
+function buildSplitJourneyMessages() {
+  return [
+    {
+      id: "assistant-a",
+      role: "assistant",
+      content: "第一轮任务和产出已整理。",
+      created_at: "2026-03-11T00:00:01Z",
+      runId: "run-a",
+      streamItems: [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "todo-a",
+            name: "todo_write",
+            input: {
+              todos: [{ id: "t-a", content: "完成第一轮交付", status: "in_progress", priority: "high" }],
+            },
+            output: "已更新任务列表（共 1 项）",
+            status: "completed",
+          },
+        },
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "write-a",
+            name: "write_file",
+            input: {
+              path: "round-one-report.html",
+              content: "<html></html>",
+            },
+            output: "成功写入 1000 字节到 round-one-report.html",
+            status: "completed",
+          },
+        },
+      ],
+    },
+    {
+      id: "assistant-b",
+      role: "assistant",
+      content: "第二轮只是补充说明，没有新的交付。",
+      created_at: "2026-03-11T00:00:02Z",
+      runId: "run-b",
+    },
+  ];
+}
+
 function renderChat() {
   return render(
     <ChatView
@@ -176,6 +224,10 @@ function renderChat() {
 describe("ChatView side panel redesign", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(window, "scrollTo", {
       configurable: true,
       value: vi.fn(),
     });
@@ -255,7 +307,7 @@ describe("ChatView side panel redesign", () => {
 
     expect(screen.getByText("总任务数")).toBeInTheDocument();
     expect(screen.getByText("已完成")).toBeInTheDocument();
-    expect(screen.getByText("进行中")).toBeInTheDocument();
+    expect(screen.getAllByText("进行中").length).toBeGreaterThan(0);
     expect(screen.getByText(/本轮生成文件/)).toBeInTheDocument();
     expect(screen.getByText(/本轮 Web 搜索/)).toBeInTheDocument();
   });
@@ -273,7 +325,8 @@ describe("ChatView side panel redesign", () => {
       expect(screen.getByText("选择要查看的文件")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getAllByText("conflict_report.html").at(-1)!);
+    const conflictReportEntries = screen.getAllByText("conflict_report.html");
+    fireEvent.click(conflictReportEntries[conflictReportEntries.length - 1]!);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "页面预览" })).toBeInTheDocument();
@@ -328,6 +381,20 @@ describe("ChatView side panel redesign", () => {
     });
   });
 
+  test("renders task journey summary after transcript instead of before the first message", async () => {
+    renderChat();
+
+    await waitFor(() => {
+      expect(screen.getByText("任务进度")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-message-0")).toBeInTheDocument();
+    });
+
+    const message = screen.getByTestId("chat-message-0");
+    const summary = screen.getByText("任务进度");
+
+    expect(message.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   test("offers delivery follow-up actions for files workspace and failed steps", async () => {
     renderChat();
 
@@ -360,6 +427,73 @@ describe("ChatView side panel redesign", () => {
       expect(value.length).toBeGreaterThan(0);
       expect(value).toContain("请继续补做失败项");
       expect(value).toContain("缺少 path 参数");
+    });
+  });
+
+  test("anchors task journey summary to the assistant message that produced the deliverables", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve(buildSplitJourneyMessages());
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "list_workspace_files") {
+        return Promise.resolve([
+          { path: "round-one-report.html", name: "round-one-report.html", size: 26.6 * 1024, kind: "html" },
+        ]);
+      }
+      if (command === "open_external_url") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    renderChat();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-message-0")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-message-1")).toBeInTheDocument();
+      expect(screen.getByTestId("task-journey-summary-run-a")).toBeInTheDocument();
+    });
+
+    const firstAssistant = screen.getByTestId("chat-message-0");
+    const secondAssistant = screen.getByTestId("chat-message-1");
+    const summary = screen.getByTestId("task-journey-summary-run-a");
+
+    expect(firstAssistant.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summary.compareDocumentPosition(secondAssistant) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId("task-journey-summary-run-b")).not.toBeInTheDocument();
+  });
+
+  test("uses user-oriented tool island summary and keeps raw tool payload secondary", async () => {
+    renderChat();
+
+    await waitFor(() => {
+      const summary = screen.getByTestId("tool-island-summary");
+      expect(summary).toBeInTheDocument();
+      expect(summary).toHaveTextContent("执行记录");
+      expect(summary).toHaveTextContent("8 个步骤");
+      expect(summary).toHaveTextContent("3 个异常");
+    });
+
+    expect(screen.queryByText("已完成 8 个步骤，3 个待处理")).not.toBeInTheDocument();
+    expect(screen.queryByText(/"todos"/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("tool-island-summary"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tool-island-step-todo-1")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/"todos"/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("tool-island-step-todo-1"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/"todos"/)).toBeInTheDocument();
     });
   });
 });
