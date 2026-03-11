@@ -3645,6 +3645,7 @@ dependencies = [
  "glob",
  "regex",
  "reqwest 0.12.28",
+ "runtime-chat-app",
  "runtime-executor-core",
  "runtime-models-app",
  "runtime-policy",
@@ -3668,6 +3669,15 @@ dependencies = [
  "wait-timeout",
  "walkdir",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "runtime-chat-app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
