@@ -1,6 +1,6 @@
 pub mod agent_profile;
 pub mod chat;
-mod chat_repo;
+pub mod chat_repo;
 pub mod clawhub;
 pub mod desktop_lifecycle;
 pub mod dialog;
