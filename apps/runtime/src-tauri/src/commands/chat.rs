@@ -1,8 +1,8 @@
+use super::chat_repo::PoolChatSettingsRepository;
 use super::employee_agents::{
     list_agent_employees_with_pool, maybe_handle_team_entry_session_message_with_pool,
     AgentEmployee,
 };
-use super::models::load_routing_settings_from_pool;
 use super::runtime_preferences::resolve_default_work_dir_with_pool;
 use super::skills::DbState;
 use crate::agent::compactor;
@@ -16,6 +16,7 @@ use crate::agent::tools::{
 };
 use crate::agent::AgentExecutor;
 use chrono::Utc;
+use runtime_chat_app::{ChatPreparationRequest, ChatPreparationService, SessionCreationRequest};
 use runtime_executor_core::estimate_tokens;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +38,7 @@ pub struct SearchCacheState(pub Arc<SearchCache>);
 /// Agent 取消标志（用于 cancel_agent command 停止正在执行的 Agent）
 pub struct CancelFlagState(pub Arc<AtomicBool>);
 
+#[cfg(test)]
 fn normalize_permission_mode_for_storage(permission_mode: Option<&str>) -> &'static str {
     match permission_mode.unwrap_or("").trim() {
         "standard" | "default" | "accept_edits" => "standard",
@@ -45,6 +47,7 @@ fn normalize_permission_mode_for_storage(permission_mode: Option<&str>) -> &'sta
     }
 }
 
+#[cfg(test)]
 fn normalize_session_mode_for_storage(session_mode: Option<&str>) -> &'static str {
     match session_mode.unwrap_or("").trim() {
         "employee_direct" => "employee_direct",
@@ -54,6 +57,7 @@ fn normalize_session_mode_for_storage(session_mode: Option<&str>) -> &'static st
     }
 }
 
+#[cfg(test)]
 fn normalize_team_id_for_storage(session_mode: &str, team_id: Option<&str>) -> String {
     if session_mode == "team_entry" {
         team_id.unwrap_or("").trim().to_string()
@@ -89,10 +93,12 @@ fn resolve_im_session_source(channel: Option<&str>) -> (String, String) {
     }
 }
 
+#[cfg(test)]
 fn is_supported_protocol(protocol: &str) -> bool {
     matches!(protocol, "openai" | "anthropic")
 }
 
+#[cfg(test)]
 fn infer_capability_from_user_message(message: &str) -> &'static str {
     let m = message.to_ascii_lowercase();
     if m.contains("识图")
@@ -127,6 +133,52 @@ fn infer_capability_from_user_message(message: &str) -> &'static str {
         return "audio_tts";
     }
     "chat"
+}
+
+fn build_imported_external_mcp_guidance(entries: &[(String, String, String)]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec![
+        "外部平台能力: 以下平台已通过外部来源导入为 WorkClaw 托管的 MCP。".to_string(),
+        "处理这些平台的内容读取、检索或资料整理请求时，优先使用对应 MCP 工具；仅在其不可用时再回退到通用 web_search / web_fetch。".to_string(),
+    ];
+
+    for (source_id, channel, server_name) in entries {
+        lines.push(format!(
+            "- 平台 `{channel}`: 优先使用对应 MCP 工具（source: `{source_id}`, server: `{server_name}`）"
+        ));
+    }
+
+    Some(lines.join("\n"))
+}
+
+async fn load_imported_external_mcp_guidance(
+    pool: &sqlx::SqlitePool,
+    registry: &crate::agent::ToolRegistry,
+) -> Option<String> {
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT imports.source_id, imports.channel, servers.name
+         FROM external_mcp_imports AS imports
+         INNER JOIN mcp_servers AS servers
+           ON servers.id = imports.mcp_server_id
+         WHERE servers.enabled = 1
+         ORDER BY imports.source_id, imports.channel",
+    )
+    .fetch_all(pool)
+    .await
+    .ok()?;
+
+    let available = rows
+        .into_iter()
+        .filter(|(_, _, server_name)| {
+            let prefix = format!("mcp_{server_name}_");
+            !registry.tools_with_prefix(&prefix).is_empty()
+        })
+        .collect::<Vec<_>>();
+
+    build_imported_external_mcp_guidance(&available)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,6 +255,7 @@ fn retry_backoff_ms(kind: ModelRouteErrorKind, attempt_idx: usize) -> u64 {
     base_ms.saturating_mul(1u64 << exp).min(5000)
 }
 
+#[cfg(test)]
 fn parse_fallback_chain_targets(raw: &str) -> Vec<(String, String)> {
     serde_json::from_str::<Value>(raw)
         .ok()
@@ -381,35 +434,32 @@ pub async fn create_session(
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let permission_mode = normalize_permission_mode_for_storage(permission_mode.as_deref());
-    let session_mode = normalize_session_mode_for_storage(session_mode.as_deref());
-    let team_id = normalize_team_id_for_storage(session_mode, team_id.as_deref());
-    let normalized_work_dir = work_dir.unwrap_or_default().trim().to_string();
-    let normalized_employee_id = employee_id.unwrap_or_default().trim().to_string();
-    let resolved_work_dir = if normalized_work_dir.is_empty() {
+    let prepared = ChatPreparationService::new().prepare_session_creation(SessionCreationRequest {
+        permission_mode,
+        session_mode,
+        team_id,
+        title,
+        work_dir,
+        employee_id,
+    });
+    let resolved_work_dir = if prepared.normalized_work_dir.is_empty() {
         resolve_default_work_dir_with_pool(&db.0).await?
     } else {
-        normalized_work_dir
-    };
-    let normalized_title = title.unwrap_or_default().trim().to_string();
-    let resolved_title = if normalized_title.is_empty() {
-        "New Chat".to_string()
-    } else {
-        normalized_title
+        prepared.normalized_work_dir
     };
     sqlx::query(
         "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&session_id)
     .bind(&skill_id)
-    .bind(&resolved_title)
+    .bind(&prepared.normalized_title)
     .bind(&now)
     .bind(&model_id)
-    .bind(permission_mode)
+    .bind(&prepared.permission_mode_storage)
     .bind(&resolved_work_dir)
-    .bind(&normalized_employee_id)
-    .bind(session_mode)
-    .bind(&team_id)
+    .bind(&prepared.normalized_employee_id)
+    .bind(&prepared.session_mode_storage)
+    .bind(&prepared.normalized_team_id)
     .execute(&db.0)
     .await
     .map_err(|e| e.to_string())?;
@@ -496,8 +546,18 @@ pub async fn send_message(
     .await
     .map_err(|e| format!("会话不存在 (session_id={session_id}): {e}"))?;
 
-    let permission_mode = parse_permission_mode_for_runtime(&perm_str);
-    let routing_settings = load_routing_settings_from_pool(&db.0).await?;
+    let chat_request = ChatPreparationRequest {
+        user_message: user_message.clone(),
+        permission_mode: Some(perm_str.clone()),
+        session_mode: None,
+        team_id: None,
+    };
+    let chat_repo = PoolChatSettingsRepository::new(&db.0);
+    let chat_preparation = ChatPreparationService::new()
+        .prepare_chat_execution(&chat_repo, chat_request.clone())
+        .await?;
+    let permission_mode =
+        parse_permission_mode_for_runtime(&chat_preparation.permission_mode_storage);
 
     // 加载 Skill 信息（含 pack_path 和 source_type，用 COALESCE 兼容旧数据）
     let (manifest_json, username, pack_path, source_type) = sqlx::query_as::<_, (String, String, String, String)>(
@@ -539,6 +599,11 @@ pub async fn send_message(
             }
         }
     };
+    let raw_prompt = crate::agent::system_prompts::workflow::apply_builtin_todowrite_governance(
+        &skill_id,
+        &source_type,
+        &raw_prompt,
+    );
 
     // 加载消息历史
     let history = sqlx::query_as::<_, (String, String)>(
@@ -549,101 +614,24 @@ pub async fn send_message(
     .await
     .map_err(|e| e.to_string())?;
 
-    // 加载会话模型配置（含 api_key）作为最后兜底候选
-    let (session_api_format, session_base_url, session_model_name, session_api_key) =
-        sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT api_format, base_url, model_name, api_key FROM model_configs WHERE id = ?",
-        )
-        .bind(&model_id)
-        .fetch_one(&db.0)
-        .await
-        .map_err(|e| format!("模型配置不存在 (model_id={model_id}): {e}"))?;
-
-    // 构建候选链：routing policy primary/fallbacks + 会话 model 配置兜底
-    let mut route_candidates: Vec<(String, String, String, String)> = Vec::new();
-
-    let mut per_candidate_retry_count: usize = 0;
-    let requested_capability = infer_capability_from_user_message(&user_message);
-    if let Ok(Some((primary_provider_id, primary_model, fallback_chain_json, policy_retry_count))) = sqlx::query_as::<_, (String, String, String, i64)>(
-        "SELECT primary_provider_id, primary_model, fallback_chain_json, retry_count FROM routing_policies WHERE capability = ? AND enabled = 1 LIMIT 1"
-    )
-    .bind(requested_capability)
-    .fetch_optional(&db.0)
-    .await
-    {
-        per_candidate_retry_count = policy_retry_count.clamp(0, 3) as usize;
-        let mut candidates: Vec<(String, String)> = vec![(primary_provider_id, primary_model)];
-        candidates.extend(parse_fallback_chain_targets(&fallback_chain_json));
-
-        for (provider_id, preferred_model) in candidates {
-            if let Ok(Some((protocol_type, routed_base_url, routed_api_key))) = sqlx::query_as::<_, (String, String, String)>(
-                "SELECT protocol_type, base_url, api_key_encrypted FROM provider_configs WHERE id = ? AND enabled = 1 LIMIT 1"
+    let prepared_routes = ChatPreparationService::new()
+        .prepare_route_candidates(&chat_repo, &model_id, &chat_request)
+        .await?;
+    let mut route_candidates: Vec<(String, String, String, String)> = prepared_routes
+        .candidates
+        .into_iter()
+        .map(|candidate| {
+            (
+                candidate.protocol_type,
+                candidate.base_url,
+                candidate.model_name,
+                candidate.api_key,
             )
-            .bind(&provider_id)
-            .fetch_optional(&db.0)
-            .await
-            {
-                if is_supported_protocol(&protocol_type) && !routed_api_key.trim().is_empty() {
-                    let candidate_model = if preferred_model.trim().is_empty() {
-                        session_model_name.clone()
-                    } else {
-                        preferred_model
-                    };
-                    route_candidates.push((
-                        protocol_type,
-                        routed_base_url,
-                        candidate_model,
-                        routed_api_key,
-                    ));
-                }
-            }
-        }
-    } else if requested_capability != "chat" {
-        // 能力未配置时退回 chat 路由
-        if let Ok(Some((primary_provider_id, primary_model, fallback_chain_json, policy_retry_count))) = sqlx::query_as::<_, (String, String, String, i64)>(
-            "SELECT primary_provider_id, primary_model, fallback_chain_json, retry_count FROM routing_policies WHERE capability = 'chat' AND enabled = 1 LIMIT 1"
-        )
-        .fetch_optional(&db.0)
-        .await
-        {
-            per_candidate_retry_count = policy_retry_count.clamp(0, 3) as usize;
-            let mut candidates: Vec<(String, String)> = vec![(primary_provider_id, primary_model)];
-            candidates.extend(parse_fallback_chain_targets(&fallback_chain_json));
+        })
+        .collect();
 
-            for (provider_id, preferred_model) in candidates {
-                if let Ok(Some((protocol_type, routed_base_url, routed_api_key))) = sqlx::query_as::<_, (String, String, String)>(
-                    "SELECT protocol_type, base_url, api_key_encrypted FROM provider_configs WHERE id = ? AND enabled = 1 LIMIT 1"
-                )
-                .bind(&provider_id)
-                .fetch_optional(&db.0)
-                .await
-                {
-                    if is_supported_protocol(&protocol_type) && !routed_api_key.trim().is_empty() {
-                        let candidate_model = if preferred_model.trim().is_empty() {
-                            session_model_name.clone()
-                        } else {
-                            preferred_model
-                        };
-                        route_candidates.push((
-                            protocol_type,
-                            routed_base_url,
-                            candidate_model,
-                            routed_api_key,
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    if !session_api_key.trim().is_empty() {
-        route_candidates.push((
-            session_api_format.clone(),
-            session_base_url.clone(),
-            session_model_name.clone(),
-            session_api_key.clone(),
-        ));
-    }
+    let per_candidate_retry_count = prepared_routes.retry_count_per_candidate;
+    let requested_capability = chat_preparation.capability.clone();
 
     if route_candidates.is_empty() {
         return Err(format!(
@@ -793,7 +781,7 @@ pub async fn send_message(
     skill_roots.sort();
     skill_roots.dedup();
     let skill_tool = SkillInvokeTool::new(session_id.clone(), skill_roots)
-        .with_max_depth(routing_settings.max_call_depth);
+        .with_max_depth(chat_preparation.max_call_depth);
     agent_executor.registry().register(Arc::new(skill_tool));
 
     // 注册 Compact 工具（手动触发上下文压缩）
@@ -827,6 +815,8 @@ pub async fn send_message(
             Err(_) => None,
         }
     };
+    let imported_external_mcp_guidance =
+        load_imported_external_mcp_guidance(&db.0, agent_executor.registry()).await;
 
     // 构建完整 system prompt（含运行环境信息）
     let system_prompt = if work_dir.is_empty() {
@@ -843,6 +833,11 @@ pub async fn send_message(
 
     let system_prompt = if let Some(collaboration) = employee_collaboration_guidance {
         format!("{}\n\n---\n{}", system_prompt, collaboration)
+    } else {
+        system_prompt
+    };
+    let system_prompt = if let Some(external_mcp_guidance) = imported_external_mcp_guidance {
+        format!("{}\n\n---\n{}", system_prompt, external_mcp_guidance)
     } else {
         system_prompt
     };
@@ -906,8 +901,8 @@ pub async fn send_message(
                     },
                     skill_config.max_iterations,
                     Some(cancel_flag_clone.clone()),
-                    Some(routing_settings.node_timeout_seconds),
-                    Some(routing_settings.retry_count),
+                    Some(chat_preparation.node_timeout_seconds),
+                    Some(chat_preparation.retry_count),
                 )
                 .await;
 
@@ -919,7 +914,7 @@ pub async fn send_message(
                     )
                     .bind(Uuid::new_v4().to_string())
                     .bind(&session_id)
-                    .bind(requested_capability)
+                    .bind(&requested_capability)
                     .bind(candidate_api_format)
                     .bind(candidate_model_name)
                     .bind((attempt_idx + 1) as i64)
@@ -947,7 +942,7 @@ pub async fn send_message(
                     )
                     .bind(Uuid::new_v4().to_string())
                     .bind(&session_id)
-                    .bind(requested_capability)
+                    .bind(&requested_capability)
                     .bind(candidate_api_format)
                     .bind(candidate_model_name)
                     .bind((attempt_idx + 1) as i64)
@@ -1708,6 +1703,34 @@ mod tests {
             "audio_tts"
         );
         assert_eq!(infer_capability_from_user_message("解释这个报错"), "chat");
+    }
+
+    #[test]
+    fn build_imported_external_mcp_guidance_lists_available_platforms() {
+        let guidance = super::build_imported_external_mcp_guidance(&[
+            (
+                "agent-reach".to_string(),
+                "xiaohongshu".to_string(),
+                "agent-reach-xiaohongshu".to_string(),
+            ),
+            (
+                "agent-reach".to_string(),
+                "linkedin".to_string(),
+                "agent-reach-linkedin".to_string(),
+            ),
+        ])
+        .expect("guidance should exist");
+
+        assert!(guidance.contains("外部平台能力"));
+        assert!(guidance.contains("xiaohongshu"));
+        assert!(guidance.contains("linkedin"));
+        assert!(guidance.contains("agent-reach-xiaohongshu"));
+        assert!(guidance.contains("优先使用对应 MCP 工具"));
+    }
+
+    #[test]
+    fn build_imported_external_mcp_guidance_returns_none_for_empty_entries() {
+        assert!(super::build_imported_external_mcp_guidance(&[]).is_none());
     }
 
     #[test]
