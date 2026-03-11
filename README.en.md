@@ -22,6 +22,7 @@ WorkClaw is a beginner-friendly OpenClaw desktop agent distribution that removes
 
 - Getting started: [Getting Started](#getting-started)
 - Documentation: [docs/](docs/)
+- Operations Manual: [Feishu Wiki](https://my.feishu.cn/wiki/ElrEwHGi7ia78HkKcYXcsVYnnfe)
 - Releases: [Releases](https://github.com/haojing8312/WorkClaw/releases)
 - Roadmap: [Roadmap](#roadmap)
 - Contributing & support: [CONTRIBUTING.md](CONTRIBUTING.md) · [SUPPORT.md](SUPPORT.md)
