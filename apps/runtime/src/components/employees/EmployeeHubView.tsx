@@ -61,6 +61,12 @@ type GroupTemplateConfig = {
 
 type EmployeeHubTab = "overview" | "employees" | "teams" | "runs" | "settings";
 
+const FEISHU_BROWSER_SETUP_POLL_INTERVAL_MS = 5000;
+
+function isFeishuBrowserSetupTerminalStep(step: string): boolean {
+  return step === "ENABLE_LONG_CONNECTION" || step === "FAILED";
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   if (bytes < 1024) return `${Math.round(bytes)} B`;
@@ -299,6 +305,29 @@ export function EmployeeHubView({
   async function cancelFeishuBrowserSetup() {
     setFeishuBrowserSetupSession(null);
   }
+
+  useEffect(() => {
+    if (!feishuBrowserSetupSession) return;
+    if (isFeishuBrowserSetupTerminalStep(feishuBrowserSetupSession.step)) return;
+
+    let disposed = false;
+    const timer = setInterval(() => {
+      void invoke<FeishuBrowserSetupSession>("get_feishu_browser_setup_session", {
+        sessionId: feishuBrowserSetupSession.session_id,
+      })
+        .then((session) => {
+          if (!disposed) setFeishuBrowserSetupSession(session);
+        })
+        .catch((error) => {
+          if (!disposed) setMessage(String(error));
+        });
+    }, FEISHU_BROWSER_SETUP_POLL_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [feishuBrowserSetupSession]);
 
   useEffect(() => {
     void loadEmployeeGroups();
