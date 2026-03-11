@@ -12,6 +12,7 @@ pub mod im_gateway;
 pub mod im_routing;
 pub mod mcp;
 pub mod models;
+pub mod models_repo;
 pub mod openclaw_gateway;
 pub mod packaging;
 pub mod runtime_preferences;

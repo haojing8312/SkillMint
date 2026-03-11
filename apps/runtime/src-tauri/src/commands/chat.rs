@@ -624,7 +624,7 @@ pub async fn send_message(
             }
         }
     };
-    let raw_prompt = crate::agent::system_prompts::workflow::apply_builtin_todowrite_governance(
+    let raw_prompt = crate::builtin_skills::apply_builtin_todowrite_governance(
         &skill_id,
         &source_type,
         &raw_prompt,
