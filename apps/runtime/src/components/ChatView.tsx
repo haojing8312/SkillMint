@@ -79,6 +79,7 @@ interface Props {
   };
   sessionTitle?: string;
   sessionMode?: "general" | "employee_direct" | "team_entry" | string;
+  sessionEmployeeName?: string;
   sessionSourceChannel?: string;
   sessionSourceLabel?: string;
   operationPermissionMode?: "standard" | "full_access" | string;
@@ -104,6 +105,7 @@ export function ChatView({
   employeeAssistantContext,
   sessionTitle,
   sessionMode,
+  sessionEmployeeName,
   sessionSourceChannel,
   sessionSourceLabel,
   operationPermissionMode = "standard",
@@ -1041,8 +1043,14 @@ export function ChatView({
   }, [taskJourneyModel]);
   const normalizedSessionMode = (sessionMode || "").trim().toLowerCase();
   const isTeamEntrySession = normalizedSessionMode === "team_entry";
+  const isEmployeeDirectSession = normalizedSessionMode === "employee_direct";
   const normalizedSessionTitle = (sessionTitle || "").trim();
-  const sessionDisplayTitle = isTeamEntrySession ? "团队协作" : skill.name;
+  const normalizedSessionEmployeeName = (sessionEmployeeName || "").trim();
+  const sessionDisplayTitle = isTeamEntrySession
+    ? "团队协作"
+    : isEmployeeDirectSession
+    ? normalizedSessionEmployeeName || normalizedSessionTitle || skill.name
+    : skill.name;
   const sessionDisplaySubtitle = isTeamEntrySession ? normalizedSessionTitle || "团队已连接" : "";
   const isFeishuSource = (sessionSourceChannel || "").trim().toLowerCase() === "feishu";
   const sessionSourceBadgeText = (sessionSourceLabel || "").trim() || "飞书同步";

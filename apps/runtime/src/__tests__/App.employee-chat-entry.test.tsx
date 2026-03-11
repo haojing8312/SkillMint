@@ -26,7 +26,13 @@ vi.mock("../components/Sidebar", () => ({
 }));
 
 vi.mock("../components/ChatView", () => ({
-  ChatView: () => <div data-testid="chat-view">chat-view</div>,
+  ChatView: (props: any) => (
+    <div data-testid="chat-view">
+      <div data-testid="chat-view-session-title">{props.sessionTitle || ""}</div>
+      <div data-testid="chat-view-session-mode">{props.sessionMode || ""}</div>
+      <div data-testid="chat-view-session-employee-name">{props.sessionEmployeeName || ""}</div>
+    </div>
+  ),
 }));
 
 vi.mock("../components/packaging/PackagingView", () => ({
@@ -124,18 +130,17 @@ describe("App employee chat entry", () => {
           },
         ]);
       }
-      if (command === "get_sessions") {
-        if (payload?.skillId === "skill-sales") {
-          return Promise.resolve([
-            {
-              id: "session-sales",
-              title: "Session Sales",
-              created_at: new Date().toISOString(),
-              model_id: "model-a",
-            },
-          ]);
-        }
-        return Promise.resolve([]);
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-sales",
+            title: "销售主管",
+            created_at: new Date().toISOString(),
+            model_id: "model-a",
+            employee_id: "sales_lead",
+            session_mode: "employee_direct",
+          },
+        ]);
       }
       if (command === "get_runtime_preferences") {
         return Promise.resolve({
@@ -159,13 +164,14 @@ describe("App employee chat entry", () => {
     fireEvent.click(screen.getByRole("button", { name: "chat-with-employee" }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith(
+        expect(invokeMock).toHaveBeenCalledWith(
         "create_session",
         expect.objectContaining({
           skillId: "skill-sales",
           modelId: "model-a",
           workDir: "D:\\\\workspace\\\\sales",
           employeeId: "sales_lead",
+          title: "销售主管",
           permissionMode: "standard",
           sessionMode: "employee_direct",
           teamId: "",

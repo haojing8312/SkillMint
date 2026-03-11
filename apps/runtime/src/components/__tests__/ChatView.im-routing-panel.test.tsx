@@ -81,6 +81,42 @@ describe("ChatView IM routing panel", () => {
     });
   });
 
+  test("shows employee name in the header for employee-direct sessions", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "feishu-bitable-hub",
+          name: "feishu-bitable-hub",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-employee-direct"
+        sessionMode="employee_direct"
+        sessionTitle="飞书业务专家"
+        sessionEmployeeName="飞书业务专家"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-session-display-title")).toHaveTextContent("飞书业务专家");
+      expect(screen.queryByText("feishu-bitable-hub")).not.toBeInTheDocument();
+    });
+  });
+
   test("shows routing collaboration signals in chat area", async () => {
     render(
       <ChatView

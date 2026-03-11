@@ -1541,6 +1541,7 @@ export default function App() {
         modelId,
         workDir: employee.default_work_dir || "",
         employeeId: employee.employee_id || employee.role_id || "",
+        title: employee.name,
         sessionMode: "employee_direct",
       });
       await loadSessions(skillId);
@@ -1662,6 +1663,18 @@ export default function App() {
 
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+  const selectedSessionEmployeeName = (() => {
+    const sessionEmployeeId = (selectedSession?.employee_id || "").trim();
+    if (!sessionEmployeeId) return undefined;
+    const matchedEmployee = employees.find((item) => {
+      const employeeCode = (item.employee_id || item.role_id || item.id || "").trim();
+      return (
+        employeeCode.toLowerCase() === sessionEmployeeId.toLowerCase() ||
+        item.id.trim().toLowerCase() === sessionEmployeeId.toLowerCase()
+      );
+    });
+    return matchedEmployee?.name;
+  })();
   const selectedEmployeeAssistantContext = (() => {
     if (selectedSkill?.id !== BUILTIN_EMPLOYEE_CREATOR_SKILL_ID || !selectedSessionId) {
       return undefined;
@@ -2483,6 +2496,7 @@ export default function App() {
                 sessionSourceLabel={selectedSession?.source_label}
                 sessionTitle={selectedSession?.title}
                 sessionMode={selectedSession?.session_mode}
+                sessionEmployeeName={selectedSessionEmployeeName}
                 operationPermissionMode={operationPermissionMode}
                 onSessionUpdate={handleSessionRefresh}
                 installedSkillIds={skills.map((s) => s.id)}
