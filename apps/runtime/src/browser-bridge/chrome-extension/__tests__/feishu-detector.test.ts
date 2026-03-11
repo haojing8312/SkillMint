@@ -23,4 +23,22 @@ describe("detectFeishuPage", () => {
 
     expect(detectFeishuPage(document).kind).toBe("credentials");
   });
+
+  it("detects credential page from readonly input fields", () => {
+    document.body.innerHTML = `
+      <section>
+        <div>凭证与基础信息</div>
+        <div class="form-row">
+          <label>App ID</label>
+          <div><input readonly value="cli_structured_123" /></div>
+        </div>
+        <div class="form-row">
+          <label>App Secret</label>
+          <div><input readonly value="sec_structured_456" /></div>
+        </div>
+      </section>
+    `;
+
+    expect(detectFeishuPage(document).kind).toBe("credentials");
+  });
 });

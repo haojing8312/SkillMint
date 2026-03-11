@@ -75,7 +75,15 @@ export async function initializeFeishuContentScript(
 
 function findValueNearLabel(doc: Document, label: string): string {
   const elements = Array.from(doc.querySelectorAll("div, span, p, td, dt, dd, label"));
-  const labelElement = elements.find((element) => normalizeText(element.textContent) === label);
+  const labelElement = elements
+    .filter((element) => normalizeText(element.textContent) === label)
+    .sort((left, right) => {
+      const depthDifference = getElementDepth(right) - getElementDepth(left);
+      if (depthDifference !== 0) {
+        return depthDifference;
+      }
+      return left.children.length - right.children.length;
+    })[0];
   if (!labelElement) {
     return "";
   }
@@ -119,7 +127,22 @@ function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function getElementDepth(element: Element): number {
+  let depth = 0;
+  let current = element.parentElement;
+  while (current) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  return depth;
+}
+
 function firstMeaningfulText(element: Element, label: string): string {
+  const fieldValue = readFieldValue(element);
+  if (fieldValue && fieldValue !== label) {
+    return fieldValue;
+  }
+
   const ownText = normalizeText(element.textContent);
   if (ownText && ownText !== label && ownText !== "凭证与基础信息") {
     return ownText;
@@ -131,6 +154,19 @@ function firstMeaningfulText(element: Element, label: string): string {
     if (text && text !== label && text !== "凭证与基础信息") {
       return text;
     }
+  }
+
+  return "";
+}
+
+function readFieldValue(element: Element): string {
+  if ("value" in element && typeof element.value === "string") {
+    return normalizeText(element.value);
+  }
+
+  const field = element.querySelector("input, textarea");
+  if (field && "value" in field && typeof field.value === "string") {
+    return normalizeText(field.value);
   }
 
   return "";

@@ -62,6 +62,27 @@ describe("chrome extension content helpers", () => {
     });
   });
 
+  it("extracts credentials from readonly input fields on the credential page", () => {
+    document.body.innerHTML = `
+      <section>
+        <div>凭证与基础信息</div>
+        <div class="form-row">
+          <label>App ID</label>
+          <div class="value"><input readonly value="cli_input_123" /></div>
+        </div>
+        <div class="form-row">
+          <label>App Secret</label>
+          <div class="value"><input readonly value="sec_input_456" /></div>
+        </div>
+      </section>
+    `;
+
+    expect(extractFeishuCredentials(document)).toEqual({
+      appId: "cli_input_123",
+      appSecret: "sec_input_456",
+    });
+  });
+
   it("reads the setup session id from the current url", () => {
     expect(getFeishuBrowserSetupSessionId("https://open.feishu.cn/?workclaw_session_id=sess-url-1")).toBe(
       "sess-url-1",
