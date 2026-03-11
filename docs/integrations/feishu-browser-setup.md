@@ -22,6 +22,7 @@
 - content script 自动读取凭据并发送到扩展 runtime
 - background script 自动接收凭据并优先走 `connectNative`，失败回退到本地 HTTP bridge
 - native-host framing 与本地 HTTP bridge client
+- sidecar 已提供 `/api/browser-bridge/native-message` 真实接收路由
 - 员工中心设置页中的“飞书浏览器配置向导”入口
 - Windows 下 Chrome native host manifest 生成脚本
 
@@ -29,7 +30,7 @@
 
 - 飞书后台真实页面的稳定 selector/step detector
 - native host 可执行入口与安装后的端到端联调
-- background 收到凭据后自动调用本地 Tauri 命令完成 session 推进
+- sidecar `browser-bridge` 路由收到凭据后自动调用本地 Tauri 命令完成 session 推进
 
 ## 目录结构
 
@@ -109,17 +110,18 @@ manifest 内容包含：
    - 未登录：提示用户先登录
    - 凭证页：读取 `App ID / App Secret`
 5. content script 通过扩展 runtime 把凭据发送给 background
-6. background 优先通过 `chrome.runtime.connectNative` 把凭据发送到本地；若不可用，则回退到本地 HTTP bridge
-7. WorkClaw 写入现有飞书设置键：
+6. background 优先通过 `chrome.runtime.connectNative` 把凭据发送到本地；若不可用，则回退到 sidecar 的 `/api/browser-bridge/native-message`
+7. sidecar 当前会先返回 bridge response，确认浏览器桥消息链路可用
+8. WorkClaw 写入现有飞书设置键：
    - `feishu_app_id`
    - `feishu_app_secret`
-8. UI 状态推进到 `ENABLE_LONG_CONNECTION`
+9. UI 状态推进到 `ENABLE_LONG_CONNECTION`
 
 ## 当前限制
 
 - 凭证提取当前同时支持测试用 `data-field` 与简单的标签/相邻文本模式，但还没覆盖真实飞书后台全部 DOM 变体
-- native host transport 已有 helper 和 listener，但尚未与安装后的本地 host 进程做端到端联调
-- 扩展 background 当前把凭据发给本地 bridge 后，还没有自动轮询或订阅 Tauri session 状态变化
+- native host transport 已有 runner 脚本、launcher 安装能力和 sidecar 接收端，但尚未与安装后的本地 host 进程做真实浏览器端到端联调
+- sidecar 当前只对 `credentials.report` 返回保守 `action.pause`，还没有真正把 session 推进同步到 Tauri/Rust store
 - Windows 环境下 Rust 验证仍建议使用独立 `CARGO_HOME`，以避开系统 Cargo cache 锁争用
 
 ## 安全边界

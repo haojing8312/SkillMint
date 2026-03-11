@@ -12,6 +12,20 @@ import { ChannelAdapterKernel, createChannelAdapterRegistry } from './adapters/k
 import type { ApiResponse } from './types.js';
 
 type RouteResolver = typeof resolveRoute;
+type BrowserBridgeEnvelope = {
+  version: 1;
+  sessionId: string;
+  kind: 'request' | 'response' | 'event';
+  payload: {
+    type: string;
+    appId?: string;
+    appSecret?: string;
+    provider?: string;
+    sessionId?: string;
+    page?: string;
+  };
+};
+type BrowserBridgeResponse = BrowserBridgeEnvelope;
 
 interface SidecarDeps {
   browser: BrowserController;
@@ -19,6 +33,7 @@ interface SidecarDeps {
   feishu: FeishuClient;
   feishuWs: FeishuLongConnectionManager;
   routeResolver: RouteResolver;
+  browserBridge: (envelope: BrowserBridgeEnvelope) => Promise<BrowserBridgeResponse>;
   channelKernel: Pick<
     ChannelAdapterKernel,
     'start' | 'stop' | 'health' | 'drainEvents' | 'sendMessage'
@@ -65,8 +80,54 @@ function createDefaultDeps(): SidecarDeps {
     feishu,
     feishuWs,
     routeResolver: resolveRoute,
+    browserBridge: defaultBrowserBridgeHandler,
     channelKernel,
   };
+}
+
+async function defaultBrowserBridgeHandler(
+  envelope: BrowserBridgeEnvelope,
+): Promise<BrowserBridgeResponse> {
+  if (envelope.payload?.type === 'credentials.report') {
+    return {
+      version: 1,
+      sessionId: envelope.sessionId,
+      kind: 'response',
+      payload: {
+        type: 'action.pause',
+        page: undefined,
+        provider: undefined,
+        sessionId: undefined,
+        appId: undefined,
+        appSecret: undefined,
+        reason: 'browser bridge credentials received',
+      } as BrowserBridgeResponse['payload'] & { reason: string },
+    };
+  }
+
+  return {
+    version: 1,
+    sessionId: envelope.sessionId,
+    kind: 'response',
+    payload: {
+      type: 'action.detect_step',
+    },
+  };
+}
+
+function isBrowserBridgeEnvelope(value: unknown): value is BrowserBridgeEnvelope {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<BrowserBridgeEnvelope>;
+  return (
+    candidate.version === 1 &&
+    typeof candidate.sessionId === 'string' &&
+    (candidate.kind === 'request' || candidate.kind === 'response' || candidate.kind === 'event') &&
+    !!candidate.payload &&
+    typeof candidate.payload === 'object' &&
+    typeof (candidate.payload as { type?: unknown }).type === 'string'
+  );
 }
 
 export function createSidecarApp(overrides: Partial<SidecarDeps> = {}) {
@@ -342,6 +403,19 @@ export function createSidecarApp(overrides: Partial<SidecarDeps> = {}) {
         .join('\n\n');
 
       return c.json({ output: output || '未找到搜索结果' } as ApiResponse);
+    } catch (e: any) {
+      return c.json({ error: e.message } as ApiResponse, 500);
+    }
+  });
+
+  app.post('/api/browser-bridge/native-message', async (c) => {
+    try {
+      const body = await c.req.json();
+      if (!isBrowserBridgeEnvelope(body)) {
+        return c.json({ error: 'invalid browser bridge envelope' }, 400);
+      }
+      const response = await deps.browserBridge(body);
+      return c.json(response);
     } catch (e: any) {
       return c.json({ error: e.message } as ApiResponse, 500);
     }
