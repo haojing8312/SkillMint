@@ -270,6 +270,12 @@ export function EmployeeHubView({
         provider: "feishu",
       });
       setFeishuBrowserSetupSession(session);
+      const query = session.session_id
+        ? `?workclaw_session_id=${encodeURIComponent(session.session_id)}`
+        : "";
+      await invoke("open_external_url", {
+        url: `https://open.feishu.cn/${query}`,
+      });
     } catch (error) {
       setMessage(String(error));
     } finally {
