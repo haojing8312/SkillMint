@@ -50,6 +50,33 @@ describe("SettingsView model providers", () => {
         return Promise.resolve(null);
       }
       if (command === "save_model_config") {
+        const savedConfig = payload?.config;
+        const nextId =
+          typeof savedConfig?.id === "string" && savedConfig.id.trim()
+            ? savedConfig.id
+            : `model-${mockModels.length + 1}`;
+        const existingIndex = mockModels.findIndex((item) => item.id === nextId);
+        const nextModel = {
+          id: nextId,
+          name: savedConfig?.name ?? "Saved Model",
+          api_format: savedConfig?.api_format ?? "openai",
+          base_url: savedConfig?.base_url ?? "https://example.com/v1",
+          model_name: savedConfig?.model_name ?? "gpt-4o-mini",
+          is_default: Boolean(savedConfig?.is_default),
+        };
+        if (existingIndex >= 0) {
+          mockModels[existingIndex] = nextModel;
+        } else {
+          mockModels = [...mockModels, nextModel];
+        }
+        return Promise.resolve(nextId);
+      }
+      if (command === "set_default_model") {
+        const targetId = payload?.modelId;
+        mockModels = mockModels.map((item) => ({
+          ...item,
+          is_default: item.id === targetId,
+        }));
         return Promise.resolve(null);
       }
       if (command === "test_connection_cmd") {
@@ -168,5 +195,96 @@ describe("SettingsView model providers", () => {
       "claude-3-5-sonnet-20241022",
     );
     expect(screen.getByTestId("settings-model-provider-custom-guidance")).toBeInTheDocument();
+  });
+
+  test("makes a newly created second model the default", async () => {
+    mockModels = [
+      {
+        id: "model-1",
+        name: "Primary Model",
+        api_format: "openai",
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o-mini",
+        is_default: true,
+      },
+    ];
+
+    render(<SettingsView onClose={() => {}} />);
+
+    await screen.findByText("Primary Model");
+
+    fireEvent.change(screen.getByTestId("settings-model-provider-name"), {
+      target: { value: "Backup Model" },
+    });
+    fireEvent.change(screen.getByTestId("settings-model-provider-base-url"), {
+      target: { value: "https://backup.example.com/v1" },
+    });
+    fireEvent.change(screen.getByTestId("settings-model-provider-model-name"), {
+      target: { value: "gpt-4.1-mini" },
+    });
+    fireEvent.change(screen.getByTestId("settings-model-provider-api-key"), {
+      target: { value: "sk-backup-123" },
+    });
+
+    fireEvent.click(screen.getByTestId("settings-model-provider-save"));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "save_model_config",
+        expect.objectContaining({
+          config: expect.objectContaining({
+            name: "Backup Model",
+            is_default: false,
+          }),
+          apiKey: "sk-backup-123",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("set_default_model", { modelId: "model-2" });
+    });
+
+    await waitFor(() => {
+      const rows = screen.getAllByText("默认");
+      expect(rows).toHaveLength(1);
+    });
+
+    expect(screen.getByText("Backup Model")).toBeInTheDocument();
+    const backupRow = screen.getByText("Backup Model").closest("div.flex.items-center.justify-between");
+    expect(backupRow).not.toBeNull();
+  });
+
+  test("shows manual set-default action for non-default models", async () => {
+    mockModels = [
+      {
+        id: "model-1",
+        name: "Primary Model",
+        api_format: "openai",
+        base_url: "https://api.openai.com/v1",
+        model_name: "gpt-4o-mini",
+        is_default: true,
+      },
+      {
+        id: "model-2",
+        name: "Backup Model",
+        api_format: "openai",
+        base_url: "https://backup.example.com/v1",
+        model_name: "gpt-4.1-mini",
+        is_default: false,
+      },
+    ];
+
+    render(<SettingsView onClose={() => {}} />);
+
+    const backupLabel = await screen.findByText("Backup Model");
+    const backupRow = backupLabel.closest("div.flex.items-center.justify-between");
+    expect(backupRow).not.toBeNull();
+
+    fireEvent.click(within(backupRow as HTMLElement).getByRole("button", { name: "设为默认" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("set_default_model", { modelId: "model-2" });
+    });
   });
 });

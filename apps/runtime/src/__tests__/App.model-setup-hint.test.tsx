@@ -119,6 +119,10 @@ describe("App model setup hint", () => {
       }
       if (command === "save_model_config") {
         const savedConfig = payload?.config;
+        const savedId =
+          typeof savedConfig?.id === "string" && savedConfig.id.trim()
+            ? savedConfig.id
+            : "model-quick";
         if (typeof savedConfig?.api_format === "string" && savedConfig.api_format.startsWith("search_")) {
           mockSearchConfigs = [
             {
@@ -133,7 +137,7 @@ describe("App model setup hint", () => {
         } else {
           mockModels = [
             {
-              id: "model-quick",
+              id: savedId,
               name: savedConfig?.name ?? "Quick Setup",
               api_format: savedConfig?.api_format ?? "openai",
               base_url: savedConfig?.base_url ?? "https://open.bigmodel.cn/api/paas/v4",
@@ -142,6 +146,14 @@ describe("App model setup hint", () => {
             },
           ];
         }
+        return Promise.resolve(savedId);
+      }
+      if (command === "set_default_model") {
+        const targetId = payload?.modelId;
+        mockModels = mockModels.map((model) => ({
+          ...model,
+          is_default: model.id === targetId,
+        }));
         return Promise.resolve(null);
       }
       if (command === "test_connection_cmd") {

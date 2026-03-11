@@ -29,6 +29,7 @@ import {
   UpsertImRoutingBindingInput,
 } from "../types";
 import { FeishuRoutingWizard } from "./employees/FeishuRoutingWizard";
+import { RiskConfirmDialog } from "./RiskConfirmDialog";
 
 const MCP_PRESETS = [
   { label: "— 快速选择 —", value: "", name: "", command: "", args: "", env: "" },
@@ -112,6 +113,7 @@ const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   launch_at_login: false,
   launch_minimized: false,
   close_to_tray: true,
+  operation_permission_mode: "standard",
 };
 
 const DEFAULT_MODEL_PROVIDER = getModelProviderCatalogItem(DEFAULT_MODEL_PROVIDER_ID);
@@ -224,6 +226,8 @@ export function SettingsView({
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [desktopPreferencesError, setDesktopPreferencesError] = useState("");
+  const [pendingPermissionMode, setPendingPermissionMode] = useState<"standard" | "full_access" | null>(null);
+  const [showPermissionModeConfirm, setShowPermissionModeConfirm] = useState(false);
   const [updaterPreferencesSaveState, setUpdaterPreferencesSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -406,6 +410,8 @@ export function SettingsView({
       typeof parsed.update_channel === "string" && parsed.update_channel === "stable"
         ? parsed.update_channel
         : "stable";
+    const operationPermissionMode =
+      parsed.operation_permission_mode === "full_access" ? "full_access" : "standard";
     return {
       default_work_dir: typeof parsed.default_work_dir === "string" ? parsed.default_work_dir : "",
       default_language:
@@ -434,6 +440,7 @@ export function SettingsView({
       launch_minimized:
         typeof parsed.launch_minimized === "boolean" ? parsed.launch_minimized : false,
       close_to_tray: typeof parsed.close_to_tray === "boolean" ? parsed.close_to_tray : true,
+      operation_permission_mode: operationPermissionMode,
     };
   }
 
@@ -483,6 +490,7 @@ export function SettingsView({
         launch_at_login: runtimePreferences.launch_at_login,
         launch_minimized: runtimePreferences.launch_minimized,
         close_to_tray: runtimePreferences.close_to_tray,
+        operation_permission_mode: runtimePreferences.operation_permission_mode,
       });
       setDesktopPreferencesSaveState("saved");
       setTimeout(() => setDesktopPreferencesSaveState("idle"), 1200);
@@ -490,6 +498,37 @@ export function SettingsView({
       setDesktopPreferencesSaveState("error");
       setDesktopPreferencesError("保存桌面设置失败: " + String(e));
     }
+  }
+
+  function requestOperationPermissionModeChange(nextMode: "standard" | "full_access") {
+    if (nextMode !== "full_access") {
+      setRuntimePreferences((prev) => ({
+        ...prev,
+        operation_permission_mode: "standard",
+      }));
+      return;
+    }
+    if (runtimePreferences.operation_permission_mode === "full_access") {
+      return;
+    }
+    setPendingPermissionMode(nextMode);
+    setShowPermissionModeConfirm(true);
+  }
+
+  function handleConfirmOperationPermissionMode() {
+    if (pendingPermissionMode) {
+      setRuntimePreferences((prev) => ({
+        ...prev,
+        operation_permission_mode: pendingPermissionMode,
+      }));
+    }
+    setPendingPermissionMode(null);
+    setShowPermissionModeConfirm(false);
+  }
+
+  function handleCancelOperationPermissionMode() {
+    setPendingPermissionMode(null);
+    setShowPermissionModeConfirm(false);
   }
 
   async function handleSaveUpdaterPreferences() {
@@ -947,7 +986,7 @@ export function SettingsView({
     }
     setError("");
     try {
-      await invoke("save_model_config", {
+      const savedModelId = await invoke<string>("save_model_config", {
         config: {
           id: editingModelId || "",
           name: form.name.trim(),
@@ -960,6 +999,9 @@ export function SettingsView({
         },
         apiKey: form.api_key.trim(),
       });
+      if (!editingModelId) {
+        await invoke("set_default_model", { modelId: savedModelId });
+      }
       resetModelForm();
       await loadModels();
     } catch (e: unknown) {
@@ -1040,6 +1082,11 @@ export function SettingsView({
     if (editingModelId === id) {
       resetModelForm();
     }
+    await loadModels();
+  }
+
+  async function handleSetDefaultModel(id: string) {
+    await invoke("set_default_model", { modelId: id });
     await loadModels();
   }
 
@@ -1276,6 +1323,14 @@ export function SettingsView({
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                {!m.is_default && (
+                  <button
+                    onClick={() => handleSetDefaultModel(m.id)}
+                    className="text-blue-400 hover:text-blue-500 text-xs"
+                  >
+                    设为默认
+                  </button>
+                )}
                 <button
                   onClick={() => handleEditModel(m)}
                   className="text-blue-500 hover:text-blue-600 text-xs"
@@ -1801,6 +1856,44 @@ export function SettingsView({
                 </div>
               </div>
             </div>
+            <section className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 space-y-3">
+              <div>
+                <div className="text-xs font-medium text-gray-500">操作权限</div>
+                <div className="mt-1 text-xs text-gray-400">
+                  控制智能体执行本地操作时的默认确认方式。
+                </div>
+              </div>
+              <label className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+                <input
+                  type="radio"
+                  name="operation-permission-mode"
+                  aria-label="标准模式（推荐）"
+                  checked={runtimePreferences.operation_permission_mode === "standard"}
+                  onChange={() => requestOperationPermissionModeChange("standard")}
+                />
+                <span>
+                  <span className="block font-medium text-gray-800">标准模式（推荐）</span>
+                  <span className="mt-1 block text-gray-500">
+                    大部分操作自动执行，仅在删除、永久覆盖、外部提交等高危操作时确认。
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+                <input
+                  type="radio"
+                  name="operation-permission-mode"
+                  aria-label="全自动模式"
+                  checked={runtimePreferences.operation_permission_mode === "full_access"}
+                  onChange={() => requestOperationPermissionModeChange("full_access")}
+                />
+                <span>
+                  <span className="block font-medium text-gray-800">全自动模式</span>
+                  <span className="mt-1 block text-gray-500">
+                    所有操作自动执行，适合可信任务与熟悉环境。
+                  </span>
+                </span>
+              </label>
+            </section>
             <label className="flex items-center gap-2 text-xs text-gray-600">
               <input
                 aria-label="开机启动"
@@ -2618,6 +2711,20 @@ export function SettingsView({
           </button>
         </div>
       )}
+
+      <RiskConfirmDialog
+        open={showPermissionModeConfirm}
+        level="high"
+        title="切换为全自动模式"
+        summary="该模式会跳过高危操作确认，请仅在可信任务与熟悉环境下使用。"
+        impact="可能直接执行删除、覆盖、发送、提交等不可逆操作。"
+        irreversible
+        confirmLabel="确认切换"
+        cancelLabel="取消"
+        loading={false}
+        onConfirm={handleConfirmOperationPermissionMode}
+        onCancel={handleCancelOperationPermissionMode}
+      />
 
     </div>
   );

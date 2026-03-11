@@ -44,7 +44,7 @@ import {
   ExpertPreviewPayload,
   ExpertPreviewResult,
 } from "./components/experts/ExpertCreateView";
-import { SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message, AgentEmployee, EmployeeGroup, UpsertAgentEmployeeInput } from "./types";
+import { SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message, AgentEmployee, EmployeeGroup, UpsertAgentEmployeeInput, RuntimePreferences } from "./types";
 
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SkillAction = "refresh" | "delete" | "check-update" | "update";
@@ -63,6 +63,7 @@ const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 const BUILTIN_EMPLOYEE_CREATOR_SKILL_ID = "builtin-employee-creator";
 const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
 const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
+const DEFAULT_OPERATION_PERMISSION_MODE: "standard" | "full_access" = "standard";
 const EMPLOYEE_ASSISTANT_DISPLAY_NAME = "智能体员工助手";
 const EMPLOYEE_CREATOR_STARTER_PROMPT =
   "请帮我创建一个新的智能体员工。先问我 1-2 个关键问题，再给出配置草案，确认后再执行创建。";
@@ -184,7 +185,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [activeMainView, setActiveMainView] = useState<MainView>("start-task");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [newSessionPermissionMode, setNewSessionPermissionMode] = useState<"default" | "accept_edits" | "unrestricted">("accept_edits");
+  const [operationPermissionMode, setOperationPermissionMode] = useState<"standard" | "full_access">(
+    DEFAULT_OPERATION_PERMISSION_MODE
+  );
   const [creatingSession, setCreatingSession] = useState(false);
   const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [creatingExpertSkill, setCreatingExpertSkill] = useState(false);
@@ -299,7 +302,7 @@ export default function App() {
       workDir: input.workDir || "",
       employeeId: input.employeeId || "",
       title: input.title,
-      permissionMode: newSessionPermissionMode,
+      permissionMode: operationPermissionMode,
       sessionMode: input.sessionMode,
       teamId: input.sessionMode === "team_entry" ? input.teamId || "" : "",
     });
@@ -309,6 +312,7 @@ export default function App() {
     loadSkills();
     loadModels();
     loadSearchConfigs();
+    loadRuntimePreferences();
     loadEmployees();
     loadEmployeeGroups();
     if (typeof window !== "undefined" && window.location.hash) {
@@ -319,6 +323,18 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadRuntimePreferences() {
+    try {
+      const prefs = await invoke<RuntimePreferences>("get_runtime_preferences");
+      setOperationPermissionMode(
+        prefs.operation_permission_mode === "full_access" ? "full_access" : "standard"
+      );
+    } catch (error) {
+      console.warn("加载运行时偏好失败:", error);
+      setOperationPermissionMode(DEFAULT_OPERATION_PERMISSION_MODE);
+    }
+  }
 
   useEffect(() => {
     if (models.length === 0 || searchConfigs.length === 0) {
@@ -1391,10 +1407,13 @@ export default function App() {
     setQuickModelSaving(true);
     setQuickModelError("");
     try {
-      await invoke("save_model_config", {
+      const savedModelId = await invoke<string>("save_model_config", {
         config: getQuickModelConfig(models.length === 0),
         apiKey,
       });
+      if (models.length > 0) {
+        await invoke("set_default_model", { modelId: savedModelId });
+      }
       await loadModels();
       setQuickModelForm((prev) => ({ ...prev, api_key: "" }));
       setQuickModelTestResult(null);
@@ -1688,8 +1707,6 @@ export default function App() {
         sessions={sessions}
         selectedSessionId={selectedSessionId}
         onSelectSession={setSelectedSessionId}
-        newSessionPermissionMode={newSessionPermissionMode}
-        onChangeNewSessionPermissionMode={setNewSessionPermissionMode}
         onDeleteSession={handleDeleteSession}
         onSettings={() => {
           navigate("start-task");
@@ -2461,6 +2478,7 @@ export default function App() {
                 sessionSourceLabel={selectedSession?.source_label}
                 sessionTitle={selectedSession?.title}
                 sessionMode={selectedSession?.session_mode}
+                operationPermissionMode={operationPermissionMode}
                 onSessionUpdate={handleSessionRefresh}
                 installedSkillIds={skills.map((s) => s.id)}
                 onSkillInstalled={handleSkillInstalledFromChat}

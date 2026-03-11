@@ -293,6 +293,7 @@ pub fn run() {
             commands::models::export_route_attempt_logs_csv,
             commands::models::list_search_configs,
             commands::models::test_search_connection,
+            commands::models::set_default_model,
             commands::models::set_default_search,
             commands::models::list_builtin_provider_plugins,
             commands::models::get_routing_settings,

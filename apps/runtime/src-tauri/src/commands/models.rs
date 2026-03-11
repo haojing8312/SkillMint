@@ -1062,7 +1062,15 @@ pub async fn save_model_config(
     config: ModelConfig,
     api_key: String,
     db: State<'_, DbState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    save_model_config_with_pool(&db.0, config, api_key).await
+}
+
+pub async fn save_model_config_with_pool(
+    db: &SqlitePool,
+    config: ModelConfig,
+    api_key: String,
+) -> Result<String, String> {
     let id = if config.id.is_empty() {
         Uuid::new_v4().to_string()
     } else {
@@ -1079,7 +1087,7 @@ pub async fn save_model_config(
     .bind(&config.model_name)
     .bind(config.is_default)
     .bind(&api_key)
-    .execute(&db.0)
+    .execute(db)
     .await
     .map_err(|e| format!("保存模型配置失败: {e}"))?;
 
@@ -1090,7 +1098,7 @@ pub async fn save_model_config(
         &api_key[api_key.len().saturating_sub(4)..]
     );
 
-    Ok(())
+    Ok(id)
 }
 
 #[tauri::command]
@@ -1134,11 +1142,40 @@ pub async fn get_model_api_key(model_id: String, db: State<'_, DbState>) -> Resu
 
 #[tauri::command]
 pub async fn delete_model_config(model_id: String, db: State<'_, DbState>) -> Result<(), String> {
+    delete_model_config_with_pool(&db.0, &model_id).await
+}
+
+pub async fn delete_model_config_with_pool(db: &SqlitePool, model_id: &str) -> Result<(), String> {
+    let deleted_row = sqlx::query_as::<_, (bool, String)>(
+        "SELECT CAST(is_default AS BOOLEAN), api_format FROM model_configs WHERE id = ?",
+    )
+    .bind(model_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| e.to_string())?;
+
     sqlx::query("DELETE FROM model_configs WHERE id = ?")
-        .bind(&model_id)
-        .execute(&db.0)
+        .bind(model_id)
+        .execute(db)
         .await
         .map_err(|e| e.to_string())?;
+
+    if let Some((was_default, api_format)) = deleted_row {
+        if was_default && !api_format.starts_with("search_") {
+            let replacement =
+                sqlx::query_as::<_, (String,)>(
+                    "SELECT id FROM model_configs WHERE api_format NOT LIKE 'search_%' ORDER BY rowid ASC LIMIT 1",
+                )
+                .fetch_optional(db)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if let Some((replacement_id,)) = replacement {
+                set_default_model_with_pool(db, &replacement_id).await?;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1224,6 +1261,28 @@ pub async fn set_default_search(config_id: String, db: State<'_, DbState>) -> Re
         .execute(&db.0)
         .await
         .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_default_model(model_id: String, db: State<'_, DbState>) -> Result<(), String> {
+    set_default_model_with_pool(&db.0, &model_id).await
+}
+
+pub async fn set_default_model_with_pool(db: &SqlitePool, model_id: &str) -> Result<(), String> {
+    sqlx::query("UPDATE model_configs SET is_default = 0 WHERE api_format NOT LIKE 'search_%'")
+        .execute(db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query(
+        "UPDATE model_configs SET is_default = 1 WHERE id = ? AND api_format NOT LIKE 'search_%'",
+    )
+    .bind(model_id)
+    .execute(db)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
