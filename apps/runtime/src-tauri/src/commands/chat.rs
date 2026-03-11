@@ -432,6 +432,31 @@ pub async fn create_session(
     team_id: Option<String>,
     db: State<'_, DbState>,
 ) -> Result<String, String> {
+    create_session_with_pool(
+        &db.0,
+        skill_id,
+        model_id,
+        work_dir,
+        employee_id,
+        title,
+        permission_mode,
+        session_mode,
+        team_id,
+    )
+    .await
+}
+
+pub async fn create_session_with_pool(
+    pool: &sqlx::SqlitePool,
+    skill_id: String,
+    model_id: String,
+    work_dir: Option<String>,
+    employee_id: Option<String>,
+    title: Option<String>,
+    permission_mode: Option<String>,
+    session_mode: Option<String>,
+    team_id: Option<String>,
+) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let prepared = ChatPreparationService::new().prepare_session_creation(SessionCreationRequest {
@@ -443,7 +468,7 @@ pub async fn create_session(
         employee_id,
     });
     let resolved_work_dir = if prepared.normalized_work_dir.is_empty() {
-        resolve_default_work_dir_with_pool(&db.0).await?
+        resolve_default_work_dir_with_pool(pool).await?
     } else {
         prepared.normalized_work_dir
     };
@@ -460,7 +485,7 @@ pub async fn create_session(
     .bind(&prepared.normalized_employee_id)
     .bind(&prepared.session_mode_storage)
     .bind(&prepared.normalized_team_id)
-    .execute(&db.0)
+    .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
     Ok(session_id)
