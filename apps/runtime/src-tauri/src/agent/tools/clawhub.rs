@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::agent::executor::truncate_tool_output;
 use crate::agent::types::{Tool, ToolContext};
+use runtime_executor_core::truncate_tool_output;
 
 const DEFAULT_CLAWHUB_BASE: &str = "https://www.clawhub.ai";
 const OUTPUT_MAX_CHARS: usize = 30_000;

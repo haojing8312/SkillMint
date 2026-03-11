@@ -1,7 +1,7 @@
-use crate::agent::executor::truncate_tool_output;
 use crate::agent::types::{Tool, ToolContext};
 use crate::commands::clawhub::{download_github_skill_repo_to_dir, workspace_import_base_dir};
 use anyhow::{anyhow, Result};
+use runtime_executor_core::truncate_tool_output;
 use serde_json::{json, Value};
 
 const OUTPUT_MAX_CHARS: usize = 30_000;

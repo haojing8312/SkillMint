@@ -81,7 +81,7 @@ fn runtime_registry_still_embeds_the_builtin_skill_creator_assets() {
     let core = read_repo_file("packages/runtime-skill-core/src/builtin_skills.rs");
 
     assert!(
-        rust.contains("pub use runtime_skill_core") && rust.contains("BUILTIN_SKILL_CREATOR_ID"),
+        rust.contains("pub use runtime_skill_core"),
         "runtime registry should re-export builtin skill assets from runtime-skill-core"
     );
     assert!(

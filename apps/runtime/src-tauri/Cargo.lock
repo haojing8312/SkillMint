@@ -3644,7 +3644,9 @@ dependencies = [
  "glob",
  "regex",
  "reqwest 0.12.28",
+ "runtime-executor-core",
  "runtime-policy",
+ "runtime-routing-core",
  "runtime-skill-core",
  "serde",
  "serde_json",
@@ -3667,11 +3669,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-executor-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "runtime-policy"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "runtime-routing-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
 ]
 
 [[package]]

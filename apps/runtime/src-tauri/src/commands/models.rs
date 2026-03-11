@@ -1,6 +1,11 @@
 use super::skills::DbState;
 use crate::providers::ProviderRegistry;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use runtime_routing_core::{
+    builtin_capability_route_templates, cache_row_is_fresh, default_model_for_protocol,
+    filter_models_by_capability, list_capability_route_templates_for,
+    recommended_models_for_provider, CapabilityRouteTemplateInfo,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
@@ -93,127 +98,6 @@ pub struct RouteAttemptStat {
     pub error_kind: String,
     pub success: bool,
     pub count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityRouteTemplateInfo {
-    pub template_id: String,
-    pub name: String,
-    pub description: String,
-    pub capability: String,
-}
-
-struct TemplateFallbackDef {
-    provider_keys: &'static [&'static str],
-    model: &'static str,
-}
-
-struct CapabilityRouteTemplateDef {
-    template_id: &'static str,
-    name: &'static str,
-    description: &'static str,
-    capability: &'static str,
-    primary_provider_keys: &'static [&'static str],
-    primary_model: &'static str,
-    fallback: &'static [TemplateFallbackDef],
-    timeout_ms: i64,
-    retry_count: i64,
-}
-
-fn builtin_capability_route_templates() -> Vec<CapabilityRouteTemplateDef> {
-    vec![
-        CapabilityRouteTemplateDef {
-            template_id: "china-first-p0",
-            name: "中国优先 P0",
-            description: "优先使用 DeepSeek/Qwen/Kimi，兼顾成本与可用性",
-            capability: "chat",
-            primary_provider_keys: &["deepseek", "qwen", "moonshot"],
-            primary_model: "deepseek-chat",
-            fallback: &[
-                TemplateFallbackDef {
-                    provider_keys: &["qwen"],
-                    model: "qwen-plus",
-                },
-                TemplateFallbackDef {
-                    provider_keys: &["moonshot"],
-                    model: "kimi-k2",
-                },
-            ],
-            timeout_ms: 60000,
-            retry_count: 1,
-        },
-        CapabilityRouteTemplateDef {
-            template_id: "china-first-p0",
-            name: "中国优先 P0",
-            description: "视觉任务优先走国内多模态",
-            capability: "vision",
-            primary_provider_keys: &["qwen"],
-            primary_model: "qwen-vl-max",
-            fallback: &[TemplateFallbackDef {
-                provider_keys: &["deepseek"],
-                model: "deepseek-chat",
-            }],
-            timeout_ms: 90000,
-            retry_count: 1,
-        },
-        CapabilityRouteTemplateDef {
-            template_id: "china-first-p0",
-            name: "中国优先 P0",
-            description: "生图优先国内，海外作为兜底",
-            capability: "image_gen",
-            primary_provider_keys: &["qwen"],
-            primary_model: "wanx2.1-t2i-plus",
-            fallback: &[TemplateFallbackDef {
-                provider_keys: &["openai"],
-                model: "gpt-image-1",
-            }],
-            timeout_ms: 120000,
-            retry_count: 1,
-        },
-        CapabilityRouteTemplateDef {
-            template_id: "china-first-p0",
-            name: "中国优先 P0",
-            description: "语音转写优先国内 ASR",
-            capability: "audio_stt",
-            primary_provider_keys: &["qwen"],
-            primary_model: "paraformer-v2",
-            fallback: &[TemplateFallbackDef {
-                provider_keys: &["openai"],
-                model: "gpt-4o-mini-transcribe",
-            }],
-            timeout_ms: 90000,
-            retry_count: 1,
-        },
-        CapabilityRouteTemplateDef {
-            template_id: "china-first-p0",
-            name: "中国优先 P0",
-            description: "语音合成优先国内 TTS",
-            capability: "audio_tts",
-            primary_provider_keys: &["qwen"],
-            primary_model: "cosyvoice-v1",
-            fallback: &[TemplateFallbackDef {
-                provider_keys: &["openai"],
-                model: "gpt-4o-mini-tts",
-            }],
-            timeout_ms: 60000,
-            retry_count: 1,
-        },
-    ]
-}
-
-pub fn list_capability_route_templates_for(
-    capability: Option<&str>,
-) -> Vec<CapabilityRouteTemplateInfo> {
-    builtin_capability_route_templates()
-        .into_iter()
-        .filter(|t| capability.map(|c| c == t.capability).unwrap_or(true))
-        .map(|t| CapabilityRouteTemplateInfo {
-            template_id: t.template_id.to_string(),
-            name: t.name.to_string(),
-            description: t.description.to_string(),
-            capability: t.capability.to_string(),
-        })
-        .collect()
 }
 
 pub async fn apply_capability_route_template_from_pool(
@@ -471,14 +355,6 @@ pub async fn get_chat_routing_policy_from_pool(
     }))
 }
 
-fn default_model_for_protocol(protocol_type: &str) -> &str {
-    if protocol_type == "anthropic" {
-        "claude-3-5-haiku-20241022"
-    } else {
-        "gpt-4o-mini"
-    }
-}
-
 async fn check_provider_health_from_pool(
     db: &SqlitePool,
     provider_id: &str,
@@ -536,94 +412,6 @@ async fn check_provider_health_from_pool(
             message: err.to_string(),
         }),
     }
-}
-
-fn recommended_models_for_provider(provider_key: &str) -> Vec<String> {
-    match provider_key {
-        "deepseek" => vec!["deepseek-chat".to_string(), "deepseek-reasoner".to_string()],
-        "qwen" => vec![
-            "qwen-max".to_string(),
-            "qwen-plus".to_string(),
-            "qwen-vl-max".to_string(),
-            "qwen-vl-plus".to_string(),
-            "qwen-tts".to_string(),
-            "qwen-omni".to_string(),
-        ],
-        "moonshot" => vec![
-            "kimi-k2".to_string(),
-            "moonshot-v1-32k".to_string(),
-            "moonshot-v1-128k".to_string(),
-        ],
-        "anthropic" => vec![
-            "claude-3-5-haiku-20241022".to_string(),
-            "claude-3-5-sonnet-20241022".to_string(),
-            "claude-sonnet-4-5-20250929".to_string(),
-        ],
-        _ => vec![
-            "gpt-4o-mini".to_string(),
-            "gpt-4.1-mini".to_string(),
-            "gpt-image-1".to_string(),
-            "whisper-1".to_string(),
-            "tts-1".to_string(),
-        ],
-    }
-}
-
-fn filter_models_by_capability(models: Vec<String>, capability: Option<&str>) -> Vec<String> {
-    let Some(capability) = capability else {
-        return models;
-    };
-    let original = models.clone();
-    let filtered = if capability == "vision" {
-        models
-            .into_iter()
-            .filter(|m| {
-                m.contains("vl") || m.contains("4o") || m.contains("claude") || m.contains("omni")
-            })
-            .collect::<Vec<_>>()
-    } else if capability == "reasoning" {
-        models
-            .into_iter()
-            .filter(|m| m.contains("reasoner") || m.contains("k2") || m.contains("sonnet"))
-            .collect::<Vec<_>>()
-    } else if capability == "image_gen" {
-        models
-            .into_iter()
-            .filter(|m| {
-                m.contains("image")
-                    || m.contains("vl")
-                    || m.contains("omni")
-                    || m.contains("cogview")
-            })
-            .collect::<Vec<_>>()
-    } else if capability == "audio_stt" {
-        models
-            .into_iter()
-            .filter(|m| m.contains("whisper") || m.contains("stt") || m.contains("omni"))
-            .collect::<Vec<_>>()
-    } else if capability == "audio_tts" {
-        models
-            .into_iter()
-            .filter(|m| m.contains("tts") || m.contains("omni"))
-            .collect::<Vec<_>>()
-    } else {
-        models
-    };
-    if filtered.is_empty() {
-        original
-    } else {
-        filtered
-    }
-}
-
-fn cache_row_is_fresh(fetched_at: &str, ttl_seconds: i64) -> bool {
-    let Ok(parsed) = DateTime::parse_from_rfc3339(fetched_at) else {
-        return false;
-    };
-    let age = Utc::now()
-        .signed_duration_since(parsed.with_timezone(&Utc))
-        .num_seconds();
-    age >= 0 && age < ttl_seconds
 }
 
 pub async fn list_provider_models_from_pool(
@@ -1101,8 +889,59 @@ pub async fn save_model_config_with_pool(
     Ok(id)
 }
 
+async fn query_candidate_model_id_with_pool(
+    db: &SqlitePool,
+    default_only: bool,
+    require_api_key: bool,
+) -> Result<Option<String>, String> {
+    let mut sql =
+        String::from("SELECT id FROM model_configs WHERE api_format NOT LIKE 'search_%'");
+    if default_only {
+        sql.push_str(" AND is_default = 1");
+    }
+    if require_api_key {
+        sql.push_str(" AND TRIM(api_key) != ''");
+    }
+    sql.push_str(" ORDER BY rowid ASC LIMIT 1");
+
+    sqlx::query_as::<_, (String,)>(&sql)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| e.to_string())
+        .map(|row| row.map(|(id,)| id))
+}
+
+async fn resolve_default_model_id_internal_with_pool(
+    db: &SqlitePool,
+    require_api_key: bool,
+) -> Result<Option<String>, String> {
+    if let Some(id) = query_candidate_model_id_with_pool(db, true, require_api_key).await? {
+        return Ok(Some(id));
+    }
+
+    let fallback = query_candidate_model_id_with_pool(db, false, require_api_key).await?;
+    if let Some(id) = fallback.as_deref() {
+        set_default_model_with_pool(db, id).await?;
+    }
+    Ok(fallback)
+}
+
+pub async fn resolve_default_model_id_with_pool(
+    db: &SqlitePool,
+) -> Result<Option<String>, String> {
+    resolve_default_model_id_internal_with_pool(db, false).await
+}
+
+pub async fn resolve_default_usable_model_id_with_pool(
+    db: &SqlitePool,
+) -> Result<Option<String>, String> {
+    resolve_default_model_id_internal_with_pool(db, true).await
+}
+
 #[tauri::command]
 pub async fn list_model_configs(db: State<'_, DbState>) -> Result<Vec<ModelConfig>, String> {
+    resolve_default_model_id_with_pool(&db.0).await?;
+
     let rows = sqlx::query_as::<_, (String, String, String, String, String, bool)>(
         "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN) FROM model_configs WHERE api_format NOT LIKE 'search_%'"
     )

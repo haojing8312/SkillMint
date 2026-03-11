@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
-use crate::agent::executor::truncate_tool_output;
 use crate::agent::types::{Tool, ToolContext};
+use runtime_executor_core::truncate_tool_output;
 
 /// 获取指定 URL 的内容，自动清洗 HTML 标签
 pub struct WebFetchTool;
