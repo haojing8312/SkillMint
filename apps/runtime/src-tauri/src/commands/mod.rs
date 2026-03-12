@@ -1,8 +1,16 @@
 pub mod agent_profile;
 pub mod channel_connectors;
 pub mod chat;
+pub(crate) mod chat_compaction;
+pub mod chat_control;
+pub(crate) mod chat_policy;
 pub mod chat_repo;
+pub(crate) mod chat_route_execution;
 pub(crate) mod chat_runtime_io;
+pub(crate) mod chat_send_message_flow;
+pub(crate) mod chat_session_io;
+pub mod chat_session_commands;
+pub(crate) mod chat_tool_setup;
 pub mod clawhub;
 pub mod desktop_lifecycle;
 pub mod dialog;
