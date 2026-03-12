@@ -66,6 +66,7 @@ type GroupTemplateConfig = {
 type EmployeeHubTab = "overview" | "employees" | "teams" | "runs" | "settings";
 
 const FEISHU_BROWSER_SETUP_POLL_INTERVAL_MS = 5000;
+const BROWSER_BRIDGE_INSTALL_POLL_INTERVAL_MS = 5000;
 
 function isFeishuBrowserSetupTerminalStep(step: string): boolean {
   return step === "ENABLE_LONG_CONNECTION" || step === "FAILED";
@@ -244,6 +245,26 @@ export function EmployeeHubView({
       disposed = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (browserBridgeInstallStatus?.state !== "waiting_for_enable") return;
+
+    let disposed = false;
+    const timer = setInterval(() => {
+      void invoke<BrowserBridgeInstallStatus>("get_browser_bridge_install_status")
+        .then((status) => {
+          if (!disposed) setBrowserBridgeInstallStatus(status);
+        })
+        .catch((error) => {
+          if (!disposed) setMessage(String(error));
+        });
+    }, BROWSER_BRIDGE_INSTALL_POLL_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [browserBridgeInstallStatus?.state]);
 
   useEffect(() => {
     const normalized = employees

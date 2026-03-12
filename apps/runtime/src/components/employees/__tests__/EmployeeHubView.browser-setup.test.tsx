@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 describe("EmployeeHubView browser setup panel", () => {
   beforeEach(() => {
-    const installStatus: BrowserBridgeInstallStatus = {
+    let installStatus: BrowserBridgeInstallStatus = {
       state: "not_installed",
       chrome_found: true,
       native_host_installed: false,
@@ -45,14 +45,18 @@ describe("EmployeeHubView browser setup panel", () => {
         return Promise.resolve({ relay: null, sidecar: null });
       }
       if (command === "get_browser_bridge_install_status") {
-        return Promise.resolve({
-          state: "not_installed",
+        return Promise.resolve(installStatus);
+      }
+      if (command === "install_browser_bridge") {
+        installStatus = {
+          state: "waiting_for_enable",
           chrome_found: true,
-          native_host_installed: false,
-          extension_dir_ready: false,
+          native_host_installed: true,
+          extension_dir_ready: true,
           bridge_connected: false,
           last_error: null,
-        } satisfies BrowserBridgeInstallStatus);
+        };
+        return Promise.resolve(installStatus);
       }
       if (command === "start_feishu_browser_setup") {
         expect(payload).toMatchObject({ provider: "feishu" });
@@ -122,6 +126,32 @@ describe("EmployeeHubView browser setup panel", () => {
         url: "https://open.feishu.cn/?workclaw_session_id=sess-1",
       });
     });
+  });
+
+  test("installs browser bridge from settings tab", async () => {
+    render(
+      <EmployeeHubView
+        employees={[]}
+        skills={[]}
+        selectedEmployeeId={null}
+        onSelectEmployee={() => {}}
+        onSaveEmployee={async () => {}}
+        onDeleteEmployee={async () => {}}
+        onSetAsMainAndEnter={() => {}}
+        onStartTaskWithEmployee={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: "安装浏览器桥接" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("install_browser_bridge");
+    });
+
+    expect(
+      screen.getByText("请在 Chrome 扩展页开启开发者模式，并加载已为你准备好的 WorkClaw 扩展目录"),
+    ).toBeInTheDocument();
   });
 
   test("polls browser setup session until terminal step", async () => {

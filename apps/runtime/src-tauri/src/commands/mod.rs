@@ -1,6 +1,7 @@
 pub mod agent_profile;
-pub mod chat;
+pub mod browser_bridge_install;
 pub mod channel_connectors;
+pub mod chat;
 pub mod chat_repo;
 pub mod clawhub;
 pub mod content_providers;
