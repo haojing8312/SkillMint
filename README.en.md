@@ -367,6 +367,7 @@ The following docs are optional for most end users and mainly target integrators
 - Feishu routing integration (CN): [docs/integrations/feishu-routing.md](docs/integrations/feishu-routing.md)
 - Employee identity and memory model (`employee_id`) (CN): [docs/architecture/employee-identity-model.md](docs/architecture/employee-identity-model.md)
 - OpenClaw upgrade runbook (CN): [docs/maintainers/openclaw-upgrade.md](docs/maintainers/openclaw-upgrade.md)
+- Agent-Reach external capability integration: [docs/integrations/agent-reach-external-capabilities.md](docs/integrations/agent-reach-external-capabilities.md)
 - Skill installation troubleshooting (CN): [docs/troubleshooting/skill-installation.md](docs/troubleshooting/skill-installation.md)
 
 ## License

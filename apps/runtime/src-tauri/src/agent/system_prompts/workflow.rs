@@ -6,3 +6,8 @@ pub const AGENT_WORKFLOW_PROMPT: &str = r#"# 工作流程
 3. 执行后验证结果，遇错误先分析原因再修复
 4. 完成后简要总结
 "#;
+
+pub use runtime_skill_core::{
+    apply_builtin_todowrite_governance, is_multistep_builtin_skill,
+    BUILTIN_MULTISTEP_TODOWRITE_GOVERNANCE,
+};

@@ -364,6 +364,7 @@ README 仅保留高层路线图，详细技术计划与迭代记录维护在 [do
 - 飞书路由集成说明：[docs/integrations/feishu-routing.md](docs/integrations/feishu-routing.md)
 - 员工身份与长期记忆模型（`employee_id`）：[docs/architecture/employee-identity-model.md](docs/architecture/employee-identity-model.md)
 - OpenClaw 升级维护手册：[docs/maintainers/openclaw-upgrade.md](docs/maintainers/openclaw-upgrade.md)
+- Agent-Reach 外部能力接入：[docs/integrations/agent-reach-external-capabilities.md](docs/integrations/agent-reach-external-capabilities.md)
 - 技能安装排错（重名冲突等）：[docs/troubleshooting/skill-installation.md](docs/troubleshooting/skill-installation.md)
 
 ## 许可证
