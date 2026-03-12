@@ -1,4 +1,3 @@
-use super::chat_route_execution::{self, RouteExecutionParams};
 use super::chat_runtime_io as chat_io;
 use super::chat_send_message_flow::{self, PrepareSendMessageParams};
 use super::chat_session_io;
@@ -387,30 +386,15 @@ pub async fn send_message(
     )
     .await?;
 
-    let route_execution = chat_route_execution::execute_route_candidates(RouteExecutionParams {
-        app: &app,
-        agent_executor: agent_executor.as_ref(),
-        db: &db.0,
-        session_id: &session_id,
-        requested_capability: &prepared_context.requested_capability,
-        route_candidates: &prepared_context.route_candidates,
-        per_candidate_retry_count: prepared_context.per_candidate_retry_count,
-        system_prompt: &prepared_context.prepared_runtime_tools.system_prompt,
-        messages: &prepared_context.messages,
-        allowed_tools: prepared_context.prepared_runtime_tools.allowed_tools.as_deref(),
-        permission_mode: prepared_context.permission_mode,
+    let route_execution = chat_send_message_flow::execute_send_message_route(
+        &app,
+        agent_executor.as_ref(),
+        &db.0,
+        &session_id,
+        &prepared_context,
+        cancel_flag_clone.clone(),
         tool_confirm_responder,
-        executor_work_dir: prepared_context.executor_work_dir.clone(),
-        max_iterations: prepared_context.max_iterations,
-        cancel_flag: cancel_flag_clone.clone(),
-        node_timeout_seconds: prepared_context.node_timeout_seconds,
-        route_retry_count: prepared_context.route_retry_count,
-        classify_error: classify_model_route_error,
-        error_kind_key: model_route_error_kind_key,
-        should_retry_same_candidate,
-        retry_budget_for_error,
-        retry_backoff_ms,
-    })
+    )
     .await;
 
     chat_send_message_flow::finalize_send_message_execution(
