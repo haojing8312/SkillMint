@@ -35,6 +35,7 @@ apps/runtime/test-results/
 
 # local temporary debug artifacts
 .tmp_*
+.tmp-*.log
 /0
 /x.l.includes('employees')
 apps/runtime/src-tauri/target-tests/
