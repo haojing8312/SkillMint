@@ -6,8 +6,6 @@ export function getNativeHostName(): string {
   return "dev.workclaw.runtime";
 }
 
-const INSTALL_HELLO_SESSION_ID = "browser-bridge-install";
-
 type FetchLike = typeof fetch;
 type ChromeLike = {
   runtime?: {
@@ -35,10 +33,6 @@ type FeishuCredentialReportMessage = {
   appSecret: string;
 };
 
-type BrowserBridgeReadyMessage = {
-  type: "workclaw.browser-bridge-ready";
-};
-
 export async function forwardCredentialsToLocalBridge(
   input: {
     sessionId: string;
@@ -57,21 +51,6 @@ export async function forwardCredentialsToLocalBridge(
       type: "credentials.report",
       appId: input.appId,
       appSecret: input.appSecret,
-    },
-  });
-}
-
-export async function sendBrowserBridgeHelloToLocalBridge(
-  baseUrl: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<BridgeEnvelope<BridgeResponse>> {
-  const client = createBridgeClient(baseUrl, fetchImpl);
-  return client.send({
-    version: 1,
-    sessionId: INSTALL_HELLO_SESSION_ID,
-    kind: "request",
-    payload: {
-      type: "bridge.hello",
     },
   });
 }
@@ -106,48 +85,6 @@ export function forwardCredentialsViaNativeHost(
       },
     });
   });
-}
-
-export function sendBrowserBridgeHelloViaNativeHost(
-  chromeLike: ChromeLike = globalThis as ChromeLike,
-): Promise<BridgeEnvelope<BridgeResponse>> {
-  const port = chromeLike.runtime?.connectNative?.(getNativeHostName());
-  if (!port) {
-    return Promise.reject(new Error("chrome native host unavailable"));
-  }
-
-  return new Promise((resolve) => {
-    port.onMessage.addListener((message: unknown) => {
-      resolve(message as BridgeEnvelope<BridgeResponse>);
-      port.disconnect();
-    });
-
-    port.postMessage({
-      version: 1,
-      sessionId: INSTALL_HELLO_SESSION_ID,
-      kind: "request",
-      payload: {
-        type: "bridge.hello",
-      },
-    });
-  });
-}
-
-export async function announceBrowserBridgeReady(
-  baseUrl: string,
-  dependencies: {
-    sendViaNativeHost?: typeof sendBrowserBridgeHelloViaNativeHost;
-    sendViaLocalBridge?: typeof sendBrowserBridgeHelloToLocalBridge;
-  } = {},
-): Promise<BridgeEnvelope<BridgeResponse>> {
-  const sendViaNativeHost = dependencies.sendViaNativeHost ?? sendBrowserBridgeHelloViaNativeHost;
-  const sendViaLocalBridge = dependencies.sendViaLocalBridge ?? sendBrowserBridgeHelloToLocalBridge;
-
-  try {
-    return await sendViaNativeHost();
-  } catch {
-    return sendViaLocalBridge(baseUrl);
-  }
 }
 
 export async function reportFeishuCredentialsFromDocument(
@@ -193,19 +130,11 @@ export async function handleFeishuExtensionMessage(
     bridgeBaseUrl: string;
     sendViaNativeHost?: typeof forwardCredentialsViaNativeHost;
     sendViaLocalBridge?: typeof forwardCredentialsToLocalBridge;
-    sendHelloViaNativeHost?: typeof sendBrowserBridgeHelloViaNativeHost;
-    sendHelloViaLocalBridge?: typeof sendBrowserBridgeHelloToLocalBridge;
     broadcastInstruction?: typeof maybeBroadcastBridgeInstruction;
   },
 ): Promise<BridgeEnvelope<BridgeResponse> | null> {
   if (!isFeishuCredentialReportMessage(message)) {
-    if (!isBrowserBridgeReadyMessage(message)) {
-      return null;
-    }
-    return announceBrowserBridgeReady(dependencies.bridgeBaseUrl, {
-      sendViaNativeHost: dependencies.sendHelloViaNativeHost,
-      sendViaLocalBridge: dependencies.sendHelloViaLocalBridge,
-    });
+    return null;
   }
 
   const sendViaNativeHost = dependencies.sendViaNativeHost ?? forwardCredentialsViaNativeHost;
@@ -264,8 +193,6 @@ export function registerFeishuBackgroundMessageHandler(
     bridgeBaseUrl: string;
     sendViaNativeHost?: typeof forwardCredentialsViaNativeHost;
     sendViaLocalBridge?: typeof forwardCredentialsToLocalBridge;
-    sendHelloViaNativeHost?: typeof sendBrowserBridgeHelloViaNativeHost;
-    sendHelloViaLocalBridge?: typeof sendBrowserBridgeHelloToLocalBridge;
   },
 ): void {
   chromeLike.runtime?.onMessage?.addListener((message: unknown) =>
@@ -287,18 +214,6 @@ function isFeishuCredentialReportMessage(message: unknown): message is FeishuCre
   );
 }
 
-function isBrowserBridgeReadyMessage(message: unknown): message is BrowserBridgeReadyMessage {
-  if (typeof message !== "object" || message === null) {
-    return false;
-  }
-
-  return (message as Partial<BrowserBridgeReadyMessage>).type === "workclaw.browser-bridge-ready";
-}
-
 registerFeishuBackgroundMessageHandler(globalThis as ChromeLike, {
   bridgeBaseUrl: "http://127.0.0.1:4312",
-});
-
-void announceBrowserBridgeReady("http://127.0.0.1:4312").catch(() => {
-  // Ignore startup handshake failures until the local bridge is installed.
 });

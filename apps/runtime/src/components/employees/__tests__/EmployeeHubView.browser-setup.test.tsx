@@ -1,6 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EmployeeHubView } from "../EmployeeHubView";
-import type { BrowserBridgeInstallStatus } from "../../../types";
 
 const invokeMock = vi.fn();
 
@@ -10,16 +9,6 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 describe("EmployeeHubView browser setup panel", () => {
   beforeEach(() => {
-    let installStatus: BrowserBridgeInstallStatus = {
-      state: "not_installed",
-      chrome_found: true,
-      native_host_installed: false,
-      extension_dir_ready: false,
-      bridge_connected: false,
-      last_error: null,
-    };
-    expect(installStatus.state).toBe("not_installed");
-
     invokeMock.mockReset();
     const sessionSnapshots = [
       {
@@ -43,20 +32,6 @@ describe("EmployeeHubView browser setup panel", () => {
       }
       if (command === "get_feishu_employee_connection_statuses") {
         return Promise.resolve({ relay: null, sidecar: null });
-      }
-      if (command === "get_browser_bridge_install_status") {
-        return Promise.resolve(installStatus);
-      }
-      if (command === "install_browser_bridge") {
-        installStatus = {
-          state: "waiting_for_enable",
-          chrome_found: true,
-          native_host_installed: true,
-          extension_dir_ready: true,
-          bridge_connected: false,
-          last_error: null,
-        };
-        return Promise.resolve(installStatus);
       }
       if (command === "start_feishu_browser_setup") {
         expect(payload).toMatchObject({ provider: "feishu" });
@@ -98,13 +73,6 @@ describe("EmployeeHubView browser setup panel", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "设置" }));
 
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("get_browser_bridge_install_status");
-    });
-
-    expect(screen.getByText("浏览器桥接安装")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "安装浏览器桥接" })).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole("button", { name: "启动飞书浏览器配置" }));
 
     await waitFor(() => {
@@ -126,32 +94,6 @@ describe("EmployeeHubView browser setup panel", () => {
         url: "https://open.feishu.cn/?workclaw_session_id=sess-1",
       });
     });
-  });
-
-  test("installs browser bridge from settings tab", async () => {
-    render(
-      <EmployeeHubView
-        employees={[]}
-        skills={[]}
-        selectedEmployeeId={null}
-        onSelectEmployee={() => {}}
-        onSaveEmployee={async () => {}}
-        onDeleteEmployee={async () => {}}
-        onSetAsMainAndEnter={() => {}}
-        onStartTaskWithEmployee={() => {}}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("tab", { name: "设置" }));
-    fireEvent.click(await screen.findByRole("button", { name: "安装浏览器桥接" }));
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("install_browser_bridge");
-    });
-
-    expect(
-      screen.getByText("请在 Chrome 扩展页开启开发者模式，并加载已为你准备好的 WorkClaw 扩展目录"),
-    ).toBeInTheDocument();
   });
 
   test("polls browser setup session until terminal step", async () => {

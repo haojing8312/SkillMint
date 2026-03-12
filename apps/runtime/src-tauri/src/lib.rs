@@ -3,7 +3,6 @@ pub mod agent;
 pub mod browser_bridge_callback;
 mod builtin_skills;
 pub mod commands;
-pub mod content_providers;
 mod db;
 pub mod im;
 pub mod providers;
@@ -18,7 +17,6 @@ use browser_bridge_callback::BrowserBridgeCallbackServer;
 use commands::chat::{
     AskUserState, CancelFlagState, SearchCacheState, ToolConfirmResponder, ToolConfirmState,
 };
-use commands::browser_bridge_install::BrowserBridgeInstallState;
 use commands::feishu_gateway::FeishuEventRelayState;
 use commands::skills::DbState;
 use session_journal::{SessionJournalStateHandle, SessionJournalStore};
@@ -279,15 +277,12 @@ pub fn run() {
             let pool = tauri::async_runtime::block_on(db::init_db(app.handle()))
                 .expect("failed to init db");
             let handles = initialize_runtime_state(app, pool.clone());
-            let browser_bridge_install_state = BrowserBridgeInstallState::default();
-            app.manage(browser_bridge_install_state.clone());
             let feishu_browser_setup_state =
                 commands::feishu_browser_setup::FeishuBrowserSetupState::default();
             app.manage(feishu_browser_setup_state.clone());
             let browser_bridge_callback = Arc::new(BrowserBridgeCallbackServer::new(
                 pool.clone(),
                 feishu_browser_setup_state.0.clone(),
-                browser_bridge_install_state.0.clone(),
             ));
             let browser_bridge_callback_base =
                 tauri::async_runtime::block_on(browser_bridge_callback.start())
@@ -356,11 +351,6 @@ pub fn run() {
             commands::models::list_builtin_provider_plugins,
             commands::models::get_routing_settings,
             commands::models::set_routing_settings,
-            commands::content_providers::list_content_providers,
-            commands::content_providers::run_content_provider_diagnostics,
-            commands::content_providers::list_external_capability_sources,
-            commands::content_providers::list_detected_external_mcp_servers,
-            commands::content_providers::import_detected_external_mcp_server,
             commands::runtime_preferences::get_runtime_preferences,
             commands::runtime_preferences::set_runtime_preferences,
             commands::runtime_preferences::resolve_default_work_dir,
@@ -388,10 +378,6 @@ pub fn run() {
             commands::feishu_browser_setup::start_feishu_browser_setup,
             commands::feishu_browser_setup::get_feishu_browser_setup_session,
             commands::feishu_browser_setup::apply_feishu_browser_setup_event,
-            commands::browser_bridge_install::get_browser_bridge_install_status,
-            commands::browser_bridge_install::install_browser_bridge,
-            commands::browser_bridge_install::open_browser_bridge_extension_page,
-            commands::browser_bridge_install::open_browser_bridge_extension_dir,
             commands::feishu_gateway::send_feishu_text_message,
             commands::feishu_gateway::list_feishu_chats,
             commands::feishu_gateway::push_role_summary_to_feishu,

@@ -1,4 +1,3 @@
-use crate::commands::browser_bridge_install::BrowserBridgeInstallStore;
 use crate::commands::feishu_browser_setup::FeishuBrowserSetupStore;
 use serde::Deserialize;
 use serde_json::json;
@@ -12,20 +11,14 @@ use tokio::task::JoinHandle;
 pub struct BrowserBridgeCallbackServer {
     pool: SqlitePool,
     store: FeishuBrowserSetupStore,
-    install_store: BrowserBridgeInstallStore,
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl BrowserBridgeCallbackServer {
-    pub fn new(
-        pool: SqlitePool,
-        store: FeishuBrowserSetupStore,
-        install_store: BrowserBridgeInstallStore,
-    ) -> Self {
+    pub fn new(pool: SqlitePool, store: FeishuBrowserSetupStore) -> Self {
         Self {
             pool,
             store,
-            install_store,
             task: Arc::new(Mutex::new(None)),
         }
     }
@@ -39,7 +32,6 @@ impl BrowserBridgeCallbackServer {
             .map_err(|e| format!("read browser bridge callback listener addr failed: {}", e))?;
         let pool = self.pool.clone();
         let store = self.store.clone();
-        let install_store = self.install_store.clone();
         let task = tokio::spawn(async move {
             loop {
                 let (mut socket, _) = match listener.accept().await {
@@ -48,17 +40,9 @@ impl BrowserBridgeCallbackServer {
                 };
                 let pool = pool.clone();
                 let store = store.clone();
-                let install_store = install_store.clone();
                 tokio::spawn(async move {
                     let response = match read_http_body(&mut socket).await {
-                        Ok(body) => match handle_browser_bridge_payload(
-                            &pool,
-                            &store,
-                            &install_store,
-                            &body,
-                        )
-                        .await
-                        {
+                        Ok(body) => match handle_browser_bridge_payload(&pool, &store, &body).await {
                             Ok(payload) => http_json_response(200, &payload),
                             Err(error) => http_json_response(400, &json!({ "error": error })),
                         },
@@ -116,14 +100,11 @@ enum BrowserBridgePayload {
         #[serde(rename = "page")]
         _page: String,
     },
-    #[serde(rename = "bridge.hello")]
-    BridgeHello,
 }
 
 async fn handle_browser_bridge_payload(
     pool: &SqlitePool,
     store: &FeishuBrowserSetupStore,
-    install_store: &BrowserBridgeInstallStore,
     body: &str,
 ) -> Result<serde_json::Value, String> {
     let envelope: BrowserBridgeEnvelope = serde_json::from_str(body)
@@ -164,17 +145,6 @@ async fn handle_browser_bridge_payload(
                 "url": format!("https://open.feishu.cn/?provider={}", provider)
             }
         })),
-        BrowserBridgePayload::BridgeHello => {
-            install_store.mark_connected_now();
-            Ok(json!({
-                "version": 1,
-                "sessionId": envelope.session_id,
-                "kind": "response",
-                "payload": {
-                    "type": "action.detect_step"
-                }
-            }))
-        }
         BrowserBridgePayload::SessionResume { .. } | BrowserBridgePayload::PageReport { .. } => {
             Ok(json!({
                 "version": 1,

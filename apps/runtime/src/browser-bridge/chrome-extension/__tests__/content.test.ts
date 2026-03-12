@@ -6,7 +6,6 @@ import {
   installFeishuCredentialReporter,
   installFeishuInstructionListener,
   maybeReportFeishuCredentialsToExtension,
-  notifyBrowserBridgeReady,
   renderFeishuBrowserSetupInstruction,
 } from "../content";
 
@@ -124,20 +123,6 @@ describe("chrome extension content helpers", () => {
       sessionId: "sess-message-1",
       appId: "cli_message_123",
       appSecret: "sec_message_456",
-    });
-  });
-
-  it("notifies the extension runtime when the browser bridge content script initializes", async () => {
-    const sendMessage = vi.fn(async () => undefined);
-
-    await notifyBrowserBridgeReady({
-      runtime: {
-        sendMessage,
-      },
-    });
-
-    expect(sendMessage).toHaveBeenCalledWith({
-      type: "workclaw.browser-bridge-ready",
     });
   });
 
