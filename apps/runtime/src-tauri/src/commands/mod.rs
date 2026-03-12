@@ -3,6 +3,7 @@ pub mod chat;
 pub mod channel_connectors;
 pub mod chat_repo;
 pub mod clawhub;
+pub mod content_providers;
 pub mod desktop_lifecycle;
 pub mod dialog;
 pub mod employee_agents;

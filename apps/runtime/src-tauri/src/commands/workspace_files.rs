@@ -35,7 +35,20 @@ fn normalize_relative_path(path: &Path) -> String {
 fn is_text_extension(ext: &str) -> bool {
     matches!(
         ext,
-        "txt" | "md" | "markdown" | "json" | "js" | "ts" | "tsx" | "jsx" | "css" | "html" | "htm" | "xml" | "yml" | "yaml"
+        "txt"
+            | "md"
+            | "markdown"
+            | "json"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "css"
+            | "html"
+            | "htm"
+            | "xml"
+            | "yml"
+            | "yaml"
     )
 }
 
@@ -110,7 +123,8 @@ fn canonicalize_workspace(workspace: &str) -> Result<PathBuf, String> {
     if !root.is_dir() {
         return Err("工作空间不是目录".to_string());
     }
-    root.canonicalize().map_err(|e| format!("解析工作空间失败: {}", e))
+    root.canonicalize()
+        .map_err(|e| format!("解析工作空间失败: {}", e))
 }
 
 fn ensure_relative_path(relative_path: &str) -> Result<(), String> {
@@ -118,13 +132,20 @@ fn ensure_relative_path(relative_path: &str) -> Result<(), String> {
     if path.is_absolute() {
         return Err("仅允许相对路径".to_string());
     }
-    if path.components().any(|component| matches!(component, Component::ParentDir)) {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
         return Err("不允许越出工作空间".to_string());
     }
     Ok(())
 }
 
-fn collect_entries(root: &Path, current: &Path, entries: &mut Vec<WorkspaceFileEntry>) -> Result<(), String> {
+fn collect_entries(
+    root: &Path,
+    current: &Path,
+    entries: &mut Vec<WorkspaceFileEntry>,
+) -> Result<(), String> {
     let mut children: Vec<_> = fs::read_dir(current)
         .map_err(|e| format!("读取目录失败: {}", e))?
         .filter_map(|item| item.ok())
@@ -133,7 +154,9 @@ fn collect_entries(root: &Path, current: &Path, entries: &mut Vec<WorkspaceFileE
 
     for entry in children {
         let path = entry.path();
-        let metadata = entry.metadata().map_err(|e| format!("读取文件信息失败: {}", e))?;
+        let metadata = entry
+            .metadata()
+            .map_err(|e| format!("读取文件信息失败: {}", e))?;
         let relative = path
             .strip_prefix(root)
             .map_err(|e| format!("解析相对路径失败: {}", e))?;

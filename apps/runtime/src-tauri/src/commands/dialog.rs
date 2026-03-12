@@ -1,7 +1,7 @@
-use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
 #[cfg(target_os = "windows")]
 use std::process::Command;
+use tauri::AppHandle;
+use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 pub async fn select_directory(

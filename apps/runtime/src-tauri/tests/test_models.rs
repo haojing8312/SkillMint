@@ -1,8 +1,8 @@
 mod helpers;
 
 use runtime_lib::commands::models::{
-    delete_model_config_with_pool, resolve_default_model_id_with_pool,
-    save_model_config_with_pool, set_default_model_with_pool, ModelConfig,
+    delete_model_config_with_pool, resolve_default_model_id_with_pool, save_model_config_with_pool,
+    set_default_model_with_pool, ModelConfig,
 };
 
 async fn insert_model(

@@ -39,7 +39,11 @@ fn make_temp_workspace(name: &str) -> PathBuf {
     }
     fs::create_dir_all(root.join(".minimax")).unwrap();
     fs::write(root.join("conflict_brief.md"), "# Brief\n\nHello").unwrap();
-    fs::write(root.join("conflict_report.html"), "<html><body>Report</body></html>").unwrap();
+    fs::write(
+        root.join("conflict_report.html"),
+        "<html><body>Report</body></html>",
+    )
+    .unwrap();
     write_docx(
         &root.join("conflict_brief.docx"),
         "美国以色列伊朗冲突 Word 简报",
@@ -51,13 +55,24 @@ fn make_temp_workspace(name: &str) -> PathBuf {
 #[test]
 fn lists_workspace_files_recursively_with_stable_sorting() {
     let root = make_temp_workspace("test_workspace_files_list");
-    let entries = list_workspace_files_within(root.to_str().unwrap()).expect("list workspace files");
+    let entries =
+        list_workspace_files_within(root.to_str().unwrap()).expect("list workspace files");
 
-    assert!(entries.iter().any(|item| item.path == ".minimax" && item.kind == "directory"));
-    assert!(entries.iter().any(|item| item.path == "conflict_brief.md" && item.kind == "markdown"));
-    assert!(entries.iter().any(|item| item.path == "conflict_report.html" && item.kind == "html"));
-    assert!(entries.iter().any(|item| item.path == "conflict_brief.docx" && item.kind == "docx"));
-    assert!(entries.iter().any(|item| item.path == "archive.bin" && item.kind == "binary"));
+    assert!(entries
+        .iter()
+        .any(|item| item.path == ".minimax" && item.kind == "directory"));
+    assert!(entries
+        .iter()
+        .any(|item| item.path == "conflict_brief.md" && item.kind == "markdown"));
+    assert!(entries
+        .iter()
+        .any(|item| item.path == "conflict_report.html" && item.kind == "html"));
+    assert!(entries
+        .iter()
+        .any(|item| item.path == "conflict_brief.docx" && item.kind == "docx"));
+    assert!(entries
+        .iter()
+        .any(|item| item.path == "archive.bin" && item.kind == "binary"));
 
     let names: Vec<_> = entries.iter().map(|item| item.path.clone()).collect();
     assert_eq!(

@@ -26,7 +26,9 @@ async fn resolve_desktop_lifecycle_paths(
     app: &AppHandle,
     pool: &SqlitePool,
 ) -> Result<DesktopLifecyclePaths, String> {
-    let default_work_dir = resolve_default_work_dir_with_pool(pool).await.unwrap_or_default();
+    let default_work_dir = resolve_default_work_dir_with_pool(pool)
+        .await
+        .unwrap_or_default();
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
@@ -45,7 +47,8 @@ fn clear_directory_contents(path: &Path) -> Result<DesktopCleanupResult, String>
     }
 
     let mut result = DesktopCleanupResult::default();
-    let entries = fs::read_dir(path).map_err(|e| format!("读取目录失败 {}: {}", path.display(), e))?;
+    let entries =
+        fs::read_dir(path).map_err(|e| format!("读取目录失败 {}: {}", path.display(), e))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("读取目录项失败 {}: {}", path.display(), e))?;
         let target = entry.path();

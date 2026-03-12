@@ -98,9 +98,8 @@ pub async fn list_im_routing_bindings_with_pool(
     {
         let role_ids =
             serde_json::from_str::<Vec<String>>(&role_ids_json).unwrap_or_else(|_| Vec::new());
-        let connector_meta =
-            serde_json::from_str::<serde_json::Value>(&connector_meta_json)
-                .unwrap_or_else(|_| serde_json::json!({}));
+        let connector_meta = serde_json::from_str::<serde_json::Value>(&connector_meta_json)
+            .unwrap_or_else(|_| serde_json::json!({}));
         out.push(ImRoutingBinding {
             id,
             agent_id,

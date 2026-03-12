@@ -2,6 +2,7 @@ mod adapters;
 pub mod agent;
 mod builtin_skills;
 pub mod commands;
+pub mod content_providers;
 mod db;
 pub mod im;
 pub mod providers;
@@ -324,6 +325,11 @@ pub fn run() {
             commands::models::list_builtin_provider_plugins,
             commands::models::get_routing_settings,
             commands::models::set_routing_settings,
+            commands::content_providers::list_content_providers,
+            commands::content_providers::run_content_provider_diagnostics,
+            commands::content_providers::list_external_capability_sources,
+            commands::content_providers::list_detected_external_mcp_servers,
+            commands::content_providers::import_detected_external_mcp_server,
             commands::runtime_preferences::get_runtime_preferences,
             commands::runtime_preferences::set_runtime_preferences,
             commands::runtime_preferences::resolve_default_work_dir,

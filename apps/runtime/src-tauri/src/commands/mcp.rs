@@ -7,14 +7,13 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
-#[tauri::command]
-pub async fn add_mcp_server(
+pub async fn add_mcp_server_with_registry(
+    pool: &sqlx::SqlitePool,
+    registry: Arc<ToolRegistry>,
     name: String,
     command: String,
     args: Vec<String>,
     env: std::collections::HashMap<String, String>,
-    db: State<'_, DbState>,
-    registry: State<'_, Arc<ToolRegistry>>,
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -29,7 +28,7 @@ pub async fn add_mcp_server(
     .bind(serde_json::to_string(&args).unwrap_or_default())
     .bind(serde_json::to_string(&env).unwrap_or_default())
     .bind(&now)
-    .execute(&db.0)
+    .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
 
@@ -53,7 +52,7 @@ pub async fn add_mcp_server(
         // 连接失败时回滚数据库记录
         let _ = sqlx::query("DELETE FROM mcp_servers WHERE id = ?")
             .bind(&id)
-            .execute(&db.0)
+            .execute(pool)
             .await;
         return Err("MCP 服务器连接失败".to_string());
     }
@@ -90,6 +89,26 @@ pub async fn add_mcp_server(
     }
 
     Ok(id)
+}
+
+#[tauri::command]
+pub async fn add_mcp_server(
+    name: String,
+    command: String,
+    args: Vec<String>,
+    env: std::collections::HashMap<String, String>,
+    db: State<'_, DbState>,
+    registry: State<'_, Arc<ToolRegistry>>,
+) -> Result<String, String> {
+    add_mcp_server_with_registry(
+        &db.0,
+        Arc::clone(&registry.inner()),
+        name,
+        command,
+        args,
+        env,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -143,6 +162,12 @@ pub async fn remove_mcp_server(
         .execute(&db.0)
         .await
         .map_err(|e| e.to_string())?;
+
+    // 清理外部来源导入映射，避免设置页残留 Imported 状态
+    let _ = sqlx::query("DELETE FROM external_mcp_imports WHERE mcp_server_id = ?")
+        .bind(&id)
+        .execute(&db.0)
+        .await;
 
     Ok(())
 }

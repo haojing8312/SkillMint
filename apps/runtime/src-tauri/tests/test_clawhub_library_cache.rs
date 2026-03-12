@@ -38,16 +38,18 @@ async fn list_uses_fresh_cache_when_network_unavailable() {
         ],
         "nextCursor": null
     });
-    seed_cache_row(&pool, LIST_CACHE_KEY, &body.to_string(), &Utc::now().to_rfc3339()).await;
-
-    let response = list_clawhub_library_with_pool(
+    seed_cache_row(
         &pool,
-        None,
-        Some(20),
-        Some("downloads".to_string()),
+        LIST_CACHE_KEY,
+        &body.to_string(),
+        &Utc::now().to_rfc3339(),
     )
-    .await
-    .expect("list from cache");
+    .await;
+
+    let response =
+        list_clawhub_library_with_pool(&pool, None, Some(20), Some("downloads".to_string()))
+            .await
+            .expect("list from cache");
 
     assert_eq!(response.items.len(), 1);
     assert_eq!(response.items[0].slug, "video-maker");
