@@ -10,6 +10,7 @@ pub(crate) mod chat_route_execution;
 pub(crate) mod chat_runtime_io;
 pub(crate) mod chat_send_message_flow;
 pub(crate) mod chat_session_io;
+pub mod chat_session_commands;
 pub(crate) mod chat_tool_setup;
 pub mod clawhub;
 pub mod content_providers;
