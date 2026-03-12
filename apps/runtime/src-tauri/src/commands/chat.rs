@@ -811,7 +811,7 @@ mod session_source_tests {
 /// 写入导出文件
 #[tauri::command]
 pub async fn write_export_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, &content).map_err(|e| format!("写入失败: {}", e))
+    chat_session_io::write_export_file_to_path(&path, &content)
 }
 
 pub use super::chat_compaction::CompactionResult;

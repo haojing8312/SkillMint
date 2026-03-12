@@ -390,6 +390,10 @@ pub(crate) async fn replace_messages_with_compacted_with_pool(
     Ok(())
 }
 
+pub(crate) fn write_export_file_to_path(path: &str, content: &str) -> Result<(), String> {
+    std::fs::write(path, content).map_err(|e| format!("写入失败: {}", e))
+}
+
 fn normalize_stream_items(items: &Value) -> Value {
     if let Some(arr) = items.as_array() {
         Value::Array(
