@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EmployeeHubView } from "../EmployeeHubView";
+import type { BrowserBridgeInstallStatus } from "../../../types";
 
 const invokeMock = vi.fn();
 
@@ -9,6 +10,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 describe("EmployeeHubView browser setup panel", () => {
   beforeEach(() => {
+    const installStatus: BrowserBridgeInstallStatus = {
+      state: "not_installed",
+      chrome_found: true,
+      native_host_installed: false,
+      extension_dir_ready: false,
+      bridge_connected: false,
+      last_error: null,
+    };
+    expect(installStatus.state).toBe("not_installed");
+
     invokeMock.mockReset();
     const sessionSnapshots = [
       {

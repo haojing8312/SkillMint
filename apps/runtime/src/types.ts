@@ -324,6 +324,22 @@ export interface FeishuBrowserSetupSession {
   app_secret_present: boolean;
 }
 
+export type BrowserBridgeInstallState =
+  | "not_installed"
+  | "installing"
+  | "waiting_for_enable"
+  | "connected"
+  | "failed";
+
+export interface BrowserBridgeInstallStatus {
+  state: BrowserBridgeInstallState;
+  chrome_found: boolean;
+  native_host_installed: boolean;
+  extension_dir_ready: boolean;
+  bridge_connected: boolean;
+  last_error: string | null;
+}
+
 export interface FeishuWsStatus {
   running: boolean;
   started_at?: string | null;
