@@ -86,23 +86,9 @@ interface Props {
   operationPermissionMode?: "standard" | "full_access" | string;
 }
 
-function hasTaskJourneyContent(model: TaskJourneyViewModel) {
-  return model.steps.length > 0 || model.deliverables.length > 0 || model.warnings.length > 0;
-}
-
-function buildFailedWorkPrompt(model: TaskJourneyViewModel): string {
-  if (model.warnings.length === 0) return "";
-  const warningSummary = model.warnings.join("\n- ");
-  return [
-    `请继续补做失败项，目标任务：${model.currentTaskTitle || "当前任务"}`,
-    "已生成的文件：",
-    ...(model.deliverables.length > 0
-      ? model.deliverables.map((item) => `- ${item.path}`)
-      : ["- 暂无可用产物"]),
-    "待处理问题：",
-    `- ${warningSummary}`,
-    "请直接续做缺失步骤，并在完成后明确说明新增了哪些文件。",
-  ].join("\n");
+function shouldRenderCompletedJourneySummary(model: TaskJourneyViewModel) {
+  if (model.deliverables.length === 0) return false;
+  return model.status === "completed" || model.status === "partial";
 }
 
 export function ChatView({
@@ -1766,23 +1752,9 @@ export function ChatView({
     return agentState.detail || agentState.state;
   }
 
-  function handleOpenWorkspaceFolder() {
-    if (!workspace) return;
-    void invoke("open_external_url", { url: workspace });
-  }
-
   function handleViewFilesFromDelivery() {
     setSidePanelOpen(true);
     setSidePanelTab("files");
-  }
-
-  function handleResumeFailedWork(prompt: string) {
-    if (!prompt) return;
-    setInput(prompt);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
-    });
   }
 
   function getRunFailureTitle(run: SessionRunProjection) {
@@ -2358,11 +2330,8 @@ export function ChatView({
           const isSessionFocusTarget = highlightedMessageIndex === i;
           const messageJourneyModel = m.role === "assistant" ? buildTaskJourneyViewModel([m]) : null;
           const shouldRenderJourneySummary =
-            messageJourneyModel !== null && hasTaskJourneyContent(messageJourneyModel);
+            messageJourneyModel !== null && shouldRenderCompletedJourneySummary(messageJourneyModel);
           const messageSummaryKey = (m.runId || m.id || `message-${i}`).trim();
-          const failedWorkPromptForMessage = messageJourneyModel
-            ? buildFailedWorkPrompt(messageJourneyModel)
-            : "";
           const inlineFailedRuns =
             m.role === "assistant" && (m.id || "").trim()
               ? failedRunsByAssistantMessageId.get((m.id || "").trim()) ?? []
@@ -2414,14 +2383,7 @@ export function ChatView({
                 <div data-testid={`task-journey-summary-${messageSummaryKey}`}>
                   <TaskJourneySummary
                     model={messageJourneyModel}
-                    workspace={workspace}
                     onViewFiles={handleViewFilesFromDelivery}
-                    onOpenWorkspace={handleOpenWorkspaceFolder}
-                    onResumeFailedWork={
-                      failedWorkPromptForMessage
-                        ? () => handleResumeFailedWork(failedWorkPromptForMessage)
-                        : undefined
-                    }
                   />
                 </div>
               )}

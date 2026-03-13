@@ -193,6 +193,130 @@ function buildSplitJourneyMessages() {
   ];
 }
 
+function buildPartialJourneyMessages() {
+  return [
+    {
+      id: "assistant-partial",
+      role: "assistant",
+      content: "已生成部分文件，仍有补做项。",
+      created_at: "2026-03-11T00:00:03Z",
+      runId: "run-partial",
+      streamItems: [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "todo-partial",
+            name: "todo_write",
+            input: {
+              todos: [{ id: "t-partial", content: "生成报告与附录", status: "completed", priority: "high" }],
+            },
+            output: "已更新任务列表（共 1 项）",
+            status: "completed",
+          },
+        },
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "write-partial",
+            name: "write_file",
+            input: {
+              path: "partial-report.html",
+              content: "<html></html>",
+            },
+            output: "成功写入 888 字节到 partial-report.html",
+            status: "completed",
+          },
+        },
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "write-partial-error",
+            name: "write_file",
+            input: {},
+            output: "工具执行错误: 缺少 path 参数",
+            status: "error",
+          },
+        },
+      ],
+    },
+  ];
+}
+
+function buildRunningJourneyMessages() {
+  return [
+    {
+      id: "assistant-running",
+      role: "assistant",
+      content: "还在继续生成中。",
+      created_at: "2026-03-11T00:00:04Z",
+      runId: "run-running",
+      streamItems: [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "todo-running",
+            name: "todo_write",
+            input: {
+              todos: [{ id: "t-running", content: "持续生成文件", status: "in_progress", priority: "high" }],
+            },
+            output: "已更新任务列表（共 1 项）",
+            status: "completed",
+          },
+        },
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "write-running",
+            name: "write_file",
+            input: {
+              path: "running-report.html",
+              content: "<html></html>",
+            },
+            output: "正在写入文件",
+            status: "running",
+          },
+        },
+      ],
+    },
+  ];
+}
+
+function buildFailedJourneyMessages() {
+  return [
+    {
+      id: "assistant-failed",
+      role: "assistant",
+      content: "这轮交付失败，没有产物。",
+      created_at: "2026-03-11T00:00:05Z",
+      runId: "run-failed",
+      streamItems: [
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "todo-failed",
+            name: "todo_write",
+            input: {
+              todos: [{ id: "t-failed", content: "生成失败文件", status: "in_progress", priority: "high" }],
+            },
+            output: "已更新任务列表（共 1 项）",
+            status: "completed",
+          },
+        },
+        {
+          type: "tool_call",
+          toolCall: {
+            id: "write-failed",
+            name: "write_file",
+            input: {},
+            output: "工具执行错误: 无法写入目标路径",
+            status: "error",
+          },
+        },
+      ],
+    },
+  ];
+}
+
 function renderChat() {
   return render(
     <ChatView
@@ -410,17 +534,18 @@ describe("ChatView side panel redesign", () => {
     });
   });
 
-  test("shows main-area task journey and delivery summary without opening side panel", async () => {
+  test("shows a completed-state files entry card in the transcript and opens the files panel on click", async () => {
     renderChat();
 
     await waitFor(() => {
-      expect(screen.getByText("任务进度")).toBeInTheDocument();
-      expect(screen.getByText("创建带动画和时间轴的HTML报告")).toBeInTheDocument();
-      expect(screen.getAllByText("已完成资料搜索").length).toBeGreaterThan(0);
-      expect(screen.getByText("交付结果")).toBeInTheDocument();
-      expect(screen.getAllByText("conflict_brief.docx").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("conflict_report.html").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("write_file 失败 3 次：工具执行错误: 缺少 path 参数").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: "查看此任务中的所有文件" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "查看此任务中的所有文件" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "文件" })).toHaveClass("bg-blue-100");
+      expect(screen.getByPlaceholderText("搜索文件...")).toBeInTheDocument();
     });
   });
 
@@ -428,49 +553,89 @@ describe("ChatView side panel redesign", () => {
     renderChat();
 
     await waitFor(() => {
-      expect(screen.getByText("任务进度")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "查看此任务中的所有文件" })).toBeInTheDocument();
       expect(screen.getByTestId("chat-message-0")).toBeInTheDocument();
     });
 
     const message = screen.getByTestId("chat-message-0");
-    const summary = screen.getByText("任务进度");
+    const summary = screen.getByRole("button", { name: "查看此任务中的所有文件" });
 
     expect(message.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  test("offers delivery follow-up actions for files workspace and failed steps", async () => {
+  test("shows the files entry card for partial completion", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve(buildPartialJourneyMessages());
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "list_workspace_files") {
+        return Promise.resolve([
+          { path: "partial-report.html", name: "partial-report.html", size: 12 * 1024, kind: "html" },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
     renderChat();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "查看文件" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "打开工作区" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "继续补做失败项" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "查看此任务中的所有文件" })).toBeInTheDocument();
+    });
+  });
+
+  test("does not show the files entry card while work is still running", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve(buildRunningJourneyMessages());
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "查看文件" }));
+    renderChat();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "文件" })).toHaveClass("bg-blue-100");
-      expect(screen.getByPlaceholderText("搜索文件...")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-message-0")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "打开工作区" }));
+    expect(screen.queryByRole("button", { name: "查看此任务中的所有文件" })).not.toBeInTheDocument();
+  });
+
+  test("does not show the files entry card when the run failed without deliverables", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve(buildFailedJourneyMessages());
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderChat();
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("open_external_url", {
-        url: "E:\\workspace\\session-side-panel-redesign",
-      });
+      expect(screen.getByTestId("chat-message-0")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "继续补做失败项" }));
-
-    await waitFor(() => {
-      const input = screen.getByPlaceholderText("输入消息，Shift+Enter 换行...");
-      const value = String((input as HTMLTextAreaElement).value);
-      expect(value.length).toBeGreaterThan(0);
-      expect(value).toContain("请继续补做失败项");
-      expect(value).toContain("缺少 path 参数");
-    });
+    expect(screen.queryByRole("button", { name: "查看此任务中的所有文件" })).not.toBeInTheDocument();
   });
 
   test("anchors task journey summary to the assistant message that produced the deliverables", async () => {
@@ -549,8 +714,7 @@ describe("ChatView side panel redesign", () => {
       });
     });
 
-    expect(screen.queryByText("任务进度")).not.toBeInTheDocument();
-    expect(screen.queryByText("交付结果")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看此任务中的所有文件" })).not.toBeInTheDocument();
   });
 
   test("keeps employee assistant entry in guidance state instead of task progress state", async () => {
@@ -576,7 +740,7 @@ describe("ChatView side panel redesign", () => {
       expect(screen.getByText("我会先问 1-2 个关键问题，再给出配置草案，确认后执行创建。")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("任务进度")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看此任务中的所有文件" })).not.toBeInTheDocument();
     expect(screen.queryByText("处理中")).not.toBeInTheDocument();
     expect(screen.queryByText("已完成")).not.toBeInTheDocument();
   });
