@@ -48,6 +48,8 @@
 4. `session-runs.json`
 5. `logs/runtime-*.jsonl`
 
+如果 `latest-crash.json` 出现 `byte index ... is not a char boundary` 之类的 panic，优先检查模型流式文本处理中是否对 UTF-8 `String` 做了按字节切片。对于 OpenAI 兼容模型，尤其要先看 thinking / reasoning 标签过滤逻辑，而不是先怀疑客户机器环境。
+
 ## 仍需系统级排查的场景
 
 如果用户连设置页都无法打开，或者诊断包为空，再退回到：

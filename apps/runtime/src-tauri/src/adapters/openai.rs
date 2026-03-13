@@ -80,45 +80,60 @@ fn validate_test_connection_response(body: &str) -> Result<bool> {
 
 /// Strip <think>…</think> spans from a streaming token chunk.
 /// `in_think` carries state across chunk boundaries.
-fn filter_thinking(input: &str, in_think: &mut bool) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut buf = String::new();
+fn tag_matches(chars: &[char], start: usize, tag: &[char]) -> bool {
+    start + tag.len() <= chars.len() && chars[start..start + tag.len()] == *tag
+}
 
-    while let Some(c) = chars.next() {
-        buf.push(c);
+fn tag_prefix_at_end(chars: &[char], start: usize, tag: &[char]) -> bool {
+    let remaining = chars.len().saturating_sub(start);
+    remaining > 0 && remaining < tag.len() && chars[start..] == tag[..remaining]
+}
+
+fn filter_thinking(input: &str, in_think: &mut bool, pending_tag: &mut String) -> String {
+    const OPEN_TAG: [char; 7] = ['<', 't', 'h', 'i', 'n', 'k', '>'];
+    const CLOSE_TAG: [char; 8] = ['<', '/', 't', 'h', 'i', 'n', 'k', '>'];
+
+    let mut combined = String::with_capacity(pending_tag.len() + input.len());
+    combined.push_str(pending_tag);
+    combined.push_str(input);
+    pending_tag.clear();
+
+    let chars: Vec<char> = combined.chars().collect();
+    let mut out = String::with_capacity(combined.len());
+    let mut index = 0;
+
+    while index < chars.len() {
         if *in_think {
-            // Look for </think>
-            if buf.ends_with("</think>") {
+            if tag_matches(&chars, index, &CLOSE_TAG) {
                 *in_think = false;
-                buf.clear();
+                index += CLOSE_TAG.len();
+                continue;
             }
-            // Keep buf bounded so it doesn't grow unbounded on large thinking blocks
-            if buf.len() > 16 {
-                buf = buf[buf.len() - 16..].to_string();
+
+            if tag_prefix_at_end(&chars, index, &CLOSE_TAG) {
+                pending_tag.extend(chars[index..].iter());
+                break;
             }
-        } else {
-            // Look for <think>
-            if buf.ends_with("<think>") {
-                *in_think = true;
-                // Remove the <think> prefix we may have already added to out
-                let clean_len = out.len().saturating_sub(6); // len("<think>") - 1
-                out.truncate(clean_len);
-                buf.clear();
-            } else {
-                // Safe to emit everything except the last 6 chars (potential partial tag)
-                if buf.len() > 7 {
-                    let safe = buf.len() - 7;
-                    out.push_str(&buf[..safe]);
-                    buf = buf[safe..].to_string();
-                }
-            }
+
+            index += 1;
+            continue;
         }
+
+        if tag_matches(&chars, index, &OPEN_TAG) {
+            *in_think = true;
+            index += OPEN_TAG.len();
+            continue;
+        }
+
+        if tag_prefix_at_end(&chars, index, &OPEN_TAG) {
+            pending_tag.extend(chars[index..].iter());
+            break;
+        }
+
+        out.push(chars[index]);
+        index += 1;
     }
-    // Flush remaining buffer if not in a thinking block
-    if !*in_think {
-        out.push_str(&buf);
-    }
+
     out
 }
 
@@ -126,6 +141,7 @@ fn filter_thinking(input: &str, in_think: &mut bool) -> String {
 struct OpenAiStreamState {
     text_content: String,
     in_think: bool,
+    pending_think_tag: String,
     tool_calls_map: HashMap<u64, (String, String, String)>,
     finish_reason: Option<String>,
     stop_stream: bool,
@@ -170,7 +186,8 @@ fn process_openai_sse_text(
                 }
 
                 if let Some(token) = delta["content"].as_str() {
-                    let filtered = filter_thinking(token, &mut state.in_think);
+                    let filtered =
+                        filter_thinking(token, &mut state.in_think, &mut state.pending_think_tag);
                     if !filtered.is_empty() {
                         state.text_content.push_str(&filtered);
                         on_token(filtered);
@@ -206,6 +223,10 @@ fn process_openai_sse_text(
 }
 
 fn finish_openai_stream(mut state: OpenAiStreamState) -> LLMResponse {
+    if !state.in_think && !state.pending_think_tag.is_empty() {
+        state.text_content.push_str(&state.pending_think_tag);
+    }
+
     if state.finish_reason.as_deref() == Some("tool_calls") || !state.tool_calls_map.is_empty() {
         let mut indices: Vec<u64> = state.tool_calls_map.keys().cloned().collect();
         indices.sort();
@@ -355,6 +376,7 @@ pub async fn test_connection(base_url: &str, api_key: &str, model: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     #[test]
     fn invalid_tool_arguments_should_not_silently_become_empty_object() {
@@ -430,5 +452,62 @@ mod tests {
         .expect("valid openai response");
 
         assert!(result);
+    }
+
+    #[test]
+    fn filter_thinking_keeps_multibyte_text_without_panicking() {
+        let mut in_think = false;
+        let mut pending_tag = String::new();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            filter_thinking("有什么", &mut in_think, &mut pending_tag)
+        }));
+
+        assert!(result.is_ok(), "多字节文本不应触发 panic");
+        assert_eq!(result.unwrap(), "有什么");
+        assert!(!in_think);
+        assert!(pending_tag.is_empty());
+    }
+
+    #[test]
+    fn filter_thinking_hides_cross_chunk_think_blocks() {
+        let mut in_think = false;
+        let mut pending_tag = String::new();
+
+        let first = filter_thinking("<think>推理中", &mut in_think, &mut pending_tag);
+        let second = filter_thinking("</think>你好", &mut in_think, &mut pending_tag);
+
+        assert_eq!(first, "");
+        assert_eq!(second, "你好");
+        assert!(!in_think);
+        assert!(pending_tag.is_empty());
+    }
+
+    #[test]
+    fn filter_thinking_handles_split_open_tag_across_chunks() {
+        let mut in_think = false;
+        let mut pending_tag = String::new();
+
+        let first = filter_thinking("<thi", &mut in_think, &mut pending_tag);
+        let second = filter_thinking("nk>内部</think>结果", &mut in_think, &mut pending_tag);
+
+        assert_eq!(first, "");
+        assert_eq!(second, "结果");
+        assert!(!in_think);
+        assert!(pending_tag.is_empty());
+    }
+
+    #[test]
+    fn filter_thinking_preserves_multibyte_text_after_think_block() {
+        let response = parse_openai_chunks_for_test(&[
+            "data: {\"choices\":[{\"delta\":{\"content\":\"<think>内部推理\"},\"finish_reason\":null}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"</think>有什么文件夹\"},\"finish_reason\":null}]}\n",
+            "data: [DONE]\n",
+        ])
+        .expect("parse chunks");
+
+        match response {
+            LLMResponse::Text(text) => assert_eq!(text, "有什么文件夹"),
+            other => panic!("expected text response, got {other:?}"),
+        }
     }
 }
