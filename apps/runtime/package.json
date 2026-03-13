@@ -9,8 +9,8 @@
     "build": "tsc && vite build",
     "build:tauri": "pnpm --dir sidecar build && pnpm build",
     "tauri": "tauri",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest",
+    "test": "node ../../scripts/run-runtime-vitest.mjs run --passWithNoTests",
+    "test:watch": "node ../../scripts/run-runtime-vitest.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },
