@@ -22,6 +22,9 @@ use crate::commands::skills::{
 };
 
 const DEFAULT_CLAWHUB_BASE: &str = "https://www.clawhub.ai";
+const DEFAULT_SKILLHUB_CATALOG_URL: &str =
+    "https://cloudcache.tencentcs.com/qcloud/tea/app/data/skills.2d46363b.json?max_age=31536000";
+const DEFAULT_SKILLHUB_DOWNLOAD_BASE: &str = "https://lightmake.site";
 const CLAWHUB_LIBRARY_CACHE_TTL_SECONDS: i64 = 10 * 60;
 const CLAWHUB_DETAIL_CACHE_TTL_SECONDS: i64 = 24 * 60 * 60;
 const CLAWHUB_FIRST_CURSOR: &str = "__first__";
@@ -44,6 +47,8 @@ pub struct ClawhubLibraryItem {
     pub slug: String,
     pub name: String,
     pub summary: String,
+    pub github_url: Option<String>,
+    pub source_url: Option<String>,
     pub tags: Vec<String>,
     pub stars: i64,
     pub downloads: i64,
@@ -125,6 +130,28 @@ fn clawhub_base_url() -> String {
         .unwrap_or_else(|| DEFAULT_CLAWHUB_BASE.to_string())
 }
 
+fn skillhub_catalog_url() -> String {
+    std::env::var("SKILLHUB_CATALOG_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_SKILLHUB_CATALOG_URL.to_string())
+}
+
+fn skillhub_download_base_url() -> String {
+    std::env::var("SKILLHUB_DOWNLOAD_BASE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_SKILLHUB_DOWNLOAD_BASE.to_string())
+}
+
+fn build_skillhub_download_url(slug: &str) -> String {
+    format!(
+        "{}/api/v1/download?slug={}",
+        skillhub_download_base_url().trim_end_matches('/'),
+        urlencoding::encode(slug.trim())
+    )
+}
+
 fn clawhub_refresh_inflight() -> &'static Mutex<HashSet<String>> {
     CLAWHUB_REFRESH_INFLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -151,6 +178,14 @@ fn build_library_cache_key(cursor: Option<&str>, limit: u32, sort: &str) -> Stri
         "clawhub:library:v1:sort={}:limit={}:cursor={}",
         sort, limit, normalized_cursor
     )
+}
+
+fn parse_skillhub_cursor(cursor: Option<&str>) -> usize {
+    cursor
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != CLAWHUB_FIRST_CURSOR)
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0)
 }
 
 fn build_detail_cache_key(slug: &str) -> String {
@@ -266,6 +301,86 @@ pub fn workspace_import_base_dir(workspace: &str) -> PathBuf {
     PathBuf::from(workspace.trim()).join(".workclaw-imports")
 }
 
+fn normalize_skillhub_tags(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items.iter()
+                .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default()
+}
+
+fn skillhub_text_fallback(item: &Value, primary_key: &str, secondary_key: &str) -> String {
+    item.get(primary_key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            item.get(secondary_key)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn normalize_skillhub_library_item(item: &Value) -> Option<ClawhubLibraryItem> {
+    let slug = item.get("slug")?.as_str()?.to_string();
+    let name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&slug)
+        .to_string();
+    let summary = skillhub_text_fallback(item, "description_zh", "description");
+    let source_url = item
+        .get("homepage")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    let tags = normalize_skillhub_tags(item.get("tags").unwrap_or(&Value::Null));
+    let stars = item.get("stars").and_then(|v| v.as_i64()).unwrap_or(0);
+    let downloads = item.get("downloads").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    Some(ClawhubLibraryItem {
+        slug,
+        name,
+        summary,
+        github_url: None,
+        source_url,
+        tags,
+        stars,
+        downloads,
+    })
+}
+
+fn normalize_skillhub_search_skill(item: &Value) -> Option<ClawhubSkillSummary> {
+    let slug = item.get("slug")?.as_str()?.to_string();
+    let name = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&slug)
+        .to_string();
+    let description = skillhub_text_fallback(item, "description_zh", "description");
+    let source_url = item
+        .get("homepage")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    let stars = item.get("stars").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    Some(ClawhubSkillSummary {
+        name,
+        slug,
+        description,
+        github_url: None,
+        source_url,
+        stars,
+    })
+}
+
 fn normalize_library_item(item: &Value) -> Option<ClawhubLibraryItem> {
     let slug = item.get("slug")?.as_str()?.to_string();
     let name = item
@@ -279,6 +394,15 @@ fn normalize_library_item(item: &Value) -> Option<ClawhubLibraryItem> {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    let github_url = item
+        .get("github_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let source_url = item
+        .get("source_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| Some(format!("{}/skills/{}", clawhub_base_url(), slug)));
 
     let tags = item
         .get("tags")
@@ -301,6 +425,8 @@ fn normalize_library_item(item: &Value) -> Option<ClawhubLibraryItem> {
         slug,
         name,
         summary,
+        github_url,
+        source_url,
         tags,
         stars,
         downloads,
@@ -345,6 +471,55 @@ fn normalize_search_skill_from_library_item(item: &Value) -> Option<ClawhubSkill
         source_url,
         stars,
     })
+}
+
+async fn fetch_skillhub_catalog_body(client: &Client) -> Result<Value, String> {
+    let resp = client
+        .get(skillhub_catalog_url())
+        .send()
+        .await
+        .map_err(|e| format!("SkillHub 列表加载失败: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("SkillHub 列表加载失败: HTTP {}", resp.status()));
+    }
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+fn normalize_skillhub_library_response(
+    body: &Value,
+    cursor: Option<&str>,
+    limit: u32,
+) -> ClawhubLibraryResponse {
+    let all_items = body
+        .get("skills")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let offset = parse_skillhub_cursor(cursor);
+    let limit = limit as usize;
+    let items: Vec<ClawhubLibraryItem> = all_items
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .filter_map(normalize_skillhub_library_item)
+        .collect();
+    let next_cursor = if offset + items.len() < all_items.len() {
+        Some((offset + items.len()).to_string())
+    } else {
+        None
+    };
+
+    ClawhubLibraryResponse { items, next_cursor }
+}
+
+fn normalize_skillhub_search_candidates(body: &Value) -> Vec<ClawhubSkillSummary> {
+    body.get("skills")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(normalize_skillhub_search_skill)
+        .collect()
 }
 
 fn normalize_skill_detail(raw: &Value, fallback_slug: &str) -> Option<ClawhubSkillDetail> {
@@ -556,6 +731,24 @@ fn extract_skill_md_from_zip_bytes(bytes: &[u8]) -> Result<String, String> {
 }
 
 async fn download_skill_zip_bytes(client: &Client, repo_url: &str) -> Result<Vec<u8>, String> {
+    if let Some(urls) = build_github_archive_urls(repo_url) {
+        for url in urls {
+            let resp = client
+                .get(&url)
+                .header("User-Agent", "WorkClaw/1.0")
+                .send()
+                .await
+                .map_err(|e| format!("下载失败: {}", e))?;
+            if !resp.status().is_success() {
+                continue;
+            }
+            let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+            if !bytes.is_empty() {
+                return Ok(bytes.to_vec());
+            }
+        }
+    }
+
     let base = clawhub_base_url();
     let download_url = format!(
         "{}/api/v1/download?url={}",
@@ -577,13 +770,77 @@ async fn download_skill_zip_bytes(client: &Client, repo_url: &str) -> Result<Vec
     Ok(bytes.to_vec())
 }
 
+async fn download_skillhub_slug_zip_bytes(client: &Client, slug: &str) -> Result<Vec<u8>, String> {
+    let clean_slug = slug.trim();
+    if clean_slug.is_empty() {
+        return Err("slug 不能为空".to_string());
+    }
+    let download_url = build_skillhub_download_url(clean_slug);
+    let resp = client
+        .get(&download_url)
+        .header("User-Agent", "WorkClaw/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("SkillHub 下载失败: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("SkillHub 下载失败: HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("SkillHub 下载内容为空".to_string());
+    }
+    Ok(bytes.to_vec())
+}
+
+async fn download_skill_bytes_with_fallback(
+    client: &Client,
+    slug: &str,
+    github_url: Option<String>,
+) -> Result<Vec<u8>, String> {
+    match download_skillhub_slug_zip_bytes(client, slug).await {
+        Ok(bytes) => Ok(bytes),
+        Err(skillhub_error) => {
+            let repo_url = resolve_repo_url(client, slug, github_url).await?;
+            download_skill_zip_bytes(client, &repo_url)
+                .await
+                .map_err(|fallback_error| format!("{}；ClawHub/GitHub 回退失败: {}", skillhub_error, fallback_error))
+        }
+    }
+}
+
+fn build_github_archive_urls(repo_url: &str) -> Option<Vec<String>> {
+    let trimmed = repo_url.trim().trim_end_matches('/');
+    let without_git = trimmed.trim_end_matches(".git");
+    let prefix = "https://github.com/";
+    if !without_git.starts_with(prefix) {
+        return None;
+    }
+    let path = &without_git[prefix.len()..];
+    let mut parts = path.split('/');
+    let owner = parts.next()?.trim();
+    let repo = parts.next()?.trim();
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    let base = format!("https://github.com/{}/{}", owner, repo);
+    Some(vec![
+        format!("{}/archive/refs/heads/main.zip", base),
+        format!("{}/archive/refs/heads/master.zip", base),
+    ])
+}
+
 async fn resolve_repo_url(
     client: &Client,
     slug: &str,
     github_url: Option<String>,
 ) -> Result<String, String> {
-    if let Some(url) = github_url.filter(|u| !u.trim().is_empty()) {
-        return Ok(url);
+    if let Some(url) = github_url
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty())
+    {
+        if build_github_archive_urls(&url).is_some() {
+            return Ok(url);
+        }
     }
     fetch_skill_detail_url(client, slug)
         .await?
@@ -1026,16 +1283,36 @@ async fn fetch_skill_detail_body(client: &Client, slug: &str) -> Result<Value, S
 
 async fn fetch_skill_detail_url(client: &Client, slug: &str) -> Result<Option<String>, String> {
     let body = fetch_skill_detail_body(client, slug).await?;
-    let direct = body
+    Ok(extract_repo_url_from_detail_body(&body))
+}
+
+fn extract_repo_url_from_detail_body(body: &Value) -> Option<String> {
+    let payload = body.get("skill").unwrap_or(body);
+    let direct = payload
         .get("github_url")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let nested = body
-        .get("skill")
-        .and_then(|s| s.get("github_url"))
+        .or_else(|| body.get("github_url").and_then(|v| v.as_str()))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if direct.is_some() {
+        return direct;
+    }
+
+    let slug = payload
+        .get("slug")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    Ok(direct.or(nested))
+        .or_else(|| body.get("slug").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let owner = body
+        .get("owner")
+        .and_then(|o| o.get("handle"))
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("owner").and_then(|o| o.get("handle")).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+
+    Some(format!("https://github.com/{}/{}", owner, slug))
 }
 
 async fn check_missing_mcp(
@@ -1069,29 +1346,43 @@ pub async fn search_clawhub_skills(
     }
 
     let client = Client::new();
-    let body = fetch_library_body(
-        &client,
-        None,
-        limit.unwrap_or(20),
-        if page.unwrap_or(1) > 1 {
-            "updated"
-        } else {
-            "downloads"
-        },
-        Some(q),
-    )
-    .await?;
-    let items = body
-        .get("items")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut out: Vec<ClawhubSkillSummary> = items
-        .iter()
-        .filter_map(normalize_search_skill_from_library_item)
-        .collect();
+    let mut out: Vec<ClawhubSkillSummary> = match fetch_skillhub_catalog_body(&client).await {
+        Ok(body) => normalize_skillhub_search_candidates(&body)
+            .into_iter()
+            .filter(|item| {
+                let haystack = format!(
+                    "{} {} {}",
+                    item.slug.to_ascii_lowercase(),
+                    item.name.to_ascii_lowercase(),
+                    item.description.to_ascii_lowercase()
+                );
+                haystack.contains(&q.to_ascii_lowercase())
+            })
+            .collect(),
+        Err(_) => {
+            let body = fetch_library_body(
+                &client,
+                None,
+                limit.unwrap_or(20),
+                if page.unwrap_or(1) > 1 {
+                    "updated"
+                } else {
+                    "downloads"
+                },
+                Some(q),
+            )
+            .await?;
+            body.get("items")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(normalize_search_skill_from_library_item)
+                .collect()
+        }
+    };
     out.sort_by(|a, b| b.stars.cmp(&a.stars).then_with(|| a.name.cmp(&b.name)));
+    out.truncate(limit.unwrap_or(20) as usize);
     Ok(out)
 }
 
@@ -1106,23 +1397,29 @@ pub async fn recommend_clawhub_skills(
     }
 
     let client = Client::new();
-    let body = fetch_library_body(
-        &client,
-        None,
-        limit.unwrap_or(20).max(5).min(50),
-        "downloads",
-        Some(q),
-    )
-    .await?;
-    let items = body
-        .get("items")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let candidates: Vec<ClawhubSkillSummary> = match fetch_skillhub_catalog_body(&client).await {
+        Ok(body) => normalize_skillhub_search_candidates(&body),
+        Err(_) => {
+            let body = fetch_library_body(
+                &client,
+                None,
+                limit.unwrap_or(20).max(5).min(50),
+                "downloads",
+                Some(q),
+            )
+            .await?;
+            body.get("items")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(normalize_search_skill_from_library_item)
+                .collect()
+        }
+    };
 
-    let mut recs: Vec<ClawhubSkillRecommendation> = items
-        .iter()
-        .filter_map(normalize_search_skill_from_library_item)
+    let mut recs: Vec<ClawhubSkillRecommendation> = candidates
+        .into_iter()
         .map(|skill| {
             let (score, hits) = calc_recommendation_score(q, &skill);
             ClawhubSkillRecommendation {
@@ -1229,21 +1526,29 @@ pub async fn list_clawhub_library_with_pool(
                 let cursor_for_refresh = cursor.clone();
                 spawn_refresh_if_needed(key_for_refresh.clone(), async move {
                     let client = Client::new();
-                    if let Ok(fresh_json) = fetch_library_body(
-                        &client,
-                        cursor_for_refresh.as_deref(),
-                        normalized_limit,
-                        &sort_for_refresh,
-                        None,
-                    )
-                    .await
-                    {
-                        let _ = upsert_http_cache_body(
-                            &pool_for_refresh,
-                            &key_for_refresh,
-                            &fresh_json.to_string(),
+                    let fresh_json = match fetch_skillhub_catalog_body(&client).await {
+                        Ok(body) => {
+                            serde_json::to_value(normalize_skillhub_library_response(
+                                &body,
+                                cursor_for_refresh.as_deref(),
+                                normalized_limit,
+                            ))
+                            .ok()
+                        }
+                        Err(_) => fetch_library_body(
+                            &client,
+                            cursor_for_refresh.as_deref(),
+                            normalized_limit,
+                            &sort_for_refresh,
+                            None,
                         )
-                        .await;
+                        .await
+                        .ok(),
+                    };
+                    if let Some(fresh_json) = fresh_json {
+                        let _ =
+                            upsert_http_cache_body(&pool_for_refresh, &key_for_refresh, &fresh_json.to_string())
+                                .await;
                     }
                 });
             }
@@ -1252,16 +1557,21 @@ pub async fn list_clawhub_library_with_pool(
     }
 
     let client = Client::new();
-    let body = fetch_library_body(
-        &client,
-        cursor_ref,
-        normalized_limit,
-        &normalized_sort,
-        None,
-    )
-    .await?;
-    let response = normalize_library_response(&body);
-    let _ = upsert_http_cache_body(pool, &cache_key, &body.to_string()).await;
+    let response = match fetch_skillhub_catalog_body(&client).await {
+        Ok(body) => normalize_skillhub_library_response(&body, cursor_ref, normalized_limit),
+        Err(_) => {
+            let body = fetch_library_body(
+                &client,
+                cursor_ref,
+                normalized_limit,
+                &normalized_sort,
+                None,
+            )
+            .await?;
+            normalize_library_response(&body)
+        }
+    };
+    let _ = upsert_http_cache_body(pool, &cache_key, &serde_json::to_string(&response).map_err(|e| e.to_string())?).await;
     Ok(response)
 }
 
@@ -1460,8 +1770,7 @@ pub async fn install_clawhub_skill(
     }
 
     let client = Client::new();
-    let repo_url = resolve_repo_url(&client, &clean_slug, github_url).await?;
-    let bytes = download_skill_zip_bytes(&client, &repo_url).await?;
+    let bytes = download_skill_bytes_with_fallback(&client, &clean_slug, github_url).await?;
 
     let base_dir = default_market_skill_base_dir(&app);
     std::fs::create_dir_all(&base_dir).map_err(|e| e.to_string())?;
@@ -1585,8 +1894,7 @@ pub async fn check_clawhub_skill_update(
     let local_hash = sha256_hex(&local_content);
 
     let client = Client::new();
-    let repo_url = resolve_repo_url(&client, &slug, None).await?;
-    let bytes = download_skill_zip_bytes(&client, &repo_url).await?;
+    let bytes = download_skill_bytes_with_fallback(&client, &slug, None).await?;
     let remote_content = extract_skill_md_from_zip_bytes(&bytes)?;
     let remote_hash = sha256_hex(&remote_content);
 
@@ -1709,6 +2017,123 @@ mod tests {
             build_github_repo_key("https://github.com/obra/superpowers.git", ""),
             "superpowers"
         );
+    }
+
+    #[test]
+    fn build_github_archive_urls_supports_standard_repo_urls() {
+        assert_eq!(
+            build_github_archive_urls("https://github.com/pskoett/self-improving-agent"),
+            Some(vec![
+                "https://github.com/pskoett/self-improving-agent/archive/refs/heads/main.zip"
+                    .to_string(),
+                "https://github.com/pskoett/self-improving-agent/archive/refs/heads/master.zip"
+                    .to_string(),
+            ])
+        );
+        assert_eq!(
+            build_github_archive_urls("https://github.com/obra/superpowers.git"),
+            Some(vec![
+                "https://github.com/obra/superpowers/archive/refs/heads/main.zip".to_string(),
+                "https://github.com/obra/superpowers/archive/refs/heads/master.zip".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn extract_repo_url_from_detail_body_prefers_direct_and_falls_back_to_owner_handle() {
+        let direct = serde_json::json!({
+            "skill": {
+                "slug": "video-maker",
+                "github_url": "https://github.com/acme/video-maker"
+            },
+            "owner": { "handle": "ignored" }
+        });
+        assert_eq!(
+            extract_repo_url_from_detail_body(&direct),
+            Some("https://github.com/acme/video-maker".to_string())
+        );
+
+        let inferred = serde_json::json!({
+            "skill": { "slug": "self-improving-agent" },
+            "owner": { "handle": "pskoett" }
+        });
+        assert_eq!(
+            extract_repo_url_from_detail_body(&inferred),
+            Some("https://github.com/pskoett/self-improving-agent".to_string())
+        );
+    }
+
+    #[test]
+    fn build_github_archive_urls_rejects_clawhub_skill_pages() {
+        assert_eq!(
+            build_github_archive_urls("https://www.clawhub.ai/skills/self-improving-agent"),
+            None
+        );
+    }
+
+    #[test]
+    fn build_skillhub_download_url_encodes_slug() {
+        assert_eq!(
+            build_skillhub_download_url("self-improving-agent"),
+            "https://lightmake.site/api/v1/download?slug=self-improving-agent"
+        );
+        assert_eq!(
+            build_skillhub_download_url("a skill"),
+            "https://lightmake.site/api/v1/download?slug=a%20skill"
+        );
+    }
+
+    #[test]
+    fn normalize_skillhub_library_item_maps_skillhub_fields() {
+        let item = serde_json::json!({
+            "slug": "self-improving-agent",
+            "name": "self-improving-agent",
+            "description": "Captures learnings",
+            "description_zh": "记录学习",
+            "version": "3.0.1",
+            "homepage": "https://clawhub.ai/skills/self-improving-agent",
+            "downloads": 206819,
+            "stars": 1975,
+            "owner": "pskoett",
+            "tags": ["automation", "latest"]
+        });
+
+        let normalized =
+            normalize_skillhub_library_item(&item).expect("skillhub item should normalize");
+
+        assert_eq!(normalized.slug, "self-improving-agent");
+        assert_eq!(normalized.name, "self-improving-agent");
+        assert_eq!(normalized.summary, "记录学习");
+        assert_eq!(normalized.source_url.as_deref(), Some("https://clawhub.ai/skills/self-improving-agent"));
+        assert_eq!(normalized.github_url, None);
+        assert_eq!(normalized.downloads, 206819);
+        assert_eq!(normalized.stars, 1975);
+        assert_eq!(normalized.tags, vec!["automation".to_string(), "latest".to_string()]);
+    }
+
+    #[test]
+    fn normalize_skillhub_search_summary_uses_owner_and_chinese_description() {
+        let item = serde_json::json!({
+            "slug": "self-improving-agent",
+            "name": "self-improving-agent",
+            "description": "Captures learnings",
+            "description_zh": "记录学习",
+            "homepage": "https://clawhub.ai/skills/self-improving-agent",
+            "downloads": 206819,
+            "stars": 1975,
+            "owner": "pskoett",
+            "tags": ["automation"]
+        });
+
+        let normalized =
+            normalize_skillhub_search_skill(&item).expect("skillhub search item should normalize");
+
+        assert_eq!(normalized.slug, "self-improving-agent");
+        assert_eq!(normalized.name, "self-improving-agent");
+        assert_eq!(normalized.description, "记录学习");
+        assert_eq!(normalized.source_url.as_deref(), Some("https://clawhub.ai/skills/self-improving-agent"));
+        assert_eq!(normalized.github_url, None);
+        assert_eq!(normalized.stars, 1975);
     }
 }
 

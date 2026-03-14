@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ClawhubLibraryItem, ClawhubSkillDetail } from "../../types";
+import { ClawhubInstallRequest, ClawhubLibraryItem, ClawhubSkillDetail } from "../../types";
 import { RiskConfirmDialog } from "../RiskConfirmDialog";
 import { useImmersiveTranslation } from "../../hooks/useImmersiveTranslation";
 
 interface Props {
   installedSkillIds: Set<string>;
-  onInstall: (slug: string) => Promise<void>;
+  onInstall: (request: ClawhubInstallRequest) => Promise<void>;
 }
 
 interface LibraryResponse {
@@ -196,7 +196,15 @@ export function SkillLibraryView({ installedSkillIds, onInstall }: Props) {
     setInstallingSlug(pendingInstall.slug);
     setError("");
     try {
-      await onInstall(pendingInstall.slug);
+      await onInstall({
+        slug: pendingInstall.slug,
+        githubUrl:
+          pendingInstall.github_url ??
+          (detailView?.slug === pendingInstall.slug ? detailView.githubUrl ?? null : null),
+        sourceUrl:
+          pendingInstall.source_url ??
+          (detailView?.slug === pendingInstall.slug ? detailView.sourceUrl ?? null : null),
+      });
     } catch (e) {
       setError(String(e));
     } finally {

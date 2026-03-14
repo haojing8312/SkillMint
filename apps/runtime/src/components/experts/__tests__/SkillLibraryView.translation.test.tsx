@@ -390,6 +390,114 @@ describe("SkillLibraryView immersive translation", () => {
     expect(screen.queryByText(/详情加载失败/)).not.toBeInTheDocument();
   });
 
+  test("passes source_url to install callback when detail has no github_url", async () => {
+    const onInstall = vi.fn().mockResolvedValue(undefined);
+
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_clawhub_library") {
+        return Promise.resolve({
+          items: [
+            {
+              slug: "self-improving-agent",
+              name: "自我提升代理",
+              summary: "记录学习和修正",
+              tags: ["automation"],
+              stars: 1934,
+              downloads: 197815,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (command === "get_clawhub_skill_detail" && payload?.slug === "self-improving-agent") {
+        return Promise.resolve({
+          slug: "self-improving-agent",
+          name: "自我提升代理",
+          summary: "记录学习和修正",
+          description: "记录学习和修正",
+          source_url: "https://www.clawhub.ai/skills/self-improving-agent",
+          tags: ["automation"],
+          stars: 1934,
+          downloads: 197815,
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <SkillLibraryView
+        installedSkillIds={new Set<string>()}
+        onInstall={onInstall}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("自我提升代理")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("自我提升代理"));
+    await waitFor(() => {
+      expect(screen.getByText("技能详情")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "安装" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认安装" }));
+
+    await waitFor(() => {
+      expect(onInstall).toHaveBeenCalledWith({
+        slug: "self-improving-agent",
+        githubUrl: null,
+        sourceUrl: "https://www.clawhub.ai/skills/self-improving-agent",
+      });
+    });
+  });
+
+  test("passes source_url to install callback when installing directly from library card", async () => {
+    const onInstall = vi.fn().mockResolvedValue(undefined);
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_clawhub_library") {
+        return Promise.resolve({
+          items: [
+            {
+              slug: "self-improving-agent",
+              name: "自我提升代理",
+              summary: "记录学习和修正",
+              source_url: "https://www.clawhub.ai/skills/self-improving-agent",
+              tags: ["automation"],
+              stars: 1934,
+              downloads: 197815,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <SkillLibraryView
+        installedSkillIds={new Set<string>()}
+        onInstall={onInstall}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("自我提升代理")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "安装" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认安装" }));
+
+    await waitFor(() => {
+      expect(onInstall).toHaveBeenCalledWith({
+        slug: "self-improving-agent",
+        githubUrl: null,
+        sourceUrl: "https://www.clawhub.ai/skills/self-improving-agent",
+      });
+    });
+  });
+
   test("auto-translates newly lazy-loaded cards in auto mode", async () => {
     let intersectionCallback!: IntersectionObserverCallback;
     class TriggerableIntersectionObserver {

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -45,7 +45,7 @@ import {
   ExpertPreviewPayload,
   ExpertPreviewResult,
 } from "./components/experts/ExpertCreateView";
-import { SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message, AgentEmployee, EmployeeGroup, UpsertAgentEmployeeInput, RuntimePreferences } from "./types";
+import { ClawhubInstallRequest, SkillManifest, ModelConfig, SessionInfo, ImRoleDispatchRequest, Message, AgentEmployee, EmployeeGroup, UpsertAgentEmployeeInput, RuntimePreferences } from "./types";
 
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SkillAction = "refresh" | "delete" | "check-update" | "update";
@@ -966,9 +966,9 @@ export default function App() {
         workDir: entryEmployee?.default_work_dir || "",
         employeeId: entryEmployee?.employee_id || entryEmployee?.role_id || "",
         title: group.name || "团队协作",
-        sessionMode: "team_entry",
-        teamId,
-      });
+                sessionMode: "team_entry",
+                teamId,
+              });
       setSessions((prev) =>
         mergeSessionInfo(
           prev,
@@ -1242,11 +1242,11 @@ export default function App() {
     }
   }
 
-  async function handleInstallFromLibrary(slug: string) {
+  async function handleInstallFromLibrary(request: ClawhubInstallRequest) {
     try {
       const result = await invoke<{ manifest: SkillManifest; missing_mcp: string[] }>("install_clawhub_skill", {
-        slug,
-        githubUrl: null,
+        slug: request.slug,
+        githubUrl: request.githubUrl ?? request.sourceUrl ?? null,
       });
       await loadSkills();
       if (result?.manifest?.id) {

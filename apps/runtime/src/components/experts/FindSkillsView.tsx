@@ -1,12 +1,12 @@
 import { FormEvent, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ClawhubSkillRecommendation } from "../../types";
+import { ClawhubInstallRequest, ClawhubSkillRecommendation } from "../../types";
 import { RiskConfirmDialog } from "../RiskConfirmDialog";
 import { useImmersiveTranslation } from "../../hooks/useImmersiveTranslation";
 
 interface Props {
   installedSkillIds: Set<string>;
-  onInstall: (slug: string) => Promise<void>;
+  onInstall: (request: ClawhubInstallRequest) => Promise<void>;
 }
 
 interface Turn {
@@ -77,7 +77,11 @@ export function FindSkillsView({ installedSkillIds, onInstall }: Props) {
     setInstallingSlug(pendingInstall.slug);
     setInstallError("");
     try {
-      await onInstall(pendingInstall.slug);
+      await onInstall({
+        slug: pendingInstall.slug,
+        githubUrl: pendingInstall.github_url ?? null,
+        sourceUrl: pendingInstall.source_url ?? null,
+      });
     } catch (e) {
       setInstallError(String(e));
     } finally {

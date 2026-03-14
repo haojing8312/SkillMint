@@ -108,4 +108,53 @@ describe("FindSkillsView immersive translation", () => {
       ).toBeInTheDocument();
     });
   });
+
+  test("passes recommendation repo fields to install callback", async () => {
+    const onInstall = vi.fn().mockResolvedValue(undefined);
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "recommend_clawhub_skills") {
+        return Promise.resolve([
+          {
+            slug: "video-maker",
+            name: "Video Maker",
+            description: "Generate short videos",
+            stars: 12,
+            score: 88,
+            reason: "Great match for short video automation",
+            github_url: "https://github.com/example/video-maker",
+            source_url: "https://www.clawhub.ai/skills/video-maker",
+          },
+        ]);
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <FindSkillsView
+        installedSkillIds={new Set<string>()}
+        onInstall={onInstall}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("例如：我想做短视频脚本，最好中文场景可用"), {
+      target: { value: "short video" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找技能" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Video Maker")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "安装" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认安装" }));
+
+    await waitFor(() => {
+      expect(onInstall).toHaveBeenCalledWith({
+        slug: "video-maker",
+        githubUrl: "https://github.com/example/video-maker",
+        sourceUrl: "https://www.clawhub.ai/skills/video-maker",
+      });
+    });
+  });
 });

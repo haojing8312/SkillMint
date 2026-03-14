@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { SkillManifest } from "../../types";
+import { ClawhubInstallRequest, SkillManifest } from "../../types";
 import { SkillLibraryView } from "./SkillLibraryView";
 import { FindSkillsView } from "./FindSkillsView";
 import { RiskConfirmDialog } from "../RiskConfirmDialog";
@@ -9,7 +9,7 @@ interface Props {
   onInstallSkill: () => void;
   onCreate: () => void;
   onOpenPackaging: () => void;
-  onInstallFromLibrary: (slug: string) => Promise<void>;
+  onInstallFromLibrary: (request: ClawhubInstallRequest) => Promise<void>;
   onStartTaskWithSkill: (skillId: string) => void;
   onRefreshLocalSkill: (skillId: string) => void;
   onCheckClawhubUpdate: (skillId: string) => void;
