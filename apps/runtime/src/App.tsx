@@ -254,6 +254,7 @@ function buildOptimisticSession(input: {
     created_at: new Date().toISOString(),
     model_id: input.modelId,
     employee_id: input.employeeId || "",
+    optimistic: true,
     session_mode: input.sessionMode,
     team_id: input.teamId || "",
     permission_mode: "standard",
@@ -373,6 +374,7 @@ export default function App() {
     Record<string, EmployeeAssistantSessionContext>
   >({});
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadSessionsRequestIdRef = useRef(0);
   const employeesRef = useRef<AgentEmployee[]>([]);
   const quickModelApiKeyInputRef = useRef<HTMLInputElement | null>(null);
   const isBlockingInitialModelSetup = !showSettings && !hasCompletedInitialModelSetup;
@@ -880,10 +882,25 @@ export default function App() {
   }
 
   async function loadSessions(_skillId: string) {
+    const requestId = ++loadSessionsRequestIdRef.current;
     try {
       const list = await invoke<SessionInfo[]>("list_sessions");
-      setSessions(Array.isArray(list) ? list : []);
+      if (requestId !== loadSessionsRequestIdRef.current) {
+        return;
+      }
+      setSessions((prev) => {
+        let next = Array.isArray(list) ? list : [];
+        for (const session of prev) {
+          if (session.optimistic && !next.some((item) => item.id === session.id)) {
+            next = mergeSessionInfo(next, session);
+          }
+        }
+        return next;
+      });
     } catch (e) {
+      if (requestId !== loadSessionsRequestIdRef.current) {
+        return;
+      }
       console.error("加载会话列表失败:", e);
       void reportFrontendDiagnostic({
         kind: "session_list_load_failed",
@@ -1710,6 +1727,18 @@ export default function App() {
         title: employee.name,
         sessionMode: "employee_direct",
       });
+      setSessions((prev) =>
+        mergeSessionInfo(
+          prev,
+          buildOptimisticSession({
+            sessionId,
+            modelId,
+            title: employee.name,
+            employeeId: employee.employee_id || employee.role_id || "",
+            sessionMode: "employee_direct",
+          }),
+        ),
+      );
       await loadSessions(skillId);
       setSelectedSessionId(sessionId);
     } catch (e) {

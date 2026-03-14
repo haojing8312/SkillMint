@@ -21,6 +21,11 @@ vi.mock("../components/Sidebar", () => ({
     <div>
       <button onClick={props.onOpenEmployees}>open-employees</button>
       <button onClick={props.onOpenStartTask}>open-start-task</button>
+      <div data-testid="sidebar-session-count">{props.sessions?.length ?? 0}</div>
+      <div data-testid="sidebar-first-session-id">{props.sessions?.[0]?.id ?? ""}</div>
+      <div data-testid="sidebar-first-session-title">
+        {props.sessions?.[0]?.display_title || props.sessions?.[0]?.title || ""}
+      </div>
     </div>
   ),
 }));
@@ -137,7 +142,6 @@ describe("App employee chat entry", () => {
             title: "销售主管",
             created_at: new Date().toISOString(),
             model_id: "model-a",
-            employee_id: "sales_lead",
             session_mode: "employee_direct",
           },
         ]);
@@ -181,6 +185,231 @@ describe("App employee chat entry", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("chat-view")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-title")).toHaveTextContent("销售主管");
+      expect(screen.getByTestId("chat-view-session-mode")).toHaveTextContent("employee_direct");
+      expect(screen.getByTestId("chat-view-session-employee-name")).toHaveTextContent("销售主管");
+    });
+  });
+
+  test("keeps the new employee session in the sidebar when an older session list request resolves late", async () => {
+    let listSessionsCount = 0;
+    let resolveInitialList: ((value: unknown) => void) | null = null;
+
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: "skill-sales",
+            name: "Sales Assistant",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([
+          {
+            id: "emp-sales",
+            employee_id: "sales_lead",
+            name: "销售主管",
+            role_id: "sales_lead",
+            persona: "",
+            feishu_open_id: "",
+            feishu_app_id: "",
+            feishu_app_secret: "",
+            primary_skill_id: "skill-sales",
+            default_work_dir: "D:\\\\workspace\\\\sales",
+            openclaw_agent_id: "sales_lead",
+            enabled_scopes: ["feishu"],
+            enabled: true,
+            is_default: false,
+            skill_ids: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        listSessionsCount += 1;
+        if (listSessionsCount === 1) {
+          return new Promise((resolve) => {
+            resolveInitialList = resolve;
+          });
+        }
+        return Promise.resolve([
+          {
+            id: "session-sales",
+            title: "销售主管",
+            display_title: "销售主管",
+            created_at: new Date().toISOString(),
+            model_id: "model-a",
+            employee_id: "sales_lead",
+            session_mode: "employee_direct",
+            team_id: "",
+          },
+        ]);
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      if (command === "create_session") {
+        return Promise.resolve("session-sales");
+      }
+      return Promise.resolve(payload ?? null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "chat-with-employee" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "chat-with-employee" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-sales");
+      expect(screen.getByTestId("sidebar-first-session-title")).toHaveTextContent("销售主管");
+    });
+
+    resolveInitialList?.([]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-sales");
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+    });
+  });
+
+  test("keeps an optimistic employee session in the sidebar when reloading sessions fails", async () => {
+    let listSessionsCount = 0;
+
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: "skill-sales",
+            name: "Sales Assistant",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([
+          {
+            id: "emp-sales",
+            employee_id: "sales_lead",
+            name: "销售主管",
+            role_id: "sales_lead",
+            persona: "",
+            feishu_open_id: "",
+            feishu_app_id: "",
+            feishu_app_secret: "",
+            primary_skill_id: "skill-sales",
+            default_work_dir: "D:\\\\workspace\\\\sales",
+            openclaw_agent_id: "sales_lead",
+            enabled_scopes: ["feishu"],
+            enabled: true,
+            is_default: false,
+            skill_ids: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        listSessionsCount += 1;
+        if (listSessionsCount === 1) {
+          return Promise.resolve([]);
+        }
+        return Promise.reject(new Error("database is locked"));
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      if (command === "record_frontend_diagnostic_event") {
+        return Promise.resolve(null);
+      }
+      if (command === "create_session") {
+        return Promise.resolve("session-sales");
+      }
+      return Promise.resolve(payload ?? null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "chat-with-employee" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "chat-with-employee" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-sales");
+      expect(screen.getByTestId("sidebar-first-session-title")).toHaveTextContent("销售主管");
     });
   });
 });

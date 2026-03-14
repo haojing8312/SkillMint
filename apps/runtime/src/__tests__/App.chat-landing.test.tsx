@@ -32,6 +32,11 @@ vi.mock("../components/Sidebar", () => ({
       >
         select-team-session
       </button>
+      <div data-testid="sidebar-session-count">{props.sessions?.length ?? 0}</div>
+      <div data-testid="sidebar-first-session-id">{props.sessions?.[0]?.id ?? ""}</div>
+      <div data-testid="sidebar-first-session-title">
+        {props.sessions?.[0]?.display_title || props.sessions?.[0]?.title || ""}
+      </div>
     </div>
   ),
 }));
@@ -393,6 +398,137 @@ describe("App chat landing", () => {
       expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-team-entry-1");
       expect(screen.getByTestId("chat-view-session-mode")).toHaveTextContent("team_entry");
       expect(screen.getByTestId("chat-view-session-title")).toHaveTextContent("默认复杂任务团队");
+    });
+  });
+
+  test("keeps the new team session in the sidebar when an older session list request resolves late", async () => {
+    let listSessionsCount = 0;
+    let resolveInitialList: ((value: unknown) => void) | null = null;
+
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        listSessionsCount += 1;
+        if (listSessionsCount === 1) {
+          return new Promise((resolve) => {
+            resolveInitialList = resolve;
+          });
+        }
+        return Promise.resolve([
+          {
+            id: "session-team-entry-1",
+            title: "默认复杂任务团队",
+            display_title: "默认复杂任务团队",
+            created_at: new Date().toISOString(),
+            model_id: "model-a",
+            employee_id: "taizi",
+            session_mode: "team_entry",
+            team_id: "group-1",
+          },
+        ]);
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([
+          {
+            id: "emp-taizi",
+            employee_id: "taizi",
+            name: "太子",
+            role_id: "taizi",
+            persona: "",
+            feishu_open_id: "",
+            feishu_app_id: "",
+            feishu_app_secret: "",
+            primary_skill_id: "builtin-general",
+            default_work_dir: "E:\\\\workspace\\\\taizi",
+            openclaw_agent_id: "taizi",
+            enabled_scopes: ["app"],
+            routing_priority: 100,
+            enabled: true,
+            is_default: true,
+            skill_ids: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_employee_groups") {
+        return Promise.resolve([
+          {
+            id: "group-1",
+            name: "默认复杂任务团队",
+            coordinator_employee_id: "shangshu",
+            member_employee_ids: ["taizi", "zhongshu", "shangshu"],
+            member_count: 3,
+            entry_employee_id: "taizi",
+            review_mode: "hard",
+            execution_mode: "parallel",
+            visibility_mode: "shared",
+            template_id: "sansheng-liubu",
+            is_bootstrap_seeded: true,
+            config_json: "{}",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "create_session") {
+        if (payload?.sessionMode === "team_entry") {
+          return Promise.resolve("session-team-entry-1");
+        }
+        return Promise.resolve("session-created-general");
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "create-team-entry-session" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "create-team-entry-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-team-entry-1");
+      expect(screen.getByTestId("sidebar-first-session-title")).toHaveTextContent("默认复杂任务团队");
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+    });
+
+    resolveInitialList?.([]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-team-entry-1");
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
     });
   });
 
