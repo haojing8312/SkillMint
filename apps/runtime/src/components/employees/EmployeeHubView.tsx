@@ -12,6 +12,7 @@ import {
   EmployeeMemoryStats,
   FeishuEmployeeConnectionStatuses,
   FeishuEmployeeWsStatus,
+  ImRoutingBinding,
   RuntimePreferences,
   SkillManifest,
   UpsertAgentEmployeeInput,
@@ -30,6 +31,7 @@ import {
   matchesEmployeeHubTeamFilter,
 } from "./employeeHubOverview";
 import { ConnectorConfigPanel } from "../connectors/ConnectorConfigPanel";
+import { EmployeeFeishuAssociationSection } from "./EmployeeFeishuAssociationSection";
 import { getConnectorSchema } from "../connectors/connectorSchemas";
 
 interface Props {
@@ -129,13 +131,8 @@ export function EmployeeHubView({
   const [pendingClearMemory, setPendingClearMemory] = useState(false);
   const [profileView, setProfileView] = useState<AgentProfileFilesView | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [savingFeishuConfig, setSavingFeishuConfig] = useState(false);
-  const [retryingFeishuConnection, setRetryingFeishuConnection] = useState(false);
-  const [feishuForm, setFeishuForm] = useState({
-    openId: "",
-    appId: "",
-    appSecret: "",
-  });
+  const [routingBindings, setRoutingBindings] = useState<ImRoutingBinding[]>([]);
+  const [savingFeishuAssociation, setSavingFeishuAssociation] = useState(false);
   const [savingWecomConfig, setSavingWecomConfig] = useState(false);
   const [retryingWecomConnection, setRetryingWecomConnection] = useState(false);
   const [wecomForm, setWecomForm] = useState({
@@ -290,6 +287,26 @@ export function EmployeeHubView({
 
   useEffect(() => {
     let disposed = false;
+    const loadBindings = async () => {
+      try {
+        const bindings = await invoke<ImRoutingBinding[]>("list_im_routing_bindings");
+        if (!disposed) {
+          setRoutingBindings(Array.isArray(bindings) ? bindings : []);
+        }
+      } catch {
+        if (!disposed) {
+          setRoutingBindings([]);
+        }
+      }
+    };
+    void loadBindings();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
     const loadWecom = async () => {
       try {
         const [settings, status] = await Promise.all([
@@ -324,16 +341,10 @@ export function EmployeeHubView({
 
   useEffect(() => {
     if (!selectedEmployee) {
-      setFeishuForm({ openId: "", appId: "", appSecret: "" });
       setProfileView(null);
       setProfileLoading(false);
       return;
     }
-    setFeishuForm({
-      openId: selectedEmployee.feishu_open_id || "",
-      appId: selectedEmployee.feishu_app_id || "",
-      appSecret: selectedEmployee.feishu_app_secret || "",
-    });
 
     let disposed = false;
     setProfileLoading(true);
@@ -365,12 +376,12 @@ export function EmployeeHubView({
 
   function resolveFeishuStatus(employee: AgentEmployee): { dotClass: string; label: string; detail: string; error: string } {
     const enabled = !!employee.enabled;
-    const hasCredentials = !!employee.feishu_app_id.trim() && !!employee.feishu_app_secret.trim();
+    const receivesFeishu = employee.enabled_scopes.includes("feishu");
     if (!enabled) {
       return { dotClass: "bg-gray-300", label: "未启用飞书消息", detail: "该员工已停用，不接收飞书事件。", error: "" };
     }
-    if (!hasCredentials) {
-      return { dotClass: "bg-gray-300", label: "待配置飞书凭据", detail: "请填写 App ID / App Secret 并保存。", error: "" };
+    if (!receivesFeishu) {
+      return { dotClass: "bg-gray-300", label: "未关联飞书接待", detail: "请在员工详情中启用飞书接待。", error: "" };
     }
     const key = employeeKey(employee).toLowerCase();
     const sidecarStatus = key ? feishuStatusByEmployeeId.get(key) : undefined;
@@ -382,9 +393,9 @@ export function EmployeeHubView({
       feishuStatuses?.relay?.last_error?.trim() ||
       (!relayRunning ? "事件 relay 未运行" : "飞书长连接未运行");
     if (!relayRunning) {
-      return { dotClass: "bg-amber-500", label: "待启动飞书事件转发", detail: "可点击“重试连接”自动拉起转发器。", error };
+      return { dotClass: "bg-amber-500", label: "待启动飞书事件转发", detail: "请前往设置中心中的飞书连接页面检查。", error };
     }
-    return { dotClass: "bg-red-500", label: "飞书连接异常", detail: "请检查飞书凭据并重试连接。", error };
+    return { dotClass: "bg-red-500", label: "飞书连接异常", detail: "请检查飞书连接状态或员工接待规则。", error };
   }
 
   async function refreshEmployeeMemoryStats(scopeSkillId?: string) {
@@ -461,65 +472,119 @@ export function EmployeeHubView({
     }
   }
 
-  async function saveFeishuConfig() {
+  async function saveEmployeeWithScopes(nextScopes: string[]) {
     if (!selectedEmployee) return;
     const employeeId = employeeKey(selectedEmployee);
     if (!employeeId) {
-      setMessage("员工编号缺失，无法保存飞书配置");
-      return;
+      throw new Error("员工编号缺失，无法保存员工配置");
     }
-    setSavingFeishuConfig(true);
-    setMessage("");
-    try {
-      await onSaveEmployee({
-        id: selectedEmployee.id,
-        employee_id: employeeId,
-        name: selectedEmployee.name,
-        role_id: employeeId,
-        persona: selectedEmployee.persona,
-        feishu_open_id: feishuForm.openId.trim(),
-        feishu_app_id: feishuForm.appId.trim(),
-        feishu_app_secret: feishuForm.appSecret.trim(),
-        primary_skill_id: selectedEmployee.primary_skill_id || "",
-        default_work_dir: selectedEmployee.default_work_dir || "",
-        openclaw_agent_id: selectedEmployee.openclaw_agent_id || employeeId,
-        routing_priority: Number.isFinite(selectedEmployee.routing_priority)
-          ? selectedEmployee.routing_priority
-          : 100,
-        enabled_scopes: selectedEmployee.enabled_scopes?.length ? selectedEmployee.enabled_scopes : ["app"],
-        enabled: selectedEmployee.enabled,
-        is_default: selectedEmployee.is_default,
-        skill_ids: selectedEmployee.skill_ids,
-      });
-      setMessage("飞书配置已保存");
-    } catch (e) {
-      setMessage(`保存飞书配置失败: ${String(e)}`);
-    } finally {
-      setSavingFeishuConfig(false);
-    }
+    await onSaveEmployee({
+      id: selectedEmployee.id,
+      employee_id: employeeId,
+      name: selectedEmployee.name,
+      role_id: employeeId,
+      persona: selectedEmployee.persona,
+      feishu_open_id: selectedEmployee.feishu_open_id || "",
+      feishu_app_id: selectedEmployee.feishu_app_id || "",
+      feishu_app_secret: selectedEmployee.feishu_app_secret || "",
+      primary_skill_id: selectedEmployee.primary_skill_id || "",
+      default_work_dir: selectedEmployee.default_work_dir || "",
+      openclaw_agent_id: selectedEmployee.openclaw_agent_id || employeeId,
+      routing_priority: Number.isFinite(selectedEmployee.routing_priority)
+        ? selectedEmployee.routing_priority
+        : 100,
+      enabled_scopes: nextScopes.length > 0 ? nextScopes : ["app"],
+      enabled: selectedEmployee.enabled,
+      is_default: selectedEmployee.is_default,
+      skill_ids: selectedEmployee.skill_ids,
+    });
   }
 
-  async function retryFeishuConnection() {
-    const appId = feishuForm.appId.trim();
-    const appSecret = feishuForm.appSecret.trim();
-    if (!appId || !appSecret) {
-      setMessage("请先填写并保存 App ID / App Secret，再重试连接");
+  async function saveFeishuAssociation(input: {
+    enabled: boolean;
+    mode: "default" | "scoped";
+    peerKind: "group" | "channel" | "direct";
+    peerId: string;
+    priority: number;
+  }) {
+    if (!selectedEmployee) return;
+    const employeeId = employeeKey(selectedEmployee);
+    const agentId = (selectedEmployee.openclaw_agent_id || employeeId).trim();
+    if (!agentId) {
+      setMessage("员工编号缺失，无法保存飞书接待");
       return;
     }
-    setRetryingFeishuConnection(true);
+    setSavingFeishuAssociation(true);
     setMessage("");
     try {
-      await invoke("start_feishu_long_connection", { sidecarBaseUrl: null, appId, appSecret });
-      await invoke("start_feishu_event_relay", { sidecarBaseUrl: null, intervalMs: 1500, limit: 50 });
-      const latest = await invoke<FeishuEmployeeConnectionStatuses>("get_feishu_employee_connection_statuses", {
-        sidecarBaseUrl: null,
-      });
-      setFeishuStatuses(latest);
-      setMessage("已触发飞书重连，请等待几秒后查看状态");
+      const scopes = new Set(selectedEmployee.enabled_scopes?.length ? selectedEmployee.enabled_scopes : ["app"]);
+      if (input.enabled) {
+        scopes.add("feishu");
+      } else {
+        scopes.delete("feishu");
+      }
+      if (scopes.size === 0) {
+        scopes.add("app");
+      }
+      await saveEmployeeWithScopes(Array.from(scopes.values()));
+
+      const existingBindings = await invoke<ImRoutingBinding[]>("list_im_routing_bindings");
+      const normalizedBindings = Array.isArray(existingBindings) ? existingBindings : [];
+      const ownBindings = normalizedBindings.filter(
+        (binding) => binding.channel === "feishu" && binding.agent_id.trim().toLowerCase() === agentId.toLowerCase(),
+      );
+      for (const binding of ownBindings) {
+        await invoke("delete_im_routing_binding", { id: binding.id });
+      }
+
+      if (input.enabled) {
+        if (input.mode === "default") {
+          const otherDefaultBindings = normalizedBindings.filter(
+            (binding) =>
+              binding.channel === "feishu" &&
+              !binding.peer_id.trim() &&
+              binding.agent_id.trim().toLowerCase() !== agentId.toLowerCase(),
+          );
+          for (const binding of otherDefaultBindings) {
+            await invoke("delete_im_routing_binding", { id: binding.id });
+          }
+        } else {
+          const conflictingScopedBindings = normalizedBindings.filter(
+            (binding) =>
+              binding.channel === "feishu" &&
+              binding.agent_id.trim().toLowerCase() !== agentId.toLowerCase() &&
+              binding.peer_kind.trim().toLowerCase() === input.peerKind &&
+              binding.peer_id.trim() === input.peerId.trim(),
+          );
+          for (const binding of conflictingScopedBindings) {
+            await invoke("delete_im_routing_binding", { id: binding.id });
+          }
+        }
+
+        await invoke<string>("upsert_im_routing_binding", {
+          input: {
+            agent_id: agentId,
+            channel: "feishu",
+            account_id: "*",
+            peer_kind: input.mode === "default" ? "group" : input.peerKind,
+            peer_id: input.mode === "default" ? "" : input.peerId.trim(),
+            guild_id: "",
+            team_id: "",
+            role_ids: [],
+            connector_meta: { connector_id: "feishu" },
+            priority: input.priority,
+            enabled: true,
+          },
+        });
+      }
+
+      const latestBindings = await invoke<ImRoutingBinding[]>("list_im_routing_bindings");
+      setRoutingBindings(Array.isArray(latestBindings) ? latestBindings : []);
+      setMessage(input.enabled ? "飞书接待已保存" : "已关闭该员工的飞书接待");
     } catch (e) {
-      setMessage(`重试飞书连接失败: ${String(e)}`);
+      setMessage(`保存飞书接待失败: ${String(e)}`);
     } finally {
-      setRetryingFeishuConnection(false);
+      setSavingFeishuAssociation(false);
     }
   }
 
@@ -831,30 +896,12 @@ export function EmployeeHubView({
     : `确定清空${clearMemoryScopeLabel}下的长期记忆吗？`;
   const clearMemoryDialogImpact = selectedEmployeeMemoryId ? `员工编号: ${selectedEmployeeMemoryId}` : undefined;
   const selectedEmployeeFeishuStatus = selectedEmployee ? resolveFeishuStatus(selectedEmployee) : null;
-  const feishuConnectorSchema = getConnectorSchema("feishu");
   const wecomConnectorSchema = getConnectorSchema("wecom");
   const selectedEmployeeFeishuRuntimeStatus = useMemo(() => {
     if (!selectedEmployee) return null;
     const key = employeeKey(selectedEmployee).toLowerCase();
     return key ? feishuStatusByEmployeeId.get(key) ?? null : null;
   }, [feishuStatusByEmployeeId, selectedEmployee]);
-  const selectedConnectorDiagnostics = useMemo(() => {
-    if (!selectedEmployeeFeishuRuntimeStatus) return [];
-    return [
-      {
-        label: "重连次数",
-        value: String(selectedEmployeeFeishuRuntimeStatus.reconnect_attempts ?? 0),
-      },
-      {
-        label: "队列事件",
-        value: String(selectedEmployeeFeishuRuntimeStatus.queued_events ?? 0),
-      },
-      {
-        label: "最后事件",
-        value: selectedEmployeeFeishuRuntimeStatus.last_event_at?.trim() || "暂无",
-      },
-    ];
-  }, [selectedEmployeeFeishuRuntimeStatus]);
   const selectedEmployeeWecomStatus = selectedEmployee
     ? wecomStatus?.running
       ? {
@@ -1588,17 +1635,14 @@ export function EmployeeHubView({
                   <div className="flex flex-wrap gap-1">{selectedEmployeeAuthorizedSkills.length === 0 ? <span className="text-[11px] px-2 py-0.5 rounded border border-gray-200 text-gray-500">未配置，默认按主技能执行</span> : selectedEmployeeAuthorizedSkills.map((item) => <span key={item.id} className="text-[11px] px-2 py-0.5 rounded border border-blue-100 bg-blue-50 text-blue-700">{item.name}</span>)}</div>
                 </div>
 
-                {selectedEmployeeFeishuStatus && (
-                  <ConnectorConfigPanel
-                    schema={feishuConnectorSchema}
-                    status={selectedEmployeeFeishuStatus}
-                    values={feishuForm}
-                    saving={savingFeishuConfig}
-                    retrying={retryingFeishuConnection}
-                    diagnostics={selectedConnectorDiagnostics}
-                    onChange={(key, value) => setFeishuForm((s) => ({ ...s, [key]: value }))}
-                    onSave={saveFeishuConfig}
-                    onRetry={retryFeishuConnection}
+                {selectedEmployeeFeishuStatus && selectedEmployee && (
+                  <EmployeeFeishuAssociationSection
+                    employee={selectedEmployee}
+                    employees={employees}
+                    bindings={routingBindings}
+                    saving={savingFeishuAssociation}
+                    runtimeStatus={selectedEmployeeFeishuRuntimeStatus}
+                    onSave={saveFeishuAssociation}
                   />
                 )}
 

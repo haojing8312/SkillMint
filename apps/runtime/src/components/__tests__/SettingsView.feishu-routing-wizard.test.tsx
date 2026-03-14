@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-describe("SettingsView connector routing wizard", () => {
+describe("SettingsView connector management", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) => {
@@ -77,145 +77,22 @@ describe("SettingsView connector routing wizard", () => {
           instance_id: "wecom:wecom-main",
         });
       }
-      if (command === "list_im_routing_bindings") {
-        return Promise.resolve([
-          {
-            id: "binding-wecom-1",
-            agent_id: "wecom-agent",
-            channel: "wecom",
-            account_id: "corp-123",
-            peer_kind: "group",
-            peer_id: "wecom-room-1",
-            guild_id: "",
-            team_id: "",
-            role_ids: [],
-            connector_meta: { connector_id: "wecom-main" },
-            priority: 90,
-            enabled: true,
-            created_at: "2026-03-11T00:00:00Z",
-            updated_at: "2026-03-11T00:00:00Z",
-          },
-        ]);
-      }
-      if (command === "upsert_im_routing_binding") return Promise.resolve("rule-1");
-      if (command === "simulate_im_route") {
-        return Promise.resolve({ agentId: "main", matchedBy: "binding.channel" });
-      }
       return Promise.resolve(null);
     });
   });
 
-  test("saves connector routing rule and can run simulation", async () => {
+  test("keeps routing assignment out of settings", async () => {
     render(<SettingsView onClose={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "渠道连接器" }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText("路由渠道")).toBeInTheDocument();
+      expect(screen.getByTestId("connector-panel-feishu")).toBeInTheDocument();
     });
-    expect(screen.getAllByText("消息处理规则").length).toBeGreaterThan(0);
-    expect(screen.getByText("设置不同渠道的消息应该交给谁处理。")).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("路由渠道"), {
-      target: { value: "feishu" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("agent_id（如 main）"), {
-      target: { value: "peer-agent" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存规则" }));
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith(
-        "upsert_im_routing_binding",
-        expect.objectContaining({
-          input: expect.objectContaining({ agent_id: "peer-agent" }),
-        }),
-      );
-    });
-    expect(screen.getAllByText("已启用规则数").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole("button", { name: "模拟路由" }));
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith(
-        "simulate_im_route",
-        expect.objectContaining({
-          payload: expect.objectContaining({ channel: "feishu" }),
-        }),
-      );
-    });
-  });
-
-  test("requires choosing a connector channel before saving", async () => {
-    render(<SettingsView onClose={() => {}} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "渠道连接器" }));
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("路由渠道")).toBeInTheDocument();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText("agent_id（如 main）"), {
-      target: { value: "peer-agent" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存规则" }));
-
-    expect(screen.getByText("请先选择路由渠道")).toBeInTheDocument();
-    expect(invokeMock).not.toHaveBeenCalledWith(
-      "upsert_im_routing_binding",
-      expect.anything(),
-    );
-  });
-
-  test("supports wecom rules through the same connector routing wizard", async () => {
-    render(<SettingsView onClose={() => {}} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "渠道连接器" }));
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("路由渠道")).toBeInTheDocument();
-    });
-
-    fireEvent.change(screen.getByLabelText("路由渠道"), {
-      target: { value: "wecom" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("agent_id（如 main）"), {
-      target: { value: "wecom-agent" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "保存规则" }));
-
-    await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith(
-        "upsert_im_routing_binding",
-        expect.objectContaining({
-          input: expect.objectContaining({
-            agent_id: "wecom-agent",
-            channel: "wecom",
-            connector_meta: expect.objectContaining({ connector_id: "wecom" }),
-          }),
-        }),
-      );
-    });
-    expect(screen.getAllByText("已启用规则数").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole("button", { name: "模拟路由" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("将由：main")).toBeInTheDocument();
-      expect(screen.getByText("命中原因：渠道规则")).toBeInTheDocument();
-      expect(screen.getByText("规则来源：企业微信")).toBeInTheDocument();
-      expect(invokeMock).toHaveBeenCalledWith(
-        "simulate_im_route",
-        expect.objectContaining({
-          payload: expect.objectContaining({ channel: "wecom" }),
-        }),
-      );
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "查看技术详情" }));
-    expect(screen.getByText("matchedBy: binding.channel")).toBeInTheDocument();
-    expect(screen.getByText("channel: wecom")).toBeInTheDocument();
+    expect(screen.getByText("员工关联入口")).toBeInTheDocument();
+    expect(screen.getByText("飞书连接成功后，请前往员工详情中的“飞书接待”配置默认接待员工或指定群聊范围。")).toBeInTheDocument();
+    expect(screen.queryByLabelText("路由渠道")).not.toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith("upsert_im_routing_binding", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("simulate_im_route", expect.anything());
   });
 });

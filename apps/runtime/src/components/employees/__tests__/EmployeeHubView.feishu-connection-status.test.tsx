@@ -75,6 +75,9 @@ describe("EmployeeHubView feishu connection status", () => {
         });
       }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
+      if (command === "list_im_routing_bindings") return Promise.resolve([]);
+      if (command === "upsert_im_routing_binding") return Promise.resolve("binding-1");
+      if (command === "delete_im_routing_binding") return Promise.resolve(null);
       if (command === "get_wecom_gateway_settings") {
         return Promise.resolve({
           corp_id: "wwcorp",
@@ -136,13 +139,12 @@ describe("EmployeeHubView feishu connection status", () => {
     expect(screen.getByTestId("employee-connection-dot-emp-green")).toHaveClass("bg-emerald-500");
     expect(screen.getByTestId("employee-connection-dot-emp-red")).toHaveClass("bg-red-500");
     expect(screen.getByTestId("employee-connection-dot-emp-gray")).toHaveClass("bg-gray-300");
-    expect(screen.getByTestId("connector-panel-feishu")).toBeInTheDocument();
-    expect(screen.getByTestId("connector-diagnostics-feishu")).toBeInTheDocument();
-    expect(screen.getByText("渠道连接器 / 飞书")).toBeInTheDocument();
+    expect(screen.getByTestId("employee-feishu-association")).toBeInTheDocument();
+    expect(screen.getByText("飞书接待")).toBeInTheDocument();
+    expect(screen.queryByTestId("connector-panel-feishu")).not.toBeInTheDocument();
+    expect(screen.getByText("飞书连接在设置中心统一管理。这里仅决定该员工是否接待飞书入口，以及接待哪些会话。")).toBeInTheDocument();
     expect(screen.getByTestId("connector-panel-wecom")).toBeInTheDocument();
-    expect(screen.getByText("渠道连接器 / 企业微信")).toBeInTheDocument();
     expect(screen.getAllByText("重连次数").length).toBeGreaterThan(0);
-    expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText("auth failed")).toBeInTheDocument();
   });
 
@@ -192,7 +194,7 @@ describe("EmployeeHubView feishu connection status", () => {
       );
     });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "重试连接" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "重试连接" }));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
@@ -206,7 +208,7 @@ describe("EmployeeHubView feishu connection status", () => {
     });
   });
 
-  test("saving feishu config preserves app scope when employee scopes are empty", async () => {
+  test("saving feishu association preserves app scope when employee scopes are empty", async () => {
     const onSaveEmployee = vi.fn().mockResolvedValue(undefined);
     const employee = {
       ...buildEmployee("emp-scope", "scope-user", true, "cli_scope", "sec_scope"),
@@ -237,12 +239,269 @@ describe("EmployeeHubView feishu connection status", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "保存连接器配置" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("employee-feishu-association")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("启用飞书接待"));
+    fireEvent.click(screen.getByRole("button", { name: "保存飞书接待" }));
 
     await waitFor(() => {
       expect(onSaveEmployee).toHaveBeenCalledWith(
         expect.objectContaining({
-          enabled_scopes: ["app"],
+          enabled_scopes: ["app", "feishu"],
+        }),
+      );
+    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "upsert_im_routing_binding",
+      expect.objectContaining({
+        input: expect.objectContaining({
+          channel: "feishu",
+          agent_id: "scope-user",
+        }),
+      }),
+    );
+  });
+
+  test("supports scoped feishu reception for a specific group", async () => {
+    const onSaveEmployee = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EmployeeHubView
+        employees={[buildEmployee("emp-scoped", "ops", true, "cli_ops", "sec_ops")]}
+        skills={[
+          {
+            id: "builtin-general",
+            name: "通用助手",
+            description: "",
+            version: "1.0.0",
+            author: "",
+            recommended_model: "",
+            tags: [],
+            created_at: "2026-03-01T00:00:00Z",
+          },
+        ]}
+        selectedEmployeeId="emp-scoped"
+        onSelectEmployee={() => {}}
+        onSaveEmployee={onSaveEmployee}
+        onDeleteEmployee={async () => {}}
+        onSetAsMainAndEnter={() => {}}
+        onStartTaskWithEmployee={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("employee-feishu-association")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("仅处理指定群聊或会话"));
+    fireEvent.change(screen.getByLabelText("飞书处理范围 ID"), {
+      target: { value: "chat-delivery-room" },
+    });
+    fireEvent.change(screen.getByLabelText("飞书处理优先级"), {
+      target: { value: "66" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存飞书接待" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "upsert_im_routing_binding",
+        expect.objectContaining({
+          input: expect.objectContaining({
+            channel: "feishu",
+            agent_id: "ops",
+            peer_kind: "group",
+            peer_id: "chat-delivery-room",
+            priority: 66,
+          }),
+        }),
+      );
+    });
+  });
+
+  test("shows default receiver replacement hint and removes previous default binding on save", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({ default_work_dir: "C:\\Users\\test\\WorkClaw\\workspace" });
+      }
+      if (command === "get_feishu_employee_connection_statuses") {
+        return Promise.resolve({
+          relay: { running: true, generation: 1, interval_ms: 1500, total_accepted: 0, last_error: null },
+          sidecar: { running: true, started_at: "2026-03-04T00:00:00Z", queued_events: 0, running_count: 0, items: [] },
+        });
+      }
+      if (command === "set_runtime_preferences") return Promise.resolve(null);
+      if (command === "list_im_routing_bindings") {
+        return Promise.resolve([
+          {
+            id: "binding-default-pm",
+            agent_id: "pm",
+            channel: "feishu",
+            account_id: "*",
+            peer_kind: "group",
+            peer_id: "",
+            guild_id: "",
+            team_id: "",
+            role_ids: [],
+            connector_meta: { connector_id: "feishu" },
+            priority: 100,
+            enabled: true,
+            created_at: "2026-03-11T00:00:00Z",
+            updated_at: "2026-03-11T00:00:00Z",
+          },
+        ]);
+      }
+      if (command === "delete_im_routing_binding") return Promise.resolve(null);
+      if (command === "upsert_im_routing_binding") return Promise.resolve("binding-tech");
+      if (command === "get_wecom_gateway_settings") {
+        return Promise.resolve({ corp_id: "wwcorp", agent_id: "1000002", agent_secret: "secret-x", sidecar_base_url: "" });
+      }
+      if (command === "get_wecom_connector_status") {
+        return Promise.resolve({
+          running: false,
+          started_at: null,
+          last_error: null,
+          reconnect_attempts: 0,
+          queue_depth: 0,
+          instance_id: "wecom:wecom-main",
+        });
+      }
+      if (command === "set_wecom_gateway_settings") return Promise.resolve(null);
+      if (command === "start_wecom_connector") return Promise.resolve("wecom:wecom-main");
+      if (command === "resolve_default_work_dir") return Promise.resolve("C:\\Users\\test\\WorkClaw\\workspace");
+      return Promise.resolve(null);
+    });
+
+    render(
+      <EmployeeHubView
+        employees={[
+          buildEmployee("emp-pm", "pm", true, "cli_pm", "sec_pm"),
+          buildEmployee("emp-tech", "tech", true, "cli_tech", "sec_tech"),
+        ]}
+        skills={[]}
+        selectedEmployeeId="emp-tech"
+        onSelectEmployee={() => {}}
+        onSaveEmployee={async () => {}}
+        onDeleteEmployee={async () => {}}
+        onSetAsMainAndEnter={() => {}}
+        onStartTaskWithEmployee={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("employee-feishu-association")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("当前默认接待员工是 pm，保存后将替换为当前员工。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存飞书接待" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("delete_im_routing_binding", { id: "binding-default-pm" });
+      expect(invokeMock).toHaveBeenCalledWith(
+        "upsert_im_routing_binding",
+        expect.objectContaining({
+          input: expect.objectContaining({
+            agent_id: "tech",
+            peer_id: "",
+          }),
+        }),
+      );
+    });
+  });
+
+  test("shows scoped conflict hint and removes conflicting binding before saving", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({ default_work_dir: "C:\\Users\\test\\WorkClaw\\workspace" });
+      }
+      if (command === "get_feishu_employee_connection_statuses") {
+        return Promise.resolve({
+          relay: { running: true, generation: 1, interval_ms: 1500, total_accepted: 0, last_error: null },
+          sidecar: { running: true, started_at: "2026-03-04T00:00:00Z", queued_events: 0, running_count: 0, items: [] },
+        });
+      }
+      if (command === "set_runtime_preferences") return Promise.resolve(null);
+      if (command === "list_im_routing_bindings") {
+        return Promise.resolve([
+          {
+            id: "binding-ops-room",
+            agent_id: "ops",
+            channel: "feishu",
+            account_id: "*",
+            peer_kind: "group",
+            peer_id: "chat-delivery-room",
+            guild_id: "",
+            team_id: "",
+            role_ids: [],
+            connector_meta: { connector_id: "feishu" },
+            priority: 88,
+            enabled: true,
+            created_at: "2026-03-11T00:00:00Z",
+            updated_at: "2026-03-11T00:00:00Z",
+          },
+        ]);
+      }
+      if (command === "delete_im_routing_binding") return Promise.resolve(null);
+      if (command === "upsert_im_routing_binding") return Promise.resolve("binding-tech-room");
+      if (command === "get_wecom_gateway_settings") {
+        return Promise.resolve({ corp_id: "wwcorp", agent_id: "1000002", agent_secret: "secret-x", sidecar_base_url: "" });
+      }
+      if (command === "get_wecom_connector_status") {
+        return Promise.resolve({
+          running: false,
+          started_at: null,
+          last_error: null,
+          reconnect_attempts: 0,
+          queue_depth: 0,
+          instance_id: "wecom:wecom-main",
+        });
+      }
+      if (command === "set_wecom_gateway_settings") return Promise.resolve(null);
+      if (command === "start_wecom_connector") return Promise.resolve("wecom:wecom-main");
+      if (command === "resolve_default_work_dir") return Promise.resolve("C:\\Users\\test\\WorkClaw\\workspace");
+      return Promise.resolve(null);
+    });
+
+    render(
+      <EmployeeHubView
+        employees={[
+          buildEmployee("emp-ops", "ops", true, "cli_ops", "sec_ops"),
+          buildEmployee("emp-tech", "tech", true, "cli_tech", "sec_tech"),
+        ]}
+        skills={[]}
+        selectedEmployeeId="emp-tech"
+        onSelectEmployee={() => {}}
+        onSaveEmployee={async () => {}}
+        onDeleteEmployee={async () => {}}
+        onSetAsMainAndEnter={() => {}}
+        onStartTaskWithEmployee={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("employee-feishu-association")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByLabelText("仅处理指定群聊或会话"));
+    fireEvent.change(screen.getByLabelText("飞书处理范围 ID"), {
+      target: { value: "chat-delivery-room" },
+    });
+
+    expect(screen.getByText("群聊/会话 chat-delivery-room 当前由 ops 处理，保存后将改为当前员工接待。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存飞书接待" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("delete_im_routing_binding", { id: "binding-ops-room" });
+      expect(invokeMock).toHaveBeenCalledWith(
+        "upsert_im_routing_binding",
+        expect.objectContaining({
+          input: expect.objectContaining({
+            agent_id: "tech",
+            peer_id: "chat-delivery-room",
+          }),
         }),
       );
     });

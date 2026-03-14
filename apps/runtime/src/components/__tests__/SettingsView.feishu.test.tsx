@@ -71,9 +71,11 @@ describe("SettingsView connector tab", () => {
     await waitFor(() => {
       expect(screen.getByTestId("connector-panel-feishu")).toBeInTheDocument();
     });
-    expect(screen.getByText("先连接消息渠道，再设置处理规则，最后用模拟结果确认命中原因。")).toBeInTheDocument();
+    expect(screen.getByText("飞书连接")).toBeInTheDocument();
+    expect(screen.getByText("先完成飞书连接，再到员工详情中指定谁来接待飞书消息。")).toBeInTheDocument();
     expect(screen.getAllByText("连接器概览").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("消息处理规则").length).toBeGreaterThan(0);
+    expect(screen.getByText("员工关联入口")).toBeInTheDocument();
+    expect(screen.queryByText("消息处理规则")).not.toBeInTheDocument();
 
     expect(invokeMock.mock.calls.some(([command]) => command === "list_im_routing_bindings")).toBe(false);
   });

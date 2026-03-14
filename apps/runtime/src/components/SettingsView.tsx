@@ -22,15 +22,12 @@ import {
   CapabilityRoutingPolicy,
   FeishuGatewaySettings,
   FeishuWsStatus,
-  ImRouteSimulationPayload,
-  ImRoutingBinding,
   ModelConfig,
   ProviderConfig,
   ProviderHealthInfo,
   RuntimePreferences,
   RouteAttemptLog,
   RouteAttemptStat,
-  UpsertImRoutingBindingInput,
   WecomConnectorStatus,
   WecomGatewaySettings,
 } from "../types";
@@ -38,7 +35,6 @@ import { RiskConfirmDialog } from "./RiskConfirmDialog";
 import { ConnectorConfigPanel } from "./connectors/ConnectorConfigPanel";
 import { ConnectorDiagnosticsPanel } from "./connectors/ConnectorDiagnosticsPanel";
 import { getConnectorSchema } from "./connectors/connectorSchemas";
-import { ImRoutingWizard } from "./employees/FeishuRoutingWizard";
 
 const MCP_PRESETS = [
   { label: "— 快速选择 —", value: "", name: "", command: "", args: "", env: "" },
@@ -225,7 +221,6 @@ export function SettingsView({
   const [routeStatsLoading, setRouteStatsLoading] = useState(false);
   const [routeStatsCapability, setRouteStatsCapability] = useState("all");
   const [routeStatsHours, setRouteStatsHours] = useState(24);
-  const [routingBindings, setRoutingBindings] = useState<ImRoutingBinding[]>([]);
   const [feishuConnectorSettings, setFeishuConnectorSettings] = useState<FeishuGatewaySettings>({
     app_id: "",
     app_secret: "",
@@ -726,16 +721,6 @@ export function SettingsView({
     }
   }
 
-  async function loadRoutingBindings() {
-    try {
-      const list = await invoke<ImRoutingBinding[]>("list_im_routing_bindings");
-      setRoutingBindings(Array.isArray(list) ? list : []);
-    } catch (e) {
-      console.warn("加载飞书路由规则失败:", e);
-      setRoutingBindings([]);
-    }
-  }
-
   async function loadConnectorSettings() {
     try {
       const [feishuSettings, wecomSettings] = await Promise.all([
@@ -1056,24 +1041,6 @@ export function SettingsView({
       setRouteError("保存自动路由设置失败: " + String(e));
       setRouteSaveState("error");
     }
-  }
-
-  async function handleSaveRoutingRule(input: UpsertImRoutingBindingInput) {
-    await invoke<string>("upsert_im_routing_binding", { input });
-    await loadRoutingBindings();
-  }
-
-  async function handleDeleteRoutingRule(id: string) {
-    await invoke("delete_im_routing_binding", { id });
-    await loadRoutingBindings();
-  }
-
-  function handleSimulateRoute(payload: ImRouteSimulationPayload) {
-    return invoke("simulate_im_route", { payload });
-  }
-
-  function getEnabledRoutingRuleCount(channel: string) {
-    return routingBindings.filter((binding) => binding.enabled && binding.channel === channel).length;
   }
 
   function summarizeConnectorIssue(rawIssue: string | null | undefined) {
@@ -2855,20 +2822,20 @@ export function SettingsView({
       {activeTab === "feishu" && (
         <div className="space-y-3">
           <div className="bg-white rounded-lg p-4 space-y-1">
-            <div className="text-sm font-medium text-gray-900">渠道连接器</div>
-            <div className="text-xs text-gray-500">先连接消息渠道，再设置处理规则，最后用模拟结果确认命中原因。</div>
+            <div className="text-sm font-medium text-gray-900">飞书连接</div>
+            <div className="text-xs text-gray-500">先完成飞书连接，再到员工详情中指定谁来接待飞书消息。</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-2">
               <div className="rounded border border-gray-100 bg-gray-50 px-3 py-2">
-                <div className="text-[11px] font-medium text-gray-700">连接器概览</div>
+                <div className="text-[11px] font-medium text-gray-700">连接状态</div>
                 <div className="text-[11px] text-gray-500">查看飞书、企业微信等渠道是否已连接。</div>
               </div>
               <div className="rounded border border-gray-100 bg-gray-50 px-3 py-2">
-                <div className="text-[11px] font-medium text-gray-700">消息处理规则</div>
-                <div className="text-[11px] text-gray-500">设置不同渠道、会话范围的消息应该交给谁处理。</div>
+                <div className="text-[11px] font-medium text-gray-700">授权与重试</div>
+                <div className="text-[11px] text-gray-500">完成授权后，可在此重试连接并查看最近问题。</div>
               </div>
               <div className="rounded border border-gray-100 bg-gray-50 px-3 py-2">
-                <div className="text-[11px] font-medium text-gray-700">模拟与诊断</div>
-                <div className="text-[11px] text-gray-500">先看用户语言结果，再按需展开技术详情。</div>
+                <div className="text-[11px] font-medium text-gray-700">员工关联</div>
+                <div className="text-[11px] text-gray-500">飞书接待员工与群聊分工，请到员工详情中配置。</div>
               </div>
             </div>
           </div>
@@ -2885,7 +2852,6 @@ export function SettingsView({
               saving={savingFeishuConnector}
               retrying={retryingFeishuConnector}
               diagnostics={[
-                { label: "已启用规则数", value: String(getEnabledRoutingRuleCount("feishu")) },
                 { label: "回调凭据", value: feishuConnectorSettings.ingress_token ? "已配置" : "未配置" },
                 { label: "加密配置", value: feishuConnectorSettings.encrypt_key ? "已配置" : "未配置" },
                 { label: "连接地址", value: feishuConnectorSettings.sidecar_base_url || "默认 http://localhost:8765" },
@@ -2912,7 +2878,6 @@ export function SettingsView({
               saving={savingWecomConnector}
               retrying={retryingWecomConnector}
               diagnostics={[
-                { label: "已启用规则数", value: String(getEnabledRoutingRuleCount("wecom")) },
                 { label: "连接标识", value: wecomConnectorStatus?.instance_id || "wecom:wecom-main" },
                 { label: "待处理消息", value: String(wecomConnectorStatus?.queue_depth ?? 0) },
                 { label: "连接地址", value: wecomConnectorSettings.sidecar_base_url || "默认 http://localhost:8765" },
@@ -2931,6 +2896,12 @@ export function SettingsView({
               onRetry={handleRetryWecomConnector}
             />
           </div>
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 space-y-1">
+            <div className="text-sm font-medium text-blue-900">员工关联入口</div>
+            <div className="text-xs text-blue-800">
+              飞书连接成功后，请前往员工详情中的“飞书接待”配置默认接待员工或指定群聊范围。
+            </div>
+          </div>
           {connectorDiagnostics.length > 0 && (
             <>
               <div className="text-xs font-medium text-gray-500 px-1">连接器诊断</div>
@@ -2944,13 +2915,6 @@ export function SettingsView({
               </div>
             </>
           )}
-          <div className="text-xs font-medium text-gray-500 px-1">消息处理规则与模拟诊断</div>
-          <ImRoutingWizard
-            bindings={routingBindings}
-            onSaveRule={handleSaveRoutingRule}
-            onDeleteRule={handleDeleteRoutingRule}
-            onSimulate={handleSimulateRoute}
-          />
         </div>
       )}
 
