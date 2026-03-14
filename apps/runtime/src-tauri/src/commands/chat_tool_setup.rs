@@ -124,6 +124,18 @@ pub(crate) async fn prepare_runtime_tools(
         params.source_type,
         params.pack_path,
     );
+    let workspace_skills_prompt = params
+        .execution_preparation_service
+        .resolve_executor_work_dir(params.execution_guidance)
+        .map(std::path::PathBuf::from)
+        .map(|work_dir| async move {
+            let entries = chat_io::load_workspace_skill_runtime_entries_with_pool(params.db).await?;
+            chat_io::prepare_workspace_skills_prompt(&work_dir, &entries)
+        });
+    let workspace_skills_prompt = match workspace_skills_prompt {
+        Some(fut) => Some(fut.await?),
+        None => None,
+    };
     let skill_tool = SkillInvokeTool::new(params.session_id.to_string(), skill_roots)
         .with_max_depth(params.max_call_depth);
     params.agent_executor.registry().register(Arc::new(skill_tool));
@@ -146,6 +158,7 @@ pub(crate) async fn prepare_runtime_tools(
         params.model_name,
         params.max_iter,
         params.execution_guidance,
+        workspace_skills_prompt.as_deref(),
         params.employee_collaboration_guidance,
         Some(&memory_content),
     );

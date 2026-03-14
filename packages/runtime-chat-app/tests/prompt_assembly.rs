@@ -10,6 +10,9 @@ fn compose_system_prompt_includes_execution_guidance_and_optional_sections() {
         &ChatExecutionGuidance {
             effective_work_dir: "E:/workspace/demo".to_string(),
         },
+        Some(
+            "<available_skills>\n<skill><name>xhs</name><location>E:/workspace/demo/skills/xhs/SKILL.md</location></skill>\n</available_skills>",
+        ),
         Some("Collaborate with employee-1 when domain knowledge is required."),
         Some("Remember previous delivery constraints."),
     );
@@ -19,6 +22,9 @@ fn compose_system_prompt_includes_execution_guidance_and_optional_sections() {
     assert!(prompt.contains("可用工具: bash, read, write"));
     assert!(prompt.contains("模型: gpt-4.1"));
     assert!(prompt.contains("最大迭代次数: 8"));
+    assert!(prompt.contains("Skills (mandatory):"));
+    assert!(prompt.contains("<available_skills>"));
+    assert!(prompt.contains("E:/workspace/demo/skills/xhs/SKILL.md"));
     assert!(prompt.contains("Collaborate with employee-1"));
     assert!(prompt.contains("持久内存:\nRemember previous delivery constraints."));
 }
