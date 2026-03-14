@@ -300,6 +300,7 @@ describe("EmployeeHubView feishu connection status", () => {
   });
 
   test("saving feishu association preserves app scope when employee scopes are empty", async () => {
+    const refreshEmployees = vi.fn().mockResolvedValue(undefined);
     const employee = {
       ...buildEmployee("emp-scope", "scope-user", true, "cli_scope", "sec_scope"),
       enabled_scopes: [],
@@ -323,6 +324,7 @@ describe("EmployeeHubView feishu connection status", () => {
         selectedEmployeeId="emp-scope"
         onSelectEmployee={() => {}}
         onSaveEmployee={async () => {}}
+        onRefreshEmployees={refreshEmployees}
         onDeleteEmployee={async () => {}}
         onSetAsMainAndEnter={() => {}}
         onStartTaskWithEmployee={() => {}}
@@ -351,6 +353,7 @@ describe("EmployeeHubView feishu connection status", () => {
         }),
       );
     });
+    expect(refreshEmployees).toHaveBeenCalledTimes(1);
     expect(invokeMock).not.toHaveBeenCalledWith("upsert_im_routing_binding", expect.anything());
   });
 

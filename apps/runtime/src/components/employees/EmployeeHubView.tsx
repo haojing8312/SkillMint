@@ -41,6 +41,7 @@ interface Props {
   selectedEmployeeId: string | null;
   onSelectEmployee: (id: string) => void;
   onSaveEmployee: (input: UpsertAgentEmployeeInput) => Promise<void>;
+  onRefreshEmployees?: () => Promise<AgentEmployee[] | void> | AgentEmployee[] | void;
   onDeleteEmployee: (employeeId: string) => Promise<void>;
   onSetAsMainAndEnter: (employeeId: string) => void;
   onStartTaskWithEmployee: (employeeId: string) => Promise<void> | void;
@@ -107,6 +108,7 @@ export function EmployeeHubView({
   skills,
   selectedEmployeeId,
   onSelectEmployee,
+  onRefreshEmployees,
   onDeleteEmployee,
   onSetAsMainAndEnter,
   onStartTaskWithEmployee,
@@ -529,7 +531,25 @@ export function EmployeeHubView({
         ...current,
         [selectedEmployee.id]: nextScopes,
       }));
-      setMessage(input.enabled ? "飞书接待已保存" : "已关闭该员工的飞书接待");
+      let refreshWarning = "";
+      if (onRefreshEmployees) {
+        try {
+          await onRefreshEmployees();
+          setEmployeeScopeOverrides((current) => {
+            if (!(selectedEmployee.id in current)) return current;
+            const next = { ...current };
+            delete next[selectedEmployee.id];
+            return next;
+          });
+        } catch (refreshError) {
+          refreshWarning = `，员工列表刷新失败: ${String(refreshError)}`;
+        }
+      }
+      setMessage(
+        input.enabled
+          ? `飞书接待已保存${refreshWarning}`
+          : `已关闭该员工的飞书接待${refreshWarning}`,
+      );
     } catch (e) {
       setMessage(`保存飞书接待失败: ${String(e)}`);
     } finally {

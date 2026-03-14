@@ -2548,6 +2548,7 @@ export default function App() {
                 onDismissHighlight={() => setEmployeeCreatorHighlight(null)}
                 onSelectEmployee={setSelectedEmployeeId}
                 onSaveEmployee={handleSaveEmployee}
+                onRefreshEmployees={loadEmployees}
                 onDeleteEmployee={handleDeleteEmployee}
                 onSetAsMainAndEnter={handleSetAsMainAndEnter}
                 onStartTaskWithEmployee={handleStartTaskWithEmployee}

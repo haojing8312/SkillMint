@@ -382,7 +382,26 @@ async fn save_feishu_employee_association_replaces_default_binding_and_updates_s
         .iter()
         .find(|employee| employee.id == pm_id)
         .expect("find pm");
-    assert!(pm.enabled_scopes.iter().any(|scope| scope == "feishu"));
+    assert!(!pm.enabled_scopes.iter().any(|scope| scope == "feishu"));
+
+    let targets = resolve_target_employees_for_event(
+        &pool,
+        &ImEvent {
+            channel: "feishu".to_string(),
+            event_type: ImEventType::MessageCreated,
+            thread_id: "chat-default".to_string(),
+            event_id: Some("evt_default_001".to_string()),
+            message_id: Some("msg_default_001".to_string()),
+            text: Some("请处理今天的项目进展".to_string()),
+            role_id: None,
+            account_id: None,
+            tenant_id: None,
+        },
+    )
+    .await
+    .expect("resolve targets after default replacement");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].id, tech_id);
 }
 
 #[tokio::test]
