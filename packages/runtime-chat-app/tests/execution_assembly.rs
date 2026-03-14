@@ -134,6 +134,7 @@ async fn prepare_execution_assembles_context_guidance_and_routes() {
             "model-1",
             &ChatExecutionPreparationRequest {
                 user_message: "请帮我识图".to_string(),
+                user_message_parts: None,
                 session_id: Some("session-42".to_string()),
                 permission_mode: Some("standard".to_string()),
                 session_mode: None,

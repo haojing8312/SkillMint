@@ -92,6 +92,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             session_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            content_json TEXT,
             created_at TEXT NOT NULL
         )",
     )
@@ -597,6 +598,9 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
             .execute(&pool)
             .await;
     let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN team_id TEXT NOT NULL DEFAULT ''")
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE messages ADD COLUMN content_json TEXT")
         .execute(&pool)
         .await;
     let _ = sqlx::query(

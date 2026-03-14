@@ -23,6 +23,8 @@ export interface ClawhubLibraryItem {
   slug: string;
   name: string;
   summary: string;
+  github_url?: string | null;
+  source_url?: string | null;
   tags: string[];
   stars: number;
   downloads: number;
@@ -52,6 +54,12 @@ export interface ClawhubSkillRecommendation {
   reason: string;
   github_url?: string | null;
   source_url?: string | null;
+}
+
+export interface ClawhubInstallRequest {
+  slug: string;
+  githubUrl?: string | null;
+  sourceUrl?: string | null;
 }
 
 export interface ModelConfig {
@@ -158,6 +166,7 @@ export interface Message {
   id?: string;
   role: "user" | "assistant" | "system";
   content: string;
+  contentParts?: ChatMessagePart[];
   created_at: string;
   runId?: string | null;
   toolCalls?: ToolCallInfo[];
@@ -666,10 +675,53 @@ export interface RuntimePreferences {
   operation_permission_mode: "standard" | "full_access" | string;
 }
 
-/// 文件附件（用于 File Upload 功能）
+export type PendingAttachment =
+  | {
+      id: string;
+      kind: "image";
+      name: string;
+      mimeType: string;
+      size: number;
+      data: string;
+      previewUrl: string;
+    }
+  | {
+      id: string;
+      kind: "text-file";
+      name: string;
+      mimeType: string;
+      size: number;
+      text: string;
+      truncated?: boolean;
+    };
+
+export type ChatMessagePart =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      name: string;
+      mimeType: string;
+      size: number;
+      data: string;
+    }
+  | {
+      type: "file_text";
+      name: string;
+      mimeType: string;
+      size: number;
+      text: string;
+      truncated?: boolean;
+    };
+
+export interface SendMessageRequest {
+  sessionId: string;
+  parts: ChatMessagePart[];
+}
+
+/// 兼容旧附件实现，待迁移到 PendingAttachment/ChatMessagePart。
 export interface FileAttachment {
   name: string;
   size: number;
   type: string;
-  content: string; // 文件文本内容或 base64
+  content: string;
 }

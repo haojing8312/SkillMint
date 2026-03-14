@@ -58,11 +58,13 @@ pub(crate) async fn get_messages_with_pool(
     pool: &sqlx::SqlitePool,
     session_id: &str,
 ) -> Result<Vec<Value>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+    let rows =
+        sqlx::query_as::<_, (String, String, String, Option<String>, String, Option<String>)>(
         "SELECT
             m.id,
             m.role,
             m.content,
+            m.content_json,
             m.created_at,
             NULLIF(sr.id, '') AS run_id
          FROM messages m
@@ -77,7 +79,7 @@ pub(crate) async fn get_messages_with_pool(
 
     Ok(rows
         .iter()
-        .map(|(id, role, content, created_at, run_id)| {
+        .map(|(id, role, content, content_json, created_at, run_id)| {
             if role == "assistant" {
                 if let Ok(parsed) = serde_json::from_str::<Value>(content) {
                     if let Some(text) = parsed.get("text") {
@@ -107,13 +109,21 @@ pub(crate) async fn get_messages_with_pool(
                     }
                 }
             }
-            json!({
+            let mut message = json!({
                 "id": id,
                 "role": role,
                 "content": content,
                 "created_at": created_at,
                 "runId": run_id,
-            })
+            });
+            if let Some(parts) = content_json
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                .filter(|value| value.is_array())
+            {
+                message["contentParts"] = parts;
+            }
+            message
         })
         .collect())
 }
@@ -409,8 +419,8 @@ pub(crate) async fn export_session_markdown_with_pool(
         .await
         .map_err(|e| e.to_string())?;
 
-    let messages = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC"
+    let messages = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        "SELECT role, content, content_json, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC"
     )
     .bind(session_id)
     .fetch_all(pool)
@@ -418,9 +428,10 @@ pub(crate) async fn export_session_markdown_with_pool(
     .map_err(|e| e.to_string())?;
 
     let mut md = format!("# {}\n\n", title);
-    for (role, content, created_at) in &messages {
+    for (role, content, content_json, created_at) in &messages {
         let label = if role == "user" { "用户" } else { "助手" };
-        let rendered_content = render_export_message_content(role, content);
+        let rendered_content =
+            render_export_message_content(role, content, content_json.as_deref());
         md.push_str(&format!(
             "## {} ({})\n\n{}\n\n---\n\n",
             label, created_at, rendered_content
@@ -444,8 +455,8 @@ pub(crate) async fn load_compaction_inputs_with_pool(
     pool: &sqlx::SqlitePool,
     session_id: &str,
 ) -> Result<(Vec<Value>, String, String, String, String), String> {
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT role, content, content_json FROM messages WHERE session_id = ? ORDER BY created_at ASC",
     )
     .bind(session_id)
     .fetch_all(pool)
@@ -454,9 +465,11 @@ pub(crate) async fn load_compaction_inputs_with_pool(
 
     let messages: Vec<Value> = rows
         .iter()
-        .map(|(role, content)| {
+        .map(|(role, content, content_json)| {
             let normalized_content = if role == "assistant" {
                 extract_assistant_text_content(content)
+            } else if let Some(parts_json) = content_json {
+                render_user_content_parts(parts_json).unwrap_or_else(|| content.clone())
             } else {
                 content.clone()
             };
@@ -496,12 +509,13 @@ pub(crate) async fn replace_messages_with_compacted_with_pool(
     let now = Utc::now().to_rfc3339();
     for msg in compacted {
         sqlx::query(
-            "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO messages (id, session_id, role, content, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(session_id)
         .bind(msg["role"].as_str().unwrap_or("user"))
         .bind(msg["content"].as_str().unwrap_or(""))
+        .bind(Option::<String>::None)
         .bind(&now)
         .execute(pool)
         .await
@@ -543,7 +557,13 @@ fn normalize_stream_items(items: &Value) -> Value {
     }
 }
 
-fn render_export_message_content(role: &str, content: &str) -> String {
+fn render_export_message_content(role: &str, content: &str, content_json: Option<&str>) -> String {
+    if role == "user" {
+        return content_json
+            .and_then(render_user_content_parts)
+            .unwrap_or_else(|| content.to_string());
+    }
+
     if role != "assistant" {
         return content.to_string();
     }
@@ -586,12 +606,12 @@ fn render_export_message_content(role: &str, content: &str) -> String {
 }
 
 fn render_recovered_run_sections(
-    messages: &[(String, String, String)],
+    messages: &[(String, String, Option<String>, String)],
     state: &SessionJournalState,
 ) -> String {
     let assistant_contents: Vec<&str> = messages
         .iter()
-        .filter_map(|(role, content, _)| (role == "assistant").then_some(content.as_str()))
+        .filter_map(|(role, content, _, _)| (role == "assistant").then_some(content.as_str()))
         .collect();
 
     let mut sections = Vec::new();
@@ -657,8 +677,9 @@ fn export_status_label(status: &SessionRunStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_sessions_with_pool, resolve_im_session_source};
+    use super::{list_sessions_with_pool, render_user_content_parts, resolve_im_session_source};
     use crate::commands::chat_policy::permission_mode_label_for_display;
+    use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
@@ -729,6 +750,7 @@ mod tests {
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                content_json TEXT,
                 created_at TEXT NOT NULL
             )",
         )
@@ -811,6 +833,7 @@ mod tests {
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                content_json TEXT,
                 created_at TEXT NOT NULL
             )",
         )
@@ -905,5 +928,74 @@ mod tests {
         assert_eq!(sessions[2]["display_title"], "修复登录接口超时问题");
         assert_eq!(sessions[3]["id"], "session-general");
         assert_eq!(sessions[3]["display_title"], "帮我整理本周销售周报");
+    }
+
+    #[test]
+    fn render_user_content_parts_formats_images_and_text_files() {
+        let rendered = render_user_content_parts(
+            &serde_json::to_string(&json!([
+                { "type": "text", "text": "请结合附件分析" },
+                { "type": "image", "name": "screen.png" },
+                {
+                    "type": "file_text",
+                    "name": "debug.ts",
+                    "mimeType": "text/plain",
+                    "text": "console.log('hi')",
+                    "truncated": true
+                }
+            ]))
+            .expect("serialize content parts"),
+        )
+        .expect("render content parts");
+
+        assert!(rendered.contains("请结合附件分析"));
+        assert!(rendered.contains("[图片] screen.png"));
+        assert!(rendered.contains("[文本附件] debug.ts (text/plain)"));
+        assert!(rendered.contains("[内容已截断]"));
+    }
+}
+
+fn render_user_content_parts(content_json: &str) -> Option<String> {
+    let parts = serde_json::from_str::<Value>(content_json).ok()?;
+    let items = parts.as_array()?;
+    let mut sections = Vec::new();
+
+    for part in items {
+        match part.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "text" => {
+                let text = part.get("text").and_then(Value::as_str).unwrap_or("").trim();
+                if !text.is_empty() {
+                    sections.push(text.to_string());
+                }
+            }
+            "image" => {
+                let name = part.get("name").and_then(Value::as_str).unwrap_or("image");
+                sections.push(format!("[图片] {name}"));
+            }
+            "file_text" => {
+                let name = part.get("name").and_then(Value::as_str).unwrap_or("attachment.txt");
+                let mime_type = part
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("text/plain");
+                let text = part.get("text").and_then(Value::as_str).unwrap_or("");
+                let truncated = part
+                    .get("truncated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let ext = name.rsplit('.').next().unwrap_or("txt");
+                let note = if truncated { "\n[内容已截断]" } else { "" };
+                sections.push(format!(
+                    "[文本附件] {name} ({mime_type})\n```{ext}\n{text}\n```{note}"
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(sections.join("\n\n"))
     }
 }

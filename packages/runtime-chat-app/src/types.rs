@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChatPermissionMode {
@@ -85,6 +86,7 @@ pub struct PreparedRouteCandidates {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatPreparationRequest {
     pub user_message: String,
+    pub user_message_parts: Option<Vec<Value>>,
     pub permission_mode: Option<String>,
     pub session_mode: Option<String>,
     pub team_id: Option<String>,
@@ -93,6 +95,7 @@ pub struct ChatPreparationRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatExecutionPreparationRequest {
     pub user_message: String,
+    pub user_message_parts: Option<Vec<Value>>,
     pub session_id: Option<String>,
     pub permission_mode: Option<String>,
     pub session_mode: Option<String>,

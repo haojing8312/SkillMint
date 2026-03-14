@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem, FileAttachment, ImRoleTimelineEvent, ImRoleDispatchRequest, EmployeeGroupRunSnapshot, EmployeeGroup, EmployeeGroupRule, SessionRunProjection } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, ImRoleTimelineEvent, ImRoleDispatchRequest, EmployeeGroupRunSnapshot, EmployeeGroup, EmployeeGroupRule, SessionRunProjection } from "../types";
 import { motion } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
@@ -166,6 +166,7 @@ export function ChatView({
   const [showInstallConfirm, setShowInstallConfirm] = useState(false);
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [composerError, setComposerError] = useState<string | null>(null);
   const installInFlightRef = useRef(false);
   const [subAgentBuffer, setSubAgentBuffer] = useState("");
   const [subAgentRoleName, setSubAgentRoleName] = useState("");
@@ -196,9 +197,41 @@ export function ChatView({
   const groupRunStepEventElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // File Upload: 附件状态
-  const [attachedFiles, setAttachedFiles] = useState<FileAttachment[]>([]);
-  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([]);
   const MAX_FILES = 5;
+  const MAX_IMAGE_FILES = 3;
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+  const MAX_TEXT_FILE_SIZE = 1 * 1024 * 1024;
+  const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
+  const TEXT_FILE_EXTENSIONS = new Set([
+    "txt",
+    "md",
+    "json",
+    "yaml",
+    "yml",
+    "xml",
+    "csv",
+    "tsv",
+    "log",
+    "ini",
+    "conf",
+    "env",
+    "js",
+    "jsx",
+    "ts",
+    "tsx",
+    "py",
+    "rs",
+    "go",
+    "java",
+    "c",
+    "cpp",
+    "h",
+    "cs",
+    "sh",
+    "ps1",
+    "sql",
+  ]);
 
   // 右侧面板状态
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
@@ -248,28 +281,75 @@ export function ChatView({
     });
   };
 
+  const readFileAsDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const getFileExtension = (fileName: string): string => fileName.split(".").pop()?.toLowerCase() ?? "";
+
+  const isImageFile = (file: File): boolean =>
+    file.type.startsWith("image/") || IMAGE_EXTENSIONS.has(getFileExtension(file.name));
+
+  const isTextFile = (file: File): boolean => TEXT_FILE_EXTENSIONS.has(getFileExtension(file.name));
+
   // File Upload: 处理文件选择
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
+    const currentImageCount = attachedFiles.filter((file) => file.kind === "image").length;
 
     if (attachedFiles.length + files.length > MAX_FILES) {
       alert(`最多只能上传 ${MAX_FILES} 个文件`);
+      e.target.value = "";
       return;
     }
 
-    const newFiles: FileAttachment[] = [];
+    const newFiles: PendingAttachment[] = [];
+    let nextImageCount = currentImageCount;
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`文件 ${file.name} 超过 5MB 限制`);
+      if (isImageFile(file)) {
+        if (nextImageCount >= MAX_IMAGE_FILES) {
+          alert(`最多只能上传 ${MAX_IMAGE_FILES} 张图片`);
+          continue;
+        }
+        if (file.size > MAX_IMAGE_SIZE) {
+          alert(`图片 ${file.name} 超过 5MB 限制`);
+          continue;
+        }
+        const data = await readFileAsDataUrl(file);
+        newFiles.push({
+          id: crypto.randomUUID(),
+          kind: "image",
+          name: file.name,
+          mimeType: file.type,
+          size: file.size,
+          data,
+          previewUrl: data,
+        });
+        nextImageCount += 1;
         continue;
       }
 
-      const content = await readFileAsText(file);
+      if (!isTextFile(file)) {
+        alert(`暂不支持附件类型 ${file.name}`);
+        continue;
+      }
+      if (file.size > MAX_TEXT_FILE_SIZE) {
+        alert(`文本文件 ${file.name} 超过 1MB 限制`);
+        continue;
+      }
+      const text = await readFileAsText(file);
       newFiles.push({
+        id: crypto.randomUUID(),
+        kind: "text-file",
         name: file.name,
+        mimeType: file.type || "text/plain",
         size: file.size,
-        type: file.type,
-        content,
+        text,
       });
     }
 
@@ -280,6 +360,123 @@ export function ChatView({
   // File Upload: 删除附件
   const removeAttachedFile = (index: number) => {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const buildDefaultAttachmentPrompt = (attachments: PendingAttachment[]): string => {
+    const hasImage = attachments.some((file) => file.kind === "image");
+    const hasTextFile = attachments.some((file) => file.kind === "text-file");
+    if (hasImage && hasTextFile) {
+      return "请结合这些图片和文本附件一起分析，并给出结论。";
+    }
+    if (hasImage) {
+      return "请结合这些图片描述主要内容，并提取可见文字。";
+    }
+    return "请阅读这些附件并总结关键信息。";
+  };
+
+  const buildMessageParts = (message: string, attachments: PendingAttachment[]): ChatMessagePart[] => {
+    const normalizedMessage = message.trim() || buildDefaultAttachmentPrompt(attachments);
+    const parts: ChatMessagePart[] = [{ type: "text", text: normalizedMessage }];
+    attachments.forEach((file) => {
+      if (file.kind === "image") {
+        parts.push({
+          type: "image",
+          name: file.name,
+          mimeType: file.mimeType,
+          size: file.size,
+          data: file.data,
+        });
+        return;
+      }
+      parts.push({
+        type: "file_text",
+        name: file.name,
+        mimeType: file.mimeType,
+        size: file.size,
+        text: file.text,
+        truncated: file.truncated,
+      });
+    });
+    return parts;
+  };
+
+  const buildOptimisticUserContent = (parts: ChatMessagePart[]): string => {
+    const textPart = parts.find((part) => part.type === "text");
+    const nonTextParts = parts.filter((part) => part.type !== "text");
+    if (nonTextParts.length === 0) {
+      return textPart?.text ?? "";
+    }
+    const attachmentSummary = nonTextParts
+      .map((part) => (part.type === "image" ? `[图片] ${part.name}` : `[文本文件] ${part.name}`))
+      .join("\n");
+    return [textPart?.text ?? "", attachmentSummary].filter(Boolean).join("\n\n");
+  };
+
+  const toUserFacingSendError = (error: unknown): string => {
+    const raw =
+      typeof error === "string"
+        ? error
+        : error instanceof Error
+        ? error.message
+        : String(error ?? "");
+    if (raw.includes("VISION_MODEL_NOT_CONFIGURED")) {
+      return "请先在设置中配置图片理解模型";
+    }
+    return `错误: ${raw}`;
+  };
+
+  const shouldPreserveInlineSendError = (error: unknown): boolean => {
+    const raw =
+      typeof error === "string"
+        ? error
+        : error instanceof Error
+        ? error.message
+        : String(error ?? "");
+    return raw.includes("VISION_MODEL_NOT_CONFIGURED");
+  };
+
+  const renderUserContentParts = (parts: ChatMessagePart[]) => {
+    const textParts = parts.filter((part): part is Extract<ChatMessagePart, { type: "text" }> => part.type === "text");
+    const attachmentParts = parts.filter((part) => part.type !== "text");
+    return (
+      <div className="space-y-3">
+        {textParts.map((part, index) => (
+          <div key={`text-${index}`} className="whitespace-pre-wrap break-words">
+            {part.text}
+          </div>
+        ))}
+        {attachmentParts.length > 0 && (
+          <div className="space-y-2">
+            {attachmentParts.map((part, index) =>
+              part.type === "image" ? (
+                <div
+                  key={`attachment-${part.name}-${index}`}
+                  className="rounded-xl border border-white/20 bg-white/10 p-2"
+                >
+                  <img
+                    src={part.data}
+                    alt={part.name}
+                    className="max-h-56 w-full rounded-lg object-cover"
+                  />
+                  <div className="mt-2 text-xs opacity-90">{part.name}</div>
+                </div>
+              ) : (
+                <div
+                  key={`attachment-${part.name}-${index}`}
+                  className="rounded-xl border border-white/20 bg-white/10 p-3 text-xs"
+                >
+                  <div className="font-medium">{part.name}</div>
+                  <div className="mt-1 opacity-80">
+                    文本附件
+                    {part.truncated ? " · 已截断" : ""}
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Secure Workspace: 工作空间状态
@@ -913,37 +1110,37 @@ export function ChatView({
     if (!input.trim() && attachedFiles.length === 0) return;
     if (streaming || !sessionId) return;
 
-    // 构建消息内容：用户输入 + 附件
-    const msg = input.trim();
-    let fullContent = msg;
-
-    if (attachedFiles.length > 0) {
-      const attachmentsText = attachedFiles.map((f) => {
-        const ext = f.name.split(".").pop()?.toLowerCase() || "";
-        const isImage = f.type.startsWith("image/");
-        if (isImage) {
-          return `## ${f.name}\n![${f.name}](${f.content})`;
-        }
-        return `## ${f.name}\n\`\`\`${ext}\n${f.content}\n\`\`\``;
-      }).join("\n\n");
-
-      fullContent = msg
-        ? `${msg}\n\n---\n\n附件文件：\n${attachmentsText}`
-        : `附件文件：\n${attachmentsText}`;
-    }
-
-    await sendContent(fullContent);
+    const parts = buildMessageParts(input, attachedFiles);
+    await sendContent({
+      sessionId,
+      parts,
+    });
   }
 
-  async function sendContent(fullContent: string) {
-    if (!fullContent.trim()) return;
+  async function sendContent(request: SendMessageRequest | string) {
     if (streaming || !sessionId) return;
+
+    const normalizedRequest: SendMessageRequest =
+      typeof request === "string"
+        ? {
+            sessionId,
+            parts: [{ type: "text", text: request.trim() }],
+          }
+        : request;
+    const optimisticContent = buildOptimisticUserContent(normalizedRequest.parts);
+    if (!normalizedRequest.parts.length || !optimisticContent.trim()) return;
 
     setInput("");
     setAttachedFiles([]); // 发送后清空附件
+    setComposerError(null);
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: fullContent, created_at: new Date().toISOString() },
+      {
+        role: "user",
+        content: optimisticContent,
+        contentParts: normalizedRequest.parts,
+        created_at: new Date().toISOString(),
+      },
     ]);
     setStreaming(true);
     streamItemsRef.current = [];
@@ -954,14 +1151,20 @@ export function ChatView({
     setSubAgentBuffer("");
     setSubAgentRoleName("");
     try {
-      await invoke("send_message", { sessionId, userMessage: fullContent });
+      await invoke("send_message", { request: normalizedRequest });
       onSessionUpdate?.();
     } catch (e) {
+      const preserveInlineError = shouldPreserveInlineSendError(e);
+      const userFacingError = toUserFacingSendError(e);
+      setComposerError(userFacingError);
+      if (preserveInlineError) {
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "错误: " + String(e),
+          content: userFacingError,
           created_at: new Date().toISOString(),
         },
       ]);
@@ -2509,6 +2712,8 @@ export function ChatView({
                     <>
                       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
                     </>
+                  ) : m.role === "user" && m.contentParts?.length ? (
+                    renderUserContentParts(m.contentParts)
                   ) : (
                     m.content
                   )}
@@ -2704,11 +2909,64 @@ export function ChatView({
             id="file-upload"
           />
 
+          {attachedFiles.length > 0 && (
+            <div className="px-3 pt-3 pb-1 space-y-2">
+              <div className="text-[11px] text-gray-500">
+                已添加 {attachedFiles.length} 个附件
+              </div>
+              <div className="space-y-2">
+                {attachedFiles.map((file) => (
+                  <div
+                    key={file.id}
+                    className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2"
+                  >
+                    {file.kind === "image" ? (
+                      <img
+                        src={file.previewUrl}
+                        alt={file.name}
+                        className="h-10 w-10 rounded object-cover border border-gray-200"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded border border-gray-200 bg-gray-50 text-[11px] text-gray-600">
+                        TXT
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm text-gray-800">{file.name}</div>
+                      <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                        <span>{file.kind === "image" ? "图片" : "文本"}</span>
+                        <span>{Math.ceil(file.size / 1024)} KB</span>
+                        {file.kind === "text-file" && file.truncated && <span>已截断</span>}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="移除附件"
+                      onClick={() => removeAttachedFile(attachedFiles.findIndex((item) => item.id === file.id))}
+                      className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {composerError && (
+            <div className="px-3 pt-3 pb-1">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {composerError}
+              </div>
+            </div>
+          )}
+
           {/* 输入框主体 */}
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => {
+              if (composerError) setComposerError(null);
               setInput(e.target.value);
               // auto-expand
               const el = e.target;

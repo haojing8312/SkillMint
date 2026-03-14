@@ -11,10 +11,19 @@ fn mock_response_text(model: &str, messages: &[Value]) -> String {
         .rev()
         .find_map(|message| {
             if message["role"].as_str() == Some("user") {
+                if let Some(content) = message["content"].as_str() {
+                    return Some(content.trim().to_string()).filter(|content| !content.is_empty());
+                }
                 message["content"]
-                    .as_str()
-                    .map(|content| content.trim().to_string())
-                    .filter(|content| !content.is_empty())
+                    .as_array()
+                    .and_then(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|part| part.get("text").and_then(Value::as_str))
+                            .map(str::trim)
+                            .find(|text| !text.is_empty())
+                            .map(str::to_string)
+                    })
             } else {
                 None
             }
@@ -242,7 +251,10 @@ fn process_openai_sse_text(
                     .unwrap_or(false)
                 {
                     on_token(StreamDelta::Reasoning(
-                        delta["reasoning_content"].as_str().unwrap_or_default().to_string(),
+                        delta["reasoning_content"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
                     ));
                     continue;
                 }

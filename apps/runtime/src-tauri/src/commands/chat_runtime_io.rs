@@ -14,16 +14,18 @@ pub(crate) async fn insert_session_message_with_pool(
     session_id: &str,
     role: &str,
     content: &str,
+    content_json: Option<&str>,
 ) -> Result<String, String> {
     let msg_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, session_id, role, content, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&msg_id)
     .bind(session_id)
     .bind(role)
     .bind(content)
+    .bind(content_json)
     .bind(&now)
     .execute(pool)
     .await
@@ -279,7 +281,14 @@ pub(crate) async fn finalize_run_success_with_pool(
     if !final_text.is_empty() || has_tool_calls {
         let persisted_content = attach_reasoning_to_content(content, final_text, has_tool_calls, reasoning_text, reasoning_duration_ms);
         let msg_id =
-            insert_session_message_with_pool(pool, session_id, "assistant", &persisted_content).await?;
+            insert_session_message_with_pool(
+                pool,
+                session_id,
+                "assistant",
+                &persisted_content,
+                None,
+            )
+            .await?;
         attach_assistant_message_to_run_with_pool(pool, run_id, &msg_id).await?;
     }
 
@@ -366,6 +375,7 @@ pub(crate) async fn maybe_handle_team_entry_pre_execution_with_pool(
             session_id,
             "assistant",
             &group_run.final_report,
+            None,
         )
         .await?;
         attach_assistant_message_to_run_with_pool(pool, &run_id, &assistant_msg_id).await?;
@@ -430,9 +440,9 @@ pub(crate) async fn load_installed_skill_source_with_pool(
 pub(crate) async fn load_session_history_with_pool(
     pool: &sqlx::SqlitePool,
     session_id: &str,
-) -> Result<Vec<(String, String)>, String> {
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+) -> Result<Vec<(String, String, Option<String>)>, String> {
+    let rows = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT role, content, content_json FROM messages WHERE session_id = ? ORDER BY created_at ASC",
     )
     .bind(session_id)
     .fetch_all(pool)
@@ -441,11 +451,11 @@ pub(crate) async fn load_session_history_with_pool(
 
     Ok(rows
         .into_iter()
-        .map(|(role, content)| {
+        .map(|(role, content, content_json)| {
             if role == "assistant" {
-                (role, extract_assistant_text_content(&content))
+                (role, extract_assistant_text_content(&content), None)
             } else {
-                (role, content)
+                (role, content, content_json)
             }
         })
         .collect())
@@ -513,6 +523,268 @@ pub(crate) fn read_local_skill_prompt(pack_path: &str) -> Option<String> {
     }
 
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkspaceSkillPromptEntry {
+    pub skill_id: String,
+    pub name: String,
+    pub description: String,
+    pub skill_md_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum WorkspaceSkillContent {
+    LocalDir(std::path::PathBuf),
+    FileTree(std::collections::HashMap<String, Vec<u8>>),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkspaceSkillRuntimeEntry {
+    pub skill_id: String,
+    pub name: String,
+    pub description: String,
+    pub source_type: String,
+    pub projected_dir_name: String,
+    pub content: WorkspaceSkillContent,
+}
+
+pub(crate) fn normalize_workspace_skill_dir_name(skill_id: &str) -> String {
+    let mut out = String::new();
+    let mut last_sep = false;
+    for ch in skill_id.trim().chars() {
+        let normalized = ch.to_ascii_lowercase();
+        if normalized.is_ascii_alphanumeric() {
+            out.push(normalized);
+            last_sep = false;
+        } else if matches!(normalized, '-' | '_') {
+            out.push(normalized);
+            last_sep = false;
+        } else if !last_sep {
+            out.push('-');
+            last_sep = true;
+        }
+    }
+    let trimmed = out.trim_matches(['-', '_']).to_string();
+    if trimmed.is_empty() {
+        "skill".to_string()
+    } else {
+        trimmed
+    }
+}
+
+pub(crate) fn build_workspace_skill_markdown_path(
+    work_dir: &std::path::Path,
+    skill_id: &str,
+) -> std::path::PathBuf {
+    work_dir
+        .join("skills")
+        .join(normalize_workspace_skill_dir_name(skill_id))
+        .join("SKILL.md")
+}
+
+pub(crate) fn build_workspace_skill_prompt_entry(entry: &WorkspaceSkillPromptEntry) -> String {
+    format!(
+        "<skill>\n<name>{}</name>\n<description>{}</description>\n<location>{}</location>\n</skill>",
+        entry.name.trim(),
+        entry.description.trim(),
+        entry.skill_md_path.trim()
+    )
+}
+
+pub(crate) fn build_workspace_skills_prompt(entries: &[WorkspaceSkillPromptEntry]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let mut blocks = Vec::with_capacity(entries.len() + 2);
+    blocks.push("<available_skills>".to_string());
+    blocks.extend(entries.iter().map(build_workspace_skill_prompt_entry));
+    blocks.push("</available_skills>".to_string());
+    blocks.join("\n")
+}
+
+pub(crate) fn resolve_workspace_skill_runtime_entry(
+    skill_id: &str,
+    manifest_json: &str,
+    username: &str,
+    pack_path: &str,
+    source_type: &str,
+) -> Result<WorkspaceSkillRuntimeEntry, String> {
+    let manifest: skillpack_rs::SkillManifest =
+        serde_json::from_str(manifest_json).map_err(|e| e.to_string())?;
+    let projected_dir_name = normalize_workspace_skill_dir_name(skill_id);
+    let content = match source_type {
+        "local" => WorkspaceSkillContent::LocalDir(std::path::PathBuf::from(pack_path)),
+        "builtin" => {
+            let markdown = crate::builtin_skills::builtin_skill_markdown(skill_id)
+                .unwrap_or(crate::builtin_skills::builtin_general_skill_markdown());
+            let mut files = std::collections::HashMap::new();
+            files.insert("SKILL.md".to_string(), markdown.as_bytes().to_vec());
+            WorkspaceSkillContent::FileTree(files)
+        }
+        _ => {
+            let unpacked = skillpack_rs::verify_and_unpack(pack_path, username)
+                .map_err(|e| format!("解包 Skill 失败: {}", e))?;
+            WorkspaceSkillContent::FileTree(unpacked.files)
+        }
+    };
+
+    Ok(WorkspaceSkillRuntimeEntry {
+        skill_id: skill_id.to_string(),
+        name: manifest.name,
+        description: manifest.description,
+        source_type: source_type.to_string(),
+        projected_dir_name,
+        content,
+    })
+}
+
+fn validate_relative_skill_file_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let candidate = std::path::PathBuf::from(path);
+    if candidate.is_absolute() {
+        return Err(format!("Skill 文件路径必须是相对路径: {}", path));
+    }
+    for component in candidate.components() {
+        match component {
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return Err(format!("Skill 文件路径不安全: {}", path));
+            }
+            _ => {}
+        }
+    }
+    Ok(candidate)
+}
+
+fn copy_local_skill_dir_recursive(
+    source_dir: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> Result<(), String> {
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    for entry in walkdir::WalkDir::new(source_dir)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .filter_map(|entry| entry.ok())
+    {
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(source_dir)
+            .map_err(|e| e.to_string())?;
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let target = dest_dir.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        } else {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(path, &target).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn write_skill_file_tree(
+    dest_dir: &std::path::Path,
+    files: &std::collections::HashMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    for (rel_path, bytes) in files {
+        let safe_rel = validate_relative_skill_file_path(rel_path)?;
+        let target = dest_dir.join(safe_rel);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(target, bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn sync_workspace_skills_to_directory(
+    work_dir: &std::path::Path,
+    entries: &[WorkspaceSkillRuntimeEntry],
+) -> Result<(), String> {
+    let skills_root = work_dir.join("skills");
+    if skills_root.exists() {
+        std::fs::remove_dir_all(&skills_root).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(&skills_root).map_err(|e| e.to_string())?;
+
+    for entry in entries {
+        let dest_dir = skills_root.join(&entry.projected_dir_name);
+        match &entry.content {
+            WorkspaceSkillContent::LocalDir(source_dir) => {
+                copy_local_skill_dir_recursive(source_dir, &dest_dir)?
+            }
+            WorkspaceSkillContent::FileTree(files) => write_skill_file_tree(&dest_dir, files)?,
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn build_workspace_skill_prompt_entries(
+    work_dir: &std::path::Path,
+    entries: &[WorkspaceSkillRuntimeEntry],
+) -> Vec<WorkspaceSkillPromptEntry> {
+    entries
+        .iter()
+        .map(|entry| WorkspaceSkillPromptEntry {
+            skill_id: entry.skill_id.clone(),
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            skill_md_path: build_workspace_skill_markdown_path(work_dir, &entry.skill_id)
+                .to_string_lossy()
+                .to_string(),
+        })
+        .collect()
+}
+
+pub(crate) fn prepare_workspace_skills_prompt(
+    work_dir: &std::path::Path,
+    entries: &[WorkspaceSkillRuntimeEntry],
+) -> Result<String, String> {
+    sync_workspace_skills_to_directory(work_dir, entries)?;
+    let prompt_entries = build_workspace_skill_prompt_entries(work_dir, entries);
+    Ok(build_workspace_skills_prompt(&prompt_entries))
+}
+
+pub(crate) async fn load_workspace_skill_runtime_entries_with_pool(
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<WorkspaceSkillRuntimeEntry>, String> {
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT id, manifest, username, pack_path, COALESCE(source_type, 'encrypted')
+         FROM installed_skills
+         ORDER BY installed_at ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+    for (skill_id, manifest_json, username, pack_path, source_type) in rows {
+        match resolve_workspace_skill_runtime_entry(
+            &skill_id,
+            &manifest_json,
+            &username,
+            &pack_path,
+            &source_type,
+        ) {
+            Ok(entry) => entries.push(entry),
+            Err(err) => {
+                eprintln!(
+                    "[skills] 跳过无法投影的 skill {} (source_type={}): {}",
+                    skill_id, source_type, err
+                );
+            }
+        }
+    }
+
+    Ok(entries)
 }
 
 pub(crate) fn extract_assistant_text_content(content: &str) -> String {
@@ -770,6 +1042,504 @@ pub(crate) fn reconstruct_llm_messages(parsed: &Value, api_format: &str) -> Vec<
     result
 }
 
+#[cfg(test)]
+mod workspace_skill_projection_tests {
+    use super::{
+        build_workspace_skill_markdown_path, build_workspace_skill_prompt_entries,
+        build_workspace_skill_prompt_entry, build_workspace_skills_prompt,
+        normalize_workspace_skill_dir_name, prepare_workspace_skills_prompt,
+        resolve_workspace_skill_runtime_entry, sync_workspace_skills_to_directory,
+        WorkspaceSkillContent, WorkspaceSkillPromptEntry,
+    };
+    use chrono::Utc;
+    use skillpack_rs::{pack, PackConfig, SkillManifest};
+    use std::path::Path;
+    use tempfile::tempdir;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn normalize_workspace_skill_dir_name_uses_skill_id_and_sanitizes() {
+        assert_eq!(
+            normalize_workspace_skill_dir_name(" Local Skill/Auto Redbook "),
+            "local-skill-auto-redbook"
+        );
+        assert_eq!(normalize_workspace_skill_dir_name("builtin.general"), "builtin-general");
+        assert_eq!(normalize_workspace_skill_dir_name("___"), "skill");
+    }
+
+    #[test]
+    fn build_workspace_skill_markdown_path_uses_projected_skill_dir() {
+        let path = build_workspace_skill_markdown_path(
+            Path::new("E:\\workspace\\session-a"),
+            "Local Skill/Auto Redbook",
+        );
+        assert_eq!(
+            path,
+            Path::new("E:\\workspace\\session-a")
+                .join("skills")
+                .join("local-skill-auto-redbook")
+                .join("SKILL.md")
+        );
+    }
+
+    #[test]
+    fn build_workspace_skill_prompt_entry_includes_location() {
+        let entry = WorkspaceSkillPromptEntry {
+            skill_id: "local-auto-redbook".to_string(),
+            name: "xhs-note-creator".to_string(),
+            description: "Create Xiaohongshu content".to_string(),
+            skill_md_path: "E:\\workspace\\skills\\local-auto-redbook\\SKILL.md".to_string(),
+        };
+
+        let prompt = build_workspace_skill_prompt_entry(&entry);
+        assert!(prompt.contains("<name>xhs-note-creator</name>"));
+        assert!(prompt.contains("<description>Create Xiaohongshu content</description>"));
+        assert!(
+            prompt.contains("<location>E:\\workspace\\skills\\local-auto-redbook\\SKILL.md</location>")
+        );
+    }
+
+    #[test]
+    fn build_workspace_skills_prompt_wraps_available_skills_block() {
+        let prompt = build_workspace_skills_prompt(&[WorkspaceSkillPromptEntry {
+            skill_id: "builtin-general".to_string(),
+            name: "General Assistant".to_string(),
+            description: "Generic work".to_string(),
+            skill_md_path: "E:\\workspace\\skills\\builtin-general\\SKILL.md".to_string(),
+        }]);
+
+        assert!(prompt.starts_with("<available_skills>"));
+        assert!(prompt.contains("<location>E:\\workspace\\skills\\builtin-general\\SKILL.md</location>"));
+        assert!(prompt.ends_with("</available_skills>"));
+    }
+
+    #[test]
+    fn resolve_workspace_skill_runtime_entry_for_local_skill_uses_local_dir() {
+        let manifest = SkillManifest {
+            id: "local-auto-redbook".to_string(),
+            name: "xhs-note-creator".to_string(),
+            description: "Create Xiaohongshu notes".to_string(),
+            version: "1.0.0".to_string(),
+            author: "tester".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        let entry = resolve_workspace_skill_runtime_entry(
+            "local-auto-redbook",
+            &serde_json::to_string(&manifest).unwrap(),
+            "",
+            "E:\\skills\\auto-redbook",
+            "local",
+        )
+        .unwrap();
+
+        assert_eq!(entry.projected_dir_name, "local-auto-redbook");
+        match entry.content {
+            WorkspaceSkillContent::LocalDir(path) => {
+                assert_eq!(path, Path::new("E:\\skills\\auto-redbook"));
+            }
+            WorkspaceSkillContent::FileTree(_) => panic!("expected local dir content"),
+        }
+    }
+
+    #[test]
+    fn resolve_workspace_skill_runtime_entry_for_builtin_skill_creates_skill_md_file_tree() {
+        let manifest = SkillManifest {
+            id: "builtin-general".to_string(),
+            name: "通用助手".to_string(),
+            description: "Generic assistant".to_string(),
+            version: "builtin".to_string(),
+            author: "WorkClaw".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        let entry = resolve_workspace_skill_runtime_entry(
+            "builtin-general",
+            &serde_json::to_string(&manifest).unwrap(),
+            "",
+            "",
+            "builtin",
+        )
+        .unwrap();
+
+        match entry.content {
+            WorkspaceSkillContent::FileTree(files) => {
+                let skill_md = files.get("SKILL.md").expect("builtin SKILL.md should exist");
+                let text = String::from_utf8(skill_md.clone()).unwrap();
+                assert!(text.contains("通用助手") || text.contains("通用任务智能体"));
+            }
+            WorkspaceSkillContent::LocalDir(_) => panic!("expected builtin file tree content"),
+        }
+    }
+
+    #[test]
+    fn resolve_workspace_skill_runtime_entry_for_encrypted_skill_uses_unpacked_files() {
+        let tmp = tempdir().unwrap();
+        let skill_dir = tmp.path().join("skill-src");
+        std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: encrypted-skill\ndescription: Encrypted skill\n---\n\n# Skill\nHello",
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("scripts").join("hello.py"), "print('hello')").unwrap();
+
+        let output = tmp.path().join("encrypted.skillpack");
+        pack(&PackConfig {
+            dir_path: skill_dir.to_string_lossy().to_string(),
+            name: "encrypted-skill".to_string(),
+            description: "Encrypted skill".to_string(),
+            version: "1.0.0".to_string(),
+            author: "tester".to_string(),
+            username: "alice".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            output_path: output.to_string_lossy().to_string(),
+        })
+        .unwrap();
+
+        let unpacked = skillpack_rs::verify_and_unpack(&output.to_string_lossy(), "alice").unwrap();
+        let entry = resolve_workspace_skill_runtime_entry(
+            &unpacked.manifest.id,
+            &serde_json::to_string(&unpacked.manifest).unwrap(),
+            "alice",
+            &output.to_string_lossy(),
+            "encrypted",
+        )
+        .unwrap();
+
+        match entry.content {
+            WorkspaceSkillContent::FileTree(files) => {
+                assert!(files.contains_key("SKILL.md"));
+                assert!(files.contains_key("scripts/hello.py"));
+            }
+            WorkspaceSkillContent::LocalDir(_) => panic!("expected encrypted file tree content"),
+        }
+    }
+
+    #[test]
+    fn sync_workspace_skills_to_directory_copies_local_skill_tree() {
+        let tmp = tempdir().unwrap();
+        let source_dir = tmp.path().join("local-skill");
+        std::fs::create_dir_all(source_dir.join("scripts")).unwrap();
+        std::fs::write(source_dir.join("SKILL.md"), "# Skill").unwrap();
+        std::fs::write(source_dir.join("scripts").join("hello.py"), "print('hi')").unwrap();
+
+        let work_dir = tmp.path().join("workspace");
+        let entry = super::WorkspaceSkillRuntimeEntry {
+            skill_id: "local-skill".to_string(),
+            name: "Local Skill".to_string(),
+            description: "Local".to_string(),
+            source_type: "local".to_string(),
+            projected_dir_name: "local-skill".to_string(),
+            content: WorkspaceSkillContent::LocalDir(source_dir),
+        };
+
+        sync_workspace_skills_to_directory(&work_dir, &[entry]).unwrap();
+
+        assert!(work_dir.join("skills").join("local-skill").join("SKILL.md").exists());
+        assert!(
+            work_dir
+                .join("skills")
+                .join("local-skill")
+                .join("scripts")
+                .join("hello.py")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn sync_workspace_skills_to_directory_skips_git_metadata_for_local_skill() {
+        let tmp = tempdir().unwrap();
+        let source_dir = tmp.path().join("local-skill");
+        std::fs::create_dir_all(source_dir.join(".git").join("objects")).unwrap();
+        std::fs::create_dir_all(source_dir.join("scripts")).unwrap();
+        std::fs::write(source_dir.join("SKILL.md"), "# Skill").unwrap();
+        std::fs::write(source_dir.join(".git").join("HEAD"), "ref: refs/heads/main").unwrap();
+        std::fs::write(source_dir.join("scripts").join("hello.py"), "print('hi')").unwrap();
+
+        let work_dir = tmp.path().join("workspace");
+        let entry = super::WorkspaceSkillRuntimeEntry {
+            skill_id: "local-skill".to_string(),
+            name: "Local Skill".to_string(),
+            description: "Local".to_string(),
+            source_type: "local".to_string(),
+            projected_dir_name: "local-skill".to_string(),
+            content: WorkspaceSkillContent::LocalDir(source_dir),
+        };
+
+        sync_workspace_skills_to_directory(&work_dir, &[entry]).unwrap();
+
+        let projected = work_dir.join("skills").join("local-skill");
+        assert!(projected.join("SKILL.md").exists());
+        assert!(projected.join("scripts").join("hello.py").exists());
+        assert!(!projected.join(".git").exists());
+    }
+
+    #[test]
+    fn sync_workspace_skills_to_directory_writes_file_tree_entries() {
+        let tmp = tempdir().unwrap();
+        let work_dir = tmp.path().join("workspace");
+        let mut files = std::collections::HashMap::new();
+        files.insert("SKILL.md".to_string(), b"# Builtin".to_vec());
+        files.insert("assets/template.txt".to_string(), b"hello".to_vec());
+
+        let entry = super::WorkspaceSkillRuntimeEntry {
+            skill_id: "builtin-general".to_string(),
+            name: "Builtin".to_string(),
+            description: "Builtin".to_string(),
+            source_type: "builtin".to_string(),
+            projected_dir_name: "builtin-general".to_string(),
+            content: WorkspaceSkillContent::FileTree(files),
+        };
+
+        sync_workspace_skills_to_directory(&work_dir, &[entry]).unwrap();
+
+        assert!(
+            work_dir
+                .join("skills")
+                .join("builtin-general")
+                .join("SKILL.md")
+                .exists()
+        );
+        assert!(
+            work_dir
+                .join("skills")
+                .join("builtin-general")
+                .join("assets")
+                .join("template.txt")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn sync_workspace_skills_to_directory_rebuilds_skills_root() {
+        let tmp = tempdir().unwrap();
+        let work_dir = tmp.path().join("workspace");
+        let stale_dir = work_dir.join("skills").join("stale-skill");
+        std::fs::create_dir_all(&stale_dir).unwrap();
+        std::fs::write(stale_dir.join("old.txt"), "stale").unwrap();
+
+        let mut files = std::collections::HashMap::new();
+        files.insert("SKILL.md".to_string(), b"# Fresh".to_vec());
+        let entry = super::WorkspaceSkillRuntimeEntry {
+            skill_id: "fresh-skill".to_string(),
+            name: "Fresh".to_string(),
+            description: "Fresh".to_string(),
+            source_type: "builtin".to_string(),
+            projected_dir_name: "fresh-skill".to_string(),
+            content: WorkspaceSkillContent::FileTree(files),
+        };
+
+        sync_workspace_skills_to_directory(&work_dir, &[entry]).unwrap();
+
+        assert!(!stale_dir.exists());
+        assert!(
+            work_dir
+                .join("skills")
+                .join("fresh-skill")
+                .join("SKILL.md")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn build_workspace_skill_prompt_entries_use_projected_skill_paths() {
+        let work_dir = Path::new("E:\\workspace\\session");
+        let entries = vec![super::WorkspaceSkillRuntimeEntry {
+            skill_id: "builtin-general".to_string(),
+            name: "General".to_string(),
+            description: "Generic".to_string(),
+            source_type: "builtin".to_string(),
+            projected_dir_name: "builtin-general".to_string(),
+            content: WorkspaceSkillContent::FileTree(std::collections::HashMap::new()),
+        }];
+
+        let prompt_entries = build_workspace_skill_prompt_entries(work_dir, &entries);
+        assert_eq!(prompt_entries.len(), 1);
+        assert_eq!(
+            prompt_entries[0].skill_md_path,
+            "E:\\workspace\\session\\skills\\builtin-general\\SKILL.md"
+        );
+    }
+
+    #[test]
+    fn prepare_workspace_skills_prompt_syncs_and_returns_available_skills_block() {
+        let tmp = tempdir().unwrap();
+        let work_dir = tmp.path().join("workspace");
+        let mut files = std::collections::HashMap::new();
+        files.insert("SKILL.md".to_string(), b"# Fresh".to_vec());
+        let entry = super::WorkspaceSkillRuntimeEntry {
+            skill_id: "fresh-skill".to_string(),
+            name: "Fresh".to_string(),
+            description: "Fresh description".to_string(),
+            source_type: "builtin".to_string(),
+            projected_dir_name: "fresh-skill".to_string(),
+            content: WorkspaceSkillContent::FileTree(files),
+        };
+
+        let prompt = prepare_workspace_skills_prompt(&work_dir, &[entry]).unwrap();
+
+        assert!(prompt.contains("<available_skills>"));
+        assert!(prompt.contains("<name>Fresh</name>"));
+        assert!(prompt.contains("<description>Fresh description</description>"));
+        let projected_skill_md = work_dir
+            .join("skills")
+            .join("fresh-skill")
+            .join("SKILL.md")
+            .to_string_lossy()
+            .to_string();
+        assert!(prompt.contains(&projected_skill_md));
+        assert!(work_dir.join("skills").join("fresh-skill").join("SKILL.md").exists());
+    }
+
+    #[tokio::test]
+    async fn load_workspace_skill_runtime_entries_with_pool_reads_local_and_builtin_skills() {
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("skills.db");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE installed_skills (
+                id TEXT PRIMARY KEY,
+                manifest TEXT NOT NULL,
+                installed_at TEXT NOT NULL,
+                last_used_at TEXT,
+                username TEXT NOT NULL,
+                pack_path TEXT NOT NULL DEFAULT '',
+                source_type TEXT NOT NULL DEFAULT 'encrypted'
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let local_skill_dir = tmp.path().join("local-skill");
+        std::fs::create_dir_all(local_skill_dir.join("scripts")).unwrap();
+        std::fs::write(local_skill_dir.join("SKILL.md"), "# Local Skill").unwrap();
+        std::fs::write(local_skill_dir.join("scripts").join("hello.py"), "print('hi')").unwrap();
+
+        let local_manifest = SkillManifest {
+            id: "local-auto-redbook".to_string(),
+            name: "xhs-note-creator".to_string(),
+            description: "Create Xiaohongshu notes".to_string(),
+            version: "local".to_string(),
+            author: "tester".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+        let builtin_manifest = SkillManifest {
+            id: "builtin-general".to_string(),
+            name: "通用助手".to_string(),
+            description: "Generic assistant".to_string(),
+            version: "builtin".to_string(),
+            author: "WorkClaw".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        sqlx::query(
+            "INSERT INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("local-auto-redbook")
+        .bind(serde_json::to_string(&local_manifest).unwrap())
+        .bind(Utc::now().to_rfc3339())
+        .bind("")
+        .bind(local_skill_dir.to_string_lossy().to_string())
+        .bind("local")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("builtin-general")
+        .bind(serde_json::to_string(&builtin_manifest).unwrap())
+        .bind(Utc::now().to_rfc3339())
+        .bind("")
+        .bind("")
+        .bind("builtin")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let entries = super::load_workspace_skill_runtime_entries_with_pool(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|entry| {
+            entry.skill_id == "local-auto-redbook"
+                && matches!(entry.content, WorkspaceSkillContent::LocalDir(_))
+        }));
+        assert!(entries.iter().any(|entry| {
+            entry.skill_id == "builtin-general"
+                && matches!(entry.content, WorkspaceSkillContent::FileTree(_))
+        }));
+    }
+
+    #[test]
+    fn sync_workspace_skills_to_directory_preserves_auto_redbook_style_layout() {
+        let tmp = tempdir().unwrap();
+        let source_dir = tmp.path().join("auto-redbook-skill");
+        std::fs::create_dir_all(source_dir.join("scripts")).unwrap();
+        std::fs::create_dir_all(source_dir.join("assets")).unwrap();
+        std::fs::create_dir_all(source_dir.join("references")).unwrap();
+        std::fs::write(source_dir.join("SKILL.md"), "# Auto Redbook").unwrap();
+        std::fs::write(
+            source_dir.join("scripts").join("publish_xhs.py"),
+            "print('publish')",
+        )
+        .unwrap();
+        std::fs::write(source_dir.join("assets").join("cover.html"), "<html></html>").unwrap();
+        std::fs::write(
+            source_dir.join("references").join("params.md"),
+            "# params",
+        )
+        .unwrap();
+
+        let work_dir = tmp.path().join("workspace");
+        let entry = super::WorkspaceSkillRuntimeEntry {
+            skill_id: "local-auto-redbook".to_string(),
+            name: "xhs-note-creator".to_string(),
+            description: "Create Xiaohongshu notes".to_string(),
+            source_type: "local".to_string(),
+            projected_dir_name: "local-auto-redbook".to_string(),
+            content: WorkspaceSkillContent::LocalDir(source_dir),
+        };
+
+        sync_workspace_skills_to_directory(&work_dir, &[entry]).unwrap();
+
+        let projected = work_dir.join("skills").join("local-auto-redbook");
+        assert!(projected.join("SKILL.md").exists());
+        assert!(projected.join("scripts").join("publish_xhs.py").exists());
+        assert!(projected.join("assets").join("cover.html").exists());
+        assert!(projected.join("references").join("params.md").exists());
+    }
+
+}
+
 pub(crate) fn extract_new_messages_after_reconstructed_history<'a>(
     final_messages: &'a [Value],
     reconstructed_history_len: usize,
@@ -781,16 +1551,32 @@ pub(crate) fn extract_new_messages_after_reconstructed_history<'a>(
 }
 
 pub(crate) fn reconstruct_history_messages(
-    history: &[(String, String)],
+    history: &[(String, String, Option<String>)],
     api_format: &str,
 ) -> Vec<Value> {
     history
         .iter()
-        .flat_map(|(role, content)| {
+        .flat_map(|(role, content, content_json)| {
             if role == "assistant" {
                 if let Ok(parsed) = serde_json::from_str::<Value>(content) {
                     if parsed.get("text").is_some() && parsed.get("items").is_some() {
                         return reconstruct_llm_messages(&parsed, api_format);
+                    }
+                }
+            }
+            if role == "user" {
+                if let Some(content_json) = content_json {
+                    if let Ok(parts) = serde_json::from_str::<Value>(content_json) {
+                        if let Some(parts_array) = parts.as_array() {
+                            if let Some(message) =
+                                super::chat_send_message_flow::build_current_turn_message(
+                                    api_format,
+                                    parts_array,
+                                )
+                            {
+                                return vec![message];
+                            }
+                        }
                     }
                 }
             }
@@ -963,7 +1749,7 @@ pub(crate) fn build_assistant_content_with_stream_fallback(
 mod tests {
     use super::{
         build_assistant_content_from_final_messages, build_assistant_content_with_stream_fallback,
-        extract_assistant_text_content,
+        extract_assistant_text_content, reconstruct_history_messages,
     };
     use serde_json::{json, Value};
 
@@ -1038,5 +1824,47 @@ mod tests {
     #[test]
     fn extract_assistant_text_content_falls_back_for_plain_text() {
         assert_eq!(extract_assistant_text_content("普通文本"), "普通文本");
+    }
+
+    #[test]
+    fn reconstruct_history_messages_restores_user_multimodal_parts() {
+        let history = vec![(
+            "user".to_string(),
+            "[图片 1 张] [文本文件 1 个]".to_string(),
+            Some(
+                serde_json::to_string(&json!([
+                    { "type": "text", "text": "请分析这些附件" },
+                    {
+                        "type": "image",
+                        "name": "screen.png",
+                        "mimeType": "image/png",
+                        "data": "data:image/png;base64,aGVsbG8="
+                    },
+                    {
+                        "type": "file_text",
+                        "name": "debug.ts",
+                        "mimeType": "text/plain",
+                        "text": "console.log('hi')"
+                    }
+                ]))
+                .expect("serialize parts"),
+            ),
+        )];
+
+        let messages = reconstruct_history_messages(&history, "openai");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"].as_str(), Some("user"));
+        let content = messages[0]["content"].as_array().expect("content array");
+        assert_eq!(content[0]["type"].as_str(), Some("text"));
+        assert!(content[0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("请分析这些附件"));
+        assert!(content[0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("debug.ts"));
+        assert_eq!(content[1]["type"].as_str(), Some("image_url"));
     }
 }

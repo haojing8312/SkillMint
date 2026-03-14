@@ -1,4 +1,5 @@
-use runtime_chat_app::infer_capability_from_user_message;
+use runtime_chat_app::{infer_capability_from_message_parts, infer_capability_from_user_message};
+use serde_json::json;
 
 #[test]
 fn infers_capability_from_user_message_keywords() {
@@ -19,4 +20,14 @@ fn infers_capability_from_user_message_keywords() {
         "audio_tts"
     );
     assert_eq!(infer_capability_from_user_message("普通聊天"), "chat");
+}
+
+#[test]
+fn infers_vision_when_message_parts_contain_image() {
+    let parts = vec![
+        json!({ "type": "text", "text": "帮我分析这些附件" }),
+        json!({ "type": "image", "name": "screen.png", "mimeType": "image/png", "data": "abcd" }),
+    ];
+
+    assert_eq!(infer_capability_from_message_parts(&parts, "普通聊天"), "vision");
 }

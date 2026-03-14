@@ -108,6 +108,7 @@ async fn prepare_route_decisions_prefers_explicit_capability() {
             "model-1",
             &ChatExecutionPreparationRequest {
                 user_message: "just continue".to_string(),
+                user_message_parts: None,
                 session_id: Some("session-9".to_string()),
                 permission_mode: Some("standard".to_string()),
                 session_mode: Some("general".to_string()),

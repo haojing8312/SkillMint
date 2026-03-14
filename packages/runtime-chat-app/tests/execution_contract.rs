@@ -7,6 +7,7 @@ fn exposes_execution_preparation_contract() {
     let _service = ChatExecutionPreparationService::new();
     let request = ChatExecutionPreparationRequest {
         user_message: "please prepare route candidates".to_string(),
+        user_message_parts: None,
         session_id: Some("session-123".to_string()),
         permission_mode: Some("standard".to_string()),
         session_mode: Some("team_entry".to_string()),

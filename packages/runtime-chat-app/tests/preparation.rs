@@ -81,6 +81,7 @@ async fn prepare_chat_execution_normalizes_request_and_settings() {
             &repo,
             ChatPreparationRequest {
                 user_message: "帮我识图并解释内容".to_string(),
+                user_message_parts: None,
                 permission_mode: Some("accept_edits".to_string()),
                 session_mode: Some("general".to_string()),
                 team_id: Some("team-1".to_string()),
@@ -135,6 +136,7 @@ async fn prepare_chat_execution_falls_back_to_defaults_without_route() {
             &repo,
             ChatPreparationRequest {
                 user_message: "普通聊天".to_string(),
+                user_message_parts: None,
                 permission_mode: None,
                 session_mode: Some("team_entry".to_string()),
                 team_id: Some(" team-a ".to_string()),

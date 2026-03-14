@@ -4,6 +4,7 @@ use runtime_chat_app::{
     ChatSettingsRepository, PreparedRouteCandidate, ProviderConnectionSnapshot,
     RoutingSettingsSnapshot, SessionModelSnapshot,
 };
+use serde_json::json;
 use std::collections::HashMap;
 
 struct FakeRouteRepo {
@@ -121,6 +122,7 @@ async fn prepare_route_candidates_prefers_requested_capability_route() {
             "model-1",
             &ChatPreparationRequest {
                 user_message: "帮我识图".to_string(),
+                user_message_parts: None,
                 permission_mode: None,
                 session_mode: None,
                 team_id: None,
@@ -196,6 +198,7 @@ async fn prepare_route_candidates_falls_back_to_chat_route_when_capability_missi
             "model-1",
             &ChatPreparationRequest {
                 user_message: "帮我识图".to_string(),
+                user_message_parts: None,
                 permission_mode: None,
                 session_mode: None,
                 team_id: None,
@@ -238,6 +241,7 @@ async fn stale_model_id_falls_back_to_default_usable_model() {
             "model-stale",
             &ChatPreparationRequest {
                 user_message: "你好".to_string(),
+                user_message_parts: None,
                 permission_mode: None,
                 session_mode: None,
                 team_id: None,
@@ -256,4 +260,61 @@ async fn stale_model_id_falls_back_to_default_usable_model() {
             api_key: "sk-live".to_string(),
         }]
     );
+}
+
+#[tokio::test]
+async fn image_parts_do_not_fall_back_to_chat_route_when_vision_route_missing() {
+    let repo = FakeRouteRepo {
+        routing: RoutingSettingsSnapshot {
+            max_call_depth: 4,
+            node_timeout_seconds: 60,
+            retry_count: 0,
+        },
+        requested_route: None,
+        chat_route: Some(ChatRoutePolicySnapshot {
+            primary_provider_id: "provider-chat".to_string(),
+            primary_model: String::new(),
+            fallback_chain_json: "[]".to_string(),
+            retry_count: 1,
+            enabled: true,
+        }),
+        providers: vec![ProviderConnectionSnapshot {
+            provider_id: "provider-chat".to_string(),
+            protocol_type: "openai".to_string(),
+            base_url: "https://chat.example.com/v1".to_string(),
+            api_key: "sk-chat".to_string(),
+        }],
+        session_models: HashMap::from([(
+            "model-1".to_string(),
+            SessionModelSnapshot {
+                model_id: "model-1".to_string(),
+                api_format: "openai".to_string(),
+                base_url: "https://fallback.example.com".to_string(),
+                model_name: "session-model".to_string(),
+                api_key: "sk-session".to_string(),
+            },
+        )]),
+        default_usable_model_id: None,
+    };
+
+    let prepared = ChatPreparationService::new()
+        .prepare_route_candidates(
+            &repo,
+            "model-1",
+            &ChatPreparationRequest {
+                user_message: "请分析图片".to_string(),
+                user_message_parts: Some(vec![
+                    json!({ "type": "text", "text": "请分析图片" }),
+                    json!({ "type": "image", "name": "screen.png", "mimeType": "image/png", "data": "abcd" }),
+                ]),
+                permission_mode: None,
+                session_mode: None,
+                team_id: None,
+            },
+        )
+        .await
+        .expect("candidates");
+
+    assert_eq!(prepared.retry_count_per_candidate, 0);
+    assert!(prepared.candidates.is_empty());
 }

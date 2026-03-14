@@ -30,6 +30,7 @@ async fn prepare_execution_context_prefers_explicit_request_values() {
             &FakeSessionContextRepo,
             &ChatExecutionPreparationRequest {
                 user_message: "continue".to_string(),
+                user_message_parts: None,
                 session_id: Some("session-7".to_string()),
                 permission_mode: Some("standard".to_string()),
                 session_mode: Some("team_entry".to_string()),

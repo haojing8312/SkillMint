@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "../ChatView";
+import type { ChatMessagePart, PendingAttachment } from "../../types";
 
 const invokeMock = vi.fn<(command: string, payload?: unknown) => Promise<unknown>>();
 const listenMock = vi.fn<(eventName: string, callback: unknown) => Promise<() => void>>(
@@ -13,6 +14,26 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (eventName: string, callback: unknown) => listenMock(eventName, callback),
 }));
+
+it("defines structured attachment and message-part frontend types", () => {
+  const attachment: PendingAttachment = {
+    id: "att-1",
+    kind: "text-file",
+    name: "notes.md",
+    mimeType: "text/markdown",
+    size: 128,
+    text: "# hello",
+  };
+  const part: ChatMessagePart = {
+    type: "file_text",
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    text: attachment.text,
+  };
+
+  expect(part.type).toBe("file_text");
+});
 
 function buildMessages() {
   return [
@@ -398,6 +419,10 @@ describe("ChatView side panel redesign", () => {
       configurable: true,
       value: vi.fn(),
     });
+    Object.defineProperty(window, "alert", {
+      configurable: true,
+      value: vi.fn(),
+    });
     invokeMock.mockReset();
     listenMock.mockClear();
     invokeMock.mockImplementation((command: string) => {
@@ -547,6 +572,238 @@ describe("ChatView side panel redesign", () => {
       expect(screen.getByRole("button", { name: "文件" })).toHaveClass("bg-blue-100");
       expect(screen.getByPlaceholderText("搜索文件...")).toBeInTheDocument();
     });
+  });
+
+  test("shows mixed image and text-file attachment previews", async () => {
+    renderEmptyChat();
+
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    const imageFile = new File(["image-bytes"], "screen.png", { type: "image/png" });
+    const textFile = new File(["console.log('hi')"], "debug.ts", { type: "text/plain" });
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [imageFile, textFile],
+      },
+    });
+
+    expect(await screen.findByText("screen.png")).toBeInTheDocument();
+    expect(await screen.findByText("debug.ts")).toBeInTheDocument();
+    expect(screen.getByText("图片")).toBeInTheDocument();
+    expect(screen.getByText("文本")).toBeInTheDocument();
+  });
+
+  test("renders multiple pending attachments and removes one by id", async () => {
+    renderEmptyChat();
+
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    const firstFile = new File(["alpha"], "first.txt", { type: "text/plain" });
+    const secondFile = new File(["beta"], "second.txt", { type: "text/plain" });
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [firstFile, secondFile],
+      },
+    });
+
+    expect(await screen.findByText("first.txt")).toBeInTheDocument();
+    expect(await screen.findByText("second.txt")).toBeInTheDocument();
+
+    const removeButtons = screen.getAllByRole("button", { name: "移除附件" });
+    fireEvent.click(removeButtons[0]!);
+
+    await waitFor(() => {
+      expect(screen.queryByText("first.txt")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("second.txt")).toBeInTheDocument();
+  });
+
+  test("rejects unsupported attachment types and oversize files", async () => {
+    renderEmptyChat();
+
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    const badFile = new File(["fake"], "clip.mp4", { type: "video/mp4" });
+    const largeFile = new File(["big"], "huge.txt", { type: "text/plain" });
+    Object.defineProperty(largeFile, "size", {
+      configurable: true,
+      value: 6 * 1024 * 1024,
+    });
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [badFile, largeFile],
+      },
+    });
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("clip.mp4")).not.toBeInTheDocument();
+    expect(screen.queryByText("huge.txt")).not.toBeInTheDocument();
+  });
+
+  test("sends text plus mixed attachment parts in user order", async () => {
+    renderEmptyChat();
+
+    fireEvent.change(screen.getByPlaceholderText("输入消息，Shift+Enter 换行..."), {
+      target: { value: "帮我一起分析这些附件" },
+    });
+
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    const imageFile = new File(["image-bytes"], "screen.png", { type: "image/png" });
+    const textFile = new File(["hello"], "notes.md", { type: "text/plain" });
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [imageFile, textFile],
+      },
+    });
+
+    await screen.findByText("screen.png");
+    await screen.findByText("notes.md");
+
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        request: {
+          sessionId: "session-side-panel-redesign",
+          parts: [
+            { type: "text", text: "帮我一起分析这些附件" },
+            expect.objectContaining({
+              type: "image",
+              name: "screen.png",
+              mimeType: "image/png",
+            }),
+            expect.objectContaining({
+              type: "file_text",
+              name: "notes.md",
+              mimeType: "text/plain",
+              text: "hello",
+            }),
+          ],
+        },
+      });
+    });
+  });
+
+  test("injects default prompt when attachments exist and input is empty", async () => {
+    renderEmptyChat();
+
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    const imageFile = new File(["image-bytes"], "screen.png", { type: "image/png" });
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [imageFile],
+      },
+    });
+
+    await screen.findByText("screen.png");
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        request: {
+          sessionId: "session-side-panel-redesign",
+          parts: [
+            {
+              type: "text",
+              text: "请结合这些图片描述主要内容，并提取可见文字。",
+            },
+            expect.objectContaining({
+              type: "image",
+              name: "screen.png",
+              mimeType: "image/png",
+            }),
+          ],
+        },
+      });
+    });
+  });
+
+  test("maps missing vision route error to a user-friendly message", async () => {
+    renderEmptyChat();
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "send_message") {
+        return Promise.reject("VISION_MODEL_NOT_CONFIGURED: 请先在设置中配置图片理解模型");
+      }
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    const fileInput = document.getElementById("file-upload") as HTMLInputElement;
+    const imageFile = new File(["image-bytes"], "screen.png", { type: "image/png" });
+
+    fireEvent.change(fileInput, {
+      target: {
+        files: [imageFile],
+      },
+    });
+
+    await screen.findByText("screen.png");
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(await screen.findByText("请先在设置中配置图片理解模型")).toBeInTheDocument();
+  });
+
+  test("renders persisted user attachment history from contentParts", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            id: "user-attachment-history",
+            role: "user",
+            content: "请结合附件一起分析",
+            contentParts: [
+              { type: "text", text: "请结合附件一起分析" },
+              {
+                type: "image",
+                name: "screen.png",
+                mimeType: "image/png",
+                size: 12,
+                data: "data:image/png;base64,aGVsbG8=",
+              },
+              {
+                type: "file_text",
+                name: "debug.ts",
+                mimeType: "text/plain",
+                size: 18,
+                text: "console.log('hi')",
+              },
+            ],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderChat();
+
+    expect(await screen.findByText("请结合附件一起分析")).toBeInTheDocument();
+    expect(await screen.findByAltText("screen.png")).toBeInTheDocument();
+    expect(await screen.findByText("debug.ts")).toBeInTheDocument();
+    expect(screen.getByText("文本附件")).toBeInTheDocument();
   });
 
   test("renders task journey summary after transcript instead of before the first message", async () => {

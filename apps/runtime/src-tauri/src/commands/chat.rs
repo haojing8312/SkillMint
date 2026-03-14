@@ -3,11 +3,13 @@ use super::chat_runtime_io as chat_io;
 use super::chat_send_message_flow::{self, PrepareSendMessageParams};
 use super::chat_session_io;
 use super::skills::DbState;
-use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::agent::tools::search_providers::cache::SearchCache;
 use crate::agent::tools::AskUserResponder;
 use crate::agent::AgentExecutor;
+use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::session_journal::SessionJournalStateHandle;
+use serde::Deserialize;
+use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -60,6 +62,79 @@ pub struct SkillRouteEvent {
 
 pub fn emit_skill_route_event(app: &AppHandle, event: SkillRouteEvent) {
     let _ = app.emit("skill-route-node-updated", event);
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SendMessageRequest {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub parts: Vec<SendMessagePart>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(tag = "type")]
+pub enum SendMessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image {
+        name: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        size: usize,
+        data: String,
+    },
+    #[serde(rename = "file_text")]
+    FileText {
+        name: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        size: usize,
+        text: String,
+        truncated: Option<bool>,
+    },
+}
+
+impl SendMessageRequest {
+    fn summary_text(&self) -> String {
+        let mut summary_parts = Vec::new();
+        let text = self
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                SendMessagePart::Text { text } => Some(text.trim()),
+                _ => None,
+            })
+            .find(|text| !text.is_empty())
+            .unwrap_or("");
+        if !text.is_empty() {
+            summary_parts.push(text.to_string());
+        }
+        let image_count = self
+            .parts
+            .iter()
+            .filter(|part| matches!(part, SendMessagePart::Image { .. }))
+            .count();
+        let text_file_count = self
+            .parts
+            .iter()
+            .filter(|part| matches!(part, SendMessagePart::FileText { .. }))
+            .count();
+        if image_count > 0 {
+            summary_parts.push(format!("[图片 {} 张]", image_count));
+        }
+        if text_file_count > 0 {
+            summary_parts.push(format!("[文本文件 {} 个]", text_file_count));
+        }
+        summary_parts.join(" ")
+    }
+
+    fn parts_as_json(&self) -> Result<Vec<Value>, String> {
+        self.parts
+            .iter()
+            .map(|part| serde_json::to_value(part).map_err(|err| err.to_string()))
+            .collect()
+    }
 }
 
 #[tauri::command]
@@ -116,13 +191,15 @@ pub async fn create_session_with_pool(
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
-    session_id: String,
-    user_message: String,
+    request: SendMessageRequest,
     db: State<'_, DbState>,
     agent_executor: State<'_, Arc<AgentExecutor>>,
     journal: State<'_, SessionJournalStateHandle>,
     cancel_flag: State<'_, CancelFlagState>,
 ) -> Result<(), String> {
+    let session_id = request.session_id.clone();
+    let user_message = request.summary_text();
+    let user_message_parts = request.parts_as_json()?;
     if let Some(diagnostics_state) = app.try_state::<ManagedDiagnosticsState>() {
         let _ = diagnostics::write_log_record(
             &diagnostics_state.0.paths,
@@ -142,15 +219,22 @@ pub async fn send_message(
     let cancel_flag_clone = cancel_flag.0.clone();
 
     // 保存用户消息
-    let msg_id =
-        chat_io::insert_session_message_with_pool(&db.0, &session_id, "user", &user_message)
-            .await?;
+    let user_message_parts_json = serde_json::to_string(&user_message_parts)
+        .map_err(|err| format!("序列化附件消息失败: {err}"))?;
+    let msg_id = chat_io::insert_session_message_with_pool(
+        &db.0,
+        &session_id,
+        "user",
+        &user_message,
+        Some(&user_message_parts_json),
+    )
+    .await?;
     chat_io::maybe_update_session_title_from_first_user_message_with_pool(
         &db.0,
         &session_id,
         &user_message,
     )
-        .await?;
+    .await?;
 
     if chat_io::maybe_handle_team_entry_pre_execution_with_pool(
         &app,
@@ -172,20 +256,15 @@ pub async fn send_message(
             agent_executor: agent_executor.inner(),
             session_id: &session_id,
             user_message: &user_message,
+            user_message_parts: &user_message_parts,
         })
         .await?;
 
     // 使用全局工具确认通道（在 lib.rs 中创建）
     let tool_confirm_responder = app.state::<ToolConfirmState>().0.clone();
     let run_id = Uuid::new_v4().to_string();
-    chat_io::append_run_started_with_pool(
-        &db.0,
-        journal.0.as_ref(),
-        &session_id,
-        &run_id,
-        &msg_id,
-    )
-    .await?;
+    chat_io::append_run_started_with_pool(&db.0, journal.0.as_ref(), &session_id, &run_id, &msg_id)
+        .await?;
 
     let route_execution = chat_send_message_flow::execute_send_message_route(
         &app,
@@ -315,4 +394,3 @@ pub async fn compact_context(
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     chat_compaction::compact_context_with_pool(&db.0, &session_id, &app_data_dir).await
 }
-

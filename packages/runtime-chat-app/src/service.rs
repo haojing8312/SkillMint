@@ -52,7 +52,11 @@ impl ChatPreparationService {
     ) -> Result<PreparedChatExecution, String> {
         let routing = repo.load_routing_settings().await?;
         let chat_route = repo.load_chat_routing().await?;
-        let capability = infer_capability_from_user_message(&request.user_message).to_string();
+        let capability = infer_capability_from_message_parts(
+            request.user_message_parts.as_deref().unwrap_or(&[]),
+            &request.user_message,
+        )
+        .to_string();
         let permission_mode_storage =
             normalize_permission_mode_for_storage(request.permission_mode.as_deref()).to_string();
         let session_mode_storage =
@@ -102,14 +106,21 @@ impl ChatPreparationService {
         request: &ChatPreparationRequest,
     ) -> Result<crate::types::PreparedRouteCandidates, String> {
         let session_model = resolve_session_model_with_fallback(repo, model_id).await?;
-        let requested_capability = infer_capability_from_user_message(&request.user_message);
+        let user_message_parts = request.user_message_parts.as_deref().unwrap_or(&[]);
+        let requested_capability = infer_capability_from_message_parts(
+            user_message_parts,
+            &request.user_message,
+        );
+        let requires_explicit_vision_route =
+            requested_capability == "vision" && has_image_message_parts(user_message_parts);
 
         let mut retry_count_per_candidate = 0usize;
         let mut route_policy = repo
             .load_route_policy(requested_capability)
             .await?
             .filter(|policy| policy.enabled);
-        if route_policy.is_none() && requested_capability != "chat" {
+        if route_policy.is_none() && requested_capability != "chat" && !requires_explicit_vision_route
+        {
             route_policy = repo
                 .load_route_policy("chat")
                 .await?
@@ -143,7 +154,7 @@ impl ChatPreparationService {
             }
         }
 
-        if !session_model.api_key.trim().is_empty() {
+        if !requires_explicit_vision_route && !session_model.api_key.trim().is_empty() {
             candidates.push(crate::types::PreparedRouteCandidate {
                 protocol_type: session_model.api_format,
                 base_url: session_model.base_url,
@@ -391,6 +402,7 @@ impl From<ChatExecutionPreparationRequest> for ChatPreparationRequest {
     fn from(value: ChatExecutionPreparationRequest) -> Self {
         Self {
             user_message: value.user_message,
+            user_message_parts: value.user_message_parts,
             permission_mode: value.permission_mode,
             session_mode: value.session_mode,
             team_id: value.team_id,
@@ -495,6 +507,31 @@ pub fn infer_capability_from_user_message(message: &str) -> &'static str {
     "chat"
 }
 
+pub fn infer_capability_from_message_parts(
+    parts: &[Value],
+    fallback_message: &str,
+) -> &'static str {
+    let has_image_part = parts.iter().any(|part| {
+        part.get("type")
+            .and_then(Value::as_str)
+            .map(|part_type| part_type == "image")
+            .unwrap_or(false)
+    });
+    if has_image_part {
+        return "vision";
+    }
+    infer_capability_from_user_message(fallback_message)
+}
+
+fn has_image_message_parts(parts: &[Value]) -> bool {
+    parts.iter().any(|part| {
+        part.get("type")
+            .and_then(Value::as_str)
+            .map(|part_type| part_type == "image")
+            .unwrap_or(false)
+    })
+}
+
 pub fn classify_model_route_error(error_message: &str) -> ModelRouteErrorKind {
     let lower = error_message.to_ascii_lowercase();
     if lower.contains("api key")
@@ -588,6 +625,7 @@ pub fn compose_system_prompt(
     model_name: &str,
     max_iter: usize,
     guidance: &ChatExecutionGuidance,
+    workspace_skills_prompt: Option<&str>,
     employee_collaboration_guidance: Option<&str>,
     memory_content: Option<&str>,
 ) -> String {
@@ -602,6 +640,13 @@ pub fn compose_system_prompt(
             base_prompt, guidance.effective_work_dir, tool_names, model_name, max_iter,
         )
     };
+
+    if let Some(skills_prompt) = workspace_skills_prompt.filter(|value| !value.trim().is_empty()) {
+        system_prompt = format!(
+            "{}\n\n---\nSkills (mandatory):\nBefore replying, inspect the available skill descriptions below. If exactly one skill clearly applies, read its SKILL.md from the listed location and follow it.\n{}\n",
+            system_prompt, skills_prompt
+        );
+    }
 
     if let Some(collaboration) =
         employee_collaboration_guidance.filter(|value| !value.trim().is_empty())

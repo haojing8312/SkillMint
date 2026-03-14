@@ -59,6 +59,7 @@ async fn prepare_execution_guidance_uses_request_context() {
             &FakeGuidanceRepo,
             &ChatExecutionPreparationRequest {
                 user_message: "continue".to_string(),
+                user_message_parts: None,
                 session_id: Some("session-7".to_string()),
                 permission_mode: Some("standard".to_string()),
                 session_mode: Some("general".to_string()),
