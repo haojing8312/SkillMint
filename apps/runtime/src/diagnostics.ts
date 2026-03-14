@@ -12,7 +12,7 @@ type FrontendDiagnosticPayload = {
 
 let installed = false;
 
-async function reportFrontendDiagnostic(payload: FrontendDiagnosticPayload) {
+export async function reportFrontendDiagnostic(payload: FrontendDiagnosticPayload) {
   try {
     await invoke("record_frontend_diagnostic_event", { payload });
   } catch {

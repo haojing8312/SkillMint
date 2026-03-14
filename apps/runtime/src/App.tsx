@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -38,6 +38,7 @@ import {
 } from "./lib/search-config";
 import { getDefaultModelId } from "./lib/default-model";
 import { openExternalUrl } from "./utils/openExternalUrl";
+import { reportFrontendDiagnostic } from "./diagnostics";
 import {
   ExpertCreatePayload,
   ExpertCreateView,
@@ -167,6 +168,35 @@ function getDefaultSkillId(skillList: SkillManifest[]): string | null {
     return builtin.id;
   }
   return skillList[0]?.id ?? null;
+}
+
+function buildOptimisticSession(input: {
+  sessionId: string;
+  modelId: string;
+  title?: string;
+  employeeId?: string;
+  sessionMode: SessionLaunchMode;
+  teamId?: string;
+}): SessionInfo {
+  return {
+    id: input.sessionId,
+    title: (input.title || "").trim() || "New Chat",
+    created_at: new Date().toISOString(),
+    model_id: input.modelId,
+    employee_id: input.employeeId || "",
+    session_mode: input.sessionMode,
+    team_id: input.teamId || "",
+    permission_mode: "standard",
+    permission_mode_label: "标准模式",
+    source_channel: "local",
+    source_label: "",
+    work_dir: "",
+  };
+}
+
+function mergeSessionInfo(list: SessionInfo[], session: SessionInfo): SessionInfo[] {
+  const withoutTarget = list.filter((item) => item.id !== session.id);
+  return [session, ...withoutTarget];
 }
 
 const SHOW_DEV_MODEL_SETUP_TOOLS = import.meta.env.DEV || import.meta.env.MODE === "test";
@@ -785,7 +815,11 @@ export default function App() {
       setSessions(Array.isArray(list) ? list : []);
     } catch (e) {
       console.error("加载会话列表失败:", e);
-      setSessions([]);
+      void reportFrontendDiagnostic({
+        kind: "session_list_load_failed",
+        message: extractErrorMessage(e, "加载会话列表失败"),
+        href: typeof window !== "undefined" ? window.location?.href : undefined,
+      });
     }
   }
 
@@ -804,6 +838,16 @@ export default function App() {
         modelId,
         sessionMode: "general",
       });
+      setSessions((prev) =>
+        mergeSessionInfo(
+          prev,
+          buildOptimisticSession({
+            sessionId: id,
+            modelId,
+            sessionMode: "general",
+          }),
+        ),
+      );
       const firstMessage = initialMessage.trim();
       await loadSessions(skillId);
       setSelectedSessionId(id);
@@ -854,6 +898,19 @@ export default function App() {
         sessionMode: "team_entry",
         teamId,
       });
+      setSessions((prev) =>
+        mergeSessionInfo(
+          prev,
+          buildOptimisticSession({
+            sessionId,
+            modelId,
+            title: group.name || "团队协作",
+            employeeId: entryEmployee?.employee_id || entryEmployee?.role_id || "",
+            sessionMode: "team_entry",
+            teamId,
+          }),
+        ),
+      );
       await loadSessions(skillId);
       setSelectedSessionId(sessionId);
       if (initialMessage) {

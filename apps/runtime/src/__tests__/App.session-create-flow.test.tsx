@@ -14,7 +14,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 vi.mock("../components/Sidebar", () => ({
-  Sidebar: () => <div data-testid="sidebar">sidebar</div>,
+  Sidebar: (props: any) => (
+    <div data-testid="sidebar">
+      <div data-testid="sidebar-session-count">{props.sessions?.length ?? 0}</div>
+      <div data-testid="sidebar-first-session-id">{props.sessions?.[0]?.id ?? ""}</div>
+    </div>
+  ),
 }));
 
 vi.mock("../components/ChatView", () => ({
@@ -275,6 +280,84 @@ describe("App session create flow", () => {
         expect.objectContaining({
           modelId: "model-a",
         })
+      );
+    });
+  });
+
+  test("retains the newly created session and reports diagnostics when list refresh fails", async () => {
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([]);
+      }
+      if (command === "create_session") {
+        return Promise.resolve("session-new-1");
+      }
+      if (command === "list_sessions") {
+        return Promise.reject(new Error("database is locked"));
+      }
+      if (command === "record_frontend_diagnostic_event") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(payload ?? null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "create-empty" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "create-empty" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-new-1");
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "record_frontend_diagnostic_event",
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            kind: "session_list_load_failed",
+            message: expect.stringContaining("database is locked"),
+          }),
+        }),
       );
     });
   });

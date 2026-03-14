@@ -132,15 +132,15 @@ pub(crate) async fn list_sessions_with_pool(
         _,
         (
             String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
         ),
     >(
         "SELECT
@@ -168,7 +168,7 @@ pub(crate) async fn list_sessions_with_pool(
     .map_err(|e| e.to_string())?;
 
     Ok(rows
-        .iter()
+        .into_iter()
         .map(
             |(
                 id,
@@ -182,8 +182,21 @@ pub(crate) async fn list_sessions_with_pool(
                 team_id,
                 im_source_channel,
             )| {
+                let title = title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("New Chat");
+                let created_at = created_at.unwrap_or_default();
+                let model_id = model_id.unwrap_or_default();
+                let work_dir = work_dir.unwrap_or_default();
+                let employee_id = employee_id.unwrap_or_default();
+                let permission_mode = permission_mode.unwrap_or_else(|| "standard".to_string());
+                let session_mode = session_mode.unwrap_or_else(|| "general".to_string());
+                let team_id = team_id.unwrap_or_default();
+                let im_source_channel = im_source_channel.unwrap_or_default();
                 let (source_channel, source_label) =
-                    resolve_im_session_source(Some(im_source_channel));
+                    resolve_im_session_source(Some(&im_source_channel));
                 json!({
                     "id": id,
                     "title": title,
@@ -194,7 +207,7 @@ pub(crate) async fn list_sessions_with_pool(
                     "permission_mode": permission_mode,
                     "session_mode": session_mode,
                     "team_id": team_id,
-                    "permission_mode_label": permission_mode_label_for_display(permission_mode),
+                    "permission_mode_label": permission_mode_label_for_display(&permission_mode),
                     "source_channel": source_channel,
                     "source_label": source_label,
                 })
@@ -547,7 +560,9 @@ fn export_status_label(status: &SessionRunStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_im_session_source;
+    use super::{list_sessions_with_pool, resolve_im_session_source};
+    use crate::commands::chat_policy::permission_mode_label_for_display;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
     fn resolve_im_session_source_maps_wecom_and_feishu_labels() {
@@ -567,5 +582,68 @@ mod tests {
             resolve_im_session_source(None),
             ("local".to_string(), String::new())
         );
+    }
+
+    #[tokio::test]
+    async fn list_sessions_with_pool_tolerates_null_titles() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                permission_mode TEXT NOT NULL DEFAULT 'standard',
+                work_dir TEXT NOT NULL DEFAULT '',
+                employee_id TEXT NOT NULL DEFAULT '',
+                session_mode TEXT NOT NULL DEFAULT 'general',
+                team_id TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create sessions table");
+
+        sqlx::query(
+            "CREATE TABLE im_thread_sessions (
+                thread_id TEXT NOT NULL,
+                employee_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                route_session_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (thread_id, employee_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create im_thread_sessions table");
+
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id)
+             VALUES
+             ('session-null-title', 'skill-1', NULL, '2026-03-13T00:00:00Z', 'model-1', 'standard', '', '', 'general', ''),
+             ('session-normal', 'skill-1', 'Visible Session', '2026-03-13T00:01:00Z', 'model-1', 'full_access', '', '', 'general', '')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed sessions");
+
+        let sessions = list_sessions_with_pool(&pool, permission_mode_label_for_display)
+            .await
+            .expect("list sessions should succeed");
+
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0]["id"], "session-normal");
+        assert_eq!(sessions[0]["title"], "Visible Session");
+        assert_eq!(sessions[1]["id"], "session-null-title");
+        assert_eq!(sessions[1]["title"], "New Chat");
     }
 }
