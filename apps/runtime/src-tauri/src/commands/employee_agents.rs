@@ -912,7 +912,9 @@ async fn clear_feishu_scope_for_agent_if_unbound(
     .await
     .map_err(|e| e.to_string())?;
 
-    for (employee_db_id, employee_id, role_id, openclaw_agent_id, enabled_scopes_json) in employee_rows {
+    for (employee_db_id, employee_id, role_id, openclaw_agent_id, enabled_scopes_json) in
+        employee_rows
+    {
         let resolved_agent_id =
             resolve_employee_agent_id(&employee_id, &role_id, &openclaw_agent_id);
         if !resolved_agent_id.eq_ignore_ascii_case(normalized_agent_id) {
@@ -928,13 +930,15 @@ async fn clear_feishu_scope_for_agent_if_unbound(
         let next_scopes = normalize_enabled_scopes_for_storage(&next_scopes);
         let next_scopes_json = serde_json::to_string(&next_scopes).map_err(|e| e.to_string())?;
 
-        sqlx::query("UPDATE agent_employees SET enabled_scopes_json = ?, updated_at = ? WHERE id = ?")
-            .bind(&next_scopes_json)
-            .bind(now)
-            .bind(&employee_db_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        sqlx::query(
+            "UPDATE agent_employees SET enabled_scopes_json = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&next_scopes_json)
+        .bind(now)
+        .bind(&employee_db_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -1004,11 +1008,13 @@ pub async fn save_feishu_employee_association_with_pool(
         .await
         .map_err(|e| e.to_string())?;
 
-    sqlx::query("DELETE FROM im_routing_bindings WHERE channel = 'feishu' AND lower(agent_id) = lower(?)")
-        .bind(&agent_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "DELETE FROM im_routing_bindings WHERE channel = 'feishu' AND lower(agent_id) = lower(?)",
+    )
+    .bind(&agent_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
 
     let mut displaced_agent_ids: Vec<String> = Vec::new();
     if input.enabled {
@@ -1065,8 +1071,16 @@ pub async fn save_feishu_employee_association_with_pool(
         }
 
         let binding_id = Uuid::new_v4().to_string();
-        let binding_peer_kind = if mode == "default" { "group" } else { peer_kind.as_str() };
-        let binding_peer_id = if mode == "default" { "" } else { scoped_peer_id.as_str() };
+        let binding_peer_kind = if mode == "default" {
+            "group"
+        } else {
+            peer_kind.as_str()
+        };
+        let binding_peer_id = if mode == "default" {
+            ""
+        } else {
+            scoped_peer_id.as_str()
+        };
 
         sqlx::query(
             "INSERT INTO im_routing_bindings (
@@ -1083,7 +1097,10 @@ pub async fn save_feishu_employee_association_with_pool(
         .bind("")
         .bind("")
         .bind("[]")
-        .bind(serde_json::to_string(&json!({ "connector_id": "feishu" })).map_err(|e| e.to_string())?)
+        .bind(
+            serde_json::to_string(&json!({ "connector_id": "feishu" }))
+                .map_err(|e| e.to_string())?,
+        )
         .bind(input.priority)
         .bind(1_i64)
         .bind(&now)
@@ -4029,12 +4046,9 @@ fn employee_scope_matches_event(employee: &AgentEmployee, event: &ImEvent) -> bo
             .filter(|scope| !scope.is_empty())
             .collect::<Vec<_>>()
     };
-    normalized_scopes
-        .iter()
-        .any(|scope| {
-            scope == normalized_event_channel
-                || (scope == "app" && normalized_event_channel == "app")
-        })
+    normalized_scopes.iter().any(|scope| {
+        scope == normalized_event_channel || (scope == "app" && normalized_event_channel == "app")
+    })
 }
 
 pub async fn resolve_target_employees_for_event(

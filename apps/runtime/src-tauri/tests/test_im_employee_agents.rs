@@ -10,10 +10,11 @@ use runtime_lib::commands::employee_agents::{
     maybe_handle_team_entry_session_message_with_pool, pause_employee_group_run_with_pool,
     reassign_group_run_step_with_pool, resolve_target_employees_for_event,
     resume_employee_group_run_with_pool, retry_employee_group_run_failed_steps_with_pool,
-    review_group_run_step_with_pool, run_group_step_with_pool, save_feishu_employee_association_with_pool,
-    start_employee_group_run_with_pool, upsert_agent_employee_with_pool,
-    CloneEmployeeGroupTemplateInput, CreateEmployeeGroupInput, CreateEmployeeTeamInput,
-    SaveFeishuEmployeeAssociationInput, StartEmployeeGroupRunInput, UpsertAgentEmployeeInput,
+    review_group_run_step_with_pool, run_group_step_with_pool,
+    save_feishu_employee_association_with_pool, start_employee_group_run_with_pool,
+    upsert_agent_employee_with_pool, CloneEmployeeGroupTemplateInput, CreateEmployeeGroupInput,
+    CreateEmployeeTeamInput, SaveFeishuEmployeeAssociationInput, StartEmployeeGroupRunInput,
+    UpsertAgentEmployeeInput,
 };
 use runtime_lib::commands::im_routing::{
     list_im_routing_bindings_with_pool, upsert_im_routing_binding_with_pool,
@@ -376,7 +377,9 @@ async fn save_feishu_employee_association_replaces_default_binding_and_updates_s
     assert_eq!(feishu_defaults.len(), 1);
     assert_eq!(feishu_defaults[0].agent_id, "tech");
     assert_eq!(feishu_defaults[0].priority, 66);
-    assert!(!bindings.iter().any(|binding| binding.id == "binding-default-pm"));
+    assert!(!bindings
+        .iter()
+        .any(|binding| binding.id == "binding-default-pm"));
 
     let pm = employees
         .iter()

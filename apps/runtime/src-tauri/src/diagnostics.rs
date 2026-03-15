@@ -132,8 +132,7 @@ pub fn write_log_record(
         .append(true)
         .open(&path)
         .map_err(|e| format!("打开诊断日志失败 {}: {}", path.display(), e))?;
-    writeln!(file, "{json}")
-        .map_err(|e| format!("写入诊断日志失败 {}: {}", path.display(), e))?;
+    writeln!(file, "{json}").map_err(|e| format!("写入诊断日志失败 {}: {}", path.display(), e))?;
     Ok(path)
 }
 
@@ -193,7 +192,10 @@ pub fn detect_abnormal_previous_run(paths: &DiagnosticsPaths) -> Result<Abnormal
     })
 }
 
-pub fn record_crash_summary(paths: &DiagnosticsPaths, summary: &CrashSummary) -> Result<PathBuf, String> {
+pub fn record_crash_summary(
+    paths: &DiagnosticsPaths,
+    summary: &CrashSummary,
+) -> Result<PathBuf, String> {
     ensure_diagnostics_dirs(paths)?;
     let filename = format!(
         "crash-{}.json",
@@ -238,8 +240,8 @@ pub fn read_latest_crash_summary(paths: &DiagnosticsPaths) -> Result<Option<Cras
     let Some((_, path)) = latest else {
         return Ok(None);
     };
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("读取崩溃摘要失败 {}: {}", path.display(), e))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("读取崩溃摘要失败 {}: {}", path.display(), e))?;
     let summary = serde_json::from_str(&content)
         .map_err(|e| format!("解析崩溃摘要失败 {}: {}", path.display(), e))?;
     Ok(Some(summary))
@@ -261,7 +263,10 @@ pub fn install_panic_hook(paths: DiagnosticsPaths, run_id: String) {
     std::panic::set_hook(Box::new(move |info| {
         let summary = CrashSummary {
             timestamp: Utc::now().to_rfc3339(),
-            thread: std::thread::current().name().unwrap_or("unnamed").to_string(),
+            thread: std::thread::current()
+                .name()
+                .unwrap_or("unnamed")
+                .to_string(),
             message: panic_message(info.payload()),
             location: info
                 .location()

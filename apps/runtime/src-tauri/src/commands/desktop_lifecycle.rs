@@ -150,13 +150,12 @@ fn read_last_clean_exit_at(paths: &diagnostics::DiagnosticsPaths) -> Option<Stri
 fn build_diagnostics_status(
     state: &diagnostics::DiagnosticsState,
 ) -> Result<DesktopDiagnosticsStatus, String> {
-    let latest_crash = diagnostics::read_latest_crash_summary(&state.paths)?.map(|summary| {
-        CrashSummaryInfo {
+    let latest_crash =
+        diagnostics::read_latest_crash_summary(&state.paths)?.map(|summary| CrashSummaryInfo {
             timestamp: summary.timestamp,
             message: summary.message,
             run_id: summary.run_id,
-        }
-    });
+        });
 
     Ok(DesktopDiagnosticsStatus {
         diagnostics_dir: state.paths.root.to_string_lossy().to_string(),
@@ -208,7 +207,9 @@ fn build_desktop_environment_summary(
     )
 }
 
-fn list_recent_runtime_log_files(paths: &diagnostics::DiagnosticsPaths) -> Result<Vec<PathBuf>, String> {
+fn list_recent_runtime_log_files(
+    paths: &diagnostics::DiagnosticsPaths,
+) -> Result<Vec<PathBuf>, String> {
     if !paths.logs_dir.exists() {
         return Ok(Vec::new());
     }
@@ -367,14 +368,14 @@ pub async fn export_desktop_diagnostics_bundle(
     .map_err(|e| e.to_string())?;
     let session_runs = sqlx::query_as::<_, (String, String, String, String, String, String)>(
         "SELECT session_id, status, error_kind, error_message, created_at, updated_at
-         FROM session_runs ORDER BY updated_at DESC LIMIT 100"
+         FROM session_runs ORDER BY updated_at DESC LIMIT 100",
     )
     .fetch_all(&db.0)
     .await
     .map_err(|e| e.to_string())?;
     let session_run_events = sqlx::query_as::<_, (String, String, String, String)>(
         "SELECT session_id, event_type, payload_json, created_at
-         FROM session_run_events ORDER BY created_at DESC LIMIT 100"
+         FROM session_run_events ORDER BY created_at DESC LIMIT 100",
     )
     .fetch_all(&db.0)
     .await

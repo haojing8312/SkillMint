@@ -305,7 +305,8 @@ fn normalize_skillhub_tags(value: &Value) -> Vec<String> {
     value
         .as_array()
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(|item| item.as_str().map(|s| s.to_string()))
                 .collect::<Vec<String>>()
         })
@@ -803,7 +804,12 @@ async fn download_skill_bytes_with_fallback(
             let repo_url = resolve_repo_url(client, slug, github_url).await?;
             download_skill_zip_bytes(client, &repo_url)
                 .await
-                .map_err(|fallback_error| format!("{}；ClawHub/GitHub 回退失败: {}", skillhub_error, fallback_error))
+                .map_err(|fallback_error| {
+                    format!(
+                        "{}；ClawHub/GitHub 回退失败: {}",
+                        skillhub_error, fallback_error
+                    )
+                })
         }
     }
 }
@@ -1308,7 +1314,12 @@ fn extract_repo_url_from_detail_body(body: &Value) -> Option<String> {
         .get("owner")
         .and_then(|o| o.get("handle"))
         .and_then(|v| v.as_str())
-        .or_else(|| payload.get("owner").and_then(|o| o.get("handle")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            payload
+                .get("owner")
+                .and_then(|o| o.get("handle"))
+                .and_then(|v| v.as_str())
+        })
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
 
@@ -1527,14 +1538,12 @@ pub async fn list_clawhub_library_with_pool(
                 spawn_refresh_if_needed(key_for_refresh.clone(), async move {
                     let client = Client::new();
                     let fresh_json = match fetch_skillhub_catalog_body(&client).await {
-                        Ok(body) => {
-                            serde_json::to_value(normalize_skillhub_library_response(
-                                &body,
-                                cursor_for_refresh.as_deref(),
-                                normalized_limit,
-                            ))
-                            .ok()
-                        }
+                        Ok(body) => serde_json::to_value(normalize_skillhub_library_response(
+                            &body,
+                            cursor_for_refresh.as_deref(),
+                            normalized_limit,
+                        ))
+                        .ok(),
                         Err(_) => fetch_library_body(
                             &client,
                             cursor_for_refresh.as_deref(),
@@ -1546,9 +1555,12 @@ pub async fn list_clawhub_library_with_pool(
                         .ok(),
                     };
                     if let Some(fresh_json) = fresh_json {
-                        let _ =
-                            upsert_http_cache_body(&pool_for_refresh, &key_for_refresh, &fresh_json.to_string())
-                                .await;
+                        let _ = upsert_http_cache_body(
+                            &pool_for_refresh,
+                            &key_for_refresh,
+                            &fresh_json.to_string(),
+                        )
+                        .await;
                     }
                 });
             }
@@ -1571,7 +1583,12 @@ pub async fn list_clawhub_library_with_pool(
             normalize_library_response(&body)
         }
     };
-    let _ = upsert_http_cache_body(pool, &cache_key, &serde_json::to_string(&response).map_err(|e| e.to_string())?).await;
+    let _ = upsert_http_cache_body(
+        pool,
+        &cache_key,
+        &serde_json::to_string(&response).map_err(|e| e.to_string())?,
+    )
+    .await;
     Ok(response)
 }
 
@@ -2104,11 +2121,17 @@ mod tests {
         assert_eq!(normalized.slug, "self-improving-agent");
         assert_eq!(normalized.name, "self-improving-agent");
         assert_eq!(normalized.summary, "记录学习");
-        assert_eq!(normalized.source_url.as_deref(), Some("https://clawhub.ai/skills/self-improving-agent"));
+        assert_eq!(
+            normalized.source_url.as_deref(),
+            Some("https://clawhub.ai/skills/self-improving-agent")
+        );
         assert_eq!(normalized.github_url, None);
         assert_eq!(normalized.downloads, 206819);
         assert_eq!(normalized.stars, 1975);
-        assert_eq!(normalized.tags, vec!["automation".to_string(), "latest".to_string()]);
+        assert_eq!(
+            normalized.tags,
+            vec!["automation".to_string(), "latest".to_string()]
+        );
     }
 
     #[test]
@@ -2131,7 +2154,10 @@ mod tests {
         assert_eq!(normalized.slug, "self-improving-agent");
         assert_eq!(normalized.name, "self-improving-agent");
         assert_eq!(normalized.description, "记录学习");
-        assert_eq!(normalized.source_url.as_deref(), Some("https://clawhub.ai/skills/self-improving-agent"));
+        assert_eq!(
+            normalized.source_url.as_deref(),
+            Some("https://clawhub.ai/skills/self-improving-agent")
+        );
         assert_eq!(normalized.github_url, None);
         assert_eq!(normalized.stars, 1975);
     }
