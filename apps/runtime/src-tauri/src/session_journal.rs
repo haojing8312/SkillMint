@@ -1,5 +1,6 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{self, OpenOptions};
@@ -163,12 +164,15 @@ pub enum SessionRunEvent {
         run_id: String,
         tool_name: String,
         call_id: String,
+        input: Value,
     },
     ToolCompleted {
         run_id: String,
         tool_name: String,
         call_id: String,
+        input: Value,
         output: String,
+        is_error: bool,
     },
     RunCompleted {
         run_id: String,

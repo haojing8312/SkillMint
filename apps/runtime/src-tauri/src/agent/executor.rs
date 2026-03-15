@@ -3,6 +3,9 @@ use super::registry::ToolRegistry;
 use super::system_prompts::SystemPromptBuilder;
 use super::types::{LLMResponse, StreamDelta, ToolContext, ToolResult};
 use crate::adapters;
+use crate::commands::session_runs::append_session_run_event_with_pool;
+use crate::commands::skills::DbState;
+use crate::session_journal::{SessionJournalStateHandle, SessionRunEvent};
 use anyhow::{anyhow, Result};
 use runtime_executor_core::{
     estimate_tokens, extract_tool_call_parse_error, micro_compact, split_error_code_and_message,
@@ -45,6 +48,33 @@ fn wait_for_tool_confirmation(
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ToolConfirmationDecision::TimedOut,
     }
+}
+
+async fn resolve_current_session_run_id(app: &AppHandle, session_id: &str) -> Option<String> {
+    let journal_state = app.try_state::<SessionJournalStateHandle>()?;
+    journal_state
+        .0
+        .read_state(session_id)
+        .await
+        .ok()?
+        .current_run_id
+}
+
+async fn append_tool_run_event(
+    app: &AppHandle,
+    session_id: &str,
+    event: SessionRunEvent,
+) -> Result<()> {
+    let db_state = app
+        .try_state::<DbState>()
+        .ok_or_else(|| anyhow!("DbState unavailable"))?;
+    let journal_state = app
+        .try_state::<SessionJournalStateHandle>()
+        .ok_or_else(|| anyhow!("SessionJournalStateHandle unavailable"))?;
+
+    append_session_run_event_with_pool(&db_state.0, journal_state.0.as_ref(), session_id, event)
+        .await
+        .map_err(|err| anyhow!(err))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -425,6 +455,11 @@ impl AgentExecutor {
         let route_retry_count = route_retry_count.unwrap_or(0).clamp(0, 2);
         let mut iteration = 0;
         let route_run_id = Uuid::new_v4().to_string();
+        let persisted_run_id = if let (Some(app), Some(sid)) = (app_handle, session_id) {
+            resolve_current_session_run_id(app, sid).await
+        } else {
+            None
+        };
         let mut tool_failure_streak: Option<ToolFailureStreak> = None;
 
         loop {
@@ -717,6 +752,19 @@ impl AgentExecutor {
                                     status: "started".to_string(),
                                 },
                             );
+                            if let Some(run_id) = persisted_run_id.as_ref() {
+                                let _ = append_tool_run_event(
+                                    app,
+                                    sid,
+                                    SessionRunEvent::ToolStarted {
+                                        run_id: run_id.clone(),
+                                        tool_name: call.name.clone(),
+                                        call_id: call.id.clone(),
+                                        input: call.input.clone(),
+                                    },
+                                )
+                                .await;
+                            }
                         }
 
                         // 权限确认检查：在执行工具前判断是否需要用户确认
@@ -784,6 +832,21 @@ impl AgentExecutor {
                                             status: "error".to_string(),
                                         },
                                     );
+                                    if let Some(run_id) = persisted_run_id.as_ref() {
+                                        let _ = append_tool_run_event(
+                                            app,
+                                            sid,
+                                            SessionRunEvent::ToolCompleted {
+                                                run_id: run_id.clone(),
+                                                tool_name: call.name.clone(),
+                                                call_id: call.id.clone(),
+                                                input: call.input.clone(),
+                                                output: rejection_message.to_string(),
+                                                is_error: true,
+                                            },
+                                        )
+                                        .await;
+                                    }
                                     tool_results.push(ToolResult {
                                         tool_use_id: call.id.clone(),
                                         content: rejection_message.to_string(),
@@ -964,6 +1027,21 @@ impl AgentExecutor {
                                     },
                                 },
                             );
+                            if let Some(run_id) = persisted_run_id.as_ref() {
+                                let _ = append_tool_run_event(
+                                    app,
+                                    sid,
+                                    SessionRunEvent::ToolCompleted {
+                                        run_id: run_id.clone(),
+                                        tool_name: call.name.clone(),
+                                        call_id: call.id.clone(),
+                                        input: call.input.clone(),
+                                        output: result.clone(),
+                                        is_error,
+                                    },
+                                )
+                                .await;
+                            }
                         }
 
                         if is_skill_call {

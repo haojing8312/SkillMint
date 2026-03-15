@@ -55,6 +55,7 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             session_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            content_json TEXT,
             created_at TEXT NOT NULL
         )",
     )
