@@ -564,6 +564,8 @@ describe("ChatView side panel redesign", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "查看此任务中的所有文件" })).toBeInTheDocument();
+      expect(screen.getByText("任务已完成，点击查看本次产出文件")).toBeInTheDocument();
+      expect(screen.getByText("共 2 个文件")).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "查看此任务中的所有文件" }));
@@ -812,6 +814,7 @@ describe("ChatView side panel redesign", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "查看此任务中的所有文件" })).toBeInTheDocument();
       expect(screen.getByTestId("chat-message-0")).toBeInTheDocument();
+      expect(screen.getByText("任务已完成，点击查看本次产出文件")).toBeInTheDocument();
     });
 
     const message = screen.getByTestId("chat-message-0");
@@ -844,6 +847,7 @@ describe("ChatView side panel redesign", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "查看此任务中的所有文件" })).toBeInTheDocument();
+      expect(screen.getByText("共 1 个文件")).toBeInTheDocument();
     });
   });
 
