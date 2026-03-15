@@ -643,7 +643,7 @@ pub fn compose_system_prompt(
 
     if let Some(skills_prompt) = workspace_skills_prompt.filter(|value| !value.trim().is_empty()) {
         system_prompt = format!(
-            "{}\n\n---\nSkills (mandatory):\nBefore replying, inspect the available skill descriptions below. If exactly one skill clearly applies, read its SKILL.md from the listed location and follow it.\n{}\n",
+            "{}\n\n---\nSkills (mandatory):\nBefore replying, inspect the available skill descriptions below. If exactly one skill clearly applies, read its SKILL.md from the listed location and follow it. When calling the `skill` tool, use its <invoke_name> or <location> as skill_name. Do not pass the display <name> as skill_name.\n{}\n",
             system_prompt, skills_prompt
         );
     }

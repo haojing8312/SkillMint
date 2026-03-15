@@ -532,6 +532,7 @@ pub(crate) fn read_local_skill_prompt(pack_path: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorkspaceSkillPromptEntry {
     pub skill_id: String,
+    pub invoke_name: String,
     pub name: String,
     pub description: String,
     pub skill_md_path: String,
@@ -589,8 +590,9 @@ pub(crate) fn build_workspace_skill_markdown_path(
 
 pub(crate) fn build_workspace_skill_prompt_entry(entry: &WorkspaceSkillPromptEntry) -> String {
     format!(
-        "<skill>\n<name>{}</name>\n<description>{}</description>\n<location>{}</location>\n</skill>",
+        "<skill>\n<name>{}</name>\n<invoke_name>{}</invoke_name>\n<description>{}</description>\n<location>{}</location>\n</skill>",
         entry.name.trim(),
+        entry.invoke_name.trim(),
         entry.description.trim(),
         entry.skill_md_path.trim()
     )
@@ -737,6 +739,7 @@ pub(crate) fn build_workspace_skill_prompt_entries(
         .iter()
         .map(|entry| WorkspaceSkillPromptEntry {
             skill_id: entry.skill_id.clone(),
+            invoke_name: entry.skill_id.clone(),
             name: entry.name.clone(),
             description: entry.description.clone(),
             skill_md_path: build_workspace_skill_markdown_path(work_dir, &entry.skill_id)
@@ -849,6 +852,7 @@ pub(crate) fn build_skill_roots(
     let mut skill_roots: Vec<std::path::PathBuf> = Vec::new();
     if let Some(wd) = tool_ctx_from_work_dir(effective_work_dir) {
         skill_roots.push(wd.join(".claude").join("skills"));
+        skill_roots.push(wd.join("skills"));
     }
     if let Ok(cwd) = std::env::current_dir() {
         skill_roots.push(cwd.join(".claude").join("skills"));
@@ -1047,7 +1051,7 @@ pub(crate) fn reconstruct_llm_messages(parsed: &Value, api_format: &str) -> Vec<
 #[cfg(test)]
 mod workspace_skill_projection_tests {
     use super::{
-        build_workspace_skill_markdown_path, build_workspace_skill_prompt_entries,
+        build_skill_roots, build_workspace_skill_markdown_path, build_workspace_skill_prompt_entries,
         build_workspace_skill_prompt_entry, build_workspace_skills_prompt,
         normalize_workspace_skill_dir_name, prepare_workspace_skills_prompt,
         resolve_workspace_skill_runtime_entry, sync_workspace_skills_to_directory,
@@ -1088,9 +1092,19 @@ mod workspace_skill_projection_tests {
     }
 
     #[test]
+    fn build_skill_roots_include_projected_workspace_skills_directory() {
+        let work_dir = Path::new("E:\\workspace\\session-a");
+        let roots = build_skill_roots(&work_dir.to_string_lossy(), "builtin", "");
+
+        assert!(roots.contains(&work_dir.join(".claude").join("skills")));
+        assert!(roots.contains(&work_dir.join("skills")));
+    }
+
+    #[test]
     fn build_workspace_skill_prompt_entry_includes_location() {
         let entry = WorkspaceSkillPromptEntry {
             skill_id: "local-auto-redbook".to_string(),
+            invoke_name: "local-auto-redbook".to_string(),
             name: "xhs-note-creator".to_string(),
             description: "Create Xiaohongshu content".to_string(),
             skill_md_path: "E:\\workspace\\skills\\local-auto-redbook\\SKILL.md".to_string(),
@@ -1098,6 +1112,7 @@ mod workspace_skill_projection_tests {
 
         let prompt = build_workspace_skill_prompt_entry(&entry);
         assert!(prompt.contains("<name>xhs-note-creator</name>"));
+        assert!(prompt.contains("<invoke_name>local-auto-redbook</invoke_name>"));
         assert!(prompt.contains("<description>Create Xiaohongshu content</description>"));
         assert!(prompt
             .contains("<location>E:\\workspace\\skills\\local-auto-redbook\\SKILL.md</location>"));
@@ -1107,6 +1122,7 @@ mod workspace_skill_projection_tests {
     fn build_workspace_skills_prompt_wraps_available_skills_block() {
         let prompt = build_workspace_skills_prompt(&[WorkspaceSkillPromptEntry {
             skill_id: "builtin-general".to_string(),
+            invoke_name: "builtin-general".to_string(),
             name: "General Assistant".to_string(),
             description: "Generic work".to_string(),
             skill_md_path: "E:\\workspace\\skills\\builtin-general\\SKILL.md".to_string(),

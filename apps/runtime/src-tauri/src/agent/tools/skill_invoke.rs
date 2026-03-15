@@ -69,11 +69,146 @@ impl SkillInvokeTool {
         Ok(name)
     }
 
+    fn search_roots_text(&self) -> String {
+        self.search_roots
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    fn path_ends_with_skill_md(path: &str) -> bool {
+        let normalized = path.replace('\\', "/");
+        normalized.ends_with("/SKILL.md") || normalized.ends_with("/skill.md")
+    }
+
+    fn skill_name_from_path(raw: &str) -> Result<String> {
+        let p = Path::new(raw.trim());
+        p.parent()
+            .and_then(|x| x.file_name())
+            .and_then(|x| x.to_str())
+            .ok_or_else(|| anyhow!("INVALID_SKILL_NAME: 无效 skill_name: {}", raw))
+            .map(|value| value.to_string())
+    }
+
+    fn path_is_within_search_roots(&self, path: &Path) -> bool {
+        let Ok(canonical_path) = path.canonicalize() else {
+            return false;
+        };
+
+        self.search_roots.iter().any(|root| {
+            root.canonicalize()
+                .map(|canonical_root| canonical_path.starts_with(&canonical_root))
+                .unwrap_or(false)
+        })
+    }
+
+    fn resolve_explicit_skill_path(&self, raw: &str) -> Result<Option<(String, PathBuf)>> {
+        if !Self::path_ends_with_skill_md(raw) {
+            return Ok(None);
+        }
+
+        let path = PathBuf::from(raw.trim());
+        if !path.is_file() {
+            return Ok(None);
+        }
+
+        if !self.path_is_within_search_roots(&path) {
+            return Err(anyhow!(
+                "PERMISSION_DENIED: skill path 不在允许范围内: {}",
+                raw
+            ));
+        }
+
+        Ok(Some((Self::skill_name_from_path(raw)?, path)))
+    }
+
+    fn find_skill_md_in_dir(dir: &Path) -> Option<PathBuf> {
+        ["SKILL.md", "skill.md"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|path| path.exists())
+    }
+
     fn find_skill_md(&self, skill_name: &str) -> Option<PathBuf> {
         self.search_roots
             .iter()
-            .map(|root| root.join(skill_name).join("SKILL.md"))
-            .find(|p| p.exists())
+            .find_map(|root| Self::find_skill_md_in_dir(&root.join(skill_name)))
+    }
+
+    fn find_skill_by_display_name(&self, raw: &str) -> Option<(String, PathBuf)> {
+        let target = raw.trim();
+        if target.is_empty() {
+            return None;
+        }
+
+        self.search_roots.iter().find_map(|root| {
+            let entries = std::fs::read_dir(root).ok()?;
+            for entry in entries.flatten() {
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                if !file_type.is_dir() {
+                    continue;
+                }
+
+                let skill_dir = entry.path();
+                let Some(skill_md) = Self::find_skill_md_in_dir(&skill_dir) else {
+                    continue;
+                };
+                let Ok(content) = std::fs::read_to_string(&skill_md) else {
+                    continue;
+                };
+                let config = SkillConfig::parse(&content);
+                let Some(display_name) = config.name else {
+                    continue;
+                };
+                let display_name = display_name.trim().to_string();
+                let matches = display_name == target
+                    || (display_name.is_ascii()
+                        && target.is_ascii()
+                        && display_name.eq_ignore_ascii_case(target));
+                if matches {
+                    let dir_name = skill_dir.file_name()?.to_str()?.to_string();
+                    return Some((dir_name, skill_md));
+                }
+            }
+            None
+        })
+    }
+
+    fn resolve_skill_target(&self, raw: &str) -> Result<(String, PathBuf)> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("INVALID_SKILL_NAME: skill_name 不能为空"));
+        }
+
+        if let Some(explicit_path) = self.resolve_explicit_skill_path(trimmed)? {
+            return Ok(explicit_path);
+        }
+
+        match Self::normalize_skill_name(trimmed) {
+            Ok(skill_name) => {
+                if let Some(skill_path) = self.find_skill_md(&skill_name) {
+                    return Ok((skill_name, skill_path));
+                }
+                if let Some(mapped) = self.find_skill_by_display_name(trimmed) {
+                    return Ok(mapped);
+                }
+                Err(anyhow!(
+                    "SKILL_NOT_FOUND: 未找到 Skill: {}。搜索路径: {}",
+                    skill_name,
+                    self.search_roots_text()
+                ))
+            }
+            Err(normalize_err) => {
+                if let Some(mapped) = self.find_skill_by_display_name(trimmed) {
+                    Ok(mapped)
+                } else {
+                    Err(normalize_err)
+                }
+            }
+        }
     }
 }
 
@@ -92,7 +227,7 @@ impl Tool for SkillInvokeTool {
             "properties": {
                 "skill_name": {
                     "type": "string",
-                    "description": "目标 Skill 名称，如 using-superpowers、executing-plans"
+                    "description": "目标 Skill 的 invoke_name 或 SKILL.md 路径，如 using-superpowers、executing-plans"
                 },
                 "arguments": {
                     "type": "array",
@@ -108,7 +243,7 @@ impl Tool for SkillInvokeTool {
         let raw_name = input["skill_name"]
             .as_str()
             .ok_or_else(|| anyhow!("BAD_REQUEST: 缺少 skill_name 参数"))?;
-        let skill_name = Self::normalize_skill_name(raw_name)?;
+        let (skill_name, skill_path) = self.resolve_skill_target(raw_name)?;
 
         let mut stack_guard = self
             .call_stack
@@ -132,18 +267,6 @@ impl Tool for SkillInvokeTool {
         drop(stack_guard);
 
         let result = (|| -> Result<String> {
-            let skill_path = self.find_skill_md(&skill_name).ok_or_else(|| {
-                anyhow!(
-                    "SKILL_NOT_FOUND: 未找到 Skill: {}。搜索路径: {}",
-                    skill_name,
-                    self.search_roots
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                )
-            })?;
-
             let content = std::fs::read_to_string(&skill_path)
                 .map_err(|e| anyhow!("SKILL_READ_FAILED: 读取 SKILL.md 失败: {}", e))?;
             let mut config = SkillConfig::parse(&content);

@@ -55,3 +55,81 @@ fn skill_tool_denies_when_child_tools_outside_parent_scope() {
         err
     );
 }
+
+#[test]
+fn skill_tool_accepts_display_name_via_frontmatter_mapping() {
+    let tmp = TempDir::new().expect("temp dir");
+    create_skill(
+        &tmp,
+        "builtin-general",
+        "---\nname: 通用助手\nallowed_tools: \"read_file\"\n---\n\nChild prompt",
+    );
+
+    let tool = SkillInvokeTool::new("sess-1".to_string(), vec![tmp.path().to_path_buf()]);
+    let ctx = ToolContext {
+        work_dir: None,
+        allowed_tools: None,
+    };
+    let out = tool
+        .execute(json!({"skill_name": "通用助手"}), &ctx)
+        .expect("display name should map to directory skill");
+
+    assert!(out.contains("## Skill: builtin-general"));
+    assert!(out.contains("Child prompt"));
+}
+
+#[test]
+fn skill_tool_accepts_skill_md_path_within_search_roots() {
+    let actual_root = TempDir::new().expect("actual root");
+    create_skill(
+        &actual_root,
+        "child-skill",
+        "---\nname: child-skill\nallowed_tools: \"read_file\"\n---\n\nChild prompt",
+    );
+
+    let tool = SkillInvokeTool::new(
+        "sess-1".to_string(),
+        vec![actual_root.path().to_path_buf()],
+    );
+    let ctx = ToolContext {
+        work_dir: None,
+        allowed_tools: None,
+    };
+    let skill_md_path = actual_root.path().join("child-skill").join("SKILL.md");
+    let out = tool
+        .execute(json!({"skill_name": skill_md_path.to_string_lossy()}), &ctx)
+        .expect("skill path should be resolved when under allowed roots");
+
+    assert!(out.contains("## Skill: child-skill"));
+    assert!(out.contains("Child prompt"));
+}
+
+#[test]
+fn skill_tool_rejects_skill_md_path_outside_search_roots() {
+    let actual_root = TempDir::new().expect("actual root");
+    create_skill(
+        &actual_root,
+        "child-skill",
+        "---\nname: child-skill\nallowed_tools: \"read_file\"\n---\n\nChild prompt",
+    );
+    let isolated_root = TempDir::new().expect("isolated root");
+
+    let tool = SkillInvokeTool::new(
+        "sess-1".to_string(),
+        vec![isolated_root.path().to_path_buf()],
+    );
+    let ctx = ToolContext {
+        work_dir: None,
+        allowed_tools: None,
+    };
+    let skill_md_path = actual_root.path().join("child-skill").join("SKILL.md");
+    let err = tool
+        .execute(json!({"skill_name": skill_md_path.to_string_lossy()}), &ctx)
+        .expect_err("skill path outside allowed roots should be rejected");
+
+    assert!(
+        err.to_string().contains("PERMISSION_DENIED"),
+        "unexpected error: {}",
+        err
+    );
+}
