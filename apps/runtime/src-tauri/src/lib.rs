@@ -1,5 +1,6 @@
 mod adapters;
 pub mod agent;
+pub mod approval_bus;
 mod builtin_skills;
 pub mod commands;
 mod db;
@@ -12,10 +13,12 @@ pub mod team_templates;
 mod windows_process;
 
 use agent::tools::new_responder;
+use approval_bus::ApprovalManager;
 use agent::tools::search_providers::cache::SearchCache;
 use agent::{AgentExecutor, ToolRegistry};
 use commands::chat::{
-    AskUserState, CancelFlagState, SearchCacheState, ToolConfirmResponder, ToolConfirmState,
+    ApprovalManagerState, AskUserState, CancelFlagState, SearchCacheState,
+    ToolConfirmResponder, ToolConfirmState,
 };
 use commands::feishu_gateway::FeishuEventRelayState;
 use commands::skills::DbState;
@@ -52,6 +55,8 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
     let tool_confirm_responder: ToolConfirmResponder =
         std::sync::Arc::new(std::sync::Mutex::new(None));
     app.manage(ToolConfirmState(tool_confirm_responder));
+    let approval_manager = Arc::new(ApprovalManager::default());
+    app.manage(ApprovalManagerState(approval_manager));
 
     let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     app.manage(CancelFlagState(cancel_flag));

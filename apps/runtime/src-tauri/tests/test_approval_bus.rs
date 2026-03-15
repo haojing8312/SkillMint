@@ -1,5 +1,6 @@
 mod helpers;
 
+use runtime_lib::approval_bus::{ApprovalDecision, ApprovalManager, ApprovalResolveResult};
 use runtime_lib::commands::session_runs::{append_session_run_event_with_pool, list_session_runs_with_pool};
 use runtime_lib::session_journal::{SessionJournalStore, SessionRunEvent, SessionRunStatus};
 use serde_json::json;
@@ -75,4 +76,92 @@ async fn approval_records_persist_and_project_waiting_status() {
     .await
     .expect("count approval events");
     assert_eq!(event_count, 1);
+}
+
+#[tokio::test]
+async fn approval_manager_allows_first_resolver_only() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    let manager = ApprovalManager::default();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO approvals (
+            id, session_id, run_id, call_id, tool_name, input_json, summary, impact,
+            irreversible, status, decision, notify_targets_json, resume_payload_json,
+            resolved_by_surface, resolved_by_user, resolved_at, resumed_at, expires_at,
+            created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
+    )
+    .bind("approval-cas")
+    .bind("sess-approval")
+    .bind("run-approval")
+    .bind("call-approval")
+    .bind("file_delete")
+    .bind("{}")
+    .bind("删除危险目录")
+    .bind("")
+    .bind(1_i64)
+    .bind("pending")
+    .bind("")
+    .bind("[]")
+    .bind("{}")
+    .bind("")
+    .bind("")
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("insert pending approval");
+
+    let first = manager
+        .resolve_with_pool(
+            &pool,
+            "approval-cas",
+            ApprovalDecision::AllowOnce,
+            "desktop",
+            "user-desktop",
+        )
+        .await
+        .expect("resolve approval first time");
+    assert_eq!(
+        first,
+        ApprovalResolveResult::Applied {
+            approval_id: "approval-cas".into(),
+            status: "approved".into(),
+            decision: ApprovalDecision::AllowOnce,
+        }
+    );
+
+    let second = manager
+        .resolve_with_pool(
+            &pool,
+            "approval-cas",
+            ApprovalDecision::Deny,
+            "feishu",
+            "user-feishu",
+        )
+        .await
+        .expect("resolve approval second time");
+    assert_eq!(
+        second,
+        ApprovalResolveResult::AlreadyResolved {
+            approval_id: "approval-cas".into(),
+            status: "approved".into(),
+            decision: Some(ApprovalDecision::AllowOnce),
+        }
+    );
+
+    let (status, decision, surface, user_id): (String, String, String, String) = sqlx::query_as(
+        "SELECT status, decision, resolved_by_surface, resolved_by_user
+         FROM approvals
+         WHERE id = ?",
+    )
+    .bind("approval-cas")
+    .fetch_one(&pool)
+    .await
+    .expect("load resolved approval");
+    assert_eq!(status, "approved");
+    assert_eq!(decision, "allow_once");
+    assert_eq!(surface, "desktop");
+    assert_eq!(user_id, "user-desktop");
 }
