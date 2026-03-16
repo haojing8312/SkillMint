@@ -125,6 +125,7 @@ interface Props {
 
 interface PendingApprovalView {
   approvalId: string;
+  approvalRecordId?: string;
   sessionId: string;
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -133,6 +134,7 @@ interface PendingApprovalView {
   impact?: string;
   irreversible?: boolean;
   status?: string;
+  usesLegacyConfirm?: boolean;
 }
 
 function shouldRenderCompletedJourneySummary(model: TaskJourneyViewModel) {
@@ -228,6 +230,10 @@ export function ChatView({
     state: string;
     detail?: string;
     iteration: number;
+    stopReasonKind?: string;
+    stopReasonTitle?: string;
+    stopReasonMessage?: string;
+    stopReasonLastCompletedStep?: string;
   } | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApprovalView[]>([]);
   const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
@@ -257,6 +263,8 @@ export function ChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const subAgentBufferRef = useRef("");
+  const pendingApprovalsRef = useRef<PendingApprovalView[]>([]);
+  const sessionIdRef = useRef(sessionId);
   const mainRoleNameRef = useRef("");
   const lastHandledSessionFocusNonceRef = useRef<number | null>(null);
   const messageElementRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -334,6 +342,7 @@ export function ChatView({
     status?: string;
   }): PendingApprovalView => ({
     approvalId: payload.approval_id || `${payload.tool_name}-${Date.now()}`,
+    approvalRecordId: payload.approval_id || undefined,
     sessionId: payload.session_id,
     toolName: payload.tool_name,
     toolInput: payload.tool_input || payload.input || {},
@@ -342,7 +351,38 @@ export function ChatView({
     impact: payload.impact || undefined,
     irreversible: payload.irreversible,
     status: payload.status,
+    usesLegacyConfirm: !(payload.approval_id || "").trim(),
   });
+
+  useEffect(() => {
+    pendingApprovalsRef.current = pendingApprovals;
+  }, [pendingApprovals]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    return () => {
+      const activeSessionId = (sessionIdRef.current || "").trim();
+      for (const approval of pendingApprovalsRef.current) {
+        if ((approval.sessionId || "").trim() !== activeSessionId) continue;
+        if (approval.approvalRecordId) {
+          void invoke("resolve_approval", {
+            approvalId: approval.approvalRecordId,
+            decision: "deny",
+            source: "desktop_cleanup",
+          });
+          continue;
+        }
+        if (approval.usesLegacyConfirm) {
+          void invoke("confirm_tool_execution", {
+            confirmed: false,
+          });
+        }
+      }
+    };
+  }, []);
 
   function syncComposerHeight() {
     const el = textareaRef.current;
@@ -1050,6 +1090,10 @@ export function ChatView({
       state: string;
       detail: string | null;
       iteration: number;
+      stop_reason_kind?: string | null;
+      stop_reason_title?: string | null;
+      stop_reason_message?: string | null;
+      stop_reason_last_completed_step?: string | null;
     }>("agent-state-event", ({ payload }) => {
       if (payload.session_id !== sessionId) return;
       if (payload.state === "finished") {
@@ -1059,6 +1103,10 @@ export function ChatView({
           state: payload.state,
           detail: payload.detail ?? undefined,
           iteration: payload.iteration,
+          stopReasonKind: payload.stop_reason_kind ?? undefined,
+          stopReasonTitle: payload.stop_reason_title ?? undefined,
+          stopReasonMessage: payload.stop_reason_message ?? undefined,
+          stopReasonLastCompletedStep: payload.stop_reason_last_completed_step ?? undefined,
         });
       }
     });
@@ -2251,10 +2299,35 @@ export function ChatView({
     if (agentState.state === "tool_calling") {
       return agentState.detail ? `正在处理步骤：${agentState.detail}` : "正在处理步骤";
     }
+    if (agentState.state === "stopped") {
+      return agentState.stopReasonTitle || agentState.stopReasonMessage || agentState.detail || "任务已停止";
+    }
     if (agentState.state === "error") {
       return `执行异常：${agentState.detail || "未知错误"}`;
     }
     return agentState.detail || agentState.state;
+  }
+
+  function renderAgentStateIndicator() {
+    if (!agentState) return null;
+    if (agentState.state === "stopped") {
+      return <span className="inline-flex h-3 w-3 rounded-full bg-amber-400" />;
+    }
+    if (agentState.state === "error") {
+      return <span className="inline-flex h-3 w-3 rounded-full bg-red-400" />;
+    }
+    return <span className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full" />;
+  }
+
+  function renderAgentStateSecondaryText() {
+    if (!agentState || agentState.state !== "stopped" || !agentState.stopReasonLastCompletedStep) {
+      return null;
+    }
+    return (
+      <span className="text-[11px] text-amber-700">
+        {`最后完成步骤：${agentState.stopReasonLastCompletedStep}`}
+      </span>
+    );
   }
 
   function handleViewFilesFromDelivery() {
@@ -2265,6 +2338,10 @@ export function ChatView({
   function getRunFailureTitle(run: SessionRunProjection) {
     if (run.error_kind === "billing") return "模型余额不足";
     if (run.error_kind === "cancelled") return "任务已取消";
+    if (run.error_kind === "max_turns") return "任务达到执行步数上限";
+    if (run.error_kind === "loop_detected") return "任务疑似卡住，已自动停止";
+    if (run.error_kind === "no_progress") return "任务长时间没有进展";
+    if (run.error_kind === "timeout") return "任务执行超时";
     return run.error_message || "本轮执行失败";
   }
 
@@ -2451,9 +2528,20 @@ export function ChatView({
           </div>
         )}
         {agentState && agentState.state !== "thinking" && (
-          <div className="sticky top-0 z-10 flex items-center gap-2 bg-white/80 backdrop-blur-lg px-4 py-2 rounded-xl text-xs text-gray-600 border border-gray-200 shadow-sm mx-4 mt-2">
-            <span className="animate-spin h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full" />
-            <span className={agentState.state === "error" ? "text-red-500" : undefined}>{getAgentStateLabel()}</span>
+          <div
+            className={`sticky top-0 z-10 flex items-center gap-2 bg-white/80 backdrop-blur-lg px-4 py-2 rounded-xl text-xs border shadow-sm mx-4 mt-2 ${
+              agentState.state === "stopped"
+                ? "text-amber-800 border-amber-200"
+                : agentState.state === "error"
+                ? "text-red-700 border-red-200"
+                : "text-gray-600 border-gray-200"
+            }`}
+          >
+            {renderAgentStateIndicator()}
+            <div className="flex min-w-0 flex-col">
+              <span className={agentState.state === "error" ? "text-red-500" : undefined}>{getAgentStateLabel()}</span>
+              {renderAgentStateSecondaryText()}
+            </div>
           </div>
         )}
         {(mainRoleName || primaryDelegationCard) && (
