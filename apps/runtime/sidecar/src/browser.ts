@@ -4,6 +4,13 @@ import path from 'node:path';
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { stageCompatUploadPaths } from './browser_uploads.js';
 
+export function resolvePreferredBrowserChannel(platform: NodeJS.Platform = process.platform): 'msedge' | undefined {
+  if (platform === 'win32') {
+    return 'msedge';
+  }
+  return undefined;
+}
+
 /** 浏览器启动选项 */
 export interface LaunchOptions {
   headless?: boolean;
@@ -236,7 +243,9 @@ export class BrowserController {
 
     const headless = options?.headless ?? false;
     const viewport = options?.viewport ?? { width: 1280, height: 720 };
+    const channel = resolvePreferredBrowserChannel();
     this.browser = await chromium.launch({
+      channel,
       headless,
       args: [
         // stealth 相关启动参数
@@ -882,8 +891,10 @@ export class BrowserController {
 
     const userDataDir = path.join(this.compatProfileRoot, profile);
     await mkdir(userDataDir, { recursive: true });
+    const channel = resolvePreferredBrowserChannel();
 
     const context = await chromium.launchPersistentContext(userDataDir, {
+      channel,
       headless: false,
       viewport: { width: 1280, height: 720 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',

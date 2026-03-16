@@ -2,6 +2,10 @@
   "name": "workclaw-runtime-sidecar",
   "version": "1.0.0",
   "type": "module",
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

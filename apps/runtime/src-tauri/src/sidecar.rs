@@ -1,18 +1,117 @@
 use crate::windows_process::hide_console_window;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidecarRuntimePaths {
+    pub cwd: PathBuf,
+    pub resource_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedSidecarRuntime {
+    pub command: String,
+    pub script: PathBuf,
+    pub working_dir: PathBuf,
+}
 
 pub struct SidecarManager {
     process: Arc<Mutex<Option<Child>>>,
     env_vars: Arc<Mutex<HashMap<String, String>>>,
     url: String,
+    resource_dir: Option<PathBuf>,
+}
+
+fn resolve_packaged_node_command(bundle_dir: &Path) -> String {
+    let bundled_node = if cfg!(windows) {
+        bundle_dir.join("node.exe")
+    } else {
+        bundle_dir.join("node")
+    };
+
+    if bundled_node.is_file() {
+        bundled_node.to_string_lossy().to_string()
+    } else {
+        "node".to_string()
+    }
+}
+
+fn resolve_packaged_sidecar_runtime(bundle_dir: &Path) -> Option<ResolvedSidecarRuntime> {
+    let script_candidates = [bundle_dir.join("dist").join("index.js"), bundle_dir.join("index.js")];
+    let script = script_candidates.into_iter().find(|candidate| candidate.is_file())?;
+
+    Some(ResolvedSidecarRuntime {
+        command: resolve_packaged_node_command(bundle_dir),
+        script: script.clone(),
+        working_dir: script
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| bundle_dir.to_path_buf()),
+    })
+}
+
+pub fn resolve_sidecar_runtime(paths: SidecarRuntimePaths) -> Result<ResolvedSidecarRuntime> {
+    let mut searched = Vec::new();
+
+    if let Some(resource_dir) = paths.resource_dir.as_ref() {
+        for bundle_dir in [
+            resource_dir.join("sidecar-runtime"),
+            resource_dir.join("resources").join("sidecar-runtime"),
+        ] {
+            searched.push(bundle_dir.display().to_string());
+            if let Some(runtime) = resolve_packaged_sidecar_runtime(&bundle_dir) {
+                return Ok(runtime);
+            }
+        }
+    }
+
+    for bundle_dir in [paths.cwd.join("resources").join("sidecar-runtime")] {
+        searched.push(bundle_dir.display().to_string());
+        if let Some(runtime) = resolve_packaged_sidecar_runtime(&bundle_dir) {
+            return Ok(runtime);
+        }
+    }
+
+    let dev_candidates = [
+        paths.cwd.join("sidecar").join("dist").join("index.js"),
+        paths.cwd.join("..").join("sidecar").join("dist").join("index.js"),
+    ];
+    for script in dev_candidates {
+        searched.push(script.display().to_string());
+        if script.is_file() {
+            return Ok(ResolvedSidecarRuntime {
+                command: "node".to_string(),
+                working_dir: script
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| paths.cwd.clone()),
+                script,
+            });
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Sidecar runtime not found. Expected packaged resources or a dev script such as sidecar/dist/index.js. Searched: {}",
+        searched.join(", ")
+    ))
 }
 
 impl SidecarManager {
     pub fn new() -> Self {
         Self {
+            process: Arc::new(Mutex::new(None)),
+            env_vars: Arc::new(Mutex::new(HashMap::new())),
+            url: "http://localhost:8765".to_string(),
+            resource_dir: None,
+        }
+    }
+
+    pub fn with_resource_dir(resource_dir: Option<PathBuf>) -> Self {
+        Self {
+            resource_dir,
             process: Arc::new(Mutex::new(None)),
             env_vars: Arc::new(Mutex::new(HashMap::new())),
             url: "http://localhost:8765".to_string(),
@@ -25,21 +124,16 @@ impl SidecarManager {
             return Ok(()); // Already started
         }
 
-        // Resolve sidecar path: try relative to CWD, then parent (for Tauri runtime)
         let cwd = std::env::current_dir().unwrap_or_default();
-        let sidecar_script = {
-            let candidate = cwd.join("sidecar").join("dist").join("index.js");
-            if candidate.exists() {
-                candidate
-            } else {
-                // When running from src-tauri/, look in ../sidecar/
-                cwd.join("..").join("sidecar").join("dist").join("index.js")
-            }
-        };
+        let runtime = resolve_sidecar_runtime(SidecarRuntimePaths {
+            cwd,
+            resource_dir: self.resource_dir.clone(),
+        })?;
 
-        let mut command = Command::new("node");
+        let mut command = Command::new(&runtime.command);
         command
-            .arg(&sidecar_script)
+            .arg(&runtime.script)
+            .current_dir(&runtime.working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         for (key, value) in self.env_vars.lock().unwrap().iter() {

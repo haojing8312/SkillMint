@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { BrowserController } from '../src/browser.js';
+import { BrowserController, resolvePreferredBrowserChannel } from '../src/browser.js';
 import { mapCompatUploadPath } from '../src/browser_uploads.js';
 
 function buildLocalController() {
@@ -339,4 +339,9 @@ test('compat serializes concurrent openclaw profile startup', async () => {
     }).launchPersistentContext = originalLaunchPersistentContext;
     await controller.close();
   }
+});
+
+test('resolvePreferredBrowserChannel prefers msedge on Windows for packaged-friendly launches', () => {
+  assert.equal(resolvePreferredBrowserChannel('win32'), 'msedge');
+  assert.equal(resolvePreferredBrowserChannel('linux'), undefined);
 });

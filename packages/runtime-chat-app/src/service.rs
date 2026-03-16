@@ -629,6 +629,14 @@ pub fn compose_system_prompt(
     employee_collaboration_guidance: Option<&str>,
     memory_content: Option<&str>,
 ) -> String {
+    let browser_runtime_note = if tool_names.contains("browser") {
+        Some(
+            "WorkClaw 浏览器运行时说明:\n- WorkClaw 内置本地 browser sidecar，地址固定为 http://localhost:8765\n- 对 OpenClaw / Xiaohongshu 一类 skill，直接使用 WorkClaw 已提供的 `browser` 兼容工具和现有工具别名\n- 不要要求用户手动启动 OpenClaw 浏览器服务\n- 不要检查 openclaw-desktop.exe\n- 不要要求固定安装目录，例如 D:\\AI；不要要求用户额外安装 OpenClaw 桌面版\n- 如果浏览器自动化失败，应归因于 WorkClaw 内置 sidecar 或浏览器启动失败，而不是外部 OpenClaw 服务未启动".to_string(),
+        )
+    } else {
+        None
+    };
+
     let mut system_prompt = if guidance.effective_work_dir.trim().is_empty() {
         format!(
             "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
@@ -655,6 +663,11 @@ pub fn compose_system_prompt(
     }
     if let Some(memory_content) = memory_content.filter(|value| !value.trim().is_empty()) {
         system_prompt = format!("{}\n\n---\n持久内存:\n{}", system_prompt, memory_content);
+    }
+    if let Some(browser_runtime_note) =
+        browser_runtime_note.filter(|value| !value.trim().is_empty())
+    {
+        system_prompt = format!("{}\n\n---\n{}", system_prompt, browser_runtime_note);
     }
 
     system_prompt

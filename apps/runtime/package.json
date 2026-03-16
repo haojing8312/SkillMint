@@ -7,7 +7,7 @@
     "dev": "vite --port 5174",
     "dev:tauri": "pnpm --dir sidecar build && pnpm dev",
     "build": "tsc && vite build",
-    "build:tauri": "pnpm --dir sidecar build && pnpm build",
+    "build:tauri": "pnpm --dir sidecar build && node ../../scripts/prepare-sidecar-runtime-bundle.mjs && pnpm build",
     "tauri": "tauri",
     "test": "node ../../scripts/run-runtime-vitest.mjs run --passWithNoTests",
     "test:watch": "node ../../scripts/run-runtime-vitest.mjs",
