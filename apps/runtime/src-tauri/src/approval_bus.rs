@@ -1,8 +1,13 @@
 use chrono::Utc;
+use crate::commands::session_runs::append_session_run_event_with_pool;
+use crate::session_journal::{SessionJournalStore, SessionRunEvent};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -48,7 +53,7 @@ pub struct ApprovalResolution {
     pub resolved_by_user: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApprovalResolveResult {
     Applied {
         approval_id: String,
@@ -63,6 +68,33 @@ pub enum ApprovalResolveResult {
     NotFound {
         approval_id: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingApprovalRecord {
+    pub approval_id: String,
+    pub session_id: String,
+    pub run_id: Option<String>,
+    pub call_id: String,
+    pub tool_name: String,
+    pub input: Value,
+    pub summary: String,
+    pub impact: Option<String>,
+    pub irreversible: bool,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateApprovalRequest {
+    pub approval_id: String,
+    pub session_id: String,
+    pub run_id: Option<String>,
+    pub call_id: String,
+    pub tool_name: String,
+    pub input: Value,
+    pub summary: String,
+    pub impact: Option<String>,
+    pub irreversible: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -156,6 +188,98 @@ impl ApprovalManager {
             .and_then(|mut guard| guard.remove(&resolution.approval_id));
         if let Some(sender) = sender {
             let _ = sender.send(resolution);
+        }
+    }
+
+    pub async fn create_pending_with_pool(
+        &self,
+        pool: &SqlitePool,
+        journal: Option<&SessionJournalStore>,
+        request: CreateApprovalRequest,
+    ) -> Result<PendingApprovalRecord, String> {
+        let run_id = request.run_id.clone();
+        if let (Some(run_id_value), Some(journal_store)) = (run_id.clone(), journal) {
+            append_session_run_event_with_pool(
+                pool,
+                journal_store,
+                &request.session_id,
+                SessionRunEvent::ApprovalRequested {
+                    run_id: run_id_value,
+                    approval_id: request.approval_id.clone(),
+                    tool_name: request.tool_name.clone(),
+                    call_id: request.call_id.clone(),
+                    input: request.input.clone(),
+                    summary: request.summary.clone(),
+                    impact: request.impact.clone(),
+                    irreversible: request.irreversible,
+                },
+            )
+            .await?;
+        } else {
+            let now = Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO approvals (
+                    id, session_id, run_id, call_id, tool_name, input_json, summary, impact,
+                    irreversible, status, decision, notify_targets_json, resume_payload_json,
+                    resolved_by_surface, resolved_by_user, resolved_at, resumed_at, expires_at,
+                    created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '[]', '{}', '', '', NULL, NULL, NULL, ?, ?)",
+            )
+            .bind(&request.approval_id)
+            .bind(&request.session_id)
+            .bind(run_id.clone().unwrap_or_default())
+            .bind(&request.call_id)
+            .bind(&request.tool_name)
+            .bind(request.input.to_string())
+            .bind(&request.summary)
+            .bind(request.impact.clone().unwrap_or_default())
+            .bind(if request.irreversible { 1_i64 } else { 0_i64 })
+            .bind("pending")
+            .bind(&now)
+            .bind(&now)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("写入 approval 记录失败: {e}"))?;
+        }
+
+        Ok(PendingApprovalRecord {
+            approval_id: request.approval_id,
+            session_id: request.session_id,
+            run_id,
+            call_id: request.call_id,
+            tool_name: request.tool_name,
+            input: request.input,
+            summary: request.summary,
+            impact: request.impact,
+            irreversible: request.irreversible,
+            status: "pending".to_string(),
+        })
+    }
+
+    pub async fn wait_for_resolution(
+        &self,
+        receiver: oneshot::Receiver<ApprovalResolution>,
+        cancel_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<ApprovalResolution, String> {
+        let mut receiver = receiver;
+        loop {
+            tokio::select! {
+                resolution = &mut receiver => {
+                    return resolution.map_err(|_| "审批等待通道已关闭".to_string());
+                }
+                _ = async {
+                    loop {
+                        if let Some(flag) = cancel_flag.as_ref() {
+                            if flag.load(Ordering::SeqCst) {
+                                return;
+                            }
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }, if cancel_flag.is_some() => {
+                    return Err("工具执行被用户取消".to_string());
+                }
+            }
         }
     }
 }

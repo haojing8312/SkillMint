@@ -27,6 +27,9 @@ pub struct ToolConfirmState(pub ToolConfirmResponder);
 /// 通用审批管理器（高风险审批总线）
 pub struct ApprovalManagerState(pub Arc<ApprovalManager>);
 
+/// 旧版桌面确认对话框与审批总线之间的过渡桥接（仅保留最近一条待确认 approval）
+pub struct PendingApprovalBridgeState(pub Arc<std::sync::Mutex<Option<String>>>);
+
 /// 全局搜索缓存（跨会话共享，在 lib.rs 中创建）
 pub struct SearchCacheState(pub Arc<SearchCache>);
 

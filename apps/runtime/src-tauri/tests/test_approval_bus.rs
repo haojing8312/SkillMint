@@ -1,6 +1,7 @@
 mod helpers;
 
 use runtime_lib::approval_bus::{ApprovalDecision, ApprovalManager, ApprovalResolveResult};
+use runtime_lib::commands::approvals::list_pending_approvals_with_pool;
 use runtime_lib::commands::session_runs::{append_session_run_event_with_pool, list_session_runs_with_pool};
 use runtime_lib::session_journal::{SessionJournalStore, SessionRunEvent, SessionRunStatus};
 use serde_json::json;
@@ -76,6 +77,13 @@ async fn approval_records_persist_and_project_waiting_status() {
     .await
     .expect("count approval events");
     assert_eq!(event_count, 1);
+
+    let pending = list_pending_approvals_with_pool(&pool, Some("sess-approval"))
+        .await
+        .expect("list pending approvals");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].approval_id, "approval-1");
+    assert_eq!(pending[0].tool_name, "file_delete");
 }
 
 #[tokio::test]

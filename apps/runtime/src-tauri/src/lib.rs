@@ -17,7 +17,8 @@ use approval_bus::ApprovalManager;
 use agent::tools::search_providers::cache::SearchCache;
 use agent::{AgentExecutor, ToolRegistry};
 use commands::chat::{
-    ApprovalManagerState, AskUserState, CancelFlagState, SearchCacheState,
+    ApprovalManagerState, AskUserState, CancelFlagState, PendingApprovalBridgeState,
+    SearchCacheState,
     ToolConfirmResponder, ToolConfirmState,
 };
 use commands::feishu_gateway::FeishuEventRelayState;
@@ -57,6 +58,8 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
     app.manage(ToolConfirmState(tool_confirm_responder));
     let approval_manager = Arc::new(ApprovalManager::default());
     app.manage(ApprovalManagerState(approval_manager));
+    let pending_approval_bridge = Arc::new(std::sync::Mutex::new(None));
+    app.manage(PendingApprovalBridgeState(pending_approval_bridge));
 
     let cancel_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     app.manage(CancelFlagState(cancel_flag));
@@ -390,6 +393,8 @@ pub fn run() {
             commands::chat_session_commands::export_session,
             commands::chat_session_commands::write_export_file,
             commands::session_runs::list_session_runs,
+            commands::approvals::list_pending_approvals,
+            commands::approvals::resolve_approval,
             commands::chat_control::answer_user_question,
             commands::chat_control::confirm_tool_execution,
             commands::chat_control::cancel_agent,
