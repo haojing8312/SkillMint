@@ -1,6 +1,7 @@
 mod adapters;
 pub mod agent;
 pub mod approval_bus;
+pub mod approval_rules;
 mod builtin_skills;
 pub mod commands;
 mod db;

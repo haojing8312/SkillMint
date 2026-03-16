@@ -4,6 +4,7 @@ use super::system_prompts::SystemPromptBuilder;
 use super::types::{LLMResponse, StreamDelta, ToolContext, ToolResult};
 use crate::adapters;
 use crate::approval_bus::{ApprovalDecision, ApprovalManager, CreateApprovalRequest};
+use crate::approval_rules::find_matching_approval_rule_with_pool;
 use crate::commands::chat::{ApprovalManagerState, PendingApprovalBridgeState};
 use crate::commands::feishu_gateway::notify_feishu_approval_requested_with_pool;
 use crate::commands::session_runs::append_session_run_event_with_pool;
@@ -939,52 +940,61 @@ impl AgentExecutor {
                                     }
                                 };
 
-                                match request_tool_approval_and_wait(
-                                    &runtime,
-                                    Some(app),
-                                    sid,
-                                    persisted_run_id.as_deref(),
+                                match find_matching_approval_rule_with_pool(
+                                    &runtime.pool,
                                     &call.name,
-                                    &call.id,
                                     &call.input,
-                                    tool_ctx.work_dir.as_deref(),
-                                    cancel_flag.clone(),
                                 )
                                 .await
                                 {
-                                    Ok(decision) => Some(decision),
-                                    Err(err) => {
-                                        let rejection_message = err.to_string();
-                                        let _ = app.emit(
-                                            "tool-call-event",
-                                            ToolCallEvent {
-                                                session_id: sid.to_string(),
-                                                tool_name: call.name.clone(),
-                                                tool_input: call.input.clone(),
-                                                tool_output: Some(rejection_message.clone()),
-                                                status: "error".to_string(),
-                                            },
-                                        );
-                                        if let Some(run_id) = persisted_run_id.as_ref() {
-                                            let _ = append_tool_run_event(
-                                                app,
-                                                sid,
-                                                SessionRunEvent::ToolCompleted {
-                                                    run_id: run_id.clone(),
+                                    Ok(Some(_)) => Some(ApprovalDecision::AllowAlways),
+                                    Ok(None) | Err(_) => match request_tool_approval_and_wait(
+                                        &runtime,
+                                        Some(app),
+                                        sid,
+                                        persisted_run_id.as_deref(),
+                                        &call.name,
+                                        &call.id,
+                                        &call.input,
+                                        tool_ctx.work_dir.as_deref(),
+                                        cancel_flag.clone(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(decision) => Some(decision),
+                                        Err(err) => {
+                                            let rejection_message = err.to_string();
+                                            let _ = app.emit(
+                                                "tool-call-event",
+                                                ToolCallEvent {
+                                                    session_id: sid.to_string(),
                                                     tool_name: call.name.clone(),
-                                                    call_id: call.id.clone(),
-                                                    input: call.input.clone(),
-                                                    output: rejection_message.clone(),
-                                                    is_error: true,
+                                                    tool_input: call.input.clone(),
+                                                    tool_output: Some(rejection_message.clone()),
+                                                    status: "error".to_string(),
                                                 },
-                                            )
-                                            .await;
+                                            );
+                                            if let Some(run_id) = persisted_run_id.as_ref() {
+                                                let _ = append_tool_run_event(
+                                                    app,
+                                                    sid,
+                                                    SessionRunEvent::ToolCompleted {
+                                                        run_id: run_id.clone(),
+                                                        tool_name: call.name.clone(),
+                                                        call_id: call.id.clone(),
+                                                        input: call.input.clone(),
+                                                        output: rejection_message.clone(),
+                                                        is_error: true,
+                                                    },
+                                                )
+                                                .await;
+                                            }
+                                            tool_results.push(ToolResult {
+                                                tool_use_id: call.id.clone(),
+                                                content: rejection_message,
+                                            });
+                                            None
                                         }
-                                        tool_results.push(ToolResult {
-                                            tool_use_id: call.id.clone(),
-                                            content: rejection_message,
-                                        });
-                                        None
                                     }
                                 }
                             } else if let Some(ref confirm_state) = tool_confirm_tx {

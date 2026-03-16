@@ -1,4 +1,5 @@
 use chrono::Utc;
+use crate::approval_rules::persist_allow_always_rule_with_tx;
 use crate::commands::session_runs::append_session_run_event_with_pool;
 use crate::session_journal::{SessionJournalStore, SessionRunEvent};
 use serde::{Deserialize, Serialize};
@@ -124,6 +125,10 @@ impl ApprovalManager {
         let status = decision.resolved_status().to_string();
         let decision_value = decision.as_db_value().to_string();
 
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|e| format!("创建审批事务失败: {e}"))?;
         let result = sqlx::query(
             "UPDATE approvals
              SET status = ?, decision = ?, resolved_by_surface = ?, resolved_by_user = ?, resolved_at = ?, updated_at = ?
@@ -136,11 +141,18 @@ impl ApprovalManager {
         .bind(&now)
         .bind(&now)
         .bind(approval_id.trim())
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| format!("更新 approval 状态失败: {e}"))?;
 
         if result.rows_affected() > 0 {
+            if decision == ApprovalDecision::AllowAlways {
+                persist_allow_always_rule_with_tx(&mut tx, approval_id).await?;
+            }
+            tx.commit()
+                .await
+                .map_err(|e| format!("提交审批事务失败: {e}"))?;
+
             self.notify_waiter(ApprovalResolution {
                 approval_id: approval_id.to_string(),
                 status: status.clone(),
@@ -155,6 +167,8 @@ impl ApprovalManager {
                 decision,
             });
         }
+
+        tx.rollback().await.ok();
 
         let current: Option<(String, Option<String>)> = sqlx::query_as(
             "SELECT status, NULLIF(decision, '')

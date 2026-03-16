@@ -157,6 +157,23 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     .await?;
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS approval_rules (
+            id TEXT PRIMARY KEY,
+            tool_name TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            source_approval_id TEXT NOT NULL DEFAULT '',
+            created_by_surface TEXT NOT NULL DEFAULT '',
+            created_by_user TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(tool_name, fingerprint)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS model_configs (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,

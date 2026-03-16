@@ -1,6 +1,7 @@
 mod helpers;
 
 use runtime_lib::approval_bus::{ApprovalDecision, ApprovalManager, ApprovalResolveResult};
+use runtime_lib::approval_rules::{find_matching_approval_rule_with_pool, list_approval_rules_with_pool};
 use runtime_lib::commands::approvals::list_pending_approvals_with_pool;
 use runtime_lib::commands::session_runs::{append_session_run_event_with_pool, list_session_runs_with_pool};
 use runtime_lib::session_journal::{SessionJournalStore, SessionRunEvent, SessionRunStatus};
@@ -172,4 +173,141 @@ async fn approval_manager_allows_first_resolver_only() {
     assert_eq!(decision, "allow_once");
     assert_eq!(surface, "desktop");
     assert_eq!(user_id, "user-desktop");
+}
+
+#[tokio::test]
+async fn allow_always_creates_reusable_rule_and_skips_reapproval() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    let manager = ApprovalManager::default();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO approvals (
+            id, session_id, run_id, call_id, tool_name, input_json, summary, impact,
+            irreversible, status, decision, notify_targets_json, resume_payload_json,
+            resolved_by_surface, resolved_by_user, resolved_at, resumed_at, expires_at,
+            created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
+    )
+    .bind("approval-rule-file-delete")
+    .bind("sess-rule")
+    .bind("run-rule")
+    .bind("call-rule-file-delete")
+    .bind("file_delete")
+    .bind(r#"{"path":"E:\\workspace\\danger.txt","recursive":true}"#)
+    .bind("删除危险目录")
+    .bind("目录会被永久删除")
+    .bind(1_i64)
+    .bind("pending")
+    .bind("")
+    .bind("[]")
+    .bind("{}")
+    .bind("")
+    .bind("")
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("insert file_delete approval");
+
+    sqlx::query(
+        "INSERT INTO approvals (
+            id, session_id, run_id, call_id, tool_name, input_json, summary, impact,
+            irreversible, status, decision, notify_targets_json, resume_payload_json,
+            resolved_by_surface, resolved_by_user, resolved_at, resumed_at, expires_at,
+            created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
+    )
+    .bind("approval-rule-bash")
+    .bind("sess-rule")
+    .bind("run-rule")
+    .bind("call-rule-bash")
+    .bind("bash")
+    .bind(r#"{"command":"Remove-Item -Recurse C:\\temp\\danger"}"#)
+    .bind("执行危险 bash 删除命令")
+    .bind("命令会递归删除目录")
+    .bind(1_i64)
+    .bind("pending")
+    .bind("")
+    .bind("[]")
+    .bind("{}")
+    .bind("")
+    .bind("")
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("insert bash approval");
+
+    manager
+        .resolve_with_pool(
+            &pool,
+            "approval-rule-file-delete",
+            ApprovalDecision::AllowAlways,
+            "desktop",
+            "user-desktop",
+        )
+        .await
+        .expect("resolve file_delete approval as allow_always");
+    manager
+        .resolve_with_pool(
+            &pool,
+            "approval-rule-bash",
+            ApprovalDecision::AllowAlways,
+            "feishu",
+            "ou_approver",
+        )
+        .await
+        .expect("resolve bash approval as allow_always");
+
+    let rules = list_approval_rules_with_pool(&pool)
+        .await
+        .expect("list approval rules");
+    assert_eq!(rules.len(), 2);
+
+    let matched_delete = find_matching_approval_rule_with_pool(
+        &pool,
+        "file_delete",
+        &json!({
+            "path": "E:\\workspace\\danger.txt",
+            "recursive": true
+        }),
+    )
+    .await
+    .expect("match file_delete rule");
+    assert!(matched_delete.is_some());
+
+    let unmatched_delete = find_matching_approval_rule_with_pool(
+        &pool,
+        "file_delete",
+        &json!({
+            "path": "E:\\workspace\\other.txt",
+            "recursive": true
+        }),
+    )
+    .await
+    .expect("mismatch file_delete rule");
+    assert!(unmatched_delete.is_none());
+
+    let matched_bash = find_matching_approval_rule_with_pool(
+        &pool,
+        "bash",
+        &json!({
+            "command": "Remove-Item -Recurse C:\\temp\\danger"
+        }),
+    )
+    .await
+    .expect("match bash rule");
+    assert!(matched_bash.is_some());
+
+    let unmatched_bash = find_matching_approval_rule_with_pool(
+        &pool,
+        "bash",
+        &json!({
+            "command": "Remove-Item -Recurse C:\\temp\\other"
+        }),
+    )
+    .await
+    .expect("mismatch bash rule");
+    assert!(unmatched_bash.is_none());
 }
