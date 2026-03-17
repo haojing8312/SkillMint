@@ -82,6 +82,7 @@ const LAST_SELECTED_SESSION_SNAPSHOT_KEY = "workclaw:last-selected-session-snaps
 const DEFAULT_OPERATION_PERMISSION_MODE: "standard" | "full_access" = "standard";
 const SESSION_LIST_RETRY_DELAY_MS = 250;
 const SESSION_LIST_MAX_RETRIES = 2;
+const SHOULD_BLOCK_DESKTOP_RELOAD_SHORTCUTS = import.meta.env.PROD || import.meta.env.MODE === "test";
 const EMPLOYEE_ASSISTANT_DISPLAY_NAME = "智能体员工助手";
 const EMPLOYEE_CREATOR_STARTER_PROMPT =
   "请帮我创建一个新的智能体员工。先问我 1-2 个关键问题，再给出配置草案，确认后再执行创建。";
@@ -666,6 +667,25 @@ export default function App() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [showQuickModelSetup, canDismissQuickModelSetup]);
+
+  useEffect(() => {
+    if (!SHOULD_BLOCK_DESKTOP_RELOAD_SHORTCUTS || typeof window === "undefined") {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (key === "f5" || ((event.ctrlKey || event.metaKey) && key === "r")) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+    };
+  }, []);
 
   useEffect(() => {
     if (

@@ -178,4 +178,29 @@ describe("App sidebar navigation with selected session", () => {
       expect(screen.getByTestId("employees-view")).toBeInTheDocument();
     });
   });
+
+  test("prevents desktop-style reload shortcuts in packaged mode", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    const f5Event = new KeyboardEvent("keydown", { key: "F5", bubbles: true, cancelable: true });
+    const ctrlREvent = new KeyboardEvent("keydown", {
+      key: "r",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const plainREvent = new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true });
+
+    window.dispatchEvent(f5Event);
+    window.dispatchEvent(ctrlREvent);
+    window.dispatchEvent(plainREvent);
+
+    expect(f5Event.defaultPrevented).toBe(true);
+    expect(ctrlREvent.defaultPrevented).toBe(true);
+    expect(plainREvent.defaultPrevented).toBe(false);
+  });
 });
