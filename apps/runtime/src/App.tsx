@@ -74,6 +74,10 @@ type EmployeeAssistantSessionContext = {
   employeeName?: string;
   employeeCode?: string;
 };
+type SessionBlockingStateUpdate = {
+  blocking: boolean;
+  status?: string | null;
+};
 type WorkTab =
   | {
       id: string;
@@ -406,6 +410,14 @@ function isSqliteLockedError(error: unknown): boolean {
   return extractErrorMessage(error, "").toLowerCase().includes("database is locked");
 }
 
+function normalizeRuntimeStatus(status?: string | null): string {
+  return (status || "").trim().toLowerCase();
+}
+
+function isBlockingRuntimeStatus(status?: string | null): boolean {
+  return ["thinking", "running", "tool_calling", "waiting_approval"].includes(normalizeRuntimeStatus(status));
+}
+
 function getAdjacentSessionId(list: SessionInfo[], sessionId: string): string | null {
   const index = list.findIndex((item) => item.id === sessionId);
   if (index < 0) {
@@ -436,6 +448,7 @@ export default function App() {
   const [tabs, setTabs] = useState<WorkTab[]>(() => [initialWorkTab]);
   const [activeTabId, setActiveTabId] = useState<string>(initialWorkTab.id);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [liveSessionRuntimeStatusById, setLiveSessionRuntimeStatusById] = useState<Record<string, string>>({});
   const [showInstall, setShowInstall] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeMainView, setActiveMainView] = useState<MainView>("start-task");
@@ -591,6 +604,7 @@ export default function App() {
   }
 
   function closeTaskTab(tabId: string) {
+    const closingTab = tabs.find((tab) => tab.id === tabId);
     setTabs((prev) => {
       if (prev.length <= 1) {
         const fallback = createStartTaskTab();
@@ -607,12 +621,49 @@ export default function App() {
       }
       return nextTabs;
     });
+    if (closingTab?.kind === "session") {
+      setLiveSessionRuntimeStatusById((prev) => {
+        if (!prev[closingTab.sessionId]) return prev;
+        const next = { ...prev };
+        delete next[closingTab.sessionId];
+        return next;
+      });
+    }
   }
 
-  function isSessionBlockingStartTaskReuse(session: SessionInfo | null | undefined): boolean {
-    const runtimeStatus = (session?.runtime_status || "").trim().toLowerCase();
-    return runtimeStatus === "running" || runtimeStatus === "waiting_approval";
+  function getEffectiveSessionRuntimeStatus(sessionId?: string | null, runtimeStatus?: string | null): string | null {
+    const normalizedSessionId = (sessionId || "").trim();
+    if (normalizedSessionId && liveSessionRuntimeStatusById[normalizedSessionId]) {
+      return liveSessionRuntimeStatusById[normalizedSessionId];
+    }
+    return runtimeStatus ?? null;
   }
+
+  function isSessionBlockingStartTaskReuse(session: SessionInfo | null | undefined, sessionId?: string | null): boolean {
+    return isBlockingRuntimeStatus(getEffectiveSessionRuntimeStatus(sessionId || session?.id, session?.runtime_status));
+  }
+
+  const handleSelectedSessionBlockingStateChange = useCallback(
+    (update: SessionBlockingStateUpdate) => {
+      const sessionId = (selectedSessionId || "").trim();
+      if (!sessionId) return;
+      const nextStatus = normalizeRuntimeStatus(update.status);
+      setLiveSessionRuntimeStatusById((prev) => {
+        if (update.blocking && nextStatus) {
+          if (prev[sessionId] === nextStatus) return prev;
+          return {
+            ...prev,
+            [sessionId]: nextStatus,
+          };
+        }
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+    },
+    [selectedSessionId],
+  );
 
   function handleSelectSession(sessionId: string, options?: { openChatView?: boolean }) {
     const targetSession = visibleSessions.find((item) => item.id === sessionId);
@@ -1275,7 +1326,7 @@ export default function App() {
     }
     if (activeTab.kind === "session") {
       const currentSession = visibleSessions.find((item) => item.id === activeTab.sessionId);
-      if (isSessionBlockingStartTaskReuse(currentSession)) {
+      if (isSessionBlockingStartTaskReuse(currentSession, activeTab.sessionId)) {
         return openFreshStartTaskTab();
       }
       openStartTaskInActiveTab();
@@ -1417,6 +1468,12 @@ export default function App() {
         }
       }
       setEmployeeAssistantSessionContexts((prev) => {
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+      setLiveSessionRuntimeStatusById((prev) => {
         if (!prev[sessionId]) return prev;
         const next = { ...prev };
         delete next[sessionId];
@@ -2320,7 +2377,7 @@ export default function App() {
           id: tab.id,
           kind: tab.kind,
           title: (session?.display_title || session?.title || "").trim() || DEFAULT_SESSION_TITLE,
-          runtimeStatus: session?.runtime_status,
+          runtimeStatus: getEffectiveSessionRuntimeStatus(session?.id || tab.sessionId, session?.runtime_status),
         };
       }
       return {
@@ -2329,7 +2386,7 @@ export default function App() {
         title: "开始任务",
       };
     });
-  }, [tabs, visibleSessions]);
+  }, [liveSessionRuntimeStatusById, tabs, visibleSessions]);
   useEffect(() => {
     persistLastSelectedSessionSnapshot(selectedSessionId ? selectedSession ?? hydratedSelectedSession : null);
   }, [hydratedSelectedSession, selectedSession, selectedSessionId]);
@@ -3169,6 +3226,7 @@ export default function App() {
                 sessionEmployeeName={selectedSessionEmployeeName}
                 operationPermissionMode={operationPermissionMode}
                 onSessionUpdate={handleSessionRefresh}
+                onSessionBlockingStateChange={handleSelectedSessionBlockingStateChange}
                 installedSkillIds={skills.map((s) => s.id)}
                 onSkillInstalled={handleSkillInstalledFromChat}
                 suppressAskUserPrompt={selectedSessionImManaged}

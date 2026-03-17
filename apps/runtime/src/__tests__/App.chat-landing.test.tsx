@@ -146,6 +146,26 @@ vi.mock("../components/ChatView", () => ({
         >
           open-source-step-event-focus
         </button>
+        <button
+          onClick={() =>
+            props.onSessionBlockingStateChange?.({
+              blocking: true,
+              status: "thinking",
+            })
+          }
+        >
+          set-session-thinking
+        </button>
+        <button
+          onClick={() =>
+            props.onSessionBlockingStateChange?.({
+              blocking: false,
+              status: null,
+            })
+          }
+        >
+          clear-session-thinking
+        </button>
       </div>
     );
   },
@@ -1069,6 +1089,29 @@ describe("App chat landing", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-1");
+    });
+  });
+
+  test("treats local thinking state as blocking and opens a new tab even before runtime status refreshes", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "select-last-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "set-session-thinking" }));
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("2");
+      expect(within(screen.getByTestId("task-tab-strip")).getByText("thinking")).toBeInTheDocument();
     });
   });
 });
