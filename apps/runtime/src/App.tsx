@@ -22,6 +22,7 @@ import { InstallDialog } from "./components/InstallDialog";
 import { SettingsView } from "./components/SettingsView";
 import { PackagingView } from "./components/packaging/PackagingView";
 import { NewSessionLanding } from "./components/NewSessionLanding";
+import { TaskTabStrip, type TaskTabStripItem } from "./components/TaskTabStrip";
 import { ExpertsView } from "./components/experts/ExpertsView";
 import { EmployeeHubView } from "./components/employees/EmployeeHubView";
 import { SearchConfigForm } from "./components/SearchConfigForm";
@@ -73,6 +74,20 @@ type EmployeeAssistantSessionContext = {
   employeeName?: string;
   employeeCode?: string;
 };
+type SessionBlockingStateUpdate = {
+  blocking: boolean;
+  status?: string | null;
+};
+type WorkTab =
+  | {
+      id: string;
+      kind: "start-task";
+    }
+  | {
+      id: string;
+      kind: "session";
+      sessionId: string;
+    };
 const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 const BUILTIN_EMPLOYEE_CREATOR_SKILL_ID = "builtin-employee-creator";
 const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
@@ -251,6 +266,25 @@ function resolveOptimisticDisplayTitle(input: {
   return input.title?.trim() || DEFAULT_SESSION_TITLE;
 }
 
+function createWorkTabId(prefix: "start-task" | "session" = "start-task"): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createStartTaskTab(id = createWorkTabId("start-task")): WorkTab {
+  return {
+    id,
+    kind: "start-task",
+  };
+}
+
+function createSessionTab(sessionId: string, id = createWorkTabId("session")): WorkTab {
+  return {
+    id,
+    kind: "session",
+    sessionId,
+  };
+}
+
 function buildOptimisticSession(input: {
   sessionId: string;
   skillId: string;
@@ -376,6 +410,14 @@ function isSqliteLockedError(error: unknown): boolean {
   return extractErrorMessage(error, "").toLowerCase().includes("database is locked");
 }
 
+function normalizeRuntimeStatus(status?: string | null): string {
+  return (status || "").trim().toLowerCase();
+}
+
+function isBlockingRuntimeStatus(status?: string | null): boolean {
+  return ["thinking", "running", "tool_calling", "waiting_approval"].includes(normalizeRuntimeStatus(status));
+}
+
 function getAdjacentSessionId(list: SessionInfo[], sessionId: string): string | null {
   const index = list.findIndex((item) => item.id === sessionId);
   if (index < 0) {
@@ -392,15 +434,21 @@ function buildEmployeeAssistantUpdatePrompt(employee: AgentEmployee): string {
 }
 
 export default function App() {
+  const initialSelectedSessionId = readPersistedLastSelectedSessionId();
   const initialSelectedSessionSnapshot = readPersistedLastSelectedSessionSnapshot();
+  const initialWorkTab = initialSelectedSessionId
+    ? createSessionTab(initialSelectedSessionId)
+    : createStartTaskTab();
   const [skills, setSkills] = useState<SkillManifest[]>([]);
   const [models, setModels] = useState<ModelConfig[]>([]);
   const [hasHydratedModelConfigs, setHasHydratedModelConfigs] = useState(false);
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(
     () => initialSelectedSessionSnapshot?.skill_id?.trim() || null
   );
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => readPersistedLastSelectedSessionId());
+  const [tabs, setTabs] = useState<WorkTab[]>(() => [initialWorkTab]);
+  const [activeTabId, setActiveTabId] = useState<string>(initialWorkTab.id);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [liveSessionRuntimeStatusById, setLiveSessionRuntimeStatusById] = useState<Record<string, string>>({});
   const [showInstall, setShowInstall] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeMainView, setActiveMainView] = useState<MainView>("start-task");
@@ -502,7 +550,7 @@ export default function App() {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadSessionsRequestIdRef = useRef(0);
   const hasLoadedSessionsRef = useRef(false);
-  const initialPersistedSessionIdRef = useRef<string | null>(selectedSessionId);
+  const initialPersistedSessionIdRef = useRef<string | null>(initialSelectedSessionId);
   const initialSelectedSessionSnapshotRef = useRef<SessionInfo | null>(initialSelectedSessionSnapshot);
   const hasResolvedInitialPersistedSessionRef = useRef(false);
   const employeesRef = useRef<AgentEmployee[]>([]);
@@ -520,13 +568,110 @@ export default function App() {
     }
   }
 
+  const activeTab = useMemo(() => {
+    return tabs.find((item) => item.id === activeTabId) ?? tabs[0] ?? null;
+  }, [activeTabId, tabs]);
+
+  const selectedSessionId = activeTab?.kind === "session" ? activeTab.sessionId : null;
+
+  function replaceTab(tabId: string, nextTab: WorkTab) {
+    setTabs((prev) => prev.map((tab) => (tab.id === tabId ? nextTab : tab)));
+  }
+
+  function replaceActiveTab(nextTab: WorkTab) {
+    if (!activeTab) {
+      setTabs([nextTab]);
+      setActiveTabId(nextTab.id);
+      return;
+    }
+    replaceTab(activeTab.id, { ...nextTab, id: activeTab.id });
+    setActiveTabId(activeTab.id);
+  }
+
+  function openSessionInActiveTab(sessionId: string) {
+    replaceActiveTab(createSessionTab(sessionId, activeTab?.id));
+  }
+
+  function openStartTaskInActiveTab() {
+    replaceActiveTab(createStartTaskTab(activeTab?.id));
+  }
+
+  function openFreshStartTaskTab() {
+    const nextTab = createStartTaskTab();
+    setTabs((prev) => [...prev, nextTab]);
+    setActiveTabId(nextTab.id);
+    return nextTab.id;
+  }
+
+  function closeTaskTab(tabId: string) {
+    const closingTab = tabs.find((tab) => tab.id === tabId);
+    setTabs((prev) => {
+      if (prev.length <= 1) {
+        const fallback = createStartTaskTab();
+        setActiveTabId(fallback.id);
+        return [fallback];
+      }
+      const index = prev.findIndex((tab) => tab.id === tabId);
+      const nextTabs = prev.filter((tab) => tab.id !== tabId);
+      if (tabId === activeTabId) {
+        const fallbackTab = nextTabs[index] ?? nextTabs[index - 1] ?? nextTabs[0];
+        if (fallbackTab) {
+          setActiveTabId(fallbackTab.id);
+        }
+      }
+      return nextTabs;
+    });
+    if (closingTab?.kind === "session") {
+      setLiveSessionRuntimeStatusById((prev) => {
+        if (!prev[closingTab.sessionId]) return prev;
+        const next = { ...prev };
+        delete next[closingTab.sessionId];
+        return next;
+      });
+    }
+  }
+
+  function getEffectiveSessionRuntimeStatus(sessionId?: string | null, runtimeStatus?: string | null): string | null {
+    const normalizedSessionId = (sessionId || "").trim();
+    if (normalizedSessionId && liveSessionRuntimeStatusById[normalizedSessionId]) {
+      return liveSessionRuntimeStatusById[normalizedSessionId];
+    }
+    return runtimeStatus ?? null;
+  }
+
+  function isSessionBlockingStartTaskReuse(session: SessionInfo | null | undefined, sessionId?: string | null): boolean {
+    return isBlockingRuntimeStatus(getEffectiveSessionRuntimeStatus(sessionId || session?.id, session?.runtime_status));
+  }
+
+  const handleSelectedSessionBlockingStateChange = useCallback(
+    (update: SessionBlockingStateUpdate) => {
+      const sessionId = (selectedSessionId || "").trim();
+      if (!sessionId) return;
+      const nextStatus = normalizeRuntimeStatus(update.status);
+      setLiveSessionRuntimeStatusById((prev) => {
+        if (update.blocking && nextStatus) {
+          if (prev[sessionId] === nextStatus) return prev;
+          return {
+            ...prev,
+            [sessionId]: nextStatus,
+          };
+        }
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+    },
+    [selectedSessionId],
+  );
+
   function handleSelectSession(sessionId: string, options?: { openChatView?: boolean }) {
     const targetSession = visibleSessions.find((item) => item.id === sessionId);
     const targetSkillId = (targetSession?.skill_id || "").trim();
     if (targetSkillId && skills.some((item) => item.id === targetSkillId)) {
       setSelectedSkillId(targetSkillId);
     }
-    setSelectedSessionId(sessionId);
+    openSessionInActiveTab(sessionId);
     setCreateSessionError(null);
     if (options?.openChatView !== false) {
       navigate("start-task");
@@ -1119,6 +1264,12 @@ export default function App() {
     persistLastSelectedSessionId(selectedSessionId);
   }, [selectedSessionId]);
 
+  useEffect(() => {
+    if (!tabs.some((item) => item.id === activeTabId) && tabs[0]) {
+      setActiveTabId(tabs[0].id);
+    }
+  }, [activeTabId, tabs]);
+
   const hydratedSessionSnapshot = !hasLoadedSessionsRef.current
     ? initialSelectedSessionSnapshotRef.current
     : null;
@@ -1162,15 +1313,33 @@ export default function App() {
       !hasResolvedInitialPersistedSessionRef.current
     ) {
       hasResolvedInitialPersistedSessionRef.current = true;
-      setSelectedSessionId(null);
+      openStartTaskInActiveTab();
     }
   }, [hydratedSelectedSession?.id, selectedSessionId, selectedSkillId, skills, visibleSessions]);
+
+  function prepareTabForNewTask(): string {
+    if (!activeTab) {
+      const fallback = createStartTaskTab();
+      setTabs([fallback]);
+      setActiveTabId(fallback.id);
+      return fallback.id;
+    }
+    if (activeTab.kind === "session") {
+      const currentSession = visibleSessions.find((item) => item.id === activeTab.sessionId);
+      if (isSessionBlockingStartTaskReuse(currentSession, activeTab.sessionId)) {
+        return openFreshStartTaskTab();
+      }
+      openStartTaskInActiveTab();
+    }
+    return activeTab.id;
+  }
 
   async function handleCreateSession(initialMessage = "") {
     const skillId = getDefaultSkillId(skills);
     const modelId = getDefaultModelId(models);
     if (!skillId || !modelId || creatingSession) return;
 
+    const targetTabId = prepareTabForNewTask();
     setCreatingSession(true);
     setCreateSessionError(null);
     try {
@@ -1197,7 +1366,8 @@ export default function App() {
         ),
       );
       const firstMessage = initialMessage.trim();
-      setSelectedSessionId(id);
+      replaceTab(targetTabId, createSessionTab(id, targetTabId));
+      setActiveTabId(targetTabId);
       void loadSessions(skillId);
 
       if (firstMessage) {
@@ -1232,6 +1402,7 @@ export default function App() {
     const skillId = entryEmployee?.primary_skill_id || getDefaultSkillId(skills);
     if (!skillId) return;
 
+    const targetTabId = prepareTabForNewTask();
     setCreatingSession(true);
     setCreateSessionError(null);
     try {
@@ -1262,7 +1433,8 @@ export default function App() {
           }),
         ),
       );
-      setSelectedSessionId(sessionId);
+      replaceTab(targetTabId, createSessionTab(sessionId, targetTabId));
+      setActiveTabId(targetTabId);
       void loadSessions(skillId);
       if (initialMessage) {
         setPendingInitialMessage({ sessionId, message: initialMessage });
@@ -1281,14 +1453,27 @@ export default function App() {
     try {
       await invoke("delete_session", { sessionId });
       setSessions((prev) => prev.filter((item) => item.id !== sessionId));
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.kind === "session" && tab.sessionId === sessionId
+            ? createStartTaskTab(tab.id)
+            : tab
+        ),
+      );
       if (deletingSelectedSession) {
         if (fallbackSessionId) {
           handleSelectSession(fallbackSessionId, { openChatView: activeMainView === "start-task" });
         } else {
-          setSelectedSessionId(null);
+          openStartTaskInActiveTab();
         }
       }
       setEmployeeAssistantSessionContexts((prev) => {
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      });
+      setLiveSessionRuntimeStatusById((prev) => {
         if (!prev[sessionId]) return prev;
         const next = { ...prev };
         delete next[sessionId];
@@ -1353,6 +1538,7 @@ export default function App() {
     const modelId = getDefaultModelId(models);
     if (modelId) {
       try {
+        const targetTabId = prepareTabForNewTask();
         const workDir = await resolveSessionLaunchWorkDir();
         const sessionId = await createRuntimeSession({
           skillId,
@@ -1360,7 +1546,8 @@ export default function App() {
           workDir,
           sessionMode: "general",
         });
-        setSelectedSessionId(sessionId);
+        replaceTab(targetTabId, createSessionTab(sessionId, targetTabId));
+        setActiveTabId(targetTabId);
         void loadSessions(skillId);
       } catch (e) {
         console.error("自动创建会话失败:", e);
@@ -1465,7 +1652,7 @@ export default function App() {
     try {
       await invoke("delete_skill", { skillId });
       if (selectedSkillId === skillId) {
-        setSelectedSessionId(null);
+        openStartTaskInActiveTab();
       }
       await loadSkills();
     } catch (e) {
@@ -1608,7 +1795,7 @@ export default function App() {
 
   function handleOpenStartTask() {
     setShowSettings(false);
-    setSelectedSessionId(null);
+    prepareTabForNewTask();
     const mainEmployee = employees.find((e) => e.is_default) ?? employees[0];
     if (mainEmployee) {
       setSelectedEmployeeId(mainEmployee.id);
@@ -1976,11 +2163,11 @@ export default function App() {
     const skillId = employee.primary_skill_id || getDefaultSkillId(skills);
     const modelId = getDefaultModelId(models);
 
+    const targetTabId = prepareTabForNewTask();
     setSelectedEmployeeId(employee.id);
     if (skillId) {
       setSelectedSkillId(skillId);
     }
-    setSelectedSessionId(null);
     setCreateSessionError(null);
     navigate("start-task");
 
@@ -2013,7 +2200,8 @@ export default function App() {
           }),
         ),
       );
-      setSelectedSessionId(sessionId);
+      replaceTab(targetTabId, createSessionTab(sessionId, targetTabId));
+      setActiveTabId(targetTabId);
       void loadSessions(skillId);
     } catch (e) {
       console.error("从员工页创建会话失败:", e);
@@ -2050,6 +2238,7 @@ export default function App() {
 
     const skillId = BUILTIN_EMPLOYEE_CREATOR_SKILL_ID;
     const modelId = getDefaultModelId(models);
+    const targetTabId = prepareTabForNewTask();
 
     if (launchMode === "update" && targetEmployee) {
       setSelectedEmployeeId(targetEmployee.id);
@@ -2057,7 +2246,6 @@ export default function App() {
       setSelectedEmployeeId(null);
     }
     setSelectedSkillId(skillId);
-    setSelectedSessionId(null);
     setCreateSessionError(null);
     navigate("start-task");
 
@@ -2086,7 +2274,8 @@ export default function App() {
         title: sessionTitle,
         sessionMode: employeeCode ? "employee_direct" : "general",
       });
-      setSelectedSessionId(sessionId);
+      replaceTab(targetTabId, createSessionTab(sessionId, targetTabId));
+      setActiveTabId(targetTabId);
       void loadSessions(skillId);
       const initialMessage =
         launchMode === "update" && targetEmployee
@@ -2130,9 +2319,9 @@ export default function App() {
       return;
     }
 
+    const targetTabId = prepareTabForNewTask();
     setSelectedEmployeeId(null);
     setSelectedSkillId(skill.id);
-    setSelectedSessionId(null);
     setCreateSessionError(null);
     setCreatingSession(true);
 
@@ -2158,7 +2347,8 @@ export default function App() {
           }),
         ),
       );
-      setSelectedSessionId(sessionId);
+      replaceTab(targetTabId, createSessionTab(sessionId, targetTabId));
+      setActiveTabId(targetTabId);
       navigate("start-task");
       void loadSessions(skill.id);
     } catch (e) {
@@ -2172,13 +2362,31 @@ export default function App() {
   async function handleOpenGroupRunSession(sessionId: string, skillId: string) {
     setSelectedSkillId(skillId);
     setCreateSessionError(null);
-    setSelectedSessionId(sessionId);
+    openSessionInActiveTab(sessionId);
     navigate("start-task");
     void loadSessions(skillId);
   }
 
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
   const selectedSession = visibleSessions.find((s) => s.id === selectedSessionId);
+  const taskTabs = useMemo<TaskTabStripItem[]>(() => {
+    return tabs.map((tab) => {
+      if (tab.kind === "session") {
+        const session = visibleSessions.find((item) => item.id === tab.sessionId);
+        return {
+          id: tab.id,
+          kind: tab.kind,
+          title: (session?.display_title || session?.title || "").trim() || DEFAULT_SESSION_TITLE,
+          runtimeStatus: getEffectiveSessionRuntimeStatus(session?.id || tab.sessionId, session?.runtime_status),
+        };
+      }
+      return {
+        id: tab.id,
+        kind: tab.kind,
+        title: "开始任务",
+      };
+    });
+  }, [liveSessionRuntimeStatusById, tabs, visibleSessions]);
   useEffect(() => {
     persistLastSelectedSessionSnapshot(selectedSessionId ? selectedSession ?? hydratedSelectedSession : null);
   }, [hydratedSelectedSession, selectedSession, selectedSessionId]);
@@ -2777,8 +2985,22 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className="flex-1 overflow-hidden">
-          <AnimatePresence mode="wait">
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {!showSettings && activeMainView === "start-task" ? (
+            <TaskTabStrip
+              tabs={taskTabs}
+              activeTabId={activeTabId}
+              onSelectTab={setActiveTabId}
+              onCreateTab={() => {
+                setShowSettings(false);
+                openFreshStartTaskTab();
+                navigate("start-task");
+              }}
+              onCloseTab={closeTaskTab}
+            />
+          ) : null}
+          <div className="flex-1 overflow-hidden">
+            <AnimatePresence mode="wait">
             {showSettings ? (
             <motion.div
               key="settings"
@@ -3004,6 +3226,7 @@ export default function App() {
                 sessionEmployeeName={selectedSessionEmployeeName}
                 operationPermissionMode={operationPermissionMode}
                 onSessionUpdate={handleSessionRefresh}
+                onSessionBlockingStateChange={handleSelectedSessionBlockingStateChange}
                 installedSkillIds={skills.map((s) => s.id)}
                 onSkillInstalled={handleSkillInstalledFromChat}
                 suppressAskUserPrompt={selectedSessionImManaged}
@@ -3055,7 +3278,8 @@ export default function App() {
                 从左侧选择一个技能，开始任务
               </div>
             )}
-          </AnimatePresence>
+            </AnimatePresence>
+          </div>
         </div>
       </div>
       {showInstall && (

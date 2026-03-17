@@ -108,6 +108,7 @@ interface Props {
   sessionExecutionContext?: ChatSessionExecutionContext;
   onReturnToSourceSession?: (sessionId: string) => Promise<void> | void;
   onSessionUpdate?: () => void;
+  onSessionBlockingStateChange?: (update: { blocking: boolean; status?: string | null }) => void;
   initialMessage?: string;
   onInitialMessageConsumed?: () => void;
   installedSkillIds?: string[];
@@ -185,6 +186,7 @@ export function ChatView({
   sessionExecutionContext,
   onReturnToSourceSession,
   onSessionUpdate,
+  onSessionBlockingStateChange,
   initialMessage,
   onInitialMessageConsumed,
   installedSkillIds = [],
@@ -2034,6 +2036,21 @@ export function ChatView({
     Boolean(streamReasoning) || (agentState?.state === "thinking" && thinkingSupport.indicator);
   const showStreamingAssistantBubble =
     showStreamingThinkingState || streamItems.length > 0 || subAgentBuffer.length > 0;
+  const liveBlockingStatus = useMemo(() => {
+    if (pendingApprovals.length > 0 || agentState?.state === "waiting_approval") {
+      return "waiting_approval";
+    }
+    if (agentState?.state === "thinking" || streamReasoning?.status === "thinking") {
+      return "thinking";
+    }
+    if (agentState?.state === "tool_calling") {
+      return "tool_calling";
+    }
+    if (streaming || streamItems.length > 0 || subAgentBuffer.trim()) {
+      return "running";
+    }
+    return null;
+  }, [agentState?.state, pendingApprovals.length, streamItems.length, streamReasoning?.status, streaming, subAgentBuffer]);
   const shouldShowTeamEntryEmptyState =
     isTeamEntrySession &&
     !initialMessage?.trim() &&
@@ -2070,6 +2087,13 @@ export function ChatView({
       : latestCompletedDelegation
       ? `${latestCompletedDelegation.toRole} 已完成，${mainRoleName || "主员工"} 正在汇总最终答复`
       : `${mainRoleName || "主员工"} 正在处理`;
+
+  useEffect(() => {
+    onSessionBlockingStateChange?.({
+      blocking: Boolean(liveBlockingStatus),
+      status: liveBlockingStatus,
+    });
+  }, [liveBlockingStatus, onSessionBlockingStateChange]);
 
   function parseClawhubCandidatesFromOutput(output?: string): ClawhubInstallCandidate[] {
     if (!output) return [];

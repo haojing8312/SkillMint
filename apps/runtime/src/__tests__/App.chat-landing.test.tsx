@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "../App";
 
 const invokeMock = vi.fn();
@@ -146,6 +146,26 @@ vi.mock("../components/ChatView", () => ({
         >
           open-source-step-event-focus
         </button>
+        <button
+          onClick={() =>
+            props.onSessionBlockingStateChange?.({
+              blocking: true,
+              status: "thinking",
+            })
+          }
+        >
+          set-session-thinking
+        </button>
+        <button
+          onClick={() =>
+            props.onSessionBlockingStateChange?.({
+              blocking: false,
+              status: null,
+            })
+          }
+        >
+          clear-session-thinking
+        </button>
       </div>
     );
   },
@@ -188,6 +208,32 @@ vi.mock("../components/NewSessionLanding", () => ({
       >
         create-team-entry-session
       </button>
+    </div>
+  ),
+}));
+
+vi.mock("../components/TaskTabStrip", () => ({
+  TaskTabStrip: (props: any) => (
+    <div data-testid="task-tab-strip">
+      <div data-testid="task-tab-count">{props.tabs?.length ?? 0}</div>
+      <div data-testid="task-tab-active-id">{props.activeTabId ?? ""}</div>
+      {props.tabs?.map((tab: any) => (
+        <div key={tab.id}>
+          <button data-testid={`task-tab-${tab.id}`} onClick={() => props.onSelectTab(tab.id)}>
+            {tab.title}
+          </button>
+          <div data-testid={`task-tab-kind-${tab.id}`}>{tab.kind}</div>
+          <div data-testid={`task-tab-active-${tab.id}`}>{String(props.activeTabId === tab.id)}</div>
+          <div data-testid={`task-tab-runtime-${tab.id}`}>{tab.runtimeStatus || ""}</div>
+          <button
+            aria-label={`close-${tab.id}`}
+            onClick={() => props.onCloseTab(tab.id)}
+          >
+            close
+          </button>
+        </div>
+      ))}
+      <button onClick={props.onCreateTab}>create-task-tab</button>
     </div>
   ),
 }));
@@ -250,6 +296,7 @@ describe("App chat landing", () => {
             skill_id: "builtin-general",
             session_mode: "general",
             team_id: "",
+            runtime_status: "running",
           },
           {
             id: "session-team-entry-1",
@@ -259,6 +306,7 @@ describe("App chat landing", () => {
             skill_id: "builtin-general",
             session_mode: "team_entry",
             team_id: "group-1",
+            runtime_status: "completed",
           },
           {
             id: "session-run-open-step",
@@ -266,6 +314,7 @@ describe("App chat landing", () => {
             created_at: new Date().toISOString(),
             model_id: "model-a",
             skill_id: "builtin-general",
+            runtime_status: "running",
           },
           {
             id: "session-step-gongbu-1",
@@ -273,6 +322,7 @@ describe("App chat landing", () => {
             created_at: new Date().toISOString(),
             model_id: "model-a",
             skill_id: "skill-gongbu",
+            runtime_status: "completed",
           },
         ]);
       }
@@ -950,6 +1000,118 @@ describe("App chat landing", () => {
       expect(screen.getByTestId("chat-view-group-run-event-focus")).toHaveTextContent(
         "evt-open-session-2",
       );
+    });
+  });
+
+  test("opens a new start-task tab when the current session is still running", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "select-first-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("2");
+    });
+
+    expect(screen.getByTestId("task-tab-count")).toHaveTextContent("2");
+  });
+
+  test("reuses the current tab when the current session has already ended", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "select-last-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("1");
+    });
+
+    expect(screen.getByTestId("task-tab-count")).toHaveTextContent("1");
+  });
+
+  test("creates a fresh start-task tab from the tab strip plus button", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "create-task-tab" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("2");
+    });
+  });
+
+  test("switches back to the running session when its tab is selected again", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "select-first-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("2");
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(within(screen.getByTestId("task-tab-strip")).getByRole("button", { name: "Session 1" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-1");
+    });
+  });
+
+  test("treats local thinking state as blocking and opens a new tab even before runtime status refreshes", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "select-last-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "set-session-thinking" }));
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+      expect(screen.getByTestId("task-tab-count")).toHaveTextContent("2");
+      expect(within(screen.getByTestId("task-tab-strip")).getByText("thinking")).toBeInTheDocument();
     });
   });
 });
