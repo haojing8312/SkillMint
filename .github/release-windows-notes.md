@@ -1,9 +1,9 @@
 ## WorkClaw Windows Release
 
-- Highlights in `v0.3.1`:
-  - Added safer run-stop handling for workspace boundary violations, with clearer blocked-state feedback during agent execution.
-  - Improved run continuation after max-turn limits and stabilized session hydration so reloads recover chat state more reliably.
-  - Bundled the browser sidecar runtime for packaged builds and tightened compatibility coverage for local automation flows.
+- Highlights in `v0.3.2`:
+  - Added parallel task tabs so active work can keep running while you open a fresh task in a new tab.
+  - Hardened session persistence across reloads, app reopen, and sidebar navigation, reducing chat loss in desktop flows.
+  - Blocked desktop reload shortcuts in packaged builds and refreshed the tab strip with a simpler flat style plus lightweight status dots.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.
