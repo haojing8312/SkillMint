@@ -174,6 +174,7 @@ async function installTauriMocks(page: Page): Promise<void> {
                 typeof args?.teamId === "string" && args.teamId.trim().length > 0
                   ? args.teamId
                   : "",
+              runtime_status: "running",
             });
             writeSessions(sessions);
             return sessionId;
@@ -322,4 +323,26 @@ test("keeps sessions visible across reload and employee page navigation", async 
     page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
   ).toBeVisible();
   await expect(sessionItem).toBeVisible();
+});
+
+test("opens a new task tab from a running session and can switch back", async ({ page }) => {
+  const input = page.getByPlaceholder("先描述你要完成什么任务...");
+  await input.fill("帮我整理一下待办事项");
+  await input.press("Enter");
+
+  await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
+  await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
+
+  await page.getByRole("button", { name: "开始任务" }).first().click();
+
+  await expect(
+    page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
+  ).toBeVisible();
+  await expect(page.getByRole("tab", { name: "E2E Session" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "开始任务" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "E2E Session" }).click();
+
+  await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
+  await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
 });
