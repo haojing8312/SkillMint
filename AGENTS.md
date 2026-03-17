@@ -1,25 +1,85 @@
 # AGENTS.md instructions for E:/code/yzpd/workclaw
 
+## Project Overview
+- `apps/runtime/` contains the React desktop app shell, frontend flows, and UI tests.
+- `apps/runtime/src-tauri/` contains the Tauri backend, desktop integrations, and Rust integration tests.
+- `apps/runtime/sidecar/` contains the sidecar runtime, adapters, browser automation bridge, and sidecar tests.
+- `packages/*` contains shared Rust crates for routing, policy, models, executor, skill packaging, and runtime support.
+- Root `package.json` commands are the source of truth for local verification and release-sensitive checks.
+
+## Repo-Local Workflow Skills
+- `$workclaw-implementation-strategy`: Use before editing runtime behavior, routing, provider integration, tool permissions, sidecar bridge behavior, or vendor sync boundaries.
+- `$workclaw-change-verification`: Use when changes affect code, tests, builtin skill assets, or build/test behavior before claiming the work is complete.
+- `$workclaw-release-readiness`: Use when changes affect versioning, release documentation, installer branding, packaging outputs, or vendor release lanes before deciding a branch is safe to ship.
+
+## Current Project Stage
+- WorkClaw is currently an early-stage open source project with a single primary maintainer.
+- Default development may happen directly on `main` when that is the most practical path.
+- Repo-local skills are lightweight self-check and workflow guidance tools, not mandatory PR approval gates.
+- PR-based review, automated merge gates, and stricter branch policies are optional future upgrades, not the default workflow today.
+
+## Mandatory Skill Usage
+- Use `$workclaw-implementation-strategy` before changing runtime behavior, routing, provider integration, tool permissions, sidecar protocols, IM orchestration behavior, or vendor sync boundaries.
+- Use `$workclaw-change-verification` when changes affect runtime code, tests, examples, builtin skills, or build/test behavior. Do not claim completion until the relevant checks have actually run.
+- Use `$workclaw-release-readiness` when changes affect versions, release docs, installer branding, packaging, or vendor release lanes.
+
+These skills should be treated as lightweight guardrails for the maintainer's own workflow. They do not imply that every change must go through a PR or a separate human approval step.
+
+## Build And Test Commands
+- Runtime dev: `pnpm app`
+- Desktop build: `pnpm build:runtime`
+- Sidecar tests: `pnpm test:sidecar`
+- Rust fast path: `pnpm test:rust-fast`
+- Runtime E2E: `pnpm test:e2e:runtime`
+- Builtin skills: `pnpm test:builtin-skills`
+
+## Release-Sensitive Commands
+- Version checks: `pnpm release:check-version`
+- Release tests: `pnpm test:release`
+- Installer checks: `pnpm test:installer`
+- Release docs: `pnpm test:release-docs`
+- Vendor lane checks: `pnpm test:openclaw-vendor-lane`
+- Packaging sanity: `pnpm build:runtime`
+
+## Compatibility And Safety Rules
+- Preserve existing user-visible runtime behavior unless the change is intentional and called out explicitly.
+- Treat packaging, installer, release docs, and vendor sync changes as release-sensitive, not ordinary code edits.
+- Prefer the smallest command set that proves the touched area is verified, but never skip a required check for the changed surface.
+- Verification claims must cite the commands actually run and whether any areas remain unverified.
+
+## Skill Priority And Coordination
+- Treat repo-local `workclaw-*` skills as the project workflow layer. They decide which WorkClaw-specific path, commands, and output contract apply.
+- Treat `superpowers` skills as the general method layer. They guide how to design, debug, verify, review, and execute work once the WorkClaw-specific path is known.
+- When both apply, use the repo-local `workclaw-*` skill first to choose the right repo workflow, then apply the relevant `superpowers` skill to execute that workflow well.
+- `workclaw-change-verification` defines which WorkClaw verification commands are required; `verification-before-completion` still applies before claiming success.
+- `workclaw-implementation-strategy` handles WorkClaw-specific risk and boundary analysis; `brainstorming` still applies for broader feature or behavior design work.
+- `workclaw-release-readiness` handles ship-readiness for WorkClaw release-sensitive changes; branch-finish or review skills can still apply afterward.
+- In the current project stage, prefer simple direct execution over introducing PR ceremony unless the change is risky enough to benefit from that extra process.
+
 ## Skills
 A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and file path so you can open the source for full instructions when using a specific skill.
 
 ### Available skills
-- skill-creator: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations. (file: C:/Users/36443/.codex/skills/.system/skill-creator/SKILL.md)
-- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: C:/Users/36443/.codex/skills/.system/skill-installer/SKILL.md)
-- brainstorming: You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation. (file: D:/worksoftdata/.codex/superpowers/skills/brainstorming/SKILL.md)
-- dispatching-parallel-agents: Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies (file: D:/worksoftdata/.codex/superpowers/skills/dispatching-parallel-agents/SKILL.md)
-- executing-plans: Use when you have a written implementation plan to execute in a separate session with review checkpoints (file: D:/worksoftdata/.codex/superpowers/skills/executing-plans/SKILL.md)
-- finishing-a-development-branch: Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup (file: D:/worksoftdata/.codex/superpowers/skills/finishing-a-development-branch/SKILL.md)
-- receiving-code-review: Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation (file: D:/worksoftdata/.codex/superpowers/skills/receiving-code-review/SKILL.md)
-- requesting-code-review: Use when completing tasks, implementing major features, or before merging to verify work meets requirements (file: D:/worksoftdata/.codex/superpowers/skills/requesting-code-review/SKILL.md)
-- subagent-driven-development: Use when executing implementation plans with independent tasks in the current session (file: D:/worksoftdata/.codex/superpowers/skills/subagent-driven-development/SKILL.md)
-- systematic-debugging: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes (file: D:/worksoftdata/.codex/superpowers/skills/systematic-debugging/SKILL.md)
-- test-driven-development: Use when implementing any feature or bugfix, before writing implementation code (file: D:/worksoftdata/.codex/superpowers/skills/test-driven-development/SKILL.md)
-- using-git-worktrees: Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification (file: D:/worksoftdata/.codex/superpowers/skills/using-git-worktrees/SKILL.md)
-- using-superpowers: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions (file: D:/worksoftdata/.codex/superpowers/skills/using-superpowers/SKILL.md)
-- verification-before-completion: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always (file: D:/worksoftdata/.codex/superpowers/skills/verification-before-completion/SKILL.md)
-- writing-plans: Use when you have a spec or requirements for a multi-step task, before touching code (file: D:/worksoftdata/.codex/superpowers/skills/writing-plans/SKILL.md)
-- writing-skills: Use when creating new skills, editing existing skills, or verifying skills work before deployment (file: D:/worksoftdata/.codex/superpowers/skills/writing-skills/SKILL.md)
+- Repo-local skills above are primary for WorkClaw. The global skills below are supplementary method skills.
+- workclaw-implementation-strategy: Review risky runtime, routing, provider, permission, sidecar, or vendor-boundary changes before editing code. (file: .agents/skills/workclaw-implementation-strategy/SKILL.md)
+- workclaw-change-verification: Choose and run the correct verification commands when WorkClaw changes affect runtime code, tests, skill assets, or build/test behavior. (file: .agents/skills/workclaw-change-verification/SKILL.md)
+- workclaw-release-readiness: Review versioning, installer, release-doc, packaging, and vendor-lane changes before deciding a branch is safe to ship. (file: .agents/skills/workclaw-release-readiness/SKILL.md)
+- skill-creator: Create or update reusable skills. (file: C:/Users/36443/.codex/skills/.system/skill-creator/SKILL.md)
+- skill-installer: Install curated or repo-based skills. (file: C:/Users/36443/.codex/skills/.system/skill-installer/SKILL.md)
+- brainstorming: Design or clarify work before implementation. (file: D:/worksoftdata/.codex/superpowers/skills/brainstorming/SKILL.md)
+- dispatching-parallel-agents: Split independent work across parallel agents. (file: D:/worksoftdata/.codex/superpowers/skills/dispatching-parallel-agents/SKILL.md)
+- executing-plans: Execute a written implementation plan in batches. (file: D:/worksoftdata/.codex/superpowers/skills/executing-plans/SKILL.md)
+- finishing-a-development-branch: Wrap up completed work for merge, PR, or cleanup. (file: D:/worksoftdata/.codex/superpowers/skills/finishing-a-development-branch/SKILL.md)
+- receiving-code-review: Evaluate incoming review feedback critically before changing code. (file: D:/worksoftdata/.codex/superpowers/skills/receiving-code-review/SKILL.md)
+- requesting-code-review: Ask for review before merging important work. (file: D:/worksoftdata/.codex/superpowers/skills/requesting-code-review/SKILL.md)
+- subagent-driven-development: Execute plan tasks with subagents in the current session. (file: D:/worksoftdata/.codex/superpowers/skills/subagent-driven-development/SKILL.md)
+- systematic-debugging: Debug failures or unexpected behavior methodically. (file: D:/worksoftdata/.codex/superpowers/skills/systematic-debugging/SKILL.md)
+- test-driven-development: Use TDD before implementing features or bugfixes. (file: D:/worksoftdata/.codex/superpowers/skills/test-driven-development/SKILL.md)
+- using-git-worktrees: Create an isolated worktree before risky or planned work. (file: D:/worksoftdata/.codex/superpowers/skills/using-git-worktrees/SKILL.md)
+- using-superpowers: Load and apply skills correctly at conversation start. (file: D:/worksoftdata/.codex/superpowers/skills/using-superpowers/SKILL.md)
+- verification-before-completion: Require fresh verification evidence before success claims. (file: D:/worksoftdata/.codex/superpowers/skills/verification-before-completion/SKILL.md)
+- writing-plans: Write a detailed implementation plan before code changes. (file: D:/worksoftdata/.codex/superpowers/skills/writing-plans/SKILL.md)
+- writing-skills: Create or refine skills with clear trigger wording. (file: D:/worksoftdata/.codex/superpowers/skills/writing-skills/SKILL.md)
 
 ### How to use skills
 - Discovery: The list above is the skills available in this session (name + description + file path). Skill bodies live on disk at the listed paths.
