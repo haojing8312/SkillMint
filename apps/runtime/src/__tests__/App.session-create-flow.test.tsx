@@ -444,6 +444,80 @@ describe("App session create flow", () => {
     });
   });
 
+  test("retries session list hydration when sqlite is temporarily locked", async () => {
+    let sessionListAttempts = 0;
+
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([]);
+      }
+      if (command === "list_sessions") {
+        sessionListAttempts += 1;
+        if (sessionListAttempts === 1) {
+          return Promise.reject(new Error("database is locked"));
+        }
+        return Promise.resolve([
+          {
+            id: "session-existing-1",
+            title: "Recovered Session",
+            created_at: new Date().toISOString(),
+            model_id: "model-a",
+            skill_id: "builtin-general",
+            session_mode: "general",
+            team_id: "",
+          },
+        ]);
+      }
+      if (command === "record_frontend_diagnostic_event") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(payload ?? null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-existing-1");
+    });
+
+    expect(sessionListAttempts).toBe(2);
+    expect(
+      invokeMock.mock.calls.some((call) => call[0] === "record_frontend_diagnostic_event")
+    ).toBe(false);
+  });
+
   test("prefers display_title over title in the sidebar session list", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
       if (command === "list_skills") {

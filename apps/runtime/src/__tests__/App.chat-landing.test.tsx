@@ -471,6 +471,137 @@ describe("App chat landing", () => {
     );
   });
 
+  test("keeps the hydrated session visible after opening start task and creating a new session before session list hydration finishes", async () => {
+    window.localStorage.setItem(LAST_SELECTED_SESSION_ID_KEY, "session-step-gongbu-1");
+    window.localStorage.setItem(
+      LAST_SELECTED_SESSION_SNAPSHOT_KEY,
+      JSON.stringify({
+        id: "session-step-gongbu-1",
+        title: "工部执行会话",
+        display_title: "工部执行会话",
+        created_at: "2026-03-17T00:00:00Z",
+        model_id: "model-a",
+        skill_id: "skill-gongbu",
+        session_mode: "general",
+        team_id: "",
+      }),
+    );
+
+    invokeMock.mockImplementation((command: string, payload?: any) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: "skill-gongbu",
+            name: "工部协作",
+            description: "gongbu",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_search_configs") {
+        return Promise.resolve([
+          {
+            id: "search-a",
+            name: "Search A",
+            api_format: "openai",
+            base_url: "https://search.example.com",
+            model_name: "search-model",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        return new Promise(() => {});
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([
+          {
+            id: "emp-taizi",
+            employee_id: "taizi",
+            name: "太子",
+            role_id: "taizi",
+            persona: "",
+            feishu_open_id: "",
+            feishu_app_id: "",
+            feishu_app_secret: "",
+            primary_skill_id: "builtin-general",
+            default_work_dir: "",
+            openclaw_agent_id: "taizi",
+            enabled_scopes: ["app"],
+            routing_priority: 100,
+            enabled: true,
+            is_default: true,
+            skill_ids: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_employee_groups") {
+        return Promise.resolve([]);
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      if (command === "create_session") {
+        return Promise.resolve("session-created-general");
+      }
+      return Promise.resolve(payload ?? null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
+      expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "start-task" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-session-landing")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("1");
+    expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-step-gongbu-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "create-general-session" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-created-general");
+    });
+
+    expect(screen.getByTestId("sidebar-session-count")).toHaveTextContent("2");
+  });
+
   test("returns to landing when clicking start-task from selected session", async () => {
     render(<App />);
 

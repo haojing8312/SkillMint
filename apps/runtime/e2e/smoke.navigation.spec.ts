@@ -62,14 +62,36 @@ async function installTauriMocks(page: Page): Promise<void> {
   await page.addInitScript(
     ({ mockedSkills, mockedModels }) => {
       const calls: TauriInvokeCall[] = [];
-      const sessions: Array<{
+      const SESSION_STORAGE_KEY = "workclaw:e2e-sessions";
+      type MockSession = {
         id: string;
         title: string;
         created_at: string;
         skill_id: string;
         work_dir: string;
-      }> = [];
-      let sessionCounter = 1;
+        model_id?: string;
+        session_mode?: string;
+        team_id?: string;
+      };
+      const readSessions = (): MockSession[] => {
+        try {
+          const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+          if (!raw) {
+            return [];
+          }
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      };
+      const writeSessions = (nextSessions: MockSession[]) => {
+        try {
+          window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSessions));
+        } catch {
+          // ignore
+        }
+      };
       let runtimePreferences = {
         default_work_dir: "",
         default_language: "zh-CN",
@@ -112,24 +134,48 @@ async function installTauriMocks(page: Page): Promise<void> {
             return mockedModels;
           case "list_agent_employees":
             return [];
+          case "list_sessions":
           case "get_sessions":
-            if (!args?.skillId || typeof args.skillId !== "string") {
-              return sessions;
+            {
+              const sessions = readSessions();
+              if (cmd === "list_sessions") {
+                return sessions;
+              }
+              if (!args?.skillId || typeof args.skillId !== "string") {
+                return sessions;
+              }
+              return sessions.filter((item) => item.skill_id === args.skillId);
             }
-            return sessions.filter((item) => item.skill_id === args.skillId);
           case "create_session": {
-            const sessionId = `session-e2e-${sessionCounter++}`;
+            const sessions = readSessions();
+            const sessionId = `session-e2e-${sessions.length + 1}`;
             const skillId =
               typeof args?.skillId === "string"
                 ? args.skillId
                 : mockedSkills[0]?.id || "builtin-general";
             sessions.push({
               id: sessionId,
-              title: "E2E Session",
+              title:
+                typeof args?.title === "string" && args.title.trim().length > 0
+                  ? args.title
+                  : "E2E Session",
               created_at: new Date().toISOString(),
               skill_id: skillId,
               work_dir: "",
+              model_id:
+                typeof args?.modelId === "string" && args.modelId.trim().length > 0
+                  ? args.modelId
+                  : mockedModels[0]?.id || "model-a",
+              session_mode:
+                typeof args?.sessionMode === "string" && args.sessionMode.trim().length > 0
+                  ? args.sessionMode
+                  : "general",
+              team_id:
+                typeof args?.teamId === "string" && args.teamId.trim().length > 0
+                  ? args.teamId
+                  : "",
             });
+            writeSessions(sessions);
             return sessionId;
           }
           case "list_search_configs":
@@ -249,4 +295,31 @@ test("creates a new session from start task composer", async ({ page }) => {
 
   await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
   await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-");
+});
+
+test("keeps sessions visible across reload and employee page navigation", async ({ page }) => {
+  const sessionItem = page.locator('[data-session-id="session-e2e-1"]').first();
+  const input = page.getByPlaceholder("先描述你要完成什么任务...");
+  await input.fill("你好");
+  await input.press("Enter");
+
+  await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
+  await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
+  await expect(sessionItem).toBeVisible();
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+
+  await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
+  await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
+  await expect(sessionItem).toBeVisible();
+
+  await page.getByRole("button", { name: "智能体员工" }).first().click();
+  await expect(page.getByTestId("employee-hub-view-stub")).toBeVisible();
+  await expect(sessionItem).toBeVisible();
+
+  await page.getByRole("button", { name: "开始任务" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
+  ).toBeVisible();
+  await expect(sessionItem).toBeVisible();
 });

@@ -80,6 +80,8 @@ const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-complete
 const LAST_SELECTED_SESSION_ID_KEY = "workclaw:last-selected-session-id";
 const LAST_SELECTED_SESSION_SNAPSHOT_KEY = "workclaw:last-selected-session-snapshot";
 const DEFAULT_OPERATION_PERMISSION_MODE: "standard" | "full_access" = "standard";
+const SESSION_LIST_RETRY_DELAY_MS = 250;
+const SESSION_LIST_MAX_RETRIES = 2;
 const EMPLOYEE_ASSISTANT_DISPLAY_NAME = "智能体员工助手";
 const EMPLOYEE_CREATOR_STARTER_PROMPT =
   "请帮我创建一个新的智能体员工。先问我 1-2 个关键问题，再给出配置草案，确认后再执行创建。";
@@ -369,6 +371,10 @@ function mergeSessionInfo(list: SessionInfo[], session: SessionInfo): SessionInf
   return [session, ...withoutTarget];
 }
 
+function isSqliteLockedError(error: unknown): boolean {
+  return extractErrorMessage(error, "").toLowerCase().includes("database is locked");
+}
+
 function getAdjacentSessionId(list: SessionInfo[], sessionId: string): string | null {
   const index = list.findIndex((item) => item.id === sessionId);
   if (index < 0) {
@@ -514,7 +520,7 @@ export default function App() {
   }
 
   function handleSelectSession(sessionId: string, options?: { openChatView?: boolean }) {
-    const targetSession = sessions.find((item) => item.id === sessionId);
+    const targetSession = visibleSessions.find((item) => item.id === sessionId);
     const targetSkillId = (targetSession?.skill_id || "").trim();
     if (targetSkillId && skills.some((item) => item.id === targetSkillId)) {
       setSelectedSkillId(targetSkillId);
@@ -1052,8 +1058,9 @@ export default function App() {
     }
   }
 
-  async function loadSessions(_skillId: string) {
-    const requestId = ++loadSessionsRequestIdRef.current;
+  async function loadSessions(_skillId: string, options?: { requestId?: number; attempt?: number }) {
+    const requestId = options?.requestId ?? ++loadSessionsRequestIdRef.current;
+    const attempt = options?.attempt ?? 0;
     try {
       const list = await invoke<SessionInfo[]>("list_sessions");
       if (requestId !== loadSessionsRequestIdRef.current) {
@@ -1073,6 +1080,12 @@ export default function App() {
       if (requestId !== loadSessionsRequestIdRef.current) {
         return;
       }
+      if (isSqliteLockedError(e) && attempt < SESSION_LIST_MAX_RETRIES) {
+        window.setTimeout(() => {
+          void loadSessions(_skillId, { requestId, attempt: attempt + 1 });
+        }, SESSION_LIST_RETRY_DELAY_MS);
+        return;
+      }
       console.error("加载会话列表失败:", e);
       void reportFrontendDiagnostic({
         kind: "session_list_load_failed",
@@ -1086,19 +1099,21 @@ export default function App() {
     persistLastSelectedSessionId(selectedSessionId);
   }, [selectedSessionId]);
 
+  const hydratedSessionSnapshot = !hasLoadedSessionsRef.current
+    ? initialSelectedSessionSnapshotRef.current
+    : null;
+
   const hydratedSelectedSession =
-    !hasLoadedSessionsRef.current &&
-    selectedSessionId &&
-    initialSelectedSessionSnapshotRef.current?.id === selectedSessionId
-      ? initialSelectedSessionSnapshotRef.current
+    hydratedSessionSnapshot && selectedSessionId && hydratedSessionSnapshot.id === selectedSessionId
+      ? hydratedSessionSnapshot
       : null;
 
   const visibleSessions = useMemo(() => {
-    if (!hydratedSelectedSession) {
+    if (!hydratedSessionSnapshot) {
       return sessions;
     }
-    return mergeSessionInfo(sessions, hydratedSelectedSession);
-  }, [hydratedSelectedSession, sessions]);
+    return mergeSessionInfo(sessions, hydratedSessionSnapshot);
+  }, [hydratedSessionSnapshot, sessions]);
 
   useEffect(() => {
     if (!selectedSessionId || skills.length === 0) {
@@ -1162,8 +1177,8 @@ export default function App() {
         ),
       );
       const firstMessage = initialMessage.trim();
-      await loadSessions(skillId);
       setSelectedSessionId(id);
+      void loadSessions(skillId);
 
       if (firstMessage) {
         // 由 ChatView 挂载后再自动发送，避免事件监听竞态导致“无响应”。
@@ -1227,8 +1242,8 @@ export default function App() {
           }),
         ),
       );
-      await loadSessions(skillId);
       setSelectedSessionId(sessionId);
+      void loadSessions(skillId);
       if (initialMessage) {
         setPendingInitialMessage({ sessionId, message: initialMessage });
       }
@@ -1325,8 +1340,8 @@ export default function App() {
           workDir,
           sessionMode: "general",
         });
-        await loadSessions(skillId);
         setSelectedSessionId(sessionId);
+        void loadSessions(skillId);
       } catch (e) {
         console.error("自动创建会话失败:", e);
       }
@@ -1978,8 +1993,8 @@ export default function App() {
           }),
         ),
       );
-      await loadSessions(skillId);
       setSelectedSessionId(sessionId);
+      void loadSessions(skillId);
     } catch (e) {
       console.error("从员工页创建会话失败:", e);
       setCreateSessionError("创建会话失败，请稍后重试");
@@ -2051,8 +2066,8 @@ export default function App() {
         title: sessionTitle,
         sessionMode: employeeCode ? "employee_direct" : "general",
       });
-      await loadSessions(skillId);
       setSelectedSessionId(sessionId);
+      void loadSessions(skillId);
       const initialMessage =
         launchMode === "update" && targetEmployee
           ? buildEmployeeAssistantUpdatePrompt(targetEmployee)
@@ -2123,9 +2138,9 @@ export default function App() {
           }),
         ),
       );
-      await loadSessions(skill.id);
       setSelectedSessionId(sessionId);
       navigate("start-task");
+      void loadSessions(skill.id);
     } catch (e) {
       console.error("从专家技能页创建会话失败:", e);
       setCreateSessionError("创建会话失败，请稍后重试");
@@ -2137,9 +2152,9 @@ export default function App() {
   async function handleOpenGroupRunSession(sessionId: string, skillId: string) {
     setSelectedSkillId(skillId);
     setCreateSessionError(null);
-    await loadSessions(skillId);
     setSelectedSessionId(sessionId);
     navigate("start-task");
+    void loadSessions(skillId);
   }
 
   const selectedSkill = skills.find((s) => s.id === selectedSkillId) ?? null;
@@ -3002,7 +3017,7 @@ export default function App() {
               className="h-full"
             >
               <NewSessionLanding
-                sessions={sessions}
+                sessions={visibleSessions}
                 teams={landingTeams}
                 creating={creatingSession}
                 error={createSessionError}

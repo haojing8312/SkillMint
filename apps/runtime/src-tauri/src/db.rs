@@ -56,6 +56,19 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
         .connect(&db_url)
         .await?;
 
+    sqlx::query("PRAGMA journal_mode = WAL")
+        .execute(&pool)
+        .await?;
+    sqlx::query("PRAGMA synchronous = NORMAL")
+        .execute(&pool)
+        .await?;
+    sqlx::query("PRAGMA busy_timeout = 5000")
+        .execute(&pool)
+        .await?;
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await?;
+
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS installed_skills (
             id TEXT PRIMARY KEY,
