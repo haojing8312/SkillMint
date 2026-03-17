@@ -2360,13 +2360,36 @@ export function ChatView({
   }
 
   function renderAgentStateSecondaryText() {
-    if (!agentState || agentState.state !== "stopped" || !agentState.stopReasonLastCompletedStep) {
+    if (!agentState || agentState.state !== "stopped") {
       return null;
     }
+
+    const secondaryLines: string[] = [];
+    if (agentState.stopReasonMessage && agentState.stopReasonMessage !== agentState.stopReasonTitle) {
+      secondaryLines.push(agentState.stopReasonMessage);
+    }
+    if (
+      agentState.detail &&
+      agentState.detail !== agentState.stopReasonTitle &&
+      agentState.detail !== agentState.stopReasonMessage
+    ) {
+      secondaryLines.push(agentState.detail);
+    }
+    if (agentState.stopReasonLastCompletedStep) {
+      secondaryLines.push(`最后完成步骤：${agentState.stopReasonLastCompletedStep}`);
+    }
+    if (secondaryLines.length === 0) {
+      return null;
+    }
+
     return (
-      <span className="text-[11px] text-amber-700">
-        {`最后完成步骤：${agentState.stopReasonLastCompletedStep}`}
-      </span>
+      <div className="flex min-w-0 flex-col gap-0.5 text-[11px] text-amber-700">
+        {secondaryLines.map((line) => (
+          <span key={line} className="whitespace-pre-wrap">
+            {line}
+          </span>
+        ))}
+      </div>
     );
   }
 
@@ -2404,6 +2427,14 @@ export function ChatView({
       return {
         title: "任务长时间没有进展",
         message: run.error_message || "系统检测到任务在多轮执行后没有明显进展，已自动停止。",
+        rawMessage: null as string | null,
+      };
+    }
+
+    if (run.error_kind === "policy_blocked") {
+      return {
+        title: "当前任务无法继续执行",
+        message: run.error_message || "本次请求触发了安全或工作区限制，系统已停止继续尝试。",
         rawMessage: null as string | null,
       };
     }
