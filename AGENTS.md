@@ -11,6 +11,8 @@
 - `$workclaw-implementation-strategy`: Use before editing runtime behavior, routing, provider integration, tool permissions, sidecar bridge behavior, or vendor sync boundaries.
 - `$workclaw-change-verification`: Use when changes affect code, tests, builtin skill assets, or build/test behavior before claiming the work is complete.
 - `$workclaw-release-readiness`: Use when changes affect versioning, release documentation, installer branding, packaging outputs, or vendor release lanes before deciding a branch is safe to ship.
+- `$workclaw-release-prep`: Use before publishing to recommend the next version and draft bilingual Chinese + English release notes for confirmation.
+- `$workclaw-release-publish`: Use only after version and release notes are confirmed, to update release metadata, push the release tag, and generate local desktop artifacts.
 
 ## Current Project Stage
 - WorkClaw is currently an early-stage open source project with a single primary maintainer.
@@ -64,6 +66,8 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 - workclaw-implementation-strategy: Review risky runtime, routing, provider, permission, sidecar, or vendor-boundary changes before editing code. (file: .agents/skills/workclaw-implementation-strategy/SKILL.md)
 - workclaw-change-verification: Choose and run the correct verification commands when WorkClaw changes affect runtime code, tests, skill assets, or build/test behavior. (file: .agents/skills/workclaw-change-verification/SKILL.md)
 - workclaw-release-readiness: Review versioning, installer, release-doc, packaging, and vendor-lane changes before deciding a branch is safe to ship. (file: .agents/skills/workclaw-release-readiness/SKILL.md)
+- workclaw-release-prep: Recommend the next WorkClaw release version and draft confirmation-ready bilingual release notes before publishing. (file: .agents/skills/workclaw-release-prep/SKILL.md)
+- workclaw-release-publish: Publish a confirmed WorkClaw release by updating metadata, pushing the tag, and generating local Windows installers. (file: .agents/skills/workclaw-release-publish/SKILL.md)
 - skill-creator: Create or update reusable skills. (file: C:/Users/36443/.codex/skills/.system/skill-creator/SKILL.md)
 - skill-installer: Install curated or repo-based skills. (file: C:/Users/36443/.codex/skills/.system/skill-installer/SKILL.md)
 - brainstorming: Design or clarify work before implementation. (file: D:/worksoftdata/.codex/superpowers/skills/brainstorming/SKILL.md)
