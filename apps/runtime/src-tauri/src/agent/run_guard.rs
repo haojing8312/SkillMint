@@ -69,6 +69,7 @@ pub enum RunStopReasonKind {
     MaxTurns,
     MaxSessionTurns,
     Timeout,
+    PolicyBlocked,
     LoopDetected,
     NoProgress,
     ToolFailureCircuitBreaker,
@@ -83,6 +84,7 @@ impl RunStopReasonKind {
             RunStopReasonKind::MaxTurns => "max_turns",
             RunStopReasonKind::MaxSessionTurns => "max_session_turns",
             RunStopReasonKind::Timeout => "timeout",
+            RunStopReasonKind::PolicyBlocked => "policy_blocked",
             RunStopReasonKind::LoopDetected => "loop_detected",
             RunStopReasonKind::NoProgress => "no_progress",
             RunStopReasonKind::ToolFailureCircuitBreaker => "tool_failure_circuit_breaker",
@@ -140,6 +142,15 @@ impl RunStopReason {
             RunStopReasonKind::LoopDetected,
             "任务疑似卡住，已自动停止",
             "系统检测到连续重复步骤，已自动停止本轮任务。",
+        )
+        .with_detail(detail)
+    }
+
+    pub fn policy_blocked(detail: impl Into<String>) -> Self {
+        Self::new(
+            RunStopReasonKind::PolicyBlocked,
+            "当前任务无法继续执行",
+            "本次请求触发了安全或工作区限制，系统已停止继续尝试。",
         )
         .with_detail(detail)
     }
@@ -458,6 +469,12 @@ mod tests {
     }
 
     #[test]
+    fn run_stop_reason_kind_serializes_policy_blocked() {
+        let value = serde_json::to_string(&RunStopReasonKind::PolicyBlocked).unwrap();
+        assert_eq!(value, "\"policy_blocked\"");
+    }
+
+    #[test]
     fn run_stop_reason_round_trips_through_encoded_payload() {
         let reason = RunStopReason::max_turns(12);
         let encoded = encode_run_stop_reason(&reason);
@@ -480,6 +497,22 @@ mod tests {
         assert_eq!(
             decoded.detail.as_deref(),
             Some("执行异常：达到最大迭代次数 24")
+        );
+    }
+
+    #[test]
+    fn policy_blocked_constructor_returns_expected_copy() {
+        let reason = RunStopReason::policy_blocked("目标路径不在当前工作目录范围内");
+
+        assert_eq!(reason.kind, RunStopReasonKind::PolicyBlocked);
+        assert_eq!(reason.title, "当前任务无法继续执行");
+        assert_eq!(
+            reason.message,
+            "本次请求触发了安全或工作区限制，系统已停止继续尝试。"
+        );
+        assert_eq!(
+            reason.detail.as_deref(),
+            Some("目标路径不在当前工作目录范围内")
         );
     }
 

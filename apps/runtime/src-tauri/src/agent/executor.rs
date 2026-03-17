@@ -115,6 +115,24 @@ async fn append_run_guard_warning_event(
     .await
 }
 
+fn normalize_policy_blocked_detail(error_text: &str) -> String {
+    error_text
+        .strip_prefix("工具执行错误: ")
+        .unwrap_or(error_text)
+        .trim()
+        .to_string()
+}
+
+fn classify_policy_blocked_tool_error(_tool_name: &str, error_text: &str) -> Option<RunStopReason> {
+    let normalized = normalize_policy_blocked_detail(error_text);
+    if normalized.contains("不在工作目录") && normalized.contains("范围内") {
+        return Some(RunStopReason::policy_blocked(format!(
+            "目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。\n{normalized}"
+        )));
+    }
+    None
+}
+
 #[derive(Clone)]
 struct ApprovalWaitRuntime {
     pool: sqlx::SqlitePool,
@@ -1402,6 +1420,27 @@ impl AgentExecutor {
                             }
                         }
 
+                        if is_error {
+                            if let Some(mut stop_reason) =
+                                classify_policy_blocked_tool_error(&call.name, &result)
+                            {
+                                if let Some(last_completed_step) = latest_browser_progress
+                                    .as_ref()
+                                    .and_then(BrowserProgressSnapshot::last_completed_step)
+                                {
+                                    stop_reason =
+                                        stop_reason.with_last_completed_step(last_completed_step);
+                                }
+                                if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                                    let _ = app.emit(
+                                        "agent-state-event",
+                                        AgentStateEvent::stopped(sid, iteration, &stop_reason),
+                                    );
+                                }
+                                return Err(anyhow!(encode_run_stop_reason(&stop_reason)));
+                            }
+                        }
+
                         if !is_error {
                             let browser_progress_snapshot =
                                 BrowserProgressSnapshot::from_tool_output(&call.name, &result);
@@ -1548,10 +1587,12 @@ impl AgentExecutor {
 
 #[cfg(test)]
 mod tests {
+    use super::classify_policy_blocked_tool_error;
     use super::request_tool_approval_and_wait;
     use super::wait_for_tool_confirmation;
     use super::ApprovalWaitRuntime;
     use super::ToolConfirmationDecision;
+    use crate::agent::run_guard::RunStopReasonKind;
     use crate::agent::{FileDeleteTool, Tool, ToolContext};
     use crate::approval_bus::{ApprovalDecision, ApprovalManager};
     use crate::session_journal::SessionJournalStore;
@@ -1576,6 +1617,35 @@ mod tests {
         tx.send(false).expect("send");
         let decision = wait_for_tool_confirmation(&rx, Duration::from_millis(5));
         assert_eq!(decision, ToolConfirmationDecision::Rejected);
+    }
+
+    #[test]
+    fn workspace_boundary_error_maps_to_policy_blocked() {
+        let reason = classify_policy_blocked_tool_error(
+            "list_dir",
+            "工具执行错误: 路径 C:\\Users\\Administrator\\Desktop 不在工作目录 C:\\Users\\Administrator\\WorkClaw\\workspace 范围内",
+        )
+        .expect("should classify");
+
+        assert_eq!(reason.kind, RunStopReasonKind::PolicyBlocked);
+        assert!(reason.detail.as_deref().unwrap_or_default().contains("切换当前会话的工作目录"));
+    }
+
+    #[test]
+    fn skill_allowlist_error_is_not_policy_blocked() {
+        let reason = classify_policy_blocked_tool_error("bash", "此 Skill 不允许使用工具: bash");
+
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn ordinary_tool_failure_is_not_policy_blocked() {
+        let reason = classify_policy_blocked_tool_error(
+            "read_file",
+            "工具执行错误: 文件不存在: missing.txt",
+        );
+
+        assert!(reason.is_none());
     }
 
     #[tokio::test]

@@ -319,12 +319,18 @@ fn upsert_run_index(state: &mut SessionJournalState, run_id: &str) -> usize {
 }
 
 fn format_run_stop_message(stop_reason: &RunStopReason) -> String {
-    match stop_reason.last_completed_step.as_deref() {
-        Some(step) if !step.trim().is_empty() => {
-            format!("{}\n最后完成步骤：{}", stop_reason.message, step)
+    let mut lines = vec![stop_reason.message.clone()];
+    if let Some(detail) = stop_reason.detail.as_deref() {
+        if !detail.trim().is_empty() && detail != stop_reason.message {
+            lines.push(detail.to_string());
         }
-        _ => stop_reason.message.clone(),
     }
+    if let Some(step) = stop_reason.last_completed_step.as_deref() {
+        if !step.trim().is_empty() {
+            lines.push(format!("最后完成步骤：{step}"));
+        }
+    }
+    lines.join("\n")
 }
 
 fn render_transcript_markdown(state: &SessionJournalState) -> String {
@@ -370,5 +376,23 @@ impl SessionRunStatus {
             SessionRunStatus::Failed => "failed",
             SessionRunStatus::Cancelled => "cancelled",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_run_stop_message;
+    use crate::agent::run_guard::RunStopReason;
+
+    #[test]
+    fn format_run_stop_message_preserves_policy_blocked_detail() {
+        let reason = RunStopReason::policy_blocked("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。")
+            .with_last_completed_step("已读取当前工作区");
+
+        let formatted = format_run_stop_message(&reason);
+
+        assert!(formatted.contains("本次请求触发了安全或工作区限制"));
+        assert!(formatted.contains("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。"));
+        assert!(formatted.contains("最后完成步骤：已读取当前工作区"));
     }
 }

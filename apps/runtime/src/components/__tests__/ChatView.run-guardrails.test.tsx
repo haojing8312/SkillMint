@@ -206,4 +206,50 @@ describe("ChatView run guardrails", () => {
       expect(screen.getByText("最后完成步骤：已填写封面标题")).toBeInTheDocument();
     });
   });
+
+  it("renders policy-blocked stop with friendly recovery messaging", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="sess-policy-blocked"
+      />,
+    );
+
+    act(() => {
+      emit("agent-state-event", {
+        session_id: "sess-policy-blocked",
+        state: "stopped",
+        detail: "目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。",
+        iteration: 3,
+        stop_reason_kind: "policy_blocked",
+        stop_reason_title: "当前任务无法继续执行",
+        stop_reason_message: "本次请求触发了安全或工作区限制，系统已停止继续尝试。",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("当前任务无法继续执行")).toBeInTheDocument();
+      expect(screen.getByText("本次请求触发了安全或工作区限制，系统已停止继续尝试。")).toBeInTheDocument();
+      expect(screen.getByText("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。")).toBeInTheDocument();
+    });
+  });
 });

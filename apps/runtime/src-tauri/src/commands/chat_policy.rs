@@ -99,6 +99,7 @@ pub(crate) enum ModelRouteErrorKind {
     RateLimit,
     Timeout,
     Network,
+    PolicyBlocked,
     MaxTurns,
     LoopDetected,
     NoProgress,
@@ -110,6 +111,7 @@ pub(crate) fn model_route_error_kind_for_stop_reason_kind(
 ) -> ModelRouteErrorKind {
     match kind {
         RunStopReasonKind::Timeout => ModelRouteErrorKind::Timeout,
+        RunStopReasonKind::PolicyBlocked => ModelRouteErrorKind::PolicyBlocked,
         RunStopReasonKind::MaxTurns | RunStopReasonKind::MaxSessionTurns => {
             ModelRouteErrorKind::MaxTurns
         }
@@ -231,6 +233,7 @@ pub(crate) fn model_route_error_kind_key(kind: ModelRouteErrorKind) -> &'static 
         ModelRouteErrorKind::RateLimit => "rate_limit",
         ModelRouteErrorKind::Timeout => "timeout",
         ModelRouteErrorKind::Network => "network",
+        ModelRouteErrorKind::PolicyBlocked => "policy_blocked",
         ModelRouteErrorKind::MaxTurns => "max_turns",
         ModelRouteErrorKind::LoopDetected => "loop_detected",
         ModelRouteErrorKind::NoProgress => "no_progress",
@@ -454,6 +457,16 @@ mod tests {
         );
         assert_eq!(kind, ModelRouteErrorKind::MaxTurns);
         assert_eq!(model_route_error_kind_key(kind), "max_turns");
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_detects_policy_blocked_stop_reason() {
+        let kind = classify_model_route_error(
+            "__WORKCLAW_RUN_STOP__:{\"kind\":\"policy_blocked\",\"title\":\"当前任务无法继续执行\",\"message\":\"本次请求触发了安全或工作区限制，系统已停止继续尝试。\",\"detail\":\"目标路径不在当前工作目录范围内\"}",
+        );
+        assert_eq!(kind, ModelRouteErrorKind::PolicyBlocked);
+        assert_eq!(model_route_error_kind_key(kind), "policy_blocked");
         assert!(!should_retry_same_candidate(kind));
     }
 
