@@ -4,6 +4,7 @@ import App from "../App";
 const invokeMock = vi.fn();
 const chatViewPropsSpy = vi.fn();
 const LAST_SELECTED_SESSION_ID_KEY = "workclaw:last-selected-session-id";
+const LAST_SELECTED_SESSION_SNAPSHOT_KEY = "workclaw:last-selected-session-snapshot";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -371,6 +372,103 @@ describe("App chat landing", () => {
       }),
     );
     expect(screen.queryByTestId("new-session-landing")).not.toBeInTheDocument();
+  });
+
+  test("hydrates the sidebar and selected skill from the persisted session snapshot before sessions finish loading", async () => {
+    window.localStorage.setItem(LAST_SELECTED_SESSION_ID_KEY, "session-step-gongbu-1");
+    window.localStorage.setItem(
+      LAST_SELECTED_SESSION_SNAPSHOT_KEY,
+      JSON.stringify({
+        id: "session-step-gongbu-1",
+        title: "工部执行会话",
+        display_title: "工部执行会话",
+        created_at: "2026-03-17T00:00:00Z",
+        model_id: "model-a",
+        skill_id: "skill-gongbu",
+        session_mode: "general",
+        team_id: "",
+      }),
+    );
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_skills") {
+        return Promise.resolve([
+          {
+            id: "builtin-general",
+            name: "General",
+            description: "desc",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: "skill-gongbu",
+            name: "工部协作",
+            description: "gongbu",
+            version: "1.0.0",
+            author: "test",
+            recommended_model: "model-a",
+            tags: [],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_model_configs") {
+        return Promise.resolve([
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_search_configs") {
+        return Promise.resolve([
+          {
+            id: "search-a",
+            name: "Search A",
+            api_format: "openai",
+            base_url: "https://search.example.com",
+            model_name: "search-model",
+            is_default: true,
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        return new Promise(() => {});
+      }
+      if (command === "list_agent_employees") {
+        return Promise.resolve([]);
+      }
+      if (command === "list_employee_groups") {
+        return Promise.resolve([]);
+      }
+      if (command === "get_runtime_preferences") {
+        return Promise.resolve({
+          operation_permission_mode: "standard",
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
+      expect(screen.getByTestId("sidebar-first-session-id")).toHaveTextContent("session-step-gongbu-1");
+      expect(screen.getByTestId("sidebar-first-session-title")).toHaveTextContent("工部执行会话");
+    });
+
+    expect(chatViewPropsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        skill: expect.objectContaining({ id: "skill-gongbu" }),
+      }),
+    );
   });
 
   test("returns to landing when clicking start-task from selected session", async () => {
