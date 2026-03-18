@@ -34,3 +34,47 @@ fn compose_system_prompt_includes_execution_guidance_and_optional_sections() {
     assert!(prompt.contains("Collaborate with employee-1"));
     assert!(prompt.contains("持久内存:\nRemember previous delivery constraints."));
 }
+
+#[test]
+fn compose_system_prompt_includes_file_tool_guidance_when_directory_tools_are_available() {
+    let prompt = compose_system_prompt(
+        "Base skill prompt",
+        "list_dir, file_move, file_copy",
+        "gpt-4.1",
+        8,
+        &ChatExecutionGuidance {
+            effective_work_dir: "E:/workspace/demo".to_string(),
+        },
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("文件工具使用说明:"));
+    assert!(prompt.contains("`list_dir` 会在可读列表后追加结构化 entries JSON"));
+    assert!(prompt.contains("`file_move` / `file_copy` / `file_delete`"));
+    assert!(prompt.contains("优先直接复用 entries 中的原始 `path`"));
+    assert!(prompt.contains("不要手写或改写文件名"));
+}
+
+#[test]
+fn compose_system_prompt_includes_structured_tool_result_guidance_for_core_tools() {
+    let prompt = compose_system_prompt(
+        "Base skill prompt",
+        "read_file, write_file, edit, glob, grep, bash, bash_output, bash_kill, list_dir, file_copy, file_delete, file_move, file_stat",
+        "gpt-4.1",
+        8,
+        &ChatExecutionGuidance {
+            effective_work_dir: "E:/workspace/demo".to_string(),
+        },
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("结构化工具结果说明:"));
+    assert!(prompt.contains("优先使用工具结果中的 `summary` 和 `details` 字段"));
+    assert!(prompt.contains("不要从展示文本中二次猜测路径"));
+    assert!(prompt.contains("命令执行结果优先读取 `exit_code`"));
+    assert!(prompt.contains("文件类结果优先复用 `details` 中的精确路径或元信息"));
+}

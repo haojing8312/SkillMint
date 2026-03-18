@@ -1,4 +1,5 @@
 use crate::agent::types::{Tool, ToolContext};
+use crate::agent::tools::tool_result;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -11,7 +12,7 @@ impl Tool for FileDeleteTool {
     }
 
     fn description(&self) -> &str {
-        "删除文件或目录。对于非空目录，需要设置 recursive 为 true 才能删除。"
+        "删除文件或目录。对于非空目录，需要设置 recursive 为 true 才能删除。返回结构化结果。"
     }
 
     fn input_schema(&self) -> Value {
@@ -45,9 +46,10 @@ impl Tool for FileDeleteTool {
             return Err(anyhow!("路径不存在: {}", path));
         }
 
-        if checked.is_file() {
+        let deleted_kind = if checked.is_file() {
             // 删除文件
             std::fs::remove_file(&checked).map_err(|e| anyhow!("删除文件失败: {}", e))?;
+            "file"
         } else if checked.is_dir() {
             // 尝试先删除空目录
             match std::fs::remove_dir(&checked) {
@@ -65,10 +67,20 @@ impl Tool for FileDeleteTool {
                     }
                 }
             }
+            "directory"
         } else {
             return Err(anyhow!("不支持的路径类型: {}", path));
-        }
+        };
 
-        Ok(format!("成功删除: {}", path))
+        tool_result::success(
+            self.name(),
+            format!("成功删除: {}", path),
+            json!({
+                "path": path,
+                "absolute_path": checked.to_string_lossy().to_string(),
+                "deleted_kind": deleted_kind,
+                "recursive": recursive,
+            }),
+        )
     }
 }

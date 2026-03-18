@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import { StreamItem, ToolCallInfo } from "../types";
+import { getToolResultSummary, parseStructuredToolResult } from "../lib/tool-result";
 
 /** 工具名 → 人性化描述 */
 const TOOL_LABELS: Record<string, string> = {
@@ -46,6 +47,13 @@ function getToolStatusLabel(tc: ToolCallInfo): string {
     return `正在${baseLabel}`;
   }
   return baseLabel;
+}
+
+function getToolOutputDisplay(tc: ToolCallInfo): string {
+  if (tc.name === "task") {
+    return String(tc.output || "");
+  }
+  return getToolResultSummary(tc.output);
 }
 
 interface ToolIslandProps {
@@ -229,8 +237,13 @@ export function ToolIsland({ toolCalls, isRunning, subAgentBuffer }: ToolIslandP
                                     <ReactMarkdown>{tc.output}</ReactMarkdown>
                                   </div>
                                 ) : (
-                                  tc.output
+                                  getToolOutputDisplay(tc)
                                 )}
+                              </pre>
+                            )}
+                            {tc.name !== "task" && parseStructuredToolResult(tc.output)?.details && (
+                              <pre className="bg-gray-50 rounded-xl p-2.5 text-[11px] text-gray-500 overflow-x-auto max-h-32 overflow-y-auto">
+                                {JSON.stringify(parseStructuredToolResult(tc.output)?.details, null, 2)}
                               </pre>
                             )}
                           </div>

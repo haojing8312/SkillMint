@@ -1,4 +1,9 @@
 import type { Message, StreamItem, ToolCallInfo } from "../../types";
+import {
+  getToolResultDetailString,
+  getToolResultErrorText,
+  getToolResultSummary,
+} from "../../lib/tool-result";
 
 export interface TaskItemView {
   id: string;
@@ -96,6 +101,8 @@ function normalizeTaskStatus(value: unknown): TaskItemView["status"] {
 }
 
 function readTouchedPath(tc: ToolCallInfo): string {
+  const detailPath = getToolResultDetailString(tc.output, "path");
+  if (detailPath) return detailPath;
   const input = tc.input || {};
   const candidate = input.path || input.file_path;
   return typeof candidate === "string" ? candidate : "";
@@ -284,18 +291,23 @@ export function buildTaskJourneyViewModel(messages: Message[]): TaskJourneyViewM
 
   for (let index = 0; index < toolCalls.length; index += 1) {
     const toolCall = toolCalls[index];
-    const output = String(toolCall.output || "").trim();
+    const output = getToolResultSummary(toolCall.output).trim();
 
     if (toolCall.status === "error") {
       let count = 1;
       while (index + count < toolCalls.length) {
         const next = toolCalls[index + count];
-        if (next.name !== toolCall.name || next.status !== "error" || String(next.output || "").trim() !== output) {
+        if (
+          next.name !== toolCall.name ||
+          next.status !== "error" ||
+          getToolResultErrorText(next.output).trim() !== getToolResultErrorText(toolCall.output).trim()
+        ) {
           break;
         }
         count += 1;
       }
-      const warning = `${toolCall.name} 失败 ${count} 次：${output || "未知错误"}`;
+      const errorText = getToolResultErrorText(toolCall.output).trim();
+      const warning = `${toolCall.name} 失败 ${count} 次：${errorText || "未知错误"}`;
       const displayName = getToolDisplayLabel(toolCall.name);
       warnings.push(warning);
       steps.push({

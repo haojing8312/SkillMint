@@ -1,3 +1,4 @@
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "使用 glob 模式搜索文件。支持 ** 递归、* 通配符、? 单字符。"
+        "使用 glob 模式搜索文件。支持 ** 递归、* 通配符、? 单字符。返回结构化结果，其中 details.matches 包含匹配路径。"
     }
 
     fn input_schema(&self) -> Value {
@@ -52,10 +53,21 @@ impl Tool for GlobTool {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
 
-        Ok(format!(
-            "找到 {} 个文件:\n{}",
-            paths.len(),
-            paths.join("\n")
-        ))
+        let summary = if paths.is_empty() {
+            "找到 0 个文件".to_string()
+        } else {
+            format!("找到 {} 个文件:\n{}", paths.len(), paths.join("\n"))
+        };
+
+        tool_result::success(
+            self.name(),
+            summary,
+            json!({
+                "pattern": pattern,
+                "base_dir": base_dir,
+                "match_count": paths.len(),
+                "matches": paths,
+            }),
+        )
     }
 }

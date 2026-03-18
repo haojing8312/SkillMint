@@ -1,6 +1,10 @@
 use runtime_lib::agent::{BashTool, Tool, ToolContext};
 use serde_json::json;
 
+fn parse_bash_result(result: &str) -> serde_json::Value {
+    serde_json::from_str(result).expect("valid bash result json")
+}
+
 #[test]
 fn test_bash_simple_command() {
     let tool = BashTool::new();
@@ -9,7 +13,13 @@ fn test_bash_simple_command() {
     let input = json!({"command": "echo Hello"});
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("Hello"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "bash");
+    assert_eq!(parsed["details"]["timed_out"], false);
+    assert_eq!(parsed["details"]["background"], false);
+    assert_eq!(parsed["details"]["exit_code"], 0);
+    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("Hello"));
 }
 
 #[test]
@@ -30,7 +40,10 @@ fn test_bash_dangerous_command_blocked() {
     let ctx = ToolContext::default();
     let input = json!({"command": "rm -rf /"});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("危险命令"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["error_code"], "DANGEROUS_COMMAND_BLOCKED");
+    assert!(parsed["error_message"].as_str().unwrap_or_default().contains("危险命令"));
 }
 
 #[test]
@@ -39,7 +52,9 @@ fn test_bash_dangerous_format_blocked() {
     let ctx = ToolContext::default();
     let input = json!({"command": "format c:"});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("危险命令"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["error_code"], "DANGEROUS_COMMAND_BLOCKED");
 }
 
 #[test]
@@ -48,8 +63,9 @@ fn test_bash_safe_command_not_blocked() {
     let ctx = ToolContext::default();
     let input = json!({"command": "echo safe"});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(!result.contains("危险命令"));
-    assert!(result.contains("safe"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], true);
+    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("safe"));
 }
 
 #[test]
@@ -63,7 +79,10 @@ fn test_bash_timeout() {
     };
     let input = json!({"command": command, "timeout_ms": 1000});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("超时"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], false);
+    assert_eq!(parsed["details"]["timed_out"], true);
+    assert!(parsed["summary"].as_str().unwrap_or_default().contains("超时"));
 }
 
 #[test]
@@ -72,6 +91,8 @@ fn test_bash_no_timeout_fast_command() {
     let ctx = ToolContext::default();
     let input = json!({"command": "echo fast", "timeout_ms": 5000});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("fast"));
-    assert!(!result.contains("超时"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["timed_out"], false);
+    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("fast"));
 }

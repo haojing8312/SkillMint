@@ -24,8 +24,12 @@ fn test_write_file_success() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功写入"));
-    assert!(result.contains(test_path));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "write_file");
+    assert!(parsed["summary"].as_str().unwrap().contains("成功写入"));
+    assert_eq!(parsed["details"]["path"], test_path);
+    assert_eq!(parsed["details"]["bytes_written"], 12);
 
     // Verify file was written
     let content = fs::read_to_string(test_path).unwrap();
@@ -47,7 +51,10 @@ fn test_write_file_creates_parent_dirs() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功写入"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["path"], test_path);
+    assert_eq!(parsed["details"]["bytes_written"], 14);
 
     // Verify file was written
     let content = fs::read_to_string(test_path).unwrap();
@@ -90,7 +97,9 @@ fn test_write_file_allows_absolute_nested_path_within_work_dir() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功写入"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["bytes_written"], 7);
     assert_eq!(fs::read_to_string(&target).unwrap(), "# brief");
 
     fs::remove_dir_all(&work_dir).unwrap();

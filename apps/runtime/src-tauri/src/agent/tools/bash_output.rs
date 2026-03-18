@@ -1,4 +1,5 @@
 use crate::agent::tools::process_manager::ProcessManager;
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -21,7 +22,7 @@ impl Tool for BashOutputTool {
     }
 
     fn description(&self) -> &str {
-        "获取后台进程的输出。可以选择阻塞等待进程完成或立即返回当前输出。"
+        "获取后台进程的输出。可以选择阻塞等待进程完成或立即返回当前输出。返回结构化结果，其中 details 包含 stdout/stderr/exit_code。"
     }
 
     fn input_schema(&self) -> Value {
@@ -50,15 +51,25 @@ impl Tool for BashOutputTool {
 
         let output = self.process_manager.get_output(process_id, block)?;
 
+        let exit_code = output.exit_code.unwrap_or(-1);
         let status = if output.exited {
-            format!("已退出 (退出码: {})", output.exit_code.unwrap_or(-1))
+            format!("已退出 (退出码: {})", exit_code)
         } else {
             "运行中".to_string()
         };
 
-        Ok(format!(
-            "状态: {}\nstdout:\n{}\nstderr:\n{}",
-            status, output.stdout, output.stderr
-        ))
+        tool_result::success(
+            self.name(),
+            format!("进程 {} 状态: {}", process_id, status),
+            json!({
+                "process_id": process_id,
+                "block": block,
+                "stdout": output.stdout,
+                "stderr": output.stderr,
+                "exited": output.exited,
+                "exit_code": if output.exited { Value::from(exit_code) } else { Value::Null },
+                "status_text": status,
+            }),
+        )
     }
 }

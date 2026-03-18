@@ -12,7 +12,13 @@ fn test_edit_replace_single() {
 
     let input = json!({"path": path, "old_string": "Hello", "new_string": "Hi"});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功替换"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "edit");
+    assert!(parsed["summary"].as_str().unwrap().contains("成功替换"));
+    assert_eq!(parsed["details"]["path"], path);
+    assert_eq!(parsed["details"]["replacements"], 1);
+    assert_eq!(parsed["details"]["replace_all"], false);
 
     let content = fs::read_to_string(path).unwrap();
     assert_eq!(content, "Hi, World!\nGoodbye, World!");
@@ -29,7 +35,9 @@ fn test_edit_not_found() {
     let input = json!({"path": path, "old_string": "NONEXISTENT", "new_string": "replacement"});
     let result = tool.execute(input, &ctx);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("未找到"));
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("未找到"));
+    assert!(error.contains(path));
     fs::remove_file(path).unwrap();
 }
 
@@ -43,7 +51,9 @@ fn test_edit_not_unique() {
     let input = json!({"path": path, "old_string": "aaa", "new_string": "ccc"});
     let result = tool.execute(input, &ctx);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("不唯一"));
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("不唯一"));
+    assert!(error.contains("2"));
     fs::remove_file(path).unwrap();
 }
 
@@ -57,7 +67,10 @@ fn test_edit_replace_all() {
     let input =
         json!({"path": path, "old_string": "aaa", "new_string": "ccc", "replace_all": true});
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("2"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["replacements"], 2);
+    assert_eq!(parsed["details"]["replace_all"], true);
 
     let content = fs::read_to_string(path).unwrap();
     assert_eq!(content, "ccc bbb ccc");

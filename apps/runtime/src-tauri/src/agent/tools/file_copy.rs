@@ -1,4 +1,5 @@
 use crate::agent::types::{Tool, ToolContext};
+use crate::agent::tools::tool_result;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs;
@@ -33,7 +34,7 @@ impl Tool for FileCopyTool {
     }
 
     fn description(&self) -> &str {
-        "复制文件或目录到目标路径。支持递归复制目录。"
+        "复制文件或目录到目标路径。支持递归复制目录。返回结构化结果。"
     }
 
     fn input_schema(&self) -> Value {
@@ -70,17 +71,32 @@ impl Tool for FileCopyTool {
 
         if src.is_dir() {
             let count = copy_dir_recursive(&src, &dst)?;
-            Ok(format!(
-                "已复制目录 {} → {}（{} 个文件）",
-                source, destination, count
-            ))
+            tool_result::success(
+                self.name(),
+                format!("已复制目录 {} → {}（{} 个文件）", source, destination, count),
+                json!({
+                    "source": source,
+                    "destination": destination,
+                    "kind": "directory",
+                    "files_copied": count,
+                }),
+            )
         } else {
             // 确保目标父目录存在
             if let Some(parent) = dst.parent() {
                 fs::create_dir_all(parent).map_err(|e| anyhow!("创建目标父目录失败: {}", e))?;
             }
             fs::copy(&src, &dst).map_err(|e| anyhow!("复制文件失败: {}", e))?;
-            Ok(format!("已复制文件 {} → {}", source, destination))
+            tool_result::success(
+                self.name(),
+                format!("已复制文件 {} → {}", source, destination),
+                json!({
+                    "source": source,
+                    "destination": destination,
+                    "kind": "file",
+                    "files_copied": 1,
+                }),
+            )
         }
     }
 }

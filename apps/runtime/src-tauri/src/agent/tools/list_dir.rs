@@ -1,6 +1,8 @@
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 
 pub struct ListDirTool;
 
@@ -21,7 +23,7 @@ impl Tool for ListDirTool {
     }
 
     fn description(&self) -> &str {
-        "列出目录内容。返回文件名、类型（文件/目录）和大小。"
+        "列出目录内容。先返回可读列表，再追加结构化 entries JSON。后续 file_move/file_copy/file_delete 等文件工具应优先复用 entries 中的原始 path，不要手写或改写文件名。"
     }
 
     fn input_schema(&self) -> Value {
@@ -49,6 +51,7 @@ impl Tool for ListDirTool {
         }
 
         let mut entries: Vec<String> = Vec::new();
+        let mut structured_entries: Vec<Value> = Vec::new();
 
         let read_dir = std::fs::read_dir(&checked).map_err(|e| anyhow!("读取目录失败: {}", e))?;
 
@@ -59,24 +62,55 @@ impl Tool for ListDirTool {
         for entry in dir_entries {
             let metadata = entry.metadata();
             let name = entry.file_name().to_string_lossy().to_string();
+            let entry_path: PathBuf = entry.path();
+            let absolute_path = entry_path.to_string_lossy().to_string();
 
             if let Ok(meta) = metadata {
                 if meta.is_dir() {
                     entries.push(format!("[DIR]  {}", name));
+                    structured_entries.push(json!({
+                        "name": name,
+                        "path": absolute_path,
+                        "kind": "dir",
+                        "size_bytes": Value::Null,
+                    }));
                 } else {
                     let size = format_size(meta.len());
                     entries.push(format!("[FILE] {} ({})", name, size));
+                    structured_entries.push(json!({
+                        "name": name,
+                        "path": absolute_path,
+                        "kind": "file",
+                        "size_bytes": meta.len(),
+                    }));
                 }
             } else {
                 // 元数据读取失败时仍然列出条目名称
                 entries.push(format!("[?]    {}", name));
+                structured_entries.push(json!({
+                    "name": name,
+                    "path": absolute_path,
+                    "kind": "unknown",
+                    "size_bytes": Value::Null,
+                }));
             }
         }
 
-        if entries.is_empty() {
-            return Ok("空目录".to_string());
-        }
+        let summary = if entries.is_empty() {
+            "空目录".to_string()
+        } else {
+            entries.join("\n")
+        };
 
-        Ok(entries.join("\n"))
+        tool_result::success(
+            self.name(),
+            summary,
+            json!({
+                "path": path,
+                "absolute_path": checked.to_string_lossy().to_string(),
+                "entry_count": structured_entries.len(),
+                "entries": structured_entries,
+            }),
+        )
     }
 }

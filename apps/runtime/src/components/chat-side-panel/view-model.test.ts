@@ -105,6 +105,79 @@ describe("chat side panel view-model", () => {
     ]);
   });
 
+  test("prefers structured details.path and error_message when tool outputs are json", () => {
+    const model = buildTaskJourneyViewModel([
+      {
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+        streamItems: [
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "write-json",
+              name: "write_file",
+              input: {},
+              status: "completed",
+              output: JSON.stringify({
+                ok: true,
+                tool: "write_file",
+                summary: "成功写入 12 字节到 structured-report.html",
+                details: {
+                  path: "structured-report.html",
+                  absolute_path: "E:/workspace/structured-report.html",
+                  bytes_written: 12,
+                },
+              }),
+            },
+          },
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "write-json-error-1",
+              name: "write_file",
+              input: {},
+              status: "error",
+              output: JSON.stringify({
+                ok: false,
+                tool: "write_file",
+                summary: "写入失败",
+                error_code: "MISSING_PATH",
+                error_message: "缺少 path 参数",
+                details: {},
+              }),
+            },
+          },
+          {
+            type: "tool_call",
+            toolCall: {
+              id: "write-json-error-2",
+              name: "write_file",
+              input: {},
+              status: "error",
+              output: JSON.stringify({
+                ok: false,
+                tool: "write_file",
+                summary: "写入失败",
+                error_code: "MISSING_PATH",
+                error_message: "缺少 path 参数",
+                details: {},
+              }),
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(model.deliverables).toEqual([
+      expect.objectContaining({
+        path: "structured-report.html",
+        category: "primary",
+      }),
+    ]);
+    expect(model.warnings).toContain("write_file 失败 2 次：缺少 path 参数");
+  });
+
   test("parses web search results from json output", () => {
     const entries = buildWebSearchViewModel(buildMessages());
 

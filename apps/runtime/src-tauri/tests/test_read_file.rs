@@ -1,6 +1,7 @@
 use runtime_lib::agent::{ReadFileTool, Tool, ToolContext, ToolRegistry};
 use serde_json::json;
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 #[test]
@@ -20,7 +21,19 @@ fn test_read_file_success() {
     let ctx = ToolContext::default();
     let result = tool.unwrap().execute(input, &ctx).unwrap();
 
-    assert_eq!(result, "Hello, World!");
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "read_file");
+    assert!(parsed["summary"].as_str().is_some_and(|value| !value.is_empty()));
+    assert_eq!(parsed["details"]["path"], test_path);
+    assert_eq!(parsed["details"]["content"], "Hello, World!");
+    assert_eq!(parsed["details"]["line_count"], 1);
+    assert_eq!(parsed["details"]["truncated"], false);
+    assert!(
+        parsed["details"]["absolute_path"]
+            .as_str()
+            .is_some_and(|value| Path::new(value).is_absolute() && value.ends_with(test_path))
+    );
 
     // Cleanup
     fs::remove_file(test_path).unwrap();

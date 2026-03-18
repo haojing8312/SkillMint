@@ -19,11 +19,21 @@ fn test_glob_find_files() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("找到 3 个文件"));
-    assert!(result.contains("file1.txt"));
-    assert!(result.contains("file2.txt"));
-    assert!(result.contains("file3.txt"));
-    assert!(!result.contains("file.rs"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "glob");
+    assert!(parsed["summary"].as_str().unwrap().contains("找到 3 个文件"));
+    let matches = parsed["details"]["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 3);
+    let joined = matches
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("file1.txt"));
+    assert!(joined.contains("file2.txt"));
+    assert!(joined.contains("file3.txt"));
+    assert!(!joined.contains("file.rs"));
 
     // Cleanup
     fs::remove_dir_all("test_glob_dir").unwrap();
@@ -38,5 +48,8 @@ fn test_glob_no_matches() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("找到 0 个文件"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["match_count"], 0);
+    assert_eq!(parsed["details"]["matches"], json!([]));
 }

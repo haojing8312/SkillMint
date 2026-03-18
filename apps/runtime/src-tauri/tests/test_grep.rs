@@ -19,9 +19,17 @@ fn test_grep_find_matches() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("找到 2 处匹配"));
-    assert!(result.contains("1:line 1: hello"));
-    assert!(result.contains("3:line 3: hello world"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "grep");
+    assert_eq!(parsed["details"]["total_matches"], 2);
+    assert_eq!(parsed["details"]["files_searched"], 1);
+    let matches = parsed["details"]["matches"].as_array().expect("matches array");
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0]["line"], 1);
+    assert_eq!(matches[0]["text"], "line 1: hello");
+    assert_eq!(matches[1]["line"], 3);
+    assert_eq!(matches[1]["text"], "line 3: hello world");
 
     fs::remove_file(test_file).unwrap();
 }
@@ -40,7 +48,8 @@ fn test_grep_case_insensitive() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("找到 3 处匹配"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["details"]["total_matches"], 3);
 
     fs::remove_file(test_file).unwrap();
 }
@@ -58,7 +67,9 @@ fn test_grep_no_matches() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("找到 0 处匹配"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["details"]["total_matches"], 0);
+    assert_eq!(parsed["details"]["files_searched"], 1);
 
     fs::remove_file(test_file).unwrap();
 }

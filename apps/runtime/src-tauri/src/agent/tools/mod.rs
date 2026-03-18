@@ -26,6 +26,7 @@ mod screenshot;
 mod sidecar_bridge;
 mod skill_invoke;
 mod task_tool;
+mod tool_result;
 mod todo_tool;
 mod tool_alias;
 pub mod web_fetch;

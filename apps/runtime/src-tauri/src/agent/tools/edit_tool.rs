@@ -1,3 +1,4 @@
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -11,7 +12,7 @@ impl Tool for EditTool {
     }
 
     fn description(&self) -> &str {
-        "在文件中精确替换文本。查找 old_string 并替换为 new_string。默认要求 old_string 在文件中唯一。"
+        "在文件中精确替换文本。查找 old_string 并替换为 new_string。默认要求 old_string 在文件中唯一。返回结构化结果，其中 details 包含替换次数和路径。"
     }
 
     fn input_schema(&self) -> Value {
@@ -44,18 +45,38 @@ impl Tool for EditTool {
         let count = content.matches(old_string).count();
 
         if count == 0 {
-            return Err(anyhow!("未找到匹配文本: \"{}\"", old_string));
+            return Err(anyhow!(
+                "未找到匹配文本: \"{}\"，文件: {}",
+                old_string,
+                checked.display()
+            ));
         }
         if !replace_all && count > 1 {
             return Err(anyhow!(
-                "匹配不唯一（找到 {} 处），请提供更多上下文或使用 replace_all",
-                count
+                "匹配不唯一（找到 {} 处），文件: {}。请提供更多上下文或使用 replace_all",
+                count,
+                checked.display()
             ));
         }
 
-        let new_content = content.replace(old_string, new_string);
+        let new_content = if replace_all {
+            content.replace(old_string, new_string)
+        } else {
+            content.replacen(old_string, new_string, 1)
+        };
         fs::write(&checked, &new_content).map_err(|e| anyhow!("写入文件失败: {}", e))?;
 
-        Ok(format!("成功替换 {} 处，文件: {}", count, path))
+        tool_result::success(
+            self.name(),
+            format!("成功替换 {} 处，文件: {}", count, path),
+            json!({
+                "path": path,
+                "absolute_path": checked.to_string_lossy().to_string(),
+                "replacements": count,
+                "replace_all": replace_all,
+                "old_string": old_string,
+                "new_string": new_string,
+            }),
+        )
     }
 }

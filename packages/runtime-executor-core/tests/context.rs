@@ -35,7 +35,7 @@ fn trim_over_budget() {
 fn micro_compact_replaces_old_tool_results() {
     let messages = vec![
         json!({"role": "user", "content": "start"}),
-        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "1", "content": "long output 1"}]}),
+        json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "1", "content": "{\"ok\":true,\"tool\":\"write_file\",\"summary\":\"成功写入 10 字节到 a.txt\",\"details\":{\"path\":\"a.txt\"}}"}]}),
         json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "2", "content": "long output 2"}]}),
         json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "3", "content": "recent output"}]}),
         json!({"role": "assistant", "content": "done"}),
@@ -43,7 +43,7 @@ fn micro_compact_replaces_old_tool_results() {
 
     let result = micro_compact(&messages, 1);
     let r1 = serde_json::to_string(&result[1]).expect("serialize r1");
-    assert!(r1.contains("[已执行]"));
+    assert!(r1.contains("[已执行] 成功写入 10 字节到 a.txt"));
     let r3 = serde_json::to_string(&result[3]).expect("serialize r3");
     assert!(r3.contains("recent output"));
 }

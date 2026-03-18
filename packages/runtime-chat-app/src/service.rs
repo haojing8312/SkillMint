@@ -636,6 +636,37 @@ pub fn compose_system_prompt(
     } else {
         None
     };
+    let file_tool_note = if tool_names.contains("list_dir")
+        || tool_names.contains("file_move")
+        || tool_names.contains("file_copy")
+        || tool_names.contains("file_delete")
+    {
+        Some(
+            "文件工具使用说明:\n- `list_dir` 会在可读列表后追加结构化 entries JSON\n- 后续 `file_move` / `file_copy` / `file_delete` 等文件工具处理目录枚举结果时，优先直接复用 entries 中的原始 `path`\n- 不要手写或改写文件名，尤其不要自行增删空格、中文标点或扩展名".to_string(),
+        )
+    } else {
+        None
+    };
+    let structured_tool_result_note = if tool_names.contains("read_file")
+        || tool_names.contains("write_file")
+        || tool_names.contains("edit")
+        || tool_names.contains("glob")
+        || tool_names.contains("grep")
+        || tool_names.contains("bash")
+        || tool_names.contains("bash_output")
+        || tool_names.contains("bash_kill")
+        || tool_names.contains("list_dir")
+        || tool_names.contains("file_copy")
+        || tool_names.contains("file_delete")
+        || tool_names.contains("file_move")
+        || tool_names.contains("file_stat")
+    {
+        Some(
+            "结构化工具结果说明:\n- 对支持结构化结果的工具，优先使用工具结果中的 `summary` 和 `details` 字段进行后续推理\n- 不要从展示文本中二次猜测路径、匹配位置或命令状态\n- 文件类结果优先复用 `details` 中的精确路径或元信息\n- 命令执行结果优先读取 `exit_code`、`timed_out`、`stdout`、`stderr`".to_string(),
+        )
+    } else {
+        None
+    };
 
     let mut system_prompt = if guidance.effective_work_dir.trim().is_empty() {
         format!(
@@ -668,6 +699,14 @@ pub fn compose_system_prompt(
         browser_runtime_note.filter(|value| !value.trim().is_empty())
     {
         system_prompt = format!("{}\n\n---\n{}", system_prompt, browser_runtime_note);
+    }
+    if let Some(file_tool_note) = file_tool_note.filter(|value| !value.trim().is_empty()) {
+        system_prompt = format!("{}\n\n---\n{}", system_prompt, file_tool_note);
+    }
+    if let Some(structured_tool_result_note) =
+        structured_tool_result_note.filter(|value| !value.trim().is_empty())
+    {
+        system_prompt = format!("{}\n\n---\n{}", system_prompt, structured_tool_result_note);
     }
 
     system_prompt

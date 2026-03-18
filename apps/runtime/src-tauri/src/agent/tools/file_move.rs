@@ -1,3 +1,4 @@
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -11,7 +12,7 @@ impl Tool for FileMoveTool {
     }
 
     fn description(&self) -> &str {
-        "移动或重命名文件/目录。将 source 移动到 destination，如果目标父目录不存在会自动创建。"
+        "移动或重命名文件/目录。将 source 移动到 destination，如果目标父目录不存在会自动创建。处理目录枚举结果时，应优先直接使用 list_dir 返回的原始 path，避免手写或改写文件名。"
     }
 
     fn input_schema(&self) -> Value {
@@ -45,7 +46,10 @@ impl Tool for FileMoveTool {
 
         // 确认源文件/目录存在
         if !src_path.exists() {
-            return Err(anyhow!("源路径不存在: {}", source));
+            return Err(anyhow!(
+                "源路径不存在: {}。如果该路径来自目录枚举，请优先直接复用 list_dir 返回的原始 path，不要手写或改写文件名。",
+                source
+            ));
         }
 
         // 确保目标的父目录存在
@@ -53,9 +57,21 @@ impl Tool for FileMoveTool {
             std::fs::create_dir_all(parent).map_err(|e| anyhow!("创建目标父目录失败: {}", e))?;
         }
 
+        let moved_kind = if src_path.is_dir() { "dir" } else { "file" };
+
         // 执行移动/重命名
         std::fs::rename(&src_path, &dst_path).map_err(|e| anyhow!("移动失败: {}", e))?;
 
-        Ok(format!("已移动 {} → {}", source, destination))
+        tool_result::success(
+            self.name(),
+            format!("已移动 {} → {}", source, destination),
+            json!({
+                "source": source,
+                "destination": destination,
+                "absolute_source": src_path.to_string_lossy().to_string(),
+                "absolute_destination": dst_path.to_string_lossy().to_string(),
+                "kind": moved_kind,
+            }),
+        )
     }
 }

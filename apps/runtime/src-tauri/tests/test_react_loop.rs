@@ -247,6 +247,59 @@ async fn test_react_loop_progress_guard_stops_repeated_successful_tool_calls() {
     fs::remove_dir_all(&work_dir).unwrap();
 }
 
+#[tokio::test]
+async fn test_react_loop_does_not_misclassify_interleaved_failures_as_repeated_list_dir_loop() {
+    let registry = Arc::new(ToolRegistry::with_file_tools());
+    let executor = AgentExecutor::with_max_iterations(Arc::clone(&registry), 20);
+    let work_dir = setup_work_dir("interleaved_list_dir_and_move_failures");
+
+    let messages = vec![json!({
+        "role": "user",
+        "content": "请继续整理目录，如果移动失败就重新检查目录"
+    })];
+
+    let result = executor
+        .execute_turn(
+            "openai",
+            "http://mock-list-dir-interleaved-move-failures",
+            "mock-key",
+            "gpt-4",
+            "You are a helpful assistant.",
+            messages,
+            |_token| {},
+            None,
+            None,
+            None,
+            PermissionMode::AcceptEdits,
+            None,
+            Some(work_dir.to_string_lossy().to_string()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "interleaved file_move failures should not be misclassified as a repeated list_dir loop: {:?}",
+        result
+    );
+
+    let messages = result.unwrap();
+    let last = messages.last().expect("assistant final message");
+    assert!(
+        last["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("需要人工确认文件名"),
+        "unexpected final content: {:?}",
+        last
+    );
+
+    fs::remove_dir_all(&work_dir).unwrap();
+}
+
 #[test]
 fn router_uses_fallback_on_primary_error() {
     let policy = RoutingPolicy {

@@ -5,6 +5,14 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+fn parse_bash_result(result: &str) -> serde_json::Value {
+    serde_json::from_str(result).expect("valid bash result json")
+}
+
+fn parse_tool_result(result: &str) -> serde_json::Value {
+    serde_json::from_str(result).expect("valid tool result json")
+}
+
 #[test]
 fn test_bash_background_returns_process_id() {
     let pm = Arc::new(ProcessManager::new());
@@ -20,9 +28,11 @@ fn test_bash_background_returns_process_id() {
     let input = json!({"command": command, "background": true});
     let result = tool.execute(input, &ctx).unwrap();
 
-    // 应返回包含 process_id 的消息
-    assert!(result.contains("后台进程已启动"));
-    assert!(result.contains("process_id:"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "bash");
+    assert_eq!(parsed["details"]["background"], true);
+    assert!(parsed["details"]["process_id"].as_str().is_some());
 }
 
 #[test]
@@ -34,9 +44,11 @@ fn test_bash_background_false_runs_sync() {
     let input = json!({"command": "echo sync_test", "background": false});
     let result = tool.execute(input, &ctx).unwrap();
 
-    // 同步模式应直接返回输出
-    assert!(result.contains("sync_test"));
-    assert!(!result.contains("process_id"));
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["background"], false);
+    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("sync_test"));
+    assert!(parsed["details"].get("process_id").is_none());
 }
 
 #[test]
@@ -71,7 +83,10 @@ fn test_bash_output_gets_finished_process() {
     let result = bash.execute(input, &ctx).unwrap();
 
     // 提取 process_id
-    let process_id = result.split("process_id: ").nth(1).unwrap().trim();
+    let process_id = parse_bash_result(&result)["details"]["process_id"]
+        .as_str()
+        .expect("process_id")
+        .to_string();
 
     // 等待完成后获取输出
     thread::sleep(Duration::from_millis(1000));
@@ -79,8 +94,13 @@ fn test_bash_output_gets_finished_process() {
     let output_input = json!({"process_id": process_id, "block": false});
     let output_result = output_tool.execute(output_input, &ctx).unwrap();
 
-    assert!(output_result.contains("output_test"));
-    assert!(output_result.contains("已退出"));
+    let parsed = parse_tool_result(&output_result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "bash_output");
+    assert_eq!(parsed["details"]["process_id"], process_id);
+    assert_eq!(parsed["details"]["exited"], true);
+    assert_eq!(parsed["details"]["exit_code"], 0);
+    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("output_test"));
 }
 
 #[test]
@@ -97,15 +117,22 @@ fn test_bash_output_block_mode() {
     };
     let input = json!({"command": command, "background": true});
     let result = bash.execute(input, &ctx).unwrap();
-    let process_id = result.split("process_id: ").nth(1).unwrap().trim();
+    let process_id = parse_bash_result(&result)["details"]["process_id"]
+        .as_str()
+        .expect("process_id")
+        .to_string();
 
     // 使用 block=true，会等待进程退出
     let output_input = json!({"process_id": process_id, "block": true});
     let output_result = output_tool.execute(output_input, &ctx).unwrap();
 
-    assert!(output_result.contains("block_test"));
-    assert!(output_result.contains("已退出"));
-    assert!(output_result.contains("退出码: 0"));
+    let parsed = parse_tool_result(&output_result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["process_id"], process_id);
+    assert_eq!(parsed["details"]["block"], true);
+    assert_eq!(parsed["details"]["exited"], true);
+    assert_eq!(parsed["details"]["exit_code"], 0);
+    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("block_test"));
 }
 
 #[test]
@@ -124,7 +151,10 @@ fn test_bash_kill_terminates_running_process() {
     };
     let input = json!({"command": command, "background": true});
     let result = bash.execute(input, &ctx).unwrap();
-    let process_id = result.split("process_id: ").nth(1).unwrap().trim();
+    let process_id = parse_bash_result(&result)["details"]["process_id"]
+        .as_str()
+        .expect("process_id")
+        .to_string();
 
     // 等待进程启动
     thread::sleep(Duration::from_millis(500));
@@ -132,12 +162,17 @@ fn test_bash_kill_terminates_running_process() {
     // 确认进程在运行
     let output_input = json!({"process_id": process_id});
     let output_result = output_tool.execute(output_input, &ctx).unwrap();
-    assert!(output_result.contains("运行中"));
+    let running = parse_tool_result(&output_result);
+    assert_eq!(running["ok"], true);
+    assert_eq!(running["details"]["exited"], false);
 
     // 终止进程
     let kill_input = json!({"process_id": process_id});
     let kill_result = kill_tool.execute(kill_input, &ctx).unwrap();
-    assert!(kill_result.contains("已终止进程"));
+    let killed = parse_tool_result(&kill_result);
+    assert_eq!(killed["ok"], true);
+    assert_eq!(killed["tool"], "bash_kill");
+    assert_eq!(killed["details"]["process_id"], process_id);
 
     // 等待退出
     thread::sleep(Duration::from_millis(500));
@@ -145,7 +180,9 @@ fn test_bash_kill_terminates_running_process() {
     // 确认已退出
     let output_input2 = json!({"process_id": process_id});
     let output_result2 = output_tool.execute(output_input2, &ctx).unwrap();
-    assert!(output_result2.contains("已退出"));
+    let exited = parse_tool_result(&output_result2);
+    assert_eq!(exited["ok"], true);
+    assert_eq!(exited["details"]["exited"], true);
 }
 
 #[test]

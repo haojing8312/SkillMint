@@ -32,7 +32,10 @@ fn test_delete_file() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功删除"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "file_delete");
+    assert_eq!(parsed["details"]["deleted_kind"], "file");
     assert!(!file_path.exists());
 
     // 清理
@@ -58,7 +61,9 @@ fn test_delete_empty_directory() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功删除"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["deleted_kind"], "directory");
     assert!(!empty_dir.exists());
 
     // 清理
@@ -120,7 +125,10 @@ fn test_delete_nonempty_dir_with_recursive() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("成功删除"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["deleted_kind"], "directory");
+    assert_eq!(parsed["details"]["recursive"], true);
     assert!(!dir.exists());
 
     // 清理

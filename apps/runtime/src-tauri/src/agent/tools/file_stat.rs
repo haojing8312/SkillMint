@@ -1,4 +1,5 @@
 use crate::agent::types::{Tool, ToolContext};
+use crate::agent::tools::tool_result;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
@@ -12,7 +13,7 @@ impl Tool for FileStatTool {
     }
 
     fn description(&self) -> &str {
-        "获取文件或目录的元信息，包括类型、大小、修改时间和只读状态。"
+        "获取文件或目录的元信息，包括类型、大小、修改时间和只读状态。返回结构化结果。"
     }
 
     fn input_schema(&self) -> Value {
@@ -62,13 +63,17 @@ impl Tool for FileStatTool {
         // 检查是否只读
         let readonly = metadata.permissions().readonly();
 
-        let result = json!({
-            "type": file_type,
-            "size": size,
-            "modified": modified,
-            "readonly": readonly,
-        });
-
-        Ok(serde_json::to_string_pretty(&result)?)
+        tool_result::success(
+            self.name(),
+            format!("已获取路径 {} 的元信息", path),
+            json!({
+                "path": path,
+                "absolute_path": checked.to_string_lossy().to_string(),
+                "type": file_type,
+                "size": size,
+                "modified": modified,
+                "readonly": readonly,
+            }),
+        )
     }
 }

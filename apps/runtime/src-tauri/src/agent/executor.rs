@@ -1441,25 +1441,32 @@ impl AgentExecutor {
                             }
                         }
 
-                        if !is_error {
-                            let browser_progress_snapshot =
-                                BrowserProgressSnapshot::from_tool_output(&call.name, &result);
-                            let input_signature = json_progress_signature(&call.input);
-                            let output_signature =
-                                if let Some(snapshot) = browser_progress_snapshot.as_ref() {
-                                    snapshot.progress_signature()
-                                } else {
-                                    text_progress_signature(&result)
-                                };
-                            if let Some(snapshot) = browser_progress_snapshot {
-                                latest_browser_progress = Some(snapshot);
-                            }
-                            progress_history.push(ProgressFingerprint::tool_result(
-                                call.name.clone(),
-                                input_signature,
-                                output_signature,
-                            ));
+                        let input_signature = json_progress_signature(&call.input);
+                        let browser_progress_snapshot = if is_error {
+                            None
+                        } else {
+                            BrowserProgressSnapshot::from_tool_output(&call.name, &result)
+                        };
+                        let output_signature = if let Some(snapshot) =
+                            browser_progress_snapshot.as_ref()
+                        {
+                            snapshot.progress_signature()
+                        } else {
+                            let progress_text = if is_error {
+                                format!("error:{result}")
+                            } else {
+                                result.clone()
+                            };
+                            text_progress_signature(&progress_text)
+                        };
+                        if let Some(snapshot) = browser_progress_snapshot {
+                            latest_browser_progress = Some(snapshot);
                         }
+                        progress_history.push(ProgressFingerprint::tool_result(
+                            call.name.clone(),
+                            input_signature,
+                            output_signature,
+                        ));
 
                         tool_results.push(ToolResult {
                             tool_use_id: call.id.clone(),

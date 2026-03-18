@@ -15,9 +15,63 @@ pub struct ToolFailureStreak {
     pub count: usize,
 }
 
+fn parse_structured_tool_output(output: &str) -> Option<Value> {
+    let trimmed = output.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let parsed: Value = serde_json::from_str(trimmed).ok()?;
+    if parsed.get("summary").is_some()
+        || parsed.get("details").is_some()
+        || parsed.get("error_code").is_some()
+    {
+        Some(parsed)
+    } else {
+        None
+    }
+}
+
+fn structured_tool_summary(output: &str) -> Option<String> {
+    let parsed = parse_structured_tool_output(output)?;
+    parsed
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn structured_tool_error_parts(output: &str) -> Option<(String, String)> {
+    let parsed = parse_structured_tool_output(output)?;
+    let code = parsed
+        .get("error_code")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("SKILL_EXECUTION_ERROR")
+        .to_string();
+    let message = parsed
+        .get("error_message")
+        .and_then(Value::as_str)
+        .or_else(|| parsed.get("summary").and_then(Value::as_str))
+        .unwrap_or(output)
+        .to_string();
+    Some((code, message))
+}
+
 pub fn truncate_tool_output(output: &str, max_chars: usize) -> String {
     if output.len() <= max_chars {
         return output.to_string();
+    }
+    if let Some(mut parsed) = parse_structured_tool_output(output) {
+        parsed["details"] = json!({
+            "truncated": true,
+            "note": format!("原始输出共 {} 字符，已为上下文压缩 details", output.len()),
+        });
+        return serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| {
+            format!(
+                "{}\n\n[输出已截断，共 {} 字符，已保留结构化摘要]",
+                structured_tool_summary(output).unwrap_or_else(|| "[结构化工具结果]".to_string()),
+                output.len()
+            )
+        });
     }
     let truncated: String = output.chars().take(max_chars).collect();
     format!(
@@ -45,14 +99,17 @@ pub fn update_tool_failure_streak(
     input: &Value,
     error: &str,
 ) -> Option<String> {
+    let normalized_error = structured_tool_error_parts(error)
+        .map(|(_, msg)| msg)
+        .unwrap_or_else(|| error.to_string());
     let signature = format!("{}:{}", tool_name, stable_tool_input_signature(input));
     match streak {
-        Some(current) if current.signature == signature && current.error == error => {
+        Some(current) if current.signature == signature && current.error == normalized_error => {
             current.count += 1;
             if current.count >= REPEATED_TOOL_FAILURE_THRESHOLD {
                 Some(format!(
                     "检测到同一工具重复调用且持续失败，已停止自动重试。工具: {}，错误: {}",
-                    tool_name, error
+                    tool_name, normalized_error
                 ))
             } else {
                 None
@@ -61,7 +118,7 @@ pub fn update_tool_failure_streak(
         _ => {
             *streak = Some(ToolFailureStreak {
                 signature,
-                error: error.to_string(),
+                error: normalized_error,
                 count: 1,
             });
             None
@@ -121,10 +178,14 @@ pub fn micro_compact(messages: &[Value], keep_recent: usize) -> Vec<Value> {
                         arr.iter()
                             .map(|v| {
                                 if v["type"].as_str() == Some("tool_result") {
+                                    let content = v["content"].as_str().unwrap_or_default();
+                                    let compact_content = structured_tool_summary(content)
+                                        .map(|summary| format!("[已执行] {}", summary))
+                                        .unwrap_or_else(|| "[已执行]".to_string());
                                     json!({
                                         "type": "tool_result",
                                         "tool_use_id": v["tool_use_id"],
-                                        "content": "[已执行]"
+                                        "content": compact_content
                                     })
                                 } else {
                                     v.clone()
@@ -193,6 +254,9 @@ pub fn trim_messages(messages: &[Value], token_budget: usize) -> Vec<Value> {
 }
 
 pub fn split_error_code_and_message(text: &str) -> (String, String) {
+    if let Some((code, msg)) = structured_tool_error_parts(text) {
+        return (code, msg);
+    }
     if let Some((code, msg)) = text.split_once(':') {
         let code = code.trim();
         if !code.is_empty()

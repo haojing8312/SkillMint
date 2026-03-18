@@ -58,6 +58,19 @@ fn is_mock_repeat_read_file_loop_base_url(base_url: &str) -> bool {
         .eq_ignore_ascii_case("http://mock-repeat-read-file-loop")
 }
 
+fn is_mock_list_dir_with_interleaved_move_failures_base_url(base_url: &str) -> bool {
+    base_url
+        .trim()
+        .eq_ignore_ascii_case("http://mock-list-dir-interleaved-move-failures")
+}
+
+fn count_tool_messages(messages: &[Value]) -> usize {
+    messages
+        .iter()
+        .filter(|message| message["role"].as_str() == Some("tool"))
+        .count()
+}
+
 fn parse_last_user_tool_input(messages: &[Value]) -> Result<Value> {
     let last_user_content = messages
         .iter()
@@ -415,6 +428,31 @@ pub async fn chat_stream_with_tools(
             input: json!({ "path": "loop.txt" }),
         }]));
     }
+    if is_mock_list_dir_with_interleaved_move_failures_base_url(base_url) {
+        let tool_count = count_tool_messages(&messages);
+        if tool_count >= 12 {
+            let final_text = "已识别到连续失败，需要人工确认文件名后再继续。";
+            on_token(StreamDelta::Text(final_text.to_string()));
+            return Ok(LLMResponse::Text(final_text.to_string()));
+        }
+
+        if tool_count % 2 == 0 {
+            return Ok(LLMResponse::ToolCalls(vec![ToolCall {
+                id: format!("mock-list-dir-{tool_count}"),
+                name: "list_dir".to_string(),
+                input: json!({ "path": "." }),
+            }]));
+        }
+
+        return Ok(LLMResponse::ToolCalls(vec![ToolCall {
+            id: format!("mock-file-move-{tool_count}"),
+            name: "file_move".to_string(),
+            input: json!({
+                "source": format!("missing-{tool_count}.txt"),
+                "destination": format!("dest-{tool_count}.txt"),
+            }),
+        }]));
+    }
 
     let client = build_http_client()?;
 
@@ -479,6 +517,7 @@ pub async fn test_connection(base_url: &str, api_key: &str, model: &str) -> Resu
         || is_mock_repeat_invalid_write_file_base_url(base_url)
         || is_mock_write_file_from_user_path_base_url(base_url)
         || is_mock_repeat_read_file_loop_base_url(base_url)
+        || is_mock_list_dir_with_interleaved_move_failures_base_url(base_url)
     {
         return Ok(true);
     }

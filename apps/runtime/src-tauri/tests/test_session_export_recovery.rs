@@ -205,6 +205,62 @@ async fn export_session_includes_tool_call_outputs_from_structured_assistant_con
 }
 
 #[tokio::test]
+async fn export_session_renders_structured_tool_outputs_readably() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    sqlx::query(
+        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("sess-structured-tool-output")
+    .bind("builtin-general")
+    .bind("结构化工具输出导出测试")
+    .bind("2026-03-11T00:21:00Z")
+    .bind("model-1")
+    .bind("standard")
+    .bind("")
+    .bind("")
+    .bind("general")
+    .bind("")
+    .execute(&pool)
+    .await
+    .expect("insert session");
+
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("msg-user-structured-tool-output")
+    .bind("sess-structured-tool-output")
+    .bind("user")
+    .bind("请继续执行")
+    .bind("2026-03-11T00:21:01Z")
+    .execute(&pool)
+    .await
+    .expect("insert user message");
+
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("msg-assistant-structured-tool-output")
+    .bind("sess-structured-tool-output")
+    .bind("assistant")
+    .bind(
+        r##"{"text":"我来创建 brief 文件","items":[{"type":"tool_call","toolCall":{"id":"call-1","name":"write_file","input":{},"status":"completed","output":"{\"ok\":true,\"tool\":\"write_file\",\"summary\":\"成功写入 7 字节到 brief.md\",\"details\":{\"path\":\"C:\\Users\\36443\\WorkClaw\\workspace\\brief.md\",\"bytes_written\":7}}"}}]}"##,
+    )
+    .bind("2026-03-11T00:21:02Z")
+    .execute(&pool)
+    .await
+    .expect("insert assistant message");
+
+    let markdown = export_session_markdown_with_pool(&pool, "sess-structured-tool-output", None)
+        .await
+        .expect("export markdown");
+
+    assert!(markdown.contains("成功写入 7 字节到 brief.md"));
+    assert!(markdown.contains("brief.md"));
+}
+
+#[tokio::test]
 async fn export_session_includes_tool_events_linked_to_assistant_run() {
     let (pool, _tmp) = helpers::setup_test_db().await;
     let journal_dir = tempfile::tempdir().expect("create journal dir");
@@ -438,4 +494,115 @@ async fn export_session_recovery_includes_tool_events_for_failed_run_without_ass
     assert!(markdown.contains("write_file"));
     assert!(markdown.contains("brief.md"));
     assert!(markdown.contains("工具执行错误"));
+}
+
+#[tokio::test]
+async fn export_session_recovery_renders_structured_tool_event_outputs_readably() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    let journal_dir = tempfile::tempdir().expect("create journal dir");
+    let journal = SessionJournalStore::new(journal_dir.path().to_path_buf());
+
+    sqlx::query(
+        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("sess-structured-run-events")
+    .bind("builtin-general")
+    .bind("结构化运行事件导出测试")
+    .bind("2026-03-11T00:41:00Z")
+    .bind("model-1")
+    .bind("standard")
+    .bind("")
+    .bind("")
+    .bind("general")
+    .bind("")
+    .execute(&pool)
+    .await
+    .expect("insert session");
+
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("msg-user-structured-run-events")
+    .bind("sess-structured-run-events")
+    .bind("user")
+    .bind("继续执行")
+    .bind("2026-03-11T00:41:01Z")
+    .execute(&pool)
+    .await
+    .expect("insert user message");
+
+    append_session_run_event_with_pool(
+        &pool,
+        &journal,
+        "sess-structured-run-events",
+        SessionRunEvent::RunStarted {
+            run_id: "run-structured-tool-events".into(),
+            user_message_id: "msg-user-structured-run-events".into(),
+        },
+    )
+    .await
+    .expect("append run started");
+
+    append_session_run_event_with_pool(
+        &pool,
+        &journal,
+        "sess-structured-run-events",
+        SessionRunEvent::ToolStarted {
+            run_id: "run-structured-tool-events".into(),
+            tool_name: "write_file".into(),
+            call_id: "call-1".into(),
+            input: json!({}),
+        },
+    )
+    .await
+    .expect("append tool started");
+
+    append_session_run_event_with_pool(
+        &pool,
+        &journal,
+        "sess-structured-run-events",
+        SessionRunEvent::ToolCompleted {
+            run_id: "run-structured-tool-events".into(),
+            tool_name: "write_file".into(),
+            call_id: "call-1".into(),
+            input: json!({}),
+            output: json!({
+                "ok": false,
+                "tool": "write_file",
+                "summary": "写入失败",
+                "error_code": "MISSING_PATH",
+                "error_message": "缺少 path 参数",
+                "details": {
+                    "path": "C:\\Users\\36443\\WorkClaw\\workspace\\brief.md"
+                }
+            })
+            .to_string(),
+            is_error: true,
+        },
+    )
+    .await
+    .expect("append tool completed");
+
+    append_session_run_event_with_pool(
+        &pool,
+        &journal,
+        "sess-structured-run-events",
+        SessionRunEvent::RunFailed {
+            run_id: "run-structured-tool-events".into(),
+            error_kind: "tool_error".into(),
+            error_message: "write_file 执行失败".into(),
+        },
+    )
+    .await
+    .expect("append run failed");
+
+    let markdown =
+        export_session_markdown_with_pool(&pool, "sess-structured-run-events", Some(&journal))
+            .await
+            .expect("export markdown");
+
+    assert!(markdown.contains("写入失败"));
+    assert!(markdown.contains("缺少 path 参数"));
+    assert!(markdown.contains("brief.md"));
 }

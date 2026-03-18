@@ -1,4 +1,5 @@
 use crate::agent::types::{Tool, ToolContext};
+use crate::agent::tools::tool_result;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
@@ -10,7 +11,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "读取文件内容。返回文件的完整文本内容。"
+        "读取文件内容。返回结构化结果，其中 details.content 包含完整文本。"
     }
 
     fn input_schema(&self) -> Value {
@@ -34,7 +35,18 @@ impl Tool for ReadFileTool {
         let checked = ctx.check_path(path)?;
         let content =
             std::fs::read_to_string(&checked).map_err(|e| anyhow!("读取文件失败: {}", e))?;
+        let line_count = content.lines().count().max(1);
 
-        Ok(content)
+        tool_result::success(
+            self.name(),
+            format!("已读取文件 {}", path),
+            json!({
+                "path": path,
+                "absolute_path": checked.to_string_lossy().to_string(),
+                "content": content,
+                "line_count": line_count,
+                "truncated": false,
+            }),
+        )
     }
 }

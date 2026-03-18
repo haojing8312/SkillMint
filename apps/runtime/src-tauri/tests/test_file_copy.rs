@@ -21,7 +21,11 @@ fn test_copy_file() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("已复制文件"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "file_copy");
+    assert_eq!(parsed["details"]["kind"], "file");
+    assert_eq!(parsed["details"]["files_copied"], 1);
 
     // 源文件仍然存在
     assert!(src.exists(), "源文件应仍然存在");
@@ -52,8 +56,11 @@ fn test_copy_directory_recursive() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("已复制目录"));
-    assert!(result.contains("2 个文件"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "file_copy");
+    assert_eq!(parsed["details"]["kind"], "directory");
+    assert_eq!(parsed["details"]["files_copied"], 2);
 
     // 源目录仍然存在
     assert!(src_dir.exists(), "源目录应仍然存在");
@@ -101,7 +108,10 @@ fn test_copy_creates_parent_dirs() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("已复制文件"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["kind"], "file");
+    assert_eq!(parsed["details"]["files_copied"], 1);
     assert_eq!(fs::read_to_string(&dst).unwrap(), "nested copy");
 }
 

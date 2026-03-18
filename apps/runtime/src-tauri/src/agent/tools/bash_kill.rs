@@ -1,4 +1,5 @@
 use crate::agent::tools::process_manager::ProcessManager;
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -21,7 +22,7 @@ impl Tool for BashKillTool {
     }
 
     fn description(&self) -> &str {
-        "终止指定的后台进程。"
+        "终止指定的后台进程。返回结构化结果，其中 details 包含 process_id。"
     }
 
     fn input_schema(&self) -> Value {
@@ -44,6 +45,12 @@ impl Tool for BashKillTool {
 
         self.process_manager.kill(process_id)?;
 
-        Ok(format!("已终止进程 {}", process_id))
+        tool_result::success(
+            self.name(),
+            format!("已终止进程 {}", process_id),
+            json!({
+                "process_id": process_id,
+            }),
+        )
     }
 }

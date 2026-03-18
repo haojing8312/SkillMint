@@ -1,4 +1,5 @@
 use crate::agent::types::{Tool, ToolContext};
+use crate::agent::tools::tool_result;
 use anyhow::{anyhow, Result};
 use regex::RegexBuilder;
 use serde_json::{json, Value};
@@ -15,7 +16,7 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "在文件或目录中搜索文本模式（正则表达式）。支持目录递归搜索。"
+        "在文件或目录中搜索文本模式（正则表达式）。返回结构化匹配结果。支持目录递归搜索。"
     }
 
     fn input_schema(&self) -> Value {
@@ -64,13 +65,13 @@ impl Tool for GrepTool {
 
         if metadata.is_file() {
             // 单文件搜索
-            search_file(&checked, &re)
+            search_file(&checked, path, &re)
         } else if metadata.is_dir() {
             // 目录递归搜索
             let file_glob = file_pattern.map(|p| {
                 glob::Pattern::new(p).unwrap_or_else(|_| glob::Pattern::new("*").unwrap())
             });
-            search_directory(&checked, &re, file_glob.as_ref())
+            search_directory(&checked, path, &re, file_glob.as_ref())
         } else {
             Err(anyhow!("路径既不是文件也不是目录: {}", path))
         }
@@ -78,40 +79,46 @@ impl Tool for GrepTool {
 }
 
 /// 搜索单个文件
-fn search_file(path: &Path, re: &regex::Regex) -> Result<String> {
+fn search_file(path: &Path, original_path: &str, re: &regex::Regex) -> Result<String> {
     let content = std::fs::read_to_string(path).map_err(|e| anyhow!("读取文件失败: {}", e))?;
 
-    let matches: Vec<String> = content
+    let matches: Vec<Value> = content
         .lines()
         .enumerate()
         .filter(|(_, line)| re.is_match(line))
-        .map(|(i, line)| format!("{}:{}", i + 1, line))
+        .map(|(i, line)| {
+            json!({
+                "path": original_path,
+                "line": i + 1,
+                "text": line,
+            })
+        })
         .collect();
 
-    Ok(format!(
-        "找到 {} 处匹配:\n{}",
-        matches.len(),
-        matches.join("\n")
-    ))
+    tool_result::success(
+        "grep",
+        format!("找到 {} 处匹配", matches.len()),
+        json!({
+            "searched_path": original_path,
+            "files_searched": 1,
+            "total_matches": matches.len(),
+            "truncated": false,
+            "matches": matches,
+        }),
+    )
 }
 
 /// 递归搜索目录中的所有文件
 fn search_directory(
     dir: &Path,
+    original_path: &str,
     re: &regex::Regex,
     file_pattern: Option<&glob::Pattern>,
 ) -> Result<String> {
-    let mut all_matches: Vec<String> = Vec::new();
+    let mut all_matches: Vec<Value> = Vec::new();
     let mut files_searched = 0u32;
 
     walk_dir(dir, re, file_pattern, &mut all_matches, &mut files_searched)?;
-
-    if all_matches.is_empty() {
-        return Ok(format!(
-            "在 {} 个文件中搜索完毕，未找到匹配。",
-            files_searched
-        ));
-    }
 
     let total = all_matches.len();
     let truncated = total > MAX_RESULT_LINES;
@@ -119,21 +126,17 @@ fn search_directory(
         all_matches.truncate(MAX_RESULT_LINES);
     }
 
-    let mut result = format!(
-        "在 {} 个文件中找到 {} 处匹配:\n{}",
-        files_searched,
-        total,
-        all_matches.join("\n")
-    );
-
-    if truncated {
-        result.push_str(&format!(
-            "\n\n[结果已截断，共 {} 处匹配，已显示前 {} 处]",
-            total, MAX_RESULT_LINES
-        ));
-    }
-
-    Ok(result)
+    tool_result::success(
+        "grep",
+        format!("在 {} 个文件中找到 {} 处匹配", files_searched, total),
+        json!({
+            "searched_path": original_path,
+            "files_searched": files_searched,
+            "total_matches": total,
+            "truncated": truncated,
+            "matches": all_matches,
+        }),
+    )
 }
 
 /// 递归遍历目录
@@ -141,7 +144,7 @@ fn walk_dir(
     dir: &Path,
     re: &regex::Regex,
     file_pattern: Option<&glob::Pattern>,
-    results: &mut Vec<String>,
+    results: &mut Vec<Value>,
     files_count: &mut u32,
 ) -> Result<()> {
     let entries = std::fs::read_dir(dir).map_err(|e| anyhow!("读取目录失败: {}", e))?;
@@ -175,7 +178,11 @@ fn walk_dir(
 
                 for (i, line) in content.lines().enumerate() {
                     if re.is_match(line) {
-                        results.push(format!("{}:{}:{}", relative, i + 1, line));
+                        results.push(json!({
+                            "path": relative.to_string(),
+                            "line": i + 1,
+                            "text": line,
+                        }));
                     }
                 }
             }

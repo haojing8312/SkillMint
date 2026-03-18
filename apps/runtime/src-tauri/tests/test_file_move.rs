@@ -18,7 +18,13 @@ fn test_move_file() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("已移动"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "file_move");
+    assert!(parsed["summary"].as_str().unwrap().contains("已移动"));
+    assert_eq!(parsed["details"]["source"], src);
+    assert_eq!(parsed["details"]["destination"], dst);
+    assert_eq!(parsed["details"]["kind"], "file");
 
     // 验证源文件已不存在
     assert!(!std::path::Path::new(src).exists());
@@ -48,7 +54,10 @@ fn test_move_directory_with_contents() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("已移动"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["kind"], "dir");
+    assert!(parsed["summary"].as_str().unwrap().contains("已移动"));
 
     // 验证源目录已不存在
     assert!(!std::path::Path::new(src_dir).exists());
@@ -97,7 +106,10 @@ fn test_move_creates_parent_dirs() {
     });
 
     let result = tool.execute(input, &ctx).unwrap();
-    assert!(result.contains("已移动"));
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["details"]["destination"], dst);
+    assert!(parsed["summary"].as_str().unwrap().contains("已移动"));
 
     // 验证目标文件内容
     let content = fs::read_to_string(dst).unwrap();

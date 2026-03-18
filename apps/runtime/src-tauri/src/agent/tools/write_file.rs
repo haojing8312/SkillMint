@@ -1,3 +1,4 @@
+use crate::agent::tools::tool_result;
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ impl Tool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "写入内容到文件。如果文件不存在会创建，已存在会覆盖。"
+        "写入内容到文件。如果文件不存在会创建，已存在会覆盖。返回结构化结果，其中 details 包含路径和写入字节数。"
     }
 
     fn input_schema(&self) -> Value {
@@ -47,6 +48,14 @@ impl Tool for WriteFileTool {
 
         std::fs::write(&checked, content).map_err(|e| anyhow!("写入文件失败: {}", e))?;
 
-        Ok(format!("成功写入 {} 字节到 {}", content.len(), path))
+        tool_result::success(
+            self.name(),
+            format!("成功写入 {} 字节到 {}", content.len(), path),
+            json!({
+                "path": path,
+                "absolute_path": checked.to_string_lossy().to_string(),
+                "bytes_written": content.len(),
+            }),
+        )
     }
 }

@@ -894,21 +894,32 @@ fn render_export_tool_call(tool_call: Option<&Value>) -> Option<String> {
 
     let output = tool_call["output"].as_str().unwrap_or("").trim();
     let status = tool_call["status"].as_str().unwrap_or("").trim();
+    let structured_output = parse_export_tool_output(output);
 
     let mut lines = vec![format!("**工具调用** `{}`", name)];
-    if let Some(path) = read_tool_call_path(&input) {
+    if let Some(path) = read_tool_call_path(&input, structured_output.as_ref()) {
         lines.push(format!("- 路径：`{}`", path));
     }
     if !status.is_empty() {
         lines.push(format!(
             "- 状态：{}",
-            render_export_tool_status(status, output)
+            render_export_tool_status(status, output, structured_output.as_ref())
         ));
     }
+    if let Some(summary) = structured_output
+        .as_ref()
+        .and_then(|value| value["summary"].as_str())
+        .filter(|value| !value.trim().is_empty())
+    {
+        lines.push(format!("- 摘要：{}", summary.trim()));
+    }
     if !output.is_empty() {
-        lines.push("```text".to_string());
-        lines.push(output.to_string());
-        lines.push("```".to_string());
+        if let Some(rendered_output) = render_export_tool_output(structured_output.as_ref(), output)
+        {
+            lines.push("```text".to_string());
+            lines.push(rendered_output);
+            lines.push("```".to_string());
+        }
     }
 
     Some(lines.join("\n"))
@@ -924,14 +935,30 @@ fn render_export_tool_call_entry(tool_call: &ExportToolCall) -> Option<String> {
     render_export_tool_call(Some(&tool_call_value))
 }
 
-fn read_tool_call_path(input: &Value) -> Option<&str> {
+fn read_tool_call_path<'a>(input: &'a Value, structured_output: Option<&'a Value>) -> Option<&'a str> {
     input["path"]
         .as_str()
         .or_else(|| input["file_path"].as_str())
+        .or_else(|| {
+            structured_output
+                .and_then(|value| value.get("details"))
+                .and_then(|details| details.get("path"))
+                .and_then(Value::as_str)
+        })
         .filter(|value| !value.trim().is_empty())
 }
 
-fn render_export_tool_status(status: &str, output: &str) -> &'static str {
+fn render_export_tool_status(
+    status: &str,
+    output: &str,
+    structured_output: Option<&Value>,
+) -> &'static str {
+    if structured_output
+        .and_then(|value| value["ok"].as_bool())
+        .is_some_and(|ok| !ok)
+    {
+        return "错误";
+    }
     if status.eq_ignore_ascii_case("error")
         || output.contains("工具执行错误")
         || output.contains("工具参数错误")
@@ -943,6 +970,79 @@ fn render_export_tool_status(status: &str, output: &str) -> &'static str {
     } else {
         "已完成"
     }
+}
+
+fn parse_export_tool_output(output: &str) -> Option<Value> {
+    let trimmed = output.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let parsed: Value = serde_json::from_str(trimmed).ok()?;
+    if parsed.get("summary").is_some()
+        || parsed.get("details").is_some()
+        || parsed.get("error_code").is_some()
+    {
+        Some(parsed)
+    } else {
+        None
+    }
+}
+
+fn render_export_tool_output(structured_output: Option<&Value>, raw_output: &str) -> Option<String> {
+    if let Some(value) = structured_output {
+        let summary = value["summary"].as_str().unwrap_or("").trim();
+        let error_message = value["error_message"].as_str().unwrap_or("").trim();
+        let mut parts = Vec::new();
+        if !summary.is_empty() {
+            parts.push(summary.to_string());
+        }
+        if !error_message.is_empty() && error_message != summary {
+            parts.push(error_message.to_string());
+        }
+        if let Some(details) = value.get("details") {
+            let compact_details = compact_export_tool_details(details);
+            if !compact_details.is_empty() {
+                parts.extend(compact_details);
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+
+    let trimmed = raw_output.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn compact_export_tool_details(details: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(path) = details.get("path").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+        lines.push(format!("path: {}", path.trim()));
+    }
+    if let Some(destination) = details
+        .get("destination")
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+    {
+        lines.push(format!("destination: {}", destination.trim()));
+    }
+    if let Some(bytes_written) = details.get("bytes_written").and_then(Value::as_u64) {
+        lines.push(format!("bytes_written: {}", bytes_written));
+    }
+    if let Some(exit_code) = details.get("exit_code").and_then(Value::as_i64) {
+        lines.push(format!("exit_code: {}", exit_code));
+    }
+    if let Some(stdout) = details.get("stdout").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+        lines.push(format!("stdout: {}", stdout.trim()));
+    }
+    if let Some(stderr) = details.get("stderr").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+        lines.push(format!("stderr: {}", stderr.trim()));
+    }
+    lines
 }
 
 fn render_recovered_run_sections(
