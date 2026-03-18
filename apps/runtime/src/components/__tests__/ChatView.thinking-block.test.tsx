@@ -6,6 +6,7 @@ import { resetChatStreamEventSubscriptionsForTest } from "../../lib/chat-stream-
 const invokeMock = vi.fn<(command: string, payload?: unknown) => Promise<unknown>>();
 const listeners = new Map<string, Array<(event: { payload: any }) => void>>();
 let messagesResponse: any[] = [];
+let scrollIntoViewMock: ReturnType<typeof vi.fn>;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, payload?: unknown) => invokeMock(command, payload),
@@ -117,7 +118,12 @@ function renderChatViewWithModels(models: Array<{
 
 describe("ChatView thinking block", () => {
   beforeEach(() => {
+    scrollIntoViewMock = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoViewMock,
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
       value: vi.fn(),
     });
@@ -137,6 +143,25 @@ describe("ChatView thinking block", () => {
   afterEach(() => {
     cleanup();
   });
+
+  function setScrollMetrics(
+    element: HTMLElement,
+    metrics: { scrollTop: number; clientHeight: number; scrollHeight: number },
+  ) {
+    Object.defineProperty(element, "scrollTop", {
+      configurable: true,
+      value: metrics.scrollTop,
+      writable: true,
+    });
+    Object.defineProperty(element, "clientHeight", {
+      configurable: true,
+      value: metrics.clientHeight,
+    });
+    Object.defineProperty(element, "scrollHeight", {
+      configurable: true,
+      value: metrics.scrollHeight,
+    });
+  }
 
   test("shows thinking state immediately but hides expand affordance before reasoning arrives", async () => {
     renderChatView();
@@ -194,6 +219,144 @@ describe("ChatView thinking block", () => {
     fireEvent.click(screen.getByTestId("thinking-block-toggle"));
 
     expect(screen.getByText("先分析需求，再组织输出。")).toBeInTheDocument();
+  });
+
+  test("pauses auto-follow after the user scrolls away and shows a jump-to-latest arrow", async () => {
+    renderChatView("sess-scroll-lock");
+
+    const scrollRegion = await screen.findByTestId("chat-scroll-region");
+    setScrollMetrics(scrollRegion, {
+      scrollTop: 120,
+      clientHeight: 400,
+      scrollHeight: 1000,
+    });
+
+    fireEvent.scroll(scrollRegion);
+    scrollIntoViewMock.mockClear();
+
+    act(() => {
+      emit("stream-token", {
+        session_id: "sess-scroll-lock",
+        token: "新的流式内容",
+        done: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-scroll-jump-button")).toHaveAttribute("aria-label", "跳转到底部");
+    });
+
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
+  });
+
+  test("switches the floating arrow between top and bottom jumps", async () => {
+    renderChatView("sess-scroll-jump");
+
+    const scrollRegion = await screen.findByTestId("chat-scroll-region");
+    const scrollToMock = vi.fn();
+    Object.defineProperty(scrollRegion, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    setScrollMetrics(scrollRegion, {
+      scrollTop: 600,
+      clientHeight: 400,
+      scrollHeight: 1000,
+    });
+    fireEvent.scroll(scrollRegion);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-scroll-jump-button")).toHaveAttribute("aria-label", "跳转到顶部");
+    });
+    expect(screen.getByTestId("chat-scroll-jump-button")).toHaveAttribute("title", "返回顶部");
+    expect(screen.getByTestId("chat-scroll-jump-button")).toHaveClass("h-10", "w-10", "bg-white/78");
+
+    fireEvent.click(screen.getByTestId("chat-scroll-jump-button"));
+    await waitFor(() => {
+      expect(scrollToMock).toHaveBeenCalled();
+    });
+    expect(scrollToMock.mock.calls[0]?.[0]).toMatchObject({ top: expect.any(Number) });
+    expect(scrollToMock.mock.calls[0]?.[0]?.top).not.toBe(0);
+
+    setScrollMetrics(scrollRegion, {
+      scrollTop: 100,
+      clientHeight: 400,
+      scrollHeight: 1000,
+    });
+    fireEvent.scroll(scrollRegion);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-scroll-jump-button")).toHaveAttribute("aria-label", "跳转到底部");
+    });
+    expect(screen.getByTestId("chat-scroll-jump-button")).toHaveAttribute("title", "回到底部并继续跟随");
+
+    fireEvent.click(screen.getByTestId("chat-scroll-jump-button"));
+    await waitFor(() => {
+      expect(scrollToMock.mock.calls.length).toBeGreaterThan(1);
+    });
+  });
+
+  test("sending a new message restores bottom-follow even when browsing history", async () => {
+    renderChatView("sess-send-scroll");
+
+    const scrollRegion = await screen.findByTestId("chat-scroll-region");
+    const scrollToMock = vi.fn();
+    Object.defineProperty(scrollRegion, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    setScrollMetrics(scrollRegion, {
+      scrollTop: 120,
+      clientHeight: 400,
+      scrollHeight: 1000,
+    });
+    fireEvent.scroll(scrollRegion);
+
+    fireEvent.change(screen.getByPlaceholderText("输入消息，Shift+Enter 换行..."), {
+      target: { value: "继续处理这个任务" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", expect.anything());
+      expect(scrollToMock).toHaveBeenCalled();
+    });
+  });
+
+  test("keeps bottom-follow active when streaming resumes after clicking the down arrow", async () => {
+    renderChatView("sess-resume-follow");
+
+    const scrollRegion = await screen.findByTestId("chat-scroll-region");
+    const scrollToMock = vi.fn();
+    Object.defineProperty(scrollRegion, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    setScrollMetrics(scrollRegion, {
+      scrollTop: 120,
+      clientHeight: 400,
+      scrollHeight: 1000,
+    });
+    fireEvent.scroll(scrollRegion);
+    scrollIntoViewMock.mockClear();
+
+    fireEvent.click(screen.getByTestId("chat-scroll-jump-button"));
+
+    act(() => {
+      emit("stream-token", {
+        session_id: "sess-resume-follow",
+        token: "继续往下输出",
+        done: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(scrollToMock).toHaveBeenCalled();
+      expect(scrollIntoViewMock).toHaveBeenCalled();
+    });
   });
 
   test("does not duplicate early stream content in StrictMode", async () => {

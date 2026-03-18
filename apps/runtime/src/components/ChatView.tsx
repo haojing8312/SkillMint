@@ -105,6 +105,7 @@ function clearSessionDraft(sessionId: string) {
 
 const CONTINUE_MESSAGE_TEXT = "继续";
 const CONTINUE_BUDGET_INCREMENT = 100;
+const CHAT_SCROLL_EDGE_THRESHOLD = 48;
 
 interface Props {
   skill: SkillManifest;
@@ -119,7 +120,9 @@ interface Props {
   onSessionUpdate?: () => void;
   onSessionBlockingStateChange?: (update: { blocking: boolean; status?: string | null }) => void;
   initialMessage?: string;
+  initialAttachments?: PendingAttachment[];
   onInitialMessageConsumed?: () => void;
+  onInitialAttachmentsConsumed?: () => void;
   installedSkillIds?: string[];
   onSkillInstalled?: (skillId: string) => Promise<void> | void;
   suppressAskUserPrompt?: boolean;
@@ -197,7 +200,9 @@ export function ChatView({
   onSessionUpdate,
   onSessionBlockingStateChange,
   initialMessage,
+  initialAttachments = [],
   onInitialMessageConsumed,
+  onInitialAttachmentsConsumed,
   installedSkillIds = [],
   onSkillInstalled,
   suppressAskUserPrompt = false,
@@ -266,6 +271,9 @@ export function ChatView({
   const [highlightedGroupRunStepId, setHighlightedGroupRunStepId] = useState<string | null>(null);
   const [highlightedGroupRunStepEventId, setHighlightedGroupRunStepEventId] = useState<string | null>(null);
   const [showDelegationHistory, setShowDelegationHistory] = useState(false);
+  const [isNearTop, setIsNearTop] = useState(true);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [hasScrollableContent, setHasScrollableContent] = useState(false);
   const [delegationCards, setDelegationCards] = useState<
     Array<{
       id: string;
@@ -276,6 +284,10 @@ export function ChatView({
     }>
   >([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRegionRef = useRef<HTMLDivElement>(null);
+  const autoFollowScrollRef = useRef(true);
+  const scrollAnimationFrameRef = useRef<number | null>(null);
+  const scrollAnimationTargetRef = useRef<"top" | "bottom" | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingApprovalsRef = useRef<PendingApprovalView[]>([]);
   const resolvingApprovalIdRef = useRef<string | null>(null);
@@ -287,6 +299,7 @@ export function ChatView({
   const lastHandledGroupRunStepFocusNonceRef = useRef<number | null>(null);
   const groupRunStepElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const groupRunStepEventElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const seededInitialAttachmentsSessionRef = useRef<string | null>(null);
 
   // File Upload: 附件状态
   const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([]);
@@ -721,12 +734,145 @@ export function ChatView({
   }, [input]);
 
   useEffect(() => {
+    if (initialAttachments.length === 0) {
+      return;
+    }
+    if (seededInitialAttachmentsSessionRef.current === sessionId) {
+      return;
+    }
+
+    seededInitialAttachmentsSessionRef.current = sessionId;
+    setAttachedFiles(initialAttachments);
+
+    if (!initialMessage?.trim()) {
+      onInitialAttachmentsConsumed?.();
+    }
+  }, [initialAttachments, initialMessage, onInitialAttachmentsConsumed, sessionId]);
+
+  useEffect(() => {
     syncComposerHeight();
   }, [input, sessionId]);
 
+  const syncScrollMetrics = (element: HTMLDivElement | null) => {
+    if (!element) {
+      return;
+    }
+    const distanceFromBottom = Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
+    const nextNearBottom = distanceFromBottom <= CHAT_SCROLL_EDGE_THRESHOLD;
+    const nextNearTop = element.scrollTop <= CHAT_SCROLL_EDGE_THRESHOLD;
+    const keepFollowingBottom = scrollAnimationTargetRef.current === "bottom";
+    setIsNearBottom(nextNearBottom);
+    setIsNearTop(nextNearTop);
+    setHasScrollableContent(element.scrollHeight > element.clientHeight + 4);
+    autoFollowScrollRef.current = keepFollowingBottom || nextNearBottom;
+  };
+
+  const stopScrollAnimation = () => {
+    if (scrollAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(scrollAnimationFrameRef.current);
+      scrollAnimationFrameRef.current = null;
+    }
+    scrollAnimationTargetRef.current = null;
+  };
+
+  const animateScrollRegionTo = (targetTop: number, durationMs = 1000, target: "top" | "bottom" | null = null) => {
+    const scrollRegion = scrollRegionRef.current;
+    if (!scrollRegion) {
+      return;
+    }
+
+    stopScrollAnimation();
+    scrollAnimationTargetRef.current = target;
+
+    const maxTop = Math.max(0, scrollRegion.scrollHeight - scrollRegion.clientHeight);
+    const startTop = scrollRegion.scrollTop;
+    const clampedTargetTop = Math.max(0, Math.min(targetTop, maxTop));
+    const distance = clampedTargetTop - startTop;
+
+    if (Math.abs(distance) < 1) {
+      scrollRegion.scrollTo({ top: clampedTargetTop });
+      syncScrollMetrics(scrollRegion);
+      if (target !== "bottom") {
+        scrollAnimationTargetRef.current = null;
+      }
+      return;
+    }
+
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+    const initialTop = startTop + distance * 0.22;
+    scrollRegion.scrollTo({ top: initialTop });
+    syncScrollMetrics(scrollRegion);
+    let startTime: number | null = null;
+
+    const step = (timestamp: number) => {
+      if (startTime === null) {
+        startTime = timestamp;
+      }
+      const progress = Math.min((timestamp - startTime) / durationMs, 1);
+      const nextTop = startTop + distance * easeOutCubic(progress);
+      scrollRegion.scrollTo({ top: nextTop });
+      syncScrollMetrics(scrollRegion);
+
+      if (progress < 1) {
+        scrollAnimationFrameRef.current = requestAnimationFrame(step);
+        return;
+      }
+
+      scrollRegion.scrollTo({ top: clampedTargetTop });
+      syncScrollMetrics(scrollRegion);
+      scrollAnimationFrameRef.current = null;
+      if (target !== "bottom") {
+        scrollAnimationTargetRef.current = null;
+      }
+    };
+
+    scrollAnimationFrameRef.current = requestAnimationFrame(step);
+  };
+
+  const handleScrollRegionScroll = () => {
+    syncScrollMetrics(scrollRegionRef.current);
+  };
+
+  const handleScrollJump = () => {
+    const scrollRegion = scrollRegionRef.current;
+    if (!scrollRegion) {
+      return;
+    }
+
+    if (isNearBottom) {
+      autoFollowScrollRef.current = false;
+      setIsNearBottom(false);
+      setIsNearTop(true);
+      animateScrollRegionTo(0, 1000, "top");
+      return;
+    }
+
+    autoFollowScrollRef.current = true;
+    setIsNearBottom(true);
+    setIsNearTop(false);
+    animateScrollRegionTo(scrollRegion.scrollHeight - scrollRegion.clientHeight, 1000, "bottom");
+  };
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    autoFollowScrollRef.current = true;
+    setIsNearTop(true);
+    setIsNearBottom(true);
+    setHasScrollableContent(false);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (autoFollowScrollRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    syncScrollMetrics(scrollRegionRef.current);
   }, [messages, streamItems, streamReasoning, askUserQuestion, pendingApprovals]);
+
+  useEffect(() => {
+    syncScrollMetrics(scrollRegionRef.current);
+  }, []);
+
+  useEffect(() => stopScrollAnimation, []);
 
   useEffect(() => {
     if (!sessionFocusRequest || !sessionFocusRequest.snippet.trim()) {
@@ -1386,6 +1532,14 @@ export function ChatView({
     setInput("");
     setAttachedFiles([]); // 发送后清空附件
     setComposerError(null);
+    autoFollowScrollRef.current = true;
+    setIsNearBottom(true);
+    setIsNearTop(false);
+    animateScrollRegionTo(
+      (scrollRegionRef.current?.scrollHeight ?? 0) - (scrollRegionRef.current?.clientHeight ?? 0),
+      1000,
+      "bottom",
+    );
     setMessages((prev) => [
       ...prev,
       {
@@ -1433,12 +1587,20 @@ export function ChatView({
 
     const timer = setTimeout(() => {
       onInitialMessageConsumed?.();
+      if (initialAttachments.length > 0) {
+        onInitialAttachmentsConsumed?.();
+        void sendContent({
+          sessionId,
+          parts: buildMessageParts(msg, initialAttachments),
+        });
+        return;
+      }
       void sendContent(msg);
     }, 0);
     return () => clearTimeout(timer);
     // 仅依赖会话与初始消息，避免重复发送
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, initialMessage]);
+  }, [sessionId, initialAttachments, initialMessage]);
 
   async function handleCancel() {
     try {
@@ -1663,6 +1825,13 @@ export function ChatView({
       },
     ];
   }, [renderedMessages, streamItems]);
+  const showScrollJump = hasScrollableContent || !isNearBottom;
+  const scrollJumpLabel = isNearBottom ? "跳转到顶部" : "跳转到底部";
+  const scrollJumpHint = isNearBottom
+    ? isNearTop
+      ? "当前已在顶部"
+      : "返回顶部"
+    : "回到底部并继续跟随";
   const taskPanelModel = useMemo(() => buildTaskPanelViewModel(sidePanelMessages), [sidePanelMessages]);
   const webSearchEntries = useMemo(() => buildWebSearchViewModel(sidePanelMessages), [sidePanelMessages]);
   const failedSessionRuns = useMemo(
@@ -2697,7 +2866,13 @@ export function ChatView({
       {/* 主内容区：消息列表 + 右侧面板 */}
       <div className="flex-1 flex overflow-hidden">
         {/* 消息列表 */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-5">
+        <div className="relative flex-1">
+        <div
+          ref={scrollRegionRef}
+          data-testid="chat-scroll-region"
+          onScroll={handleScrollRegionScroll}
+          className="h-full overflow-y-auto p-6 space-y-5"
+        >
         {employeeAssistantContext && (
           <div className="space-y-3">
             <div
@@ -3319,6 +3494,36 @@ export function ChatView({
           onCancel={handleCancelInstallConfirm}
         />
         <div ref={bottomRef} />
+      </div>
+      {showScrollJump && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
+          <motion.button
+            type="button"
+            data-testid="chat-scroll-jump-button"
+            aria-label={scrollJumpLabel}
+            title={scrollJumpHint}
+            onClick={handleScrollJump}
+            initial={false}
+            animate={{
+              opacity: isNearBottom ? 0.94 : 0.88,
+              y: isNearBottom ? 0 : -20,
+              scale: isNearBottom ? 1 : 0.985,
+            }}
+            transition={{ type: "spring", stiffness: 240, damping: 28, mass: 0.8 }}
+            className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-white/80 bg-white/78 text-gray-700 shadow-[0_8px_20px_rgba(15,23,42,0.09)] backdrop-blur-xl transition-all duration-200 hover:border-gray-200 hover:bg-white/90 hover:text-gray-900 hover:shadow-[0_12px_28px_rgba(15,23,42,0.12)]"
+          >
+            <motion.span
+              aria-hidden="true"
+              initial={false}
+              animate={{ rotate: isNearBottom ? 0 : 180 }}
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="translate-y-[-1px] text-[22px] leading-none"
+            >
+              ↑
+            </motion.span>
+          </motion.button>
+        </div>
+      )}
       </div>
 
       {/* 右侧面板 */}
