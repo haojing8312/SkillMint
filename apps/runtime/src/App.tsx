@@ -41,6 +41,7 @@ import {
   validateSearchConfigForm,
 } from "./lib/search-config";
 import { getModelErrorDisplay } from "./lib/model-error-display";
+import { buildSessionExportFilename } from "./lib/session-export-filename";
 import { getDefaultModelId } from "./lib/default-model";
 import { openExternalUrl } from "./utils/openExternalUrl";
 import { reportFrontendDiagnostic } from "./diagnostics";
@@ -1689,8 +1690,9 @@ export default function App() {
   async function handleExportSession(sessionId: string) {
     try {
       const md = await invoke<string>("export_session", { sessionId });
+      const session = visibleSessions.find((item) => item.id === sessionId) ?? null;
       const filePath = await save({
-        defaultPath: "session-export.md",
+        defaultPath: buildSessionExportFilename(session),
         filters: [{ name: "Markdown", extensions: ["md"] }],
       });
       if (filePath) {
