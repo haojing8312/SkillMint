@@ -148,6 +148,7 @@ impl SendMessageRequest {
 
 #[tauri::command]
 pub async fn create_session(
+    app: AppHandle,
     skill_id: String,
     model_id: String,
     work_dir: Option<String>,
@@ -158,18 +159,44 @@ pub async fn create_session(
     team_id: Option<String>,
     db: State<'_, DbState>,
 ) -> Result<String, String> {
-    create_session_with_pool(
+    let session_id = create_session_with_pool(
         &db.0,
-        skill_id,
-        model_id,
-        work_dir,
-        employee_id,
-        title,
-        permission_mode,
-        session_mode,
-        team_id,
+        skill_id.clone(),
+        model_id.clone(),
+        work_dir.clone(),
+        employee_id.clone(),
+        title.clone(),
+        permission_mode.clone(),
+        session_mode.clone(),
+        team_id.clone(),
     )
-    .await
+    .await?;
+
+    if let Some(diagnostics_state) = app.try_state::<ManagedDiagnosticsState>() {
+        let storage = super::desktop_lifecycle::collect_database_storage_snapshot(&app);
+        let counts = super::desktop_lifecycle::collect_database_counts(&db.0).await;
+        let _ = diagnostics::write_audit_record(
+            &diagnostics_state.0.paths,
+            "session",
+            "create_session",
+            "session created",
+            Some(serde_json::json!({
+                "session_id": session_id,
+                "skill_id": skill_id,
+                "model_id": model_id,
+                "work_dir": work_dir,
+                "employee_id": employee_id,
+                "title": title,
+                "permission_mode": permission_mode,
+                "session_mode": session_mode,
+                "team_id": team_id,
+                "counts": counts,
+                "storage": storage,
+            })),
+        );
+    }
+
+    Ok(session_id)
 }
 
 pub async fn create_session_with_pool(
@@ -238,12 +265,58 @@ pub async fn send_message(
         Some(&user_message_parts_json),
     )
     .await?;
+    if let Some(diagnostics_state) = app.try_state::<ManagedDiagnosticsState>() {
+        let counts = super::desktop_lifecycle::collect_database_counts(&db.0).await;
+        let storage = super::desktop_lifecycle::collect_database_storage_snapshot(&app);
+        let _ = diagnostics::write_audit_record(
+            &diagnostics_state.0.paths,
+            "message",
+            "message_inserted",
+            "user message inserted",
+            Some(serde_json::json!({
+                "session_id": session_id,
+                "message_id": msg_id,
+                "role": "user",
+                "content_preview": user_message.chars().take(120).collect::<String>(),
+                "content_parts_count": user_message_parts.len(),
+                "counts": counts,
+                "storage": storage,
+            })),
+        );
+    }
     chat_io::maybe_update_session_title_from_first_user_message_with_pool(
         &db.0,
         &session_id,
         &user_message,
     )
     .await?;
+    if let Some(diagnostics_state) = app.try_state::<ManagedDiagnosticsState>() {
+        let title_row = sqlx::query_scalar::<_, String>(
+            "SELECT COALESCE(title, '') FROM sessions WHERE id = ?",
+        )
+        .bind(&session_id)
+        .fetch_optional(&db.0)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+        if !title_row.trim().is_empty() {
+            let counts = super::desktop_lifecycle::collect_database_counts(&db.0).await;
+            let storage = super::desktop_lifecycle::collect_database_storage_snapshot(&app);
+            let _ = diagnostics::write_audit_record(
+                &diagnostics_state.0.paths,
+                "session",
+                "session_title_updated",
+                "session title evaluated after first user message",
+                Some(serde_json::json!({
+                    "session_id": session_id,
+                    "title": title_row,
+                    "counts": counts,
+                    "storage": storage,
+                })),
+            );
+        }
+    }
 
     if chat_io::maybe_handle_team_entry_pre_execution_with_pool(
         &app,

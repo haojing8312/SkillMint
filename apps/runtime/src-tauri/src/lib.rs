@@ -23,10 +23,12 @@ use commands::chat::{
     SearchCacheState, ToolConfirmResponder, ToolConfirmState,
 };
 use commands::feishu_gateway::FeishuEventRelayState;
+use commands::openclaw_plugins::OpenClawPluginFeishuRuntimeState;
 use commands::skills::DbState;
 use diagnostics::{DiagnosticsState, ManagedDiagnosticsState};
 use session_journal::{SessionJournalStateHandle, SessionJournalStore};
 use sidecar::SidecarManager;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -35,6 +37,34 @@ struct DiagnosticsStateHandle(Arc<DiagnosticsState>);
 impl Drop for DiagnosticsStateHandle {
     fn drop(&mut self) {
         let _ = diagnostics::mark_clean_exit(self.0.as_ref());
+    }
+}
+
+struct RuntimeAuditStateHandle {
+    diagnostics: Arc<DiagnosticsState>,
+    pool: sqlx::SqlitePool,
+    app_data_dir: PathBuf,
+}
+
+impl Drop for RuntimeAuditStateHandle {
+    fn drop(&mut self) {
+        let counts = tauri::async_runtime::block_on(
+            commands::desktop_lifecycle::collect_database_counts(&self.pool),
+        );
+        let _ = diagnostics::write_audit_record(
+            &self.diagnostics.paths,
+            "runtime",
+            "shutdown_snapshot",
+            "runtime shutting down",
+            Some(serde_json::json!({
+                "run_id": self.diagnostics.run_id,
+                "counts": counts,
+                "storage": {
+                    "app_data_dir": self.app_data_dir.to_string_lossy().to_string(),
+                    "sqlite_files": diagnostics::collect_sqlite_storage_snapshot(&self.app_data_dir),
+                },
+            })),
+        );
     }
 }
 
@@ -83,6 +113,8 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
 
     let feishu_relay_state = FeishuEventRelayState::default();
     app.manage(feishu_relay_state.clone());
+    app.manage(OpenClawPluginFeishuRuntimeState::default());
+    app.manage(commands::openclaw_plugins::OpenClawLarkInstallerSessionState::default());
 
     ManagedRuntimeHandles {
         registry,
@@ -232,70 +264,28 @@ fn spawn_approval_recovery_bootstrap(
     });
 }
 
-fn spawn_feishu_relay_bootstrap(
-    pool: sqlx::SqlitePool,
-    relay_state: FeishuEventRelayState,
-    app_handle: tauri::AppHandle,
+fn write_startup_audit_snapshot(
+    diagnostics_state: &Arc<DiagnosticsState>,
+    pool: &sqlx::SqlitePool,
+    app_data_dir: &std::path::Path,
 ) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        let mut backoff_secs = 2u64;
-        for _ in 0..30 {
-            let has_connections =
-                match commands::feishu_gateway::reconcile_feishu_employee_connections_with_pool(
-                    &pool, None,
-                )
-                .await
-                {
-                    Ok(summary) => !summary.items.is_empty(),
-                    Err(_) => false,
-                };
-            if has_connections {
-                let _ = commands::feishu_gateway::start_feishu_event_relay_with_pool_and_app(
-                    &pool,
-                    relay_state.clone(),
-                    Some(app_handle.clone()),
-                    None,
-                    Some(1500),
-                    Some(50),
-                )
-                .await;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
-            backoff_secs = (backoff_secs * 2).min(60);
-        }
-
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            let summary =
-                match commands::feishu_gateway::reconcile_feishu_employee_connections_with_pool(
-                    &pool, None,
-                )
-                .await
-                {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-            if summary.items.is_empty() {
-                continue;
-            }
-
-            let relay_status =
-                commands::feishu_gateway::start_feishu_event_relay_with_pool_and_app(
-                    &pool,
-                    relay_state.clone(),
-                    Some(app_handle.clone()),
-                    None,
-                    Some(1500),
-                    Some(50),
-                )
-                .await;
-            if relay_status.is_ok() {
-                continue;
-            }
-        }
-    });
+    let counts =
+        tauri::async_runtime::block_on(commands::desktop_lifecycle::collect_database_counts(pool));
+    let _ = diagnostics::write_audit_record(
+        &diagnostics_state.paths,
+        "runtime",
+        "startup_snapshot",
+        "runtime startup snapshot captured",
+        Some(serde_json::json!({
+            "run_id": diagnostics_state.run_id,
+            "abnormal_previous_run": diagnostics_state.abnormal_previous_run.was_abnormal_exit,
+            "counts": counts,
+            "storage": {
+                "app_data_dir": app_data_dir.to_string_lossy().to_string(),
+                "sqlite_files": diagnostics::collect_sqlite_storage_snapshot(app_data_dir),
+            },
+        })),
+    );
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -351,6 +341,16 @@ pub fn run() {
                     panic!("failed to init db: {error}");
                 }
             };
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("WorkClaw"));
+            write_startup_audit_snapshot(&diagnostics_state, &pool, &app_data_dir);
+            app.manage(RuntimeAuditStateHandle {
+                diagnostics: Arc::clone(&diagnostics_state),
+                pool: pool.clone(),
+                app_data_dir,
+            });
             let handles = initialize_runtime_state(app, pool.clone());
             let journal_store = app.state::<SessionJournalStateHandle>().0.clone();
             apply_startup_preferences(app, &pool);
@@ -361,11 +361,7 @@ pub fn run() {
             );
             spawn_sidecar_bootstrap(handles.sidecar_manager.clone());
             restore_saved_mcp_servers(pool.clone(), Arc::clone(&handles.registry));
-            spawn_feishu_relay_bootstrap(
-                pool,
-                handles.feishu_relay_state.clone(),
-                app.handle().clone(),
-            );
+            let _ = (&pool, &handles.feishu_relay_state);
 
             Ok(())
         })
@@ -420,6 +416,21 @@ pub fn run() {
             commands::runtime_preferences::get_runtime_preferences,
             commands::runtime_preferences::set_runtime_preferences,
             commands::runtime_preferences::resolve_default_work_dir,
+            commands::openclaw_plugins::upsert_openclaw_plugin_install,
+            commands::openclaw_plugins::install_openclaw_plugin_from_npm,
+            commands::openclaw_plugins::list_openclaw_plugin_installs,
+            commands::openclaw_plugins::delete_openclaw_plugin_install,
+            commands::openclaw_plugins::inspect_openclaw_plugin,
+            commands::openclaw_plugins::list_openclaw_plugin_channel_hosts,
+            commands::openclaw_plugins::get_openclaw_plugin_feishu_channel_snapshot,
+            commands::openclaw_plugins::start_openclaw_plugin_feishu_runtime,
+            commands::openclaw_plugins::stop_openclaw_plugin_feishu_runtime,
+            commands::openclaw_plugins::get_openclaw_plugin_feishu_runtime_status,
+            commands::openclaw_plugins::start_openclaw_lark_installer_session,
+            commands::openclaw_plugins::get_openclaw_lark_installer_session_status,
+            commands::openclaw_plugins::send_openclaw_lark_installer_input,
+            commands::openclaw_plugins::stop_openclaw_lark_installer_session,
+            commands::openclaw_plugins::probe_openclaw_plugin_feishu_credentials,
             commands::desktop_lifecycle::get_desktop_lifecycle_paths,
             commands::desktop_lifecycle::get_desktop_diagnostics_status,
             commands::desktop_lifecycle::open_desktop_path,
@@ -452,14 +463,11 @@ pub fn run() {
             commands::feishu_gateway::push_role_summary_to_feishu,
             commands::feishu_gateway::set_feishu_gateway_settings,
             commands::feishu_gateway::get_feishu_gateway_settings,
-            commands::feishu_gateway::start_feishu_long_connection,
-            commands::feishu_gateway::stop_feishu_long_connection,
-            commands::feishu_gateway::get_feishu_long_connection_status,
+            commands::feishu_gateway::list_feishu_pairing_requests,
+            commands::feishu_gateway::approve_feishu_pairing_request,
+            commands::feishu_gateway::deny_feishu_pairing_request,
             commands::feishu_gateway::get_feishu_employee_connection_statuses,
             commands::feishu_gateway::sync_feishu_ws_events,
-            commands::feishu_gateway::start_feishu_event_relay,
-            commands::feishu_gateway::stop_feishu_event_relay,
-            commands::feishu_gateway::get_feishu_event_relay_status,
             commands::wecom_gateway::set_wecom_gateway_settings,
             commands::wecom_gateway::get_wecom_gateway_settings,
             commands::wecom_gateway::start_wecom_connector,

@@ -2,6 +2,7 @@ use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use crate::commands::skills::DbState;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use serde::Serialize;
+use serde_json::Value;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::fs;
@@ -37,6 +38,7 @@ pub struct CrashSummaryInfo {
 pub struct DesktopDiagnosticsStatus {
     pub diagnostics_dir: String,
     pub logs_dir: String,
+    pub audit_dir: String,
     pub crashes_dir: String,
     pub exports_dir: String,
     pub current_run_id: String,
@@ -53,6 +55,7 @@ pub struct DesktopDiagnosticsExportPayload {
     pub session_run_events_json: String,
     pub latest_crash_json: Option<String>,
     pub runtime_log_files: Vec<PathBuf>,
+    pub audit_log_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -160,6 +163,7 @@ fn build_diagnostics_status(
     Ok(DesktopDiagnosticsStatus {
         diagnostics_dir: state.paths.root.to_string_lossy().to_string(),
         logs_dir: state.paths.logs_dir.to_string_lossy().to_string(),
+        audit_dir: state.paths.audit_dir.to_string_lossy().to_string(),
         crashes_dir: state.paths.crashes_dir.to_string_lossy().to_string(),
         exports_dir: state.paths.exports_dir.to_string_lossy().to_string(),
         current_run_id: state.run_id.clone(),
@@ -179,7 +183,7 @@ fn build_desktop_environment_summary(
     diagnostics_status: &DesktopDiagnosticsStatus,
 ) -> String {
     format!(
-        "# WorkClaw Environment Summary\n\n- Version: {version}\n- Platform: {platform}\n- Application Data: {app_data_dir}\n- Cache: {cache_dir}\n- Logs: {log_dir}\n- Default Workspace: {}\n- Diagnostics: {}\n- Diagnostics Logs: {}\n- Diagnostics Crashes: {}\n- Diagnostics Exports: {}\n- Current Run ID: {}\n- Abnormal Previous Run: {}\n- Last Clean Exit: {}\n- Latest Crash: {}\n",
+        "# WorkClaw Environment Summary\n\n- Version: {version}\n- Platform: {platform}\n- Application Data: {app_data_dir}\n- Cache: {cache_dir}\n- Logs: {log_dir}\n- Default Workspace: {}\n- Diagnostics: {}\n- Diagnostics Logs: {}\n- Diagnostics Audit: {}\n- Diagnostics Crashes: {}\n- Diagnostics Exports: {}\n- Current Run ID: {}\n- Abnormal Previous Run: {}\n- Last Clean Exit: {}\n- Latest Crash: {}\n",
         if default_work_dir.trim().is_empty() {
             "未设置".to_string()
         } else {
@@ -187,6 +191,7 @@ fn build_desktop_environment_summary(
         },
         diagnostics_status.diagnostics_dir,
         diagnostics_status.logs_dir,
+        diagnostics_status.audit_dir,
         diagnostics_status.crashes_dir,
         diagnostics_status.exports_dir,
         diagnostics_status.current_run_id,
@@ -222,6 +227,50 @@ fn list_recent_runtime_log_files(
     files.reverse();
     files.truncate(3);
     Ok(files)
+}
+
+fn list_recent_audit_log_files(
+    paths: &diagnostics::DiagnosticsPaths,
+) -> Result<Vec<PathBuf>, String> {
+    if !paths.audit_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files: Vec<PathBuf> = fs::read_dir(&paths.audit_dir)
+        .map_err(|e| format!("读取审计日志目录失败 {}: {}", paths.audit_dir.display(), e))?
+        .filter_map(|entry| entry.ok().map(|item| item.path()))
+        .filter(|path| path.extension().and_then(|v| v.to_str()) == Some("jsonl"))
+        .collect();
+    files.sort();
+    files.reverse();
+    files.truncate(3);
+    Ok(files)
+}
+
+pub(crate) async fn collect_database_counts(pool: &SqlitePool) -> Value {
+    let session_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sessions")
+        .fetch_one(pool)
+        .await
+        .ok();
+    let message_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages")
+        .fetch_one(pool)
+        .await
+        .ok();
+    serde_json::json!({
+        "session_count": session_count,
+        "message_count": message_count,
+    })
+}
+
+pub(crate) fn collect_database_storage_snapshot(app: &AppHandle) -> Value {
+    match app.path().app_data_dir() {
+        Ok(app_data_dir) => serde_json::json!({
+            "app_data_dir": app_data_dir.to_string_lossy().to_string(),
+            "sqlite_files": diagnostics::collect_sqlite_storage_snapshot(&app_data_dir),
+        }),
+        Err(error) => serde_json::json!({
+            "app_data_dir_error": error.to_string(),
+        }),
+    }
 }
 
 fn export_diagnostics_bundle(
@@ -263,6 +312,15 @@ fn export_diagnostics_bundle(
                 .and_then(|v| v.to_str())
                 .unwrap_or("runtime.jsonl");
             add_text(&format!("logs/{file_name}"), &content)?;
+        }
+    }
+    for audit_path in &payload.audit_log_files {
+        if let Ok(content) = fs::read_to_string(audit_path) {
+            let file_name = audit_path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or("audit.jsonl");
+            add_text(&format!("audit/{file_name}"), &content)?;
         }
     }
 
@@ -437,6 +495,7 @@ pub async fn export_desktop_diagnostics_bundle(
         .transpose()
         .map_err(|e| e.to_string())?;
     let runtime_log_files = list_recent_runtime_log_files(&diagnostics_state.0.paths)?;
+    let audit_log_files = list_recent_audit_log_files(&diagnostics_state.0.paths)?;
 
     let bundle = export_diagnostics_bundle(
         &diagnostics_state.0.paths.exports_dir,
@@ -448,6 +507,7 @@ pub async fn export_desktop_diagnostics_bundle(
             session_run_events_json,
             latest_crash_json,
             runtime_log_files,
+            audit_log_files,
         },
     )?;
 
@@ -515,6 +575,7 @@ mod tests {
         let status = DesktopDiagnosticsStatus {
             diagnostics_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics".to_string(),
             logs_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\logs".to_string(),
+            audit_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\audit".to_string(),
             crashes_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\crashes"
                 .to_string(),
             exports_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\exports"
@@ -540,6 +601,7 @@ mod tests {
         );
 
         assert!(summary.contains("Diagnostics"));
+        assert!(summary.contains("Diagnostics Audit"));
         assert!(summary.contains("Abnormal Previous Run: yes"));
         assert!(summary.contains("Latest Crash: 2026-03-13T10:00:00Z panic occurred"));
     }
@@ -557,6 +619,7 @@ mod tests {
             session_run_events_json: "[]".to_string(),
             latest_crash_json: Some("{\"message\":\"panic occurred\"}".to_string()),
             runtime_log_files: Vec::new(),
+            audit_log_files: Vec::new(),
         };
 
         let zip_path =
@@ -564,5 +627,39 @@ mod tests {
 
         assert!(zip_path.exists());
         assert_eq!(zip_path.extension().and_then(|v| v.to_str()), Some("zip"));
+    }
+
+    #[test]
+    fn exports_audit_logs_in_diagnostics_bundle_zip() {
+        let dir = tempdir().expect("temp dir");
+        let export_dir = dir.path().join("exports");
+        std::fs::create_dir_all(&export_dir).expect("create export dir");
+        let audit_log = dir.path().join("audit-2026-03-20.jsonl");
+        std::fs::write(&audit_log, "{\"event\":\"create_session\"}\n").expect("write audit");
+
+        let payload = DesktopDiagnosticsExportPayload {
+            environment_summary: "# WorkClaw Environment Summary".to_string(),
+            route_attempt_logs_json: "[]".to_string(),
+            session_runs_json: "[]".to_string(),
+            session_run_events_json: "[]".to_string(),
+            latest_crash_json: None,
+            runtime_log_files: Vec::new(),
+            audit_log_files: vec![audit_log],
+        };
+
+        let zip_path =
+            export_diagnostics_bundle(&export_dir, "run-2", &payload).expect("export bundle");
+
+        let file = std::fs::File::open(&zip_path).expect("open zip");
+        let mut archive = zip::ZipArchive::new(file).expect("read zip");
+        let mut audit_entry = archive
+            .by_name("audit/audit-2026-03-20.jsonl")
+            .expect("audit entry in zip");
+        let mut content = String::new();
+        use std::io::Read;
+        audit_entry
+            .read_to_string(&mut content)
+            .expect("read audit entry");
+        assert!(content.contains("create_session"));
     }
 }

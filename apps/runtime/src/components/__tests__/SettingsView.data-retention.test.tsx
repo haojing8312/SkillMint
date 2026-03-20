@@ -47,6 +47,7 @@ describe("SettingsView data retention", () => {
         return Promise.resolve({
           diagnostics_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics",
           logs_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\logs",
+          audit_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\audit",
           crashes_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\crashes",
           exports_dir: "C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\exports",
           current_run_id: "run-1",
@@ -95,6 +96,9 @@ describe("SettingsView data retention", () => {
     expect(screen.getByText("诊断目录")).toBeInTheDocument();
     expect(
       screen.getByText("C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("审计目录：C:\\Users\\me\\AppData\\Roaming\\WorkClaw\\diagnostics\\audit"),
     ).toBeInTheDocument();
     expect(screen.getByText("检测到上次运行可能异常退出")).toBeInTheDocument();
     expect(screen.getByText(/panic occurred/)).toBeInTheDocument();
