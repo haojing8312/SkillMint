@@ -207,7 +207,7 @@ describe("App desktop titlebar", () => {
     });
   });
 
-  test("restores and continues dragging when the titlebar is dragged from maximized state", async () => {
+  test("restores and continues dragging when the titlebar is moved from maximized state", async () => {
     isMaximizedMock.mockResolvedValue(true);
     render(<App />);
 
@@ -227,7 +227,12 @@ describe("App desktop titlebar", () => {
       }),
     });
 
-    fireEvent.mouseDown(dragRegion, { button: 0, clientX: 300, clientY: 18 });
+    fireEvent.mouseDown(dragRegion, { button: 0, buttons: 1, clientX: 300, clientY: 18 });
+
+    expect(unmaximizeMock).toHaveBeenCalledTimes(0);
+    expect(startDraggingMock).toHaveBeenCalledTimes(0);
+
+    fireEvent.mouseMove(dragRegion, { button: 0, buttons: 1, clientX: 324, clientY: 18 });
 
     await waitFor(() => {
       expect(unmaximizeMock).toHaveBeenCalledTimes(1);
@@ -238,12 +243,16 @@ describe("App desktop titlebar", () => {
     });
   });
 
-  test("starts dragging directly when the titlebar is dragged in restored state", async () => {
+  test("starts dragging after pointer movement in restored state", async () => {
     isMaximizedMock.mockResolvedValue(false);
     render(<App />);
 
     const dragRegion = await waitFor(() => screen.getByTestId("app-titlebar-drag-region"));
-    fireEvent.mouseDown(dragRegion, { button: 0, clientX: 240, clientY: 18 });
+    fireEvent.mouseDown(dragRegion, { button: 0, buttons: 1, clientX: 240, clientY: 18 });
+
+    expect(startDraggingMock).toHaveBeenCalledTimes(0);
+
+    fireEvent.mouseMove(dragRegion, { button: 0, buttons: 1, clientX: 258, clientY: 18 });
 
     await waitFor(() => {
       expect(startDraggingMock).toHaveBeenCalledTimes(1);
@@ -252,5 +261,25 @@ describe("App desktop titlebar", () => {
     expect(unmaximizeMock).toHaveBeenCalledTimes(0);
     expect(setPositionMock).toHaveBeenCalledTimes(0);
     expect(cursorPositionMock).toHaveBeenCalledTimes(0);
+  });
+
+  test("toggles maximize on titlebar double click without starting a drag", async () => {
+    isMaximizedMock.mockResolvedValue(false);
+    render(<App />);
+
+    const dragRegion = await waitFor(() => screen.getByTestId("app-titlebar-drag-region"));
+
+    fireEvent.mouseDown(dragRegion, { button: 0, buttons: 1, clientX: 240, clientY: 18, detail: 1 });
+    fireEvent.mouseUp(dragRegion, { button: 0, clientX: 240, clientY: 18, detail: 1 });
+    fireEvent.mouseDown(dragRegion, { button: 0, buttons: 1, clientX: 240, clientY: 18, detail: 2 });
+    fireEvent.doubleClick(dragRegion);
+
+    await waitFor(() => {
+      expect(isMaximizedMock).toHaveBeenCalled();
+      expect(maximizeMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(startDraggingMock).toHaveBeenCalledTimes(0);
+    expect(unmaximizeMock).toHaveBeenCalledTimes(0);
   });
 });

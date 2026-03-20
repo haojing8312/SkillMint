@@ -487,8 +487,15 @@ function clampTitlebarRatio(value: number): number {
   return Math.min(Math.max(value, 0.1), 0.9);
 }
 
+const TITLEBAR_DRAG_THRESHOLD_PX = 6;
+
 function DesktopTitleBar() {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const pendingTitlebarDragRef = useRef<{
+    clientX: number;
+    clientY: number;
+    dragRegion: HTMLDivElement;
+  } | null>(null);
 
   useEffect(() => {
     const desktopWindow = getDesktopWindow();
@@ -556,11 +563,11 @@ function DesktopTitleBar() {
     }
   }, []);
 
-  const handleTitlebarMouseDown = useCallback(async (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
+  const clearPendingTitlebarDrag = useCallback(() => {
+    pendingTitlebarDragRef.current = null;
+  }, []);
 
+  const handleTitlebarDragStart = useCallback(async (clientX: number, clientY: number, dragRegion: HTMLDivElement) => {
     const desktopWindow = getDesktopWindow();
     if (!desktopWindow) {
       return;
@@ -581,12 +588,9 @@ function DesktopTitleBar() {
       return;
     }
 
-    const dragRegion = event.currentTarget;
     const rect = dragRegion.getBoundingClientRect();
-    const pointerRatio = clampTitlebarRatio((event.clientX - rect.left) / Math.max(rect.width, 1));
-    const pointerOffsetY = Math.max(12, Math.min(event.clientY - rect.top, rect.height - 8));
-
-    event.preventDefault();
+    const pointerRatio = clampTitlebarRatio((clientX - rect.left) / Math.max(rect.width, 1));
+    const pointerOffsetY = Math.max(12, Math.min(clientY - rect.top, rect.height - 8));
 
     try {
       const [screenCursor, restoredSize] = await Promise.all([
@@ -614,6 +618,35 @@ function DesktopTitleBar() {
     }
   }, [isWindowMaximized]);
 
+  const handleTitlebarMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      clearPendingTitlebarDrag();
+      return;
+    }
+
+    pendingTitlebarDragRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      dragRegion: event.currentTarget,
+    };
+  }, [clearPendingTitlebarDrag]);
+
+  const handleTitlebarMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const pendingDrag = pendingTitlebarDragRef.current;
+    if (!pendingDrag || (event.buttons & 1) !== 1) {
+      return;
+    }
+
+    const deltaX = event.clientX - pendingDrag.clientX;
+    const deltaY = event.clientY - pendingDrag.clientY;
+    if (Math.hypot(deltaX, deltaY) < TITLEBAR_DRAG_THRESHOLD_PX) {
+      return;
+    }
+
+    clearPendingTitlebarDrag();
+    void handleTitlebarDragStart(event.clientX, event.clientY, pendingDrag.dragRegion);
+  }, [clearPendingTitlebarDrag, handleTitlebarDragStart]);
+
   const maximizeButtonLabel = isWindowMaximized ? "还原窗口" : "最大化窗口";
 
   return (
@@ -625,9 +658,16 @@ function DesktopTitleBar() {
         data-testid="app-titlebar-drag-region"
         className="flex min-w-0 flex-1 items-center gap-2.5 self-stretch pr-3"
         onMouseDown={(event) => {
-          void handleTitlebarMouseDown(event);
+          handleTitlebarMouseDown(event);
+        }}
+        onMouseMove={(event) => {
+          handleTitlebarMouseMove(event);
+        }}
+        onMouseUp={() => {
+          clearPendingTitlebarDrag();
         }}
         onDoubleClick={() => {
+          clearPendingTitlebarDrag();
           void handleWindowAction("toggleMaximize");
         }}
       >
