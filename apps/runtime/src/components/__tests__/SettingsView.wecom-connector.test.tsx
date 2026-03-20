@@ -365,7 +365,7 @@ describe("SettingsView connector visibility", () => {
     openExternalUrlMock.mockClear();
   });
 
-  test("shows the redesigned feishu connector anchors without legacy console controls", async () => {
+  test("shows the redesigned feishu connector anchors and keeps advanced new-bot access", async () => {
     render(<SettingsView onClose={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "渠道连接器" }));
@@ -384,8 +384,26 @@ describe("SettingsView connector visibility", () => {
     expect(screen.queryByRole("button", { name: "配对与授权" })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("飞书事件订阅 Verification Token")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("飞书事件订阅 Encrypt Key")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "新建机器人" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "运行新建机器人向导" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建机器人向导（高级）" })).toBeInTheDocument();
+    expect(screen.getByText("查看安装向导输出")).toBeInTheDocument();
+  });
+
+  test("starts the advanced create-bot installer session from the redesigned feishu page", async () => {
+    render(<SettingsView onClose={() => {}} initialTab="feishu" />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "新建机器人向导（高级）" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "新建机器人向导（高级）" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("start_openclaw_lark_installer_session", {
+        mode: "create",
+        appId: null,
+        appSecret: null,
+      });
+    });
   });
 
   test("opens the employee hub callback from the routing card", async () => {

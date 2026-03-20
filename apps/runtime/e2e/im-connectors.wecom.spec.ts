@@ -88,6 +88,65 @@ async function installTauriMocks(page: Page): Promise<void> {
             encrypt_key: "",
             sidecar_base_url: "",
           };
+        case "get_openclaw_plugin_feishu_advanced_settings":
+          return {
+            groups_json: "",
+            dms_json: "",
+            footer_json: "",
+            account_overrides_json: "",
+            render_mode: "auto",
+            streaming: "false",
+            text_chunk_limit: "4000",
+            chunk_mode: "length",
+            reply_in_thread: "disabled",
+            group_session_scope: "group",
+            topic_session_mode: "disabled",
+            markdown_mode: "native",
+            markdown_table_mode: "native",
+            heartbeat_visibility: "visible",
+            heartbeat_interval_ms: "30000",
+            media_max_mb: "20",
+            http_timeout_ms: "60000",
+            config_writes: "false",
+            webhook_host: "",
+            webhook_port: "",
+            dynamic_agent_creation_enabled: "false",
+            dynamic_agent_creation_workspace_template: "",
+            dynamic_agent_creation_agent_dir_template: "",
+            dynamic_agent_creation_max_agents: "",
+          };
+        case "get_feishu_plugin_environment_status":
+          return {
+            node_available: true,
+            npm_available: true,
+            node_version: "v22.0.0",
+            npm_version: "10.0.0",
+            can_install_plugin: true,
+            can_start_runtime: true,
+            error: null,
+          };
+        case "get_feishu_setup_progress":
+          return {
+            environment: {
+              node_available: true,
+              npm_available: true,
+              node_version: "v22.0.0",
+              npm_version: "10.0.0",
+              can_install_plugin: true,
+              can_start_runtime: true,
+              error: null,
+            },
+            credentials_configured: false,
+            plugin_installed: false,
+            plugin_version: null,
+            runtime_running: false,
+            runtime_last_error: null,
+            auth_status: "pending",
+            pending_pairings: 0,
+            default_routing_employee_name: null,
+            scoped_routing_count: 0,
+            summary_state: "needs_credentials",
+          };
         case "get_wecom_gateway_settings":
           return {
             corp_id: "wwcorp",
@@ -101,6 +160,33 @@ async function installTauriMocks(page: Page): Promise<void> {
             started_at: null,
             queued_events: 0,
           };
+        case "get_openclaw_plugin_feishu_runtime_status":
+          return {
+            plugin_id: "openclaw-lark",
+            account_id: "default",
+            running: false,
+            started_at: null,
+            last_stop_at: null,
+            last_event_at: null,
+            last_error: null,
+            pid: null,
+            port: null,
+            recent_logs: [],
+          };
+        case "get_openclaw_lark_installer_session_status":
+          return {
+            running: false,
+            mode: null,
+            started_at: null,
+            last_output_at: null,
+            last_error: null,
+            prompt_hint: null,
+            recent_output: [],
+          };
+        case "list_openclaw_plugin_channel_hosts":
+          return [];
+        case "list_feishu_pairing_requests":
+          return [];
         case "get_wecom_connector_status":
           return {
             running: false,
@@ -231,35 +317,17 @@ test.beforeEach(async ({ page }) => {
   ).toBeVisible({ timeout: 30_000 });
 });
 
-test("settings supports minimal wecom connector save and retry flow", async ({ page }) => {
+test("settings hides wecom-specific setup entry points from the current connector experience", async ({ page }) => {
   await page.getByRole("button", { name: "设置" }).first().click();
   await page.getByRole("button", { name: "渠道连接器" }).click();
 
-  await expect(page.getByTestId("connector-panel-wecom")).toBeVisible();
-  await expect(page.getByText("员工关联入口")).toBeVisible();
-
-  await page.getByPlaceholder("企业微信 Corp ID").fill("wwcorp-updated");
-  await page.getByRole("button", { name: "保存企业微信连接器" }).click();
-
-  const retryButtons = page.getByRole("button", { name: "重试连接" });
-  await retryButtons.nth(1).click();
+  await expect(page.getByText("检查运行环境", { exact: true })).toBeVisible();
+  await expect(page.getByText("绑定已有机器人", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("企业微信 Corp ID")).toHaveCount(0);
+  await expect(page.getByText("企业微信连接器")).toHaveCount(0);
 
   const calls = await readInvokeCalls(page);
-  expect(
-    calls.some(
-      (call) =>
-        call.cmd === "set_wecom_gateway_settings" &&
-        String((call.args?.settings as Record<string, unknown> | undefined)?.corp_id ?? "") ===
-          "wwcorp-updated",
-    ),
-  ).toBe(true);
-  expect(
-    calls.some(
-      (call) =>
-        call.cmd === "start_wecom_connector" &&
-        String(call.args?.corpId ?? "") === "wwcorp-updated" &&
-        String(call.args?.agentId ?? "") === "1000002",
-    ),
-  ).toBe(true);
+  expect(calls.some((call) => call.cmd === "set_wecom_gateway_settings")).toBe(false);
+  expect(calls.some((call) => call.cmd === "start_wecom_connector")).toBe(false);
   expect(calls.some((call) => call.cmd === "list_im_routing_bindings")).toBe(false);
 });

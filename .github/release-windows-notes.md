@@ -1,14 +1,14 @@
 ## WorkClaw Windows Release
 
-- Highlights in `v0.4.1`:
+- Highlights in `v0.5.0`:
   - 中文:
-    - 修复 Windows 发布流程在 GitHub Actions 上的打包兼容性问题。
-    - 远端发布脚本现在会根据 `pnpm` 版本自动选择合适的 sidecar 部署参数，避免因 `pnpm 9` 不支持 `--legacy` 而导致发布失败。
-    - 本次为发布稳定性热修复，不包含新的用户功能变更。
+    - 新增 OpenClaw 飞书官方插件兼容宿主，WorkClaw 现在可以安装、识别并运行 `@larksuite/openclaw-lark`。
+    - 重构飞书接入流程，支持官方插件安装、已有机器人绑定、配对审批、自动接待与高级配置面板。
+    - 修复飞书消息入站、配对放行、自动启动和回复回传链路，并补强会话恢复、审计诊断与任务防护能力。
   - English:
-    - Fixes the Windows release pipeline compatibility issue in GitHub Actions.
-    - The remote packaging script now adapts its sidecar deploy arguments based on the detected `pnpm` version, preventing release failures caused by `pnpm 9` not supporting `--legacy`.
-    - This is a release stability hotfix with no new user-facing features.
+    - Adds an OpenClaw-compatible host for the official Feishu plugin so WorkClaw can install, recognize, and run `@larksuite/openclaw-lark`.
+    - Redesigns the Feishu onboarding flow with official-plugin install, existing-bot linking, pairing approval, auto-routing, and an advanced settings console.
+    - Hardens the Feishu inbound, pairing, autostart, and reply return path while also improving session recovery, audit diagnostics, and task guardrails.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.

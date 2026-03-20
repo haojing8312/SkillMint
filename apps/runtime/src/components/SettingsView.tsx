@@ -28,6 +28,8 @@ import {
   OpenClawPluginChannelSnapshotResult,
   OpenClawPluginFeishuCredentialProbeResult,
   OpenClawPluginFeishuRuntimeStatus,
+  OpenClawLarkInstallerMode,
+  OpenClawLarkInstallerSessionStatus,
   ModelConfig,
   ModelConnectionTestResult,
   ProviderConfig,
@@ -336,6 +338,17 @@ export function SettingsView({
   const [validatingFeishuCredentials, setValidatingFeishuCredentials] = useState(false);
   const [feishuCredentialProbe, setFeishuCredentialProbe] =
     useState<OpenClawPluginFeishuCredentialProbeResult | null>(null);
+  const [feishuInstallerSession, setFeishuInstallerSession] = useState<OpenClawLarkInstallerSessionStatus>({
+    running: false,
+    mode: null,
+    started_at: null,
+    last_output_at: null,
+    last_error: null,
+    prompt_hint: null,
+    recent_output: [],
+  });
+  const [feishuInstallerInput, setFeishuInstallerInput] = useState("");
+  const [feishuInstallerBusy, setFeishuInstallerBusy] = useState(false);
   const [feishuPairingRequests, setFeishuPairingRequests] = useState<FeishuPairingRequestRecord[]>([]);
   const [feishuPairingRequestsError, setFeishuPairingRequestsError] = useState("");
   const [savingFeishuConnector, setSavingFeishuConnector] = useState(false);
@@ -922,6 +935,17 @@ export function SettingsView({
     }
   }
 
+  async function loadFeishuInstallerSessionStatus() {
+    try {
+      const status = await invoke<OpenClawLarkInstallerSessionStatus>(
+        "get_openclaw_lark_installer_session_status",
+      );
+      setFeishuInstallerSession(status);
+    } catch (e) {
+      console.warn("加载飞书官方安装向导状态失败:", e);
+    }
+  }
+
   async function loadConnectorPlatformData() {
     const [hostsResult, pairingResult] = await Promise.allSettled([
       invoke<OpenClawPluginChannelHost[]>("list_openclaw_plugin_channel_hosts"),
@@ -1161,7 +1185,18 @@ export function SettingsView({
     }
     void loadConnectorStatuses();
     void loadFeishuSetupProgress();
+    void loadFeishuInstallerSessionStatus();
   }, [activeTab, useOfficialFeishuPluginMode]);
+
+  useEffect(() => {
+    if (activeTab !== "feishu" || !feishuInstallerSession.running) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadFeishuInstallerSessionStatus();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [activeTab, feishuInstallerSession.running]);
 
   useEffect(() => {
     if (activeTab !== "feishu" || !useOfficialFeishuPluginMode) {
@@ -1636,6 +1671,60 @@ export function SettingsView({
       setFeishuConnectorError("保存飞书高级配置失败: " + String(error));
     } finally {
       setSavingFeishuAdvancedSettings(false);
+    }
+  }
+
+  async function handleStartFeishuInstaller(mode: OpenClawLarkInstallerMode) {
+    setFeishuInstallerBusy(true);
+    setFeishuConnectorNotice("");
+    setFeishuConnectorError("");
+    try {
+      const status = await invoke<OpenClawLarkInstallerSessionStatus>("start_openclaw_lark_installer_session", {
+        mode,
+        appId: mode === "link" ? feishuConnectorSettings.app_id.trim() : null,
+        appSecret: mode === "link" ? feishuConnectorSettings.app_secret.trim() : null,
+      });
+      setFeishuInstallerSession(status);
+      setFeishuInstallerInput("");
+      setFeishuConnectorNotice(mode === "create" ? "已启动新建机器人向导" : "已启动关联已有机器人向导");
+    } catch (error) {
+      setFeishuConnectorError(
+        `${mode === "create" ? "启动新建机器人向导" : "启动关联已有机器人向导"}失败: ${String(error)}`,
+      );
+    } finally {
+      setFeishuInstallerBusy(false);
+    }
+  }
+
+  async function handleSendFeishuInstallerInput() {
+    const input = feishuInstallerInput.trim();
+    if (!input) return;
+    setFeishuInstallerBusy(true);
+    setFeishuConnectorError("");
+    try {
+      const status = await invoke<OpenClawLarkInstallerSessionStatus>("send_openclaw_lark_installer_input", {
+        input,
+      });
+      setFeishuInstallerSession(status);
+      setFeishuInstallerInput("");
+    } catch (error) {
+      setFeishuConnectorError("发送安装向导输入失败: " + String(error));
+    } finally {
+      setFeishuInstallerBusy(false);
+    }
+  }
+
+  async function handleStopFeishuInstallerSession() {
+    setFeishuInstallerBusy(true);
+    setFeishuConnectorError("");
+    try {
+      const status = await invoke<OpenClawLarkInstallerSessionStatus>("stop_openclaw_lark_installer_session");
+      setFeishuInstallerSession(status);
+      setFeishuConnectorNotice("已停止飞书官方安装向导");
+    } catch (error) {
+      setFeishuConnectorError("停止飞书官方安装向导失败: " + String(error));
+    } finally {
+      setFeishuInstallerBusy(false);
     }
   }
 
@@ -3633,7 +3722,77 @@ export function SettingsView({
               >
                 刷新授权状态
               </button>
+              <button
+                type="button"
+                onClick={() => void handleStartFeishuInstaller("create")}
+                disabled={feishuInstallerBusy}
+                className="h-8 px-3 rounded border border-indigo-200 bg-white text-xs text-indigo-700 hover:bg-indigo-50 disabled:bg-gray-100"
+              >
+                {feishuInstallerBusy && feishuInstallerSession.mode === "create" ? "启动中..." : "新建机器人向导（高级）"}
+              </button>
             </div>
+            <details
+              className="rounded-lg border border-gray-100 bg-gray-50 p-3"
+              open={feishuInstallerSession.running || feishuInstallerSession.recent_output.length > 0}
+            >
+              <summary className="cursor-pointer text-xs font-medium text-gray-700">查看安装向导输出</summary>
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="rounded border border-gray-200 bg-white px-3 py-2">
+                    <div className="text-[11px] text-gray-500">向导状态</div>
+                    <div className="text-sm font-medium text-gray-900">{feishuInstallerSession.running ? "运行中" : "未运行"}</div>
+                  </div>
+                  <div className="rounded border border-gray-200 bg-white px-3 py-2">
+                    <div className="text-[11px] text-gray-500">当前模式</div>
+                    <div className="text-sm font-medium text-gray-900">
+                      {feishuInstallerSession.mode === "create"
+                        ? "新建机器人"
+                        : feishuInstallerSession.mode === "link"
+                          ? "关联已有机器人"
+                          : "未启动"}
+                    </div>
+                  </div>
+                  <div className="rounded border border-gray-200 bg-white px-3 py-2">
+                    <div className="text-[11px] text-gray-500">提示</div>
+                    <div className="text-sm font-medium text-gray-900">{feishuInstallerSession.prompt_hint || "暂无"}</div>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-gray-900 bg-[#050816] px-3 py-3 text-xs text-gray-100">
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono">
+                    {feishuInstallerSession.recent_output.length > 0
+                      ? feishuInstallerSession.recent_output.join("\n")
+                      : "暂无安装向导输出"}
+                  </pre>
+                </div>
+                <div className="flex flex-col gap-2 md:flex-row">
+                  <input
+                    value={feishuInstallerInput}
+                    onChange={(event) => setFeishuInstallerInput(event.target.value)}
+                    placeholder="需要时手动输入，例如 App ID、App Secret 或回车"
+                    className="flex-1 rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSendFeishuInstallerInput()}
+                    disabled={feishuInstallerBusy || !feishuInstallerInput.trim()}
+                    className="h-9 px-3 rounded border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 disabled:bg-gray-100"
+                  >
+                    发送输入
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleStopFeishuInstallerSession()}
+                    disabled={feishuInstallerBusy || !feishuInstallerSession.running}
+                    className="h-9 px-3 rounded border border-red-200 bg-white text-xs text-red-700 hover:bg-red-50 disabled:bg-gray-100"
+                  >
+                    停止向导
+                  </button>
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  如果你的电脑已安装 OpenClaw，当前向导也会优先命中 WorkClaw 内置的受控 openclaw shim，不会写到外部 OpenClaw 配置。
+                </div>
+              </div>
+            </details>
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">

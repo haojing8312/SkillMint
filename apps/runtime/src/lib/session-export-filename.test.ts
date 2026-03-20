@@ -5,11 +5,8 @@ describe("buildSessionExportFilename", () => {
   test("uses display_title and local export timestamp in the default filename", () => {
     const fileName = buildSessionExportFilename(
       {
-        id: "session-1",
         title: "New Chat",
         display_title: "修复登录/接口:超时？",
-        created_at: "2026-03-19T06:00:00Z",
-        model_id: "model-a",
       },
       new Date("2026-03-19T14:30:45"),
     );
@@ -20,10 +17,7 @@ describe("buildSessionExportFilename", () => {
   test("falls back to a generic name when the title is empty after sanitizing", () => {
     const fileName = buildSessionExportFilename(
       {
-        id: "session-2",
         title: "  <>:\"/\\\\|?*  ",
-        created_at: "2026-03-19T06:00:00Z",
-        model_id: "model-a",
       },
       new Date("2026-03-19T09:05:00"),
     );

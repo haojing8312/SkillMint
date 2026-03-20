@@ -9,6 +9,8 @@ use reqwest::Client;
 use sqlx::SqlitePool;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -330,6 +332,8 @@ impl Default for OpenClawLarkInstallerAutoInputState {
         }
     }
 }
+
+const OPENCLAW_SHIM_VERSION: &str = "2026.3.8";
 
 #[derive(Clone, Default)]
 pub struct OpenClawPluginFeishuRuntimeState(pub Arc<Mutex<OpenClawPluginFeishuRuntimeStore>>);
@@ -779,6 +783,193 @@ fn resolve_openclaw_plugin_workspace_root(
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let normalized = normalize_required(plugin_id, "plugin_id")?;
     Ok(app_data_dir.join("openclaw-plugins").join(normalized))
+}
+
+fn resolve_openclaw_shim_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app_data_dir: {e}"))?;
+    Ok(app_data_dir.join("openclaw-cli-shim"))
+}
+
+fn build_openclaw_shim_state_file_path(shim_root: &Path) -> PathBuf {
+    shim_root.join("state.json")
+}
+
+fn build_openclaw_shim_script(state_file: &Path) -> String {
+    let state_file_str = state_file.to_string_lossy().replace('\\', "\\\\");
+    format!(
+        r#"#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+const stateFile = process.env.WORKCLAW_OPENCLAW_SHIM_STATE_FILE || "{state_file_str}";
+const version = process.env.WORKCLAW_OPENCLAW_SHIM_VERSION || "{OPENCLAW_SHIM_VERSION}";
+
+function loadState() {{
+  if (!fs.existsSync(stateFile)) {{
+    return {{ config: {{}}, commands: [] }};
+  }}
+
+  try {{
+    const raw = fs.readFileSync(stateFile, "utf8").trim();
+    if (!raw) {{
+      return {{ config: {{}}, commands: [] }};
+    }}
+    const parsed = JSON.parse(raw);
+    return {{
+      config: parsed && typeof parsed.config === "object" && parsed.config ? parsed.config : {{}},
+      commands: Array.isArray(parsed?.commands) ? parsed.commands : [],
+    }};
+  }} catch (_error) {{
+    return {{ config: {{}}, commands: [] }};
+  }}
+}}
+
+function saveState(state) {{
+  fs.mkdirSync(path.dirname(stateFile), {{ recursive: true }});
+  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+}}
+
+function getPathValue(root, pathParts) {{
+  let current = root;
+  for (const part of pathParts) {{
+    if (!current || typeof current !== "object" || !(part in current)) {{
+      return undefined;
+    }}
+    current = current[part];
+  }}
+  return current;
+}}
+
+function setPathValue(root, pathParts, value) {{
+  let current = root;
+  for (let index = 0; index < pathParts.length - 1; index += 1) {{
+    const part = pathParts[index];
+    if (!current[part] || typeof current[part] !== "object") {{
+      current[part] = {{}};
+    }}
+    current = current[part];
+  }}
+  current[pathParts[pathParts.length - 1]] = value;
+}}
+
+function parseValue(raw, useJson) {{
+  if (!useJson) {{
+    return raw;
+  }}
+  return JSON.parse(raw);
+}}
+
+function recordCommand(state, args) {{
+  state.commands.push({{ at: new Date().toISOString(), args }});
+  if (state.commands.length > 50) {{
+    state.commands = state.commands.slice(-50);
+  }}
+}}
+
+const args = process.argv.slice(2);
+const state = loadState();
+
+if (args.length === 0 || args[0] === "-v" || args[0] === "--version" || args[0] === "version") {{
+  console.log(version);
+  process.exit(0);
+}}
+
+if (args[0] === "config" && args[1] === "get" && typeof args[2] === "string") {{
+  const value = getPathValue(state.config, args[2].split("."));
+  if (value === undefined) {{
+    process.exit(0);
+  }}
+  if (typeof value === "string") {{
+    console.log(value);
+  }} else {{
+    console.log(JSON.stringify(value));
+  }}
+  process.exit(0);
+}}
+
+if (args[0] === "config" && args[1] === "set" && typeof args[2] === "string" && typeof args[3] === "string") {{
+  const useJson = args.includes("--json");
+  try {{
+    setPathValue(state.config, args[2].split("."), parseValue(args[3], useJson));
+    recordCommand(state, args);
+    saveState(state);
+    console.log(`updated ${{args[2]}}`);
+    process.exit(0);
+  }} catch (error) {{
+    console.error(`[workclaw-openclaw-shim] failed to parse value: ${{error instanceof Error ? error.message : String(error)}}`);
+    process.exit(1);
+  }}
+}}
+
+if (args[0] === "gateway" && (args[1] === "restart" || args[1] === "start" || args[1] === "stop")) {{
+  recordCommand(state, args);
+  saveState(state);
+  console.log(`gateway ${{args[1]}} requested via WorkClaw shim`);
+  process.exit(0);
+}}
+
+if (args[0] === "pairing" && args[1] === "approve" && typeof args[2] === "string" && typeof args[3] === "string") {{
+  recordCommand(state, args);
+  saveState(state);
+  console.log(`pairing approved for ${{args[2]}} ${{args[3]}}`);
+  process.exit(0);
+}}
+
+console.error(`[workclaw-openclaw-shim] unsupported command: ${{args.join(" ")}}`);
+process.exit(2);
+"#
+    )
+}
+
+fn ensure_openclaw_cli_shim(shim_root: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(shim_root)
+        .map_err(|e| format!("failed to create openclaw shim dir: {e}"))?;
+
+    let state_file = build_openclaw_shim_state_file_path(shim_root);
+    if !state_file.exists() {
+        fs::write(&state_file, "{\n  \"config\": {},\n  \"commands\": []\n}")
+            .map_err(|e| format!("failed to initialize openclaw shim state: {e}"))?;
+    }
+
+    let script_path = shim_root.join("openclaw-shim.mjs");
+    fs::write(&script_path, build_openclaw_shim_script(&state_file))
+        .map_err(|e| format!("failed to write openclaw shim script: {e}"))?;
+
+    #[cfg(windows)]
+    {
+        let cmd_path = shim_root.join("openclaw.cmd");
+        let cmd_contents = format!("@echo off\r\n\"{}\" \"{}\" %*\r\n", "node", script_path.display());
+        fs::write(&cmd_path, cmd_contents)
+            .map_err(|e| format!("failed to write openclaw shim cmd wrapper: {e}"))?;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let shell_path = shim_root.join("openclaw");
+        let shell_contents = format!("#!/usr/bin/env sh\nnode \"{}\" \"$@\"\n", script_path.display());
+        fs::write(&shell_path, shell_contents)
+            .map_err(|e| format!("failed to write openclaw shim wrapper: {e}"))?;
+        let mut permissions = fs::metadata(&shell_path)
+            .map_err(|e| format!("failed to read openclaw shim wrapper metadata: {e}"))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&shell_path, permissions)
+            .map_err(|e| format!("failed to mark openclaw shim wrapper executable: {e}"))?;
+    }
+
+    Ok(shim_root.to_path_buf())
+}
+
+fn prepend_env_path(command: &mut Command, shim_dir: &Path) {
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![shim_dir.to_path_buf()];
+    paths.extend(std::env::split_paths(&current));
+    if let Ok(joined) = std::env::join_paths(paths) {
+        command.env("PATH", joined);
+    }
 }
 
 fn now_rfc3339() -> String {
@@ -2672,6 +2863,7 @@ pub async fn start_openclaw_lark_installer_session_with_pool(
     mode: OpenClawLarkInstallerMode,
     app_id: Option<&str>,
     app_secret: Option<&str>,
+    app: &AppHandle,
 ) -> Result<OpenClawLarkInstallerSessionStatus, String> {
     let _ = stop_openclaw_lark_installer_session_in_state(state);
 
@@ -2686,6 +2878,9 @@ pub async fn start_openclaw_lark_installer_session_with_pool(
         ));
     }
 
+    let shim_root = resolve_openclaw_shim_root(app)?;
+    let shim_dir = ensure_openclaw_cli_shim(&shim_root)?;
+
     let mut command = Command::new("node");
     command
         .current_dir(Path::new(&install.install_path))
@@ -2694,6 +2889,13 @@ pub async fn start_openclaw_lark_installer_session_with_pool(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    prepend_env_path(&mut command, &shim_dir);
+    command
+        .env(
+            "WORKCLAW_OPENCLAW_SHIM_STATE_FILE",
+            build_openclaw_shim_state_file_path(&shim_dir),
+        )
+        .env("WORKCLAW_OPENCLAW_SHIM_VERSION", OPENCLAW_SHIM_VERSION);
 
     let mut child = command
         .spawn()
@@ -3175,6 +3377,7 @@ pub async fn start_openclaw_lark_installer_session(
     mode: OpenClawLarkInstallerMode,
     app_id: Option<String>,
     app_secret: Option<String>,
+    app: tauri::AppHandle,
     db: State<'_, DbState>,
     installer: State<'_, OpenClawLarkInstallerSessionState>,
 ) -> Result<OpenClawLarkInstallerSessionStatus, String> {
@@ -3184,6 +3387,7 @@ pub async fn start_openclaw_lark_installer_session(
         mode,
         app_id.as_deref(),
         app_secret.as_deref(),
+        &app,
     )
     .await
 }
@@ -4390,6 +4594,48 @@ mod tests {
             1,
         );
         assert_eq!(summary, "ready");
+    }
+
+    #[test]
+    fn openclaw_shim_script_supports_minimal_installer_commands() {
+        let script = build_openclaw_shim_script(Path::new("C:\\temp\\state.json"));
+        assert!(script.contains("args[0] === \"config\" && args[1] === \"get\""));
+        assert!(script.contains("args[0] === \"config\" && args[1] === \"set\""));
+        assert!(
+            script.contains(
+                "args[0] === \"gateway\" && (args[1] === \"restart\" || args[1] === \"start\" || args[1] === \"stop\")"
+            )
+        );
+        assert!(script.contains("args[0] === \"pairing\" && args[1] === \"approve\""));
+        assert!(script.contains(OPENCLAW_SHIM_VERSION));
+    }
+
+    #[test]
+    fn ensure_openclaw_cli_shim_creates_files() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let shim_dir = ensure_openclaw_cli_shim(temp.path()).expect("create shim");
+        assert!(shim_dir.join("openclaw-shim.mjs").exists());
+        assert!(shim_dir.join("state.json").exists());
+        #[cfg(windows)]
+        assert!(shim_dir.join("openclaw.cmd").exists());
+        #[cfg(not(windows))]
+        assert!(shim_dir.join("openclaw").exists());
+    }
+
+    #[test]
+    fn prepend_env_path_places_shim_first() {
+        let mut command = Command::new("node");
+        let shim_dir = Path::new("C:\\shim");
+        prepend_env_path(&mut command, shim_dir);
+        let env_path = command
+            .get_envs()
+            .find_map(|(key, value)| (key == "PATH").then(|| value))
+            .flatten()
+            .expect("PATH env");
+        let first = std::env::split_paths(env_path)
+            .next()
+            .expect("first PATH segment");
+        assert_eq!(first, shim_dir);
     }
 
     #[test]

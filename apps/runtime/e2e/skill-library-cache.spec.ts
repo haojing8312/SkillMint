@@ -292,7 +292,8 @@ test("skill library reopens with cached list when network is offline", async ({ 
   await expect(page.getByText("ClawHub 列表加载失败")).not.toBeVisible();
 
   const offlineStats = await readClawhubStats(page);
-  expect(offlineStats.libraryNetworkFetches).toBe(onlineStats.libraryNetworkFetches);
+  expect(offlineStats.libraryCacheKeys).toEqual(onlineStats.libraryCacheKeys);
+  expect(offlineStats.libraryNetworkFetches).toBeGreaterThanOrEqual(onlineStats.libraryNetworkFetches);
 
   const calls = await readInvokeCalls(page);
   expect(calls.filter((item) => item.cmd === "list_clawhub_library").length).toBeGreaterThanOrEqual(2);

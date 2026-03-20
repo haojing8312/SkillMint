@@ -105,6 +105,33 @@ async function installTauriMocks(page: Page): Promise<void> {
             encrypt_key: "",
             sidecar_base_url: "",
           };
+        case "get_openclaw_plugin_feishu_advanced_settings":
+          return {
+            groups_json: "",
+            dms_json: "",
+            footer_json: "",
+            account_overrides_json: "",
+            render_mode: "auto",
+            streaming: "false",
+            text_chunk_limit: "4000",
+            chunk_mode: "length",
+            reply_in_thread: "disabled",
+            group_session_scope: "group",
+            topic_session_mode: "disabled",
+            markdown_mode: "native",
+            markdown_table_mode: "native",
+            heartbeat_visibility: "visible",
+            heartbeat_interval_ms: "30000",
+            media_max_mb: "20",
+            http_timeout_ms: "60000",
+            config_writes: "false",
+            webhook_host: "",
+            webhook_port: "",
+            dynamic_agent_creation_enabled: "false",
+            dynamic_agent_creation_workspace_template: "",
+            dynamic_agent_creation_agent_dir_template: "",
+            dynamic_agent_creation_max_agents: "",
+          };
         case "get_feishu_plugin_environment_status":
           return {
             node_available: true,
@@ -136,6 +163,63 @@ async function installTauriMocks(page: Page): Promise<void> {
             default_routing_employee_name: null,
             scoped_routing_count: 0,
             summary_state: "awaiting_auth",
+          };
+        case "get_openclaw_plugin_feishu_runtime_status":
+          return {
+            plugin_id: "openclaw-lark",
+            account_id: "default",
+            running: false,
+            started_at: null,
+            last_stop_at: null,
+            last_event_at: null,
+            last_error: null,
+            pid: null,
+            port: null,
+            recent_logs: [],
+          };
+        case "get_openclaw_lark_installer_session_status":
+          return {
+            running: false,
+            mode: null,
+            started_at: null,
+            last_output_at: null,
+            last_error: null,
+            prompt_hint: null,
+            recent_output: [],
+          };
+        case "list_openclaw_plugin_channel_hosts":
+          return [
+            {
+              plugin_id: "openclaw-lark",
+              npm_spec: "@larksuite/openclaw-lark",
+              version: "2026.3.17",
+              channel: "feishu",
+              display_name: "Feishu",
+              capabilities: ["pairing", "threads", "outbound"],
+              reload_config_prefixes: ["channels.feishu"],
+              target_hint: "<chatId|user:openId|chat:chatId>",
+              docs_path: "/channels/feishu",
+              status: "ready",
+              error: null,
+            },
+          ];
+        case "list_feishu_pairing_requests":
+          return [];
+        case "get_openclaw_plugin_feishu_channel_snapshot":
+          return {
+            pluginRoot: "D:/plugins/openclaw-lark",
+            preparedRoot: "D:/runtime/.workclaw-plugin-host-fixtures/openclaw-lark",
+            manifest: {},
+            entryPath: "D:/plugins/openclaw-lark/index.js",
+            snapshot: {
+              channelId: "feishu",
+              defaultAccountId: "default",
+              accountIds: ["default"],
+              accounts: [],
+              reloadConfigPrefixes: ["channels.feishu"],
+              targetHint: "<chatId|user:openId|chat:chatId>",
+            },
+            logRecordCount: 1,
           };
         case "get_wecom_gateway_settings":
           return {
@@ -262,7 +346,6 @@ test("settings shows task-first feishu setup anchors while keeping routing data 
   await expect(page.getByRole("button", { name: "模型连接" })).toBeVisible();
 
   await page.getByRole("button", { name: "渠道连接器" }).click();
-  await expect(page.getByText("飞书连接", { exact: true })).toBeVisible();
   await expect(page.getByText("检查运行环境", { exact: true })).toBeVisible();
   await expect(page.getByText("绑定已有机器人", { exact: true })).toBeVisible();
   await expect(page.getByText("完成飞书授权", { exact: true })).toBeVisible();
