@@ -224,6 +224,64 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     .await?;
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS feishu_pairing_requests (
+            id TEXT PRIMARY KEY,
+            channel TEXT NOT NULL DEFAULT 'feishu',
+            account_id TEXT NOT NULL DEFAULT 'default',
+            sender_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL DEFAULT '',
+            code TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            resolved_at TEXT,
+            resolved_by_user TEXT NOT NULL DEFAULT ''
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query("DROP INDEX IF EXISTS idx_feishu_pairing_requests_pending")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_feishu_pairing_requests_pending
+         ON feishu_pairing_requests(channel, account_id, sender_id)
+         WHERE status = 'pending'",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS feishu_pairing_allow_from (
+            channel TEXT NOT NULL DEFAULT 'feishu',
+            account_id TEXT NOT NULL DEFAULT 'default',
+            sender_id TEXT NOT NULL,
+            source_request_id TEXT NOT NULL DEFAULT '',
+            approved_at TEXT NOT NULL,
+            approved_by_user TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(channel, account_id, sender_id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS installed_openclaw_plugins (
+            plugin_id TEXT PRIMARY KEY,
+            npm_spec TEXT NOT NULL,
+            version TEXT NOT NULL,
+            install_path TEXT NOT NULL,
+            source_type TEXT NOT NULL DEFAULT 'npm',
+            manifest_json TEXT NOT NULL DEFAULT '{}',
+            installed_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS provider_configs (
             id TEXT PRIMARY KEY,
             provider_key TEXT NOT NULL,
@@ -716,6 +774,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     )
     .execute(&pool)
     .await;
+    ensure_im_thread_sessions_channel_column(&pool).await?;
     let _ = sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_im_thread_sessions_route_key ON im_thread_sessions(route_session_key)",
     )
@@ -913,6 +972,23 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+async fn ensure_im_thread_sessions_channel_column(pool: &SqlitePool) -> Result<()> {
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('im_thread_sessions')")
+            .fetch_all(pool)
+            .await?;
+    if columns.iter().any(|name| name == "channel") {
+        return Ok(());
+    }
+
+    let _ =
+        sqlx::query("ALTER TABLE im_thread_sessions ADD COLUMN channel TEXT NOT NULL DEFAULT ''")
+            .execute(pool)
+            .await;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,5 +1080,41 @@ mod tests {
             count,
             crate::builtin_skills::builtin_skill_entries().len() as i64
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_im_thread_sessions_channel_column_migrates_legacy_schema() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE im_thread_sessions (
+                thread_id TEXT NOT NULL,
+                employee_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                route_session_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (thread_id, employee_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy im_thread_sessions table");
+
+        ensure_im_thread_sessions_channel_column(&pool)
+            .await
+            .expect("migrate legacy im_thread_sessions schema");
+
+        let columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('im_thread_sessions')")
+                .fetch_all(&pool)
+                .await
+                .expect("load im_thread_sessions columns");
+
+        assert!(columns.iter().any(|name| name == "channel"));
     }
 }

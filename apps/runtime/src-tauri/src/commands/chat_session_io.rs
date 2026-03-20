@@ -165,10 +165,32 @@ pub(crate) fn resolve_im_session_source(channel: Option<&str>) -> (String, Strin
     }
 }
 
+async fn im_thread_sessions_has_channel_column(pool: &sqlx::SqlitePool) -> bool {
+    matches!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT name FROM pragma_table_info('im_thread_sessions') WHERE name = 'channel'",
+        )
+        .fetch_optional(pool)
+        .await,
+        Ok(Some(_))
+    )
+}
+
 pub(crate) async fn list_sessions_with_pool(
     pool: &sqlx::SqlitePool,
     permission_mode_label_for_display: fn(&str) -> &'static str,
 ) -> Result<Vec<Value>, String> {
+    let im_source_channel_select = if im_thread_sessions_has_channel_column(pool).await {
+        "COALESCE((
+                SELECT ts.channel
+                FROM im_thread_sessions ts
+                WHERE ts.session_id = s.id
+                ORDER BY ts.updated_at DESC, ts.created_at DESC
+                LIMIT 1
+            ), '') AS im_source_channel"
+    } else {
+        "'' AS im_source_channel"
+    };
     let runtime_status_rows = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT
             s.id,
@@ -203,6 +225,22 @@ pub(crate) async fn list_sessions_with_pool(
         .map(|(session_id, runtime_status)| (session_id, runtime_status))
         .collect::<std::collections::HashMap<_, _>>();
 
+    let rows_query = format!(
+        "SELECT
+            s.id,
+            COALESCE(s.skill_id, ''),
+            s.title,
+            s.created_at,
+            s.model_id,
+            COALESCE(s.work_dir, ''),
+            COALESCE(s.employee_id, ''),
+            COALESCE(s.permission_mode, 'standard'),
+            COALESCE(s.session_mode, 'general'),
+            COALESCE(s.team_id, ''),
+            {im_source_channel_select}
+         FROM sessions s
+         ORDER BY s.created_at DESC"
+    );
     let rows = sqlx::query_as::<
         _,
         (
@@ -218,28 +256,7 @@ pub(crate) async fn list_sessions_with_pool(
             Option<String>,
             Option<String>,
         ),
-    >(
-        "SELECT
-            s.id,
-            COALESCE(s.skill_id, ''),
-            s.title,
-            s.created_at,
-            s.model_id,
-            COALESCE(s.work_dir, ''),
-            COALESCE(s.employee_id, ''),
-            COALESCE(s.permission_mode, 'standard'),
-            COALESCE(s.session_mode, 'general'),
-            COALESCE(s.team_id, ''),
-            COALESCE((
-                SELECT ts.channel
-                FROM im_thread_sessions ts
-                WHERE ts.session_id = s.id
-                ORDER BY ts.updated_at DESC, ts.created_at DESC
-                LIMIT 1
-            ), '') AS im_source_channel
-         FROM sessions s
-         ORDER BY s.created_at DESC",
-    )
+    >(&rows_query)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -390,7 +407,33 @@ pub(crate) async fn search_sessions_global_with_pool(
     pool: &sqlx::SqlitePool,
     query: &str,
 ) -> Result<Vec<Value>, String> {
+    let im_source_channel_select = if im_thread_sessions_has_channel_column(pool).await {
+        "COALESCE((
+                SELECT ts.channel
+                FROM im_thread_sessions ts
+                WHERE ts.session_id = s.id
+                ORDER BY ts.updated_at DESC, ts.created_at DESC
+                LIMIT 1
+            ), '') AS im_source_channel"
+    } else {
+        "'' AS im_source_channel"
+    };
     let pattern = format!("%{}%", query);
+    let rows_query = format!(
+        "SELECT DISTINCT
+            s.id,
+            COALESCE(s.skill_id, ''),
+            s.title,
+            s.created_at,
+            s.model_id,
+            COALESCE(s.work_dir, ''),
+            COALESCE(s.employee_id, ''),
+            {im_source_channel_select}
+         FROM sessions s
+         LEFT JOIN messages m ON m.session_id = s.id
+         WHERE (s.title LIKE ? OR m.content LIKE ?)
+         ORDER BY s.created_at DESC"
+    );
     let rows = sqlx::query_as::<
         _,
         (
@@ -403,27 +446,7 @@ pub(crate) async fn search_sessions_global_with_pool(
             String,
             String,
         ),
-    >(
-        "SELECT DISTINCT
-            s.id,
-            COALESCE(s.skill_id, ''),
-            s.title,
-            s.created_at,
-            s.model_id,
-            COALESCE(s.work_dir, ''),
-            COALESCE(s.employee_id, ''),
-            COALESCE((
-                SELECT ts.channel
-                FROM im_thread_sessions ts
-                WHERE ts.session_id = s.id
-                ORDER BY ts.updated_at DESC, ts.created_at DESC
-                LIMIT 1
-            ), '') AS im_source_channel
-         FROM sessions s
-         LEFT JOIN messages m ON m.session_id = s.id
-         WHERE (s.title LIKE ? OR m.content LIKE ?)
-         ORDER BY s.created_at DESC",
-    )
+    >(&rows_query)
     .bind(&pattern)
     .bind(&pattern)
     .fetch_all(pool)
@@ -935,7 +958,10 @@ fn render_export_tool_call_entry(tool_call: &ExportToolCall) -> Option<String> {
     render_export_tool_call(Some(&tool_call_value))
 }
 
-fn read_tool_call_path<'a>(input: &'a Value, structured_output: Option<&'a Value>) -> Option<&'a str> {
+fn read_tool_call_path<'a>(
+    input: &'a Value,
+    structured_output: Option<&'a Value>,
+) -> Option<&'a str> {
     input["path"]
         .as_str()
         .or_else(|| input["file_path"].as_str())
@@ -988,7 +1014,10 @@ fn parse_export_tool_output(output: &str) -> Option<Value> {
     }
 }
 
-fn render_export_tool_output(structured_output: Option<&Value>, raw_output: &str) -> Option<String> {
+fn render_export_tool_output(
+    structured_output: Option<&Value>,
+    raw_output: &str,
+) -> Option<String> {
     if let Some(value) = structured_output {
         let summary = value["summary"].as_str().unwrap_or("").trim();
         let error_message = value["error_message"].as_str().unwrap_or("").trim();
@@ -1020,7 +1049,11 @@ fn render_export_tool_output(structured_output: Option<&Value>, raw_output: &str
 
 fn compact_export_tool_details(details: &Value) -> Vec<String> {
     let mut lines = Vec::new();
-    if let Some(path) = details.get("path").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+    if let Some(path) = details
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+    {
         lines.push(format!("path: {}", path.trim()));
     }
     if let Some(destination) = details
@@ -1036,10 +1069,18 @@ fn compact_export_tool_details(details: &Value) -> Vec<String> {
     if let Some(exit_code) = details.get("exit_code").and_then(Value::as_i64) {
         lines.push(format!("exit_code: {}", exit_code));
     }
-    if let Some(stdout) = details.get("stdout").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+    if let Some(stdout) = details
+        .get("stdout")
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+    {
         lines.push(format!("stdout: {}", stdout.trim()));
     }
-    if let Some(stderr) = details.get("stderr").and_then(Value::as_str).filter(|v| !v.trim().is_empty()) {
+    if let Some(stderr) = details
+        .get("stderr")
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+    {
         lines.push(format!("stderr: {}", stderr.trim()));
     }
     lines
@@ -1301,6 +1342,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_sessions_with_pool_tolerates_legacy_im_thread_sessions_without_channel() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                permission_mode TEXT NOT NULL DEFAULT 'standard',
+                work_dir TEXT NOT NULL DEFAULT '',
+                employee_id TEXT NOT NULL DEFAULT '',
+                session_mode TEXT NOT NULL DEFAULT 'general',
+                team_id TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create sessions table");
+
+        sqlx::query(
+            "CREATE TABLE im_thread_sessions (
+                thread_id TEXT NOT NULL,
+                employee_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                route_session_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (thread_id, employee_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy im_thread_sessions table");
+
+        sqlx::query(
+            "CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                content_json TEXT,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create messages table");
+
+        sqlx::query(
+            "CREATE TABLE agent_employees (
+                id TEXT PRIMARY KEY,
+                employee_id TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL,
+                role_id TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create agent_employees table");
+
+        sqlx::query(
+            "CREATE TABLE employee_groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create employee_groups table");
+
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id)
+             VALUES ('legacy-session', 'skill-1', 'Legacy Session', '2026-03-13T00:00:00Z', 'model-1', 'standard', '', '', 'general', '')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed session");
+
+        let sessions = list_sessions_with_pool(&pool, permission_mode_label_for_display)
+            .await
+            .expect("list sessions should succeed for legacy schema");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["id"], "legacy-session");
+        assert_eq!(sessions[0]["source_channel"], "local");
+        assert_eq!(sessions[0]["source_label"], "");
+    }
+
+    #[tokio::test]
     async fn list_sessions_with_pool_derives_display_title_for_general_sessions() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1552,7 +1688,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn export_session_markdown_skips_recovered_buffer_when_structured_assistant_text_matches() {
+    async fn export_session_markdown_skips_recovered_buffer_when_structured_assistant_text_matches()
+    {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")

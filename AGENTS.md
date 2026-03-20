@@ -48,6 +48,8 @@ These skills should be treated as lightweight guardrails for the maintainer's ow
 - Treat packaging, installer, release docs, and vendor sync changes as release-sensitive, not ordinary code edits.
 - Prefer the smallest command set that proves the touched area is verified, but never skip a required check for the changed surface.
 - Verification claims must cite the commands actually run and whether any areas remain unverified.
+- For SQLite-backed runtime data, any new query dependency on a column or table shape must ship with a backward-compatible migration or a legacy-schema fallback in the query path.
+- When changing session list, session search, IM bindings, or other startup-critical SQLite reads, add at least one regression test that uses a legacy schema and proves old databases still load.
 
 ## Skill Priority And Coordination
 - Treat repo-local `workclaw-*` skills as the project workflow layer. They decide which WorkClaw-specific path, commands, and output contract apply.
