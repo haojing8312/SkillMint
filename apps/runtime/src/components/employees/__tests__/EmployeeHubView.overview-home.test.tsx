@@ -38,6 +38,17 @@ describe("EmployeeHubView overview home", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "E:\\workspace" });
       }
+      if (command === "get_openclaw_plugin_feishu_runtime_status") {
+        return Promise.resolve({
+          plugin_id: "@larksuite/openclaw-lark",
+          account_id: "default",
+          running: false,
+          started_at: null,
+          last_error: null,
+          last_event_at: null,
+          recent_logs: [],
+        });
+      }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
       if (command === "resolve_default_work_dir") return Promise.resolve("E:\\workspace");
       if (command === "list_employee_groups") {

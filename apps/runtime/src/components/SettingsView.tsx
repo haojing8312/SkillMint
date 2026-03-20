@@ -20,6 +20,7 @@ import {
   CapabilityRoutingPolicy,
   FeishuPairingRequestRecord,
   FeishuGatewaySettings,
+  OpenClawPluginFeishuAdvancedSettings,
   OpenClawPluginChannelHost,
   OpenClawPluginInstallRecord,
   OpenClawPluginChannelSnapshotResult,
@@ -237,6 +238,32 @@ export function SettingsView({
     encrypt_key: "",
     sidecar_base_url: "",
   });
+  const [feishuAdvancedSettings, setFeishuAdvancedSettings] = useState<OpenClawPluginFeishuAdvancedSettings>({
+    groups_json: "",
+    dms_json: "",
+    footer_json: "",
+    account_overrides_json: "",
+    render_mode: "",
+    streaming: "",
+    text_chunk_limit: "",
+    chunk_mode: "",
+    reply_in_thread: "",
+    group_session_scope: "",
+    topic_session_mode: "",
+    markdown_mode: "",
+    markdown_table_mode: "",
+    heartbeat_visibility: "",
+    heartbeat_interval_ms: "",
+    media_max_mb: "",
+    http_timeout_ms: "",
+    config_writes: "",
+    webhook_host: "",
+    webhook_port: "",
+    dynamic_agent_creation_enabled: "",
+    dynamic_agent_creation_workspace_template: "",
+    dynamic_agent_creation_agent_dir_template: "",
+    dynamic_agent_creation_max_agents: "",
+  });
   const [officialFeishuRuntimeStatus, setOfficialFeishuRuntimeStatus] =
     useState<OpenClawPluginFeishuRuntimeStatus | null>(null);
   const [pluginChannelHosts, setPluginChannelHosts] = useState<OpenClawPluginChannelHost[]>([]);
@@ -249,6 +276,7 @@ export function SettingsView({
   const [feishuPairingFilter, setFeishuPairingFilter] = useState<"pending" | "approved" | "denied" | "all">("pending");
   const [feishuPairingActionId, setFeishuPairingActionId] = useState<string | null>(null);
   const [savingFeishuConnector, setSavingFeishuConnector] = useState(false);
+  const [savingFeishuAdvancedSettings, setSavingFeishuAdvancedSettings] = useState(false);
   const [retryingFeishuConnector, setRetryingFeishuConnector] = useState(false);
   const [installingOfficialFeishuPlugin, setInstallingOfficialFeishuPlugin] = useState(false);
   const [startingOfficialInstaller, setStartingOfficialInstaller] = useState(false);
@@ -758,13 +786,45 @@ export function SettingsView({
 
   async function loadConnectorSettings() {
     try {
-      const feishuSettings = await invoke<FeishuGatewaySettings>("get_feishu_gateway_settings");
+      const [feishuSettings, feishuAdvanced] = await Promise.all([
+        invoke<FeishuGatewaySettings>("get_feishu_gateway_settings"),
+        invoke<OpenClawPluginFeishuAdvancedSettings>("get_openclaw_plugin_feishu_advanced_settings"),
+      ]);
       setFeishuConnectorSettings({
         app_id: feishuSettings?.app_id || "",
         app_secret: feishuSettings?.app_secret || "",
         ingress_token: feishuSettings?.ingress_token || "",
         encrypt_key: feishuSettings?.encrypt_key || "",
         sidecar_base_url: feishuSettings?.sidecar_base_url || "",
+      });
+      setFeishuAdvancedSettings({
+        groups_json: feishuAdvanced?.groups_json || "",
+        dms_json: feishuAdvanced?.dms_json || "",
+        footer_json: feishuAdvanced?.footer_json || "",
+        account_overrides_json: feishuAdvanced?.account_overrides_json || "",
+        render_mode: feishuAdvanced?.render_mode || "",
+        streaming: feishuAdvanced?.streaming || "",
+        text_chunk_limit: feishuAdvanced?.text_chunk_limit || "",
+        chunk_mode: feishuAdvanced?.chunk_mode || "",
+        reply_in_thread: feishuAdvanced?.reply_in_thread || "",
+        group_session_scope: feishuAdvanced?.group_session_scope || "",
+        topic_session_mode: feishuAdvanced?.topic_session_mode || "",
+        markdown_mode: feishuAdvanced?.markdown_mode || "",
+        markdown_table_mode: feishuAdvanced?.markdown_table_mode || "",
+        heartbeat_visibility: feishuAdvanced?.heartbeat_visibility || "",
+        heartbeat_interval_ms: feishuAdvanced?.heartbeat_interval_ms || "",
+        media_max_mb: feishuAdvanced?.media_max_mb || "",
+        http_timeout_ms: feishuAdvanced?.http_timeout_ms || "",
+        config_writes: feishuAdvanced?.config_writes || "",
+        webhook_host: feishuAdvanced?.webhook_host || "",
+        webhook_port: feishuAdvanced?.webhook_port || "",
+        dynamic_agent_creation_enabled: feishuAdvanced?.dynamic_agent_creation_enabled || "",
+        dynamic_agent_creation_workspace_template:
+          feishuAdvanced?.dynamic_agent_creation_workspace_template || "",
+        dynamic_agent_creation_agent_dir_template:
+          feishuAdvanced?.dynamic_agent_creation_agent_dir_template || "",
+        dynamic_agent_creation_max_agents:
+          feishuAdvanced?.dynamic_agent_creation_max_agents || "",
       });
     } catch (e) {
       console.warn("加载渠道连接器配置失败:", e);
@@ -1414,6 +1474,55 @@ export function SettingsView({
       setFeishuConnectorError("保存飞书官方插件配置失败: " + String(error));
     } finally {
       setSavingFeishuConnector(false);
+    }
+  }
+
+  async function handleSaveFeishuAdvancedSettings() {
+    setSavingFeishuAdvancedSettings(true);
+    setFeishuConnectorNotice("");
+    setFeishuConnectorError("");
+    try {
+      const saved = await invoke<OpenClawPluginFeishuAdvancedSettings>(
+        "set_openclaw_plugin_feishu_advanced_settings",
+        {
+          settings: {
+            groups_json: feishuAdvancedSettings.groups_json,
+            dms_json: feishuAdvancedSettings.dms_json,
+            footer_json: feishuAdvancedSettings.footer_json,
+            account_overrides_json: feishuAdvancedSettings.account_overrides_json,
+            render_mode: feishuAdvancedSettings.render_mode,
+            streaming: feishuAdvancedSettings.streaming,
+            text_chunk_limit: feishuAdvancedSettings.text_chunk_limit,
+            chunk_mode: feishuAdvancedSettings.chunk_mode,
+            reply_in_thread: feishuAdvancedSettings.reply_in_thread,
+            group_session_scope: feishuAdvancedSettings.group_session_scope,
+            topic_session_mode: feishuAdvancedSettings.topic_session_mode,
+            markdown_mode: feishuAdvancedSettings.markdown_mode,
+            markdown_table_mode: feishuAdvancedSettings.markdown_table_mode,
+            heartbeat_visibility: feishuAdvancedSettings.heartbeat_visibility,
+            heartbeat_interval_ms: feishuAdvancedSettings.heartbeat_interval_ms,
+            media_max_mb: feishuAdvancedSettings.media_max_mb,
+            http_timeout_ms: feishuAdvancedSettings.http_timeout_ms,
+            config_writes: feishuAdvancedSettings.config_writes,
+            webhook_host: feishuAdvancedSettings.webhook_host,
+            webhook_port: feishuAdvancedSettings.webhook_port,
+            dynamic_agent_creation_enabled: feishuAdvancedSettings.dynamic_agent_creation_enabled,
+            dynamic_agent_creation_workspace_template:
+              feishuAdvancedSettings.dynamic_agent_creation_workspace_template,
+            dynamic_agent_creation_agent_dir_template:
+              feishuAdvancedSettings.dynamic_agent_creation_agent_dir_template,
+            dynamic_agent_creation_max_agents:
+              feishuAdvancedSettings.dynamic_agent_creation_max_agents,
+          },
+        },
+      );
+      setFeishuAdvancedSettings(saved);
+      await loadConnectorPlatformData();
+      setFeishuConnectorNotice("飞书高级配置已保存");
+    } catch (error) {
+      setFeishuConnectorError("保存飞书高级配置失败: " + String(error));
+    } finally {
+      setSavingFeishuAdvancedSettings(false);
     }
   }
 
@@ -3459,6 +3568,392 @@ export function SettingsView({
                   onSave={handleSaveFeishuConnector}
                   onRetry={handleRetryFeishuConnector}
                 />
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-3">
+                  <div>
+                    <div className="text-xs font-medium text-gray-700">飞书官方插件高级配置</div>
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      用 JSON 覆盖官方插件的高级规则，直接投影到 <span className="font-mono">channels.feishu</span>。
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">群聊高级规则 JSON</div>
+                      <textarea
+                        aria-label="群聊高级规则 JSON"
+                        value={feishuAdvancedSettings.groups_json}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            groups_json: event.target.value,
+                          }))
+                        }
+                        rows={8}
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-[11px] text-gray-900"
+                        placeholder='{\n  "oc_demo": { "enabled": true, "requireMention": true }\n}'
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">私聊高级规则 JSON</div>
+                      <textarea
+                        aria-label="私聊高级规则 JSON"
+                        value={feishuAdvancedSettings.dms_json}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            dms_json: event.target.value,
+                          }))
+                        }
+                        rows={8}
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-[11px] text-gray-900"
+                        placeholder='{\n  "ou_demo": { "enabled": true, "systemPrompt": "优先回答测试问题" }\n}'
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">回复页脚 JSON</div>
+                      <textarea
+                        aria-label="回复页脚 JSON"
+                        value={feishuAdvancedSettings.footer_json}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            footer_json: event.target.value,
+                          }))
+                        }
+                        rows={5}
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-[11px] text-gray-900"
+                        placeholder='{\n  "status": true,\n  "elapsed": true\n}'
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">账号覆盖 JSON</div>
+                      <textarea
+                        aria-label="账号覆盖 JSON"
+                        value={feishuAdvancedSettings.account_overrides_json}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            account_overrides_json: event.target.value,
+                          }))
+                        }
+                        rows={5}
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-[11px] text-gray-900"
+                        placeholder='{\n  "default": { "renderMode": "card" }\n}'
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">渲染模式</div>
+                      <input
+                        aria-label="渲染模式"
+                        value={feishuAdvancedSettings.render_mode}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            render_mode: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="auto / card / raw"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">流式输出</div>
+                      <input
+                        aria-label="流式输出"
+                        value={feishuAdvancedSettings.streaming}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            streaming: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="true / false"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">文本分块上限</div>
+                      <input
+                        aria-label="文本分块上限"
+                        value={feishuAdvancedSettings.text_chunk_limit}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            text_chunk_limit: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="4000"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">分块模式</div>
+                      <input
+                        aria-label="分块模式"
+                        value={feishuAdvancedSettings.chunk_mode}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            chunk_mode: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="length / newline"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">线程内回复</div>
+                      <input
+                        aria-label="线程内回复"
+                        value={feishuAdvancedSettings.reply_in_thread}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            reply_in_thread: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="enabled / disabled"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">群聊会话范围</div>
+                      <input
+                        aria-label="群聊会话范围"
+                        value={feishuAdvancedSettings.group_session_scope}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            group_session_scope: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="group / group_sender"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">话题会话模式</div>
+                      <input
+                        aria-label="话题会话模式"
+                        value={feishuAdvancedSettings.topic_session_mode}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            topic_session_mode: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="enabled / disabled"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">Markdown 模式</div>
+                      <input
+                        aria-label="Markdown 模式"
+                        value={feishuAdvancedSettings.markdown_mode}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            markdown_mode: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="native"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">Markdown 表格模式</div>
+                      <input
+                        aria-label="Markdown 表格模式"
+                        value={feishuAdvancedSettings.markdown_table_mode}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            markdown_table_mode: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="native"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">心跳可见性</div>
+                      <input
+                        aria-label="心跳可见性"
+                        value={feishuAdvancedSettings.heartbeat_visibility}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            heartbeat_visibility: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="visible / hidden"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">心跳间隔毫秒</div>
+                      <input
+                        aria-label="心跳间隔毫秒"
+                        value={feishuAdvancedSettings.heartbeat_interval_ms}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            heartbeat_interval_ms: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="30000"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">媒体大小上限 MB</div>
+                      <input
+                        aria-label="媒体大小上限 MB"
+                        value={feishuAdvancedSettings.media_max_mb}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            media_max_mb: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="20"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">HTTP 超时毫秒</div>
+                      <input
+                        aria-label="HTTP 超时毫秒"
+                        value={feishuAdvancedSettings.http_timeout_ms}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            http_timeout_ms: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="60000"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">允许插件写回配置</div>
+                      <input
+                        aria-label="允许插件写回配置"
+                        value={feishuAdvancedSettings.config_writes}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            config_writes: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="true / false"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">Webhook Host</div>
+                      <input
+                        aria-label="Webhook Host"
+                        value={feishuAdvancedSettings.webhook_host}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            webhook_host: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="127.0.0.1"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">Webhook Port</div>
+                      <input
+                        aria-label="Webhook Port"
+                        value={feishuAdvancedSettings.webhook_port}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            webhook_port: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="8787"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">动态 Agent 创建</div>
+                      <input
+                        aria-label="动态 Agent 创建"
+                        value={feishuAdvancedSettings.dynamic_agent_creation_enabled}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            dynamic_agent_creation_enabled: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="true / false"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">动态工作区模板</div>
+                      <input
+                        aria-label="动态工作区模板"
+                        value={feishuAdvancedSettings.dynamic_agent_creation_workspace_template}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            dynamic_agent_creation_workspace_template: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="workspace/{sender_id}"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">动态 Agent 目录模板</div>
+                      <input
+                        aria-label="动态 Agent 目录模板"
+                        value={feishuAdvancedSettings.dynamic_agent_creation_agent_dir_template}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            dynamic_agent_creation_agent_dir_template: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="agents/{sender_id}"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-[11px] font-medium text-gray-700">动态 Agent 数量上限</div>
+                      <input
+                        aria-label="动态 Agent 数量上限"
+                        value={feishuAdvancedSettings.dynamic_agent_creation_max_agents}
+                        onChange={(event) =>
+                          setFeishuAdvancedSettings((state) => ({
+                            ...state,
+                            dynamic_agent_creation_max_agents: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-900"
+                        placeholder="48"
+                      />
+                    </label>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveFeishuAdvancedSettings()}
+                      disabled={savingFeishuAdvancedSettings}
+                      className="sm-btn sm-btn-primary h-9 rounded-lg px-4 text-sm disabled:opacity-60"
+                    >
+                      {savingFeishuAdvancedSettings ? "保存中..." : "保存高级配置"}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 space-y-1">
                 <div className="text-sm font-medium text-blue-900">员工关联入口</div>

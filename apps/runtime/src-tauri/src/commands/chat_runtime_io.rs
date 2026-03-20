@@ -1918,7 +1918,10 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(items[0]["content"].as_str(), Some("让我先检查正确的目录路径。"));
+        assert_eq!(
+            items[0]["content"].as_str(),
+            Some("让我先检查正确的目录路径。")
+        );
         assert_eq!(items[1]["toolCall"]["name"].as_str(), Some("list_dir"));
     }
 

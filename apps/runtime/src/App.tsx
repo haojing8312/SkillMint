@@ -176,6 +176,7 @@ type ImBridgeSessionContext = {
   streamSentCount: number;
   waitingForAnswer: boolean;
   streamFlushTimer: ReturnType<typeof setTimeout> | null;
+  fallbackReplyTimer: ReturnType<typeof setTimeout> | null;
   lastStreamFlushAt: number;
   streamFlushInFlight: boolean;
 };
@@ -1097,10 +1098,12 @@ export default function App() {
     const seen = new Set<string>();
     const sessionContexts = new Map<string, ImBridgeSessionContext>();
     const feishuRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const outboundImDedup = new Map<string, number>();
     const STREAM_CHUNK_SIZE = 120;
     const STREAM_FLUSH_INTERVAL_MS = 1200;
     const FEISHU_RETRY_DELAYS_MS = [1000, 3000, 8000];
     const FEISHU_MAX_ATTEMPTS = FEISHU_RETRY_DELAYS_MS.length + 1;
+    const IM_OUTBOUND_DEDUP_WINDOW_MS = 2500;
     const sanitizeInboundPrompt = (raw: string): string =>
       raw
         .replace(/(^|\s)@_[A-Za-z0-9_]+/g, "$1")
@@ -1130,12 +1133,35 @@ export default function App() {
     const buildChannelRetryKey = (channel: string, threadId: string, text: string) =>
       `${channel}::${threadId}::${text}`;
 
+    const shouldSuppressOutboundDuplicate = (channel: string, threadId: string, text: string) => {
+      const key = buildChannelRetryKey(channel, threadId, text);
+      const now = Date.now();
+      for (const [entryKey, timestamp] of outboundImDedup.entries()) {
+        if (now - timestamp > IM_OUTBOUND_DEDUP_WINDOW_MS) {
+          outboundImDedup.delete(entryKey);
+        }
+      }
+      const previous = outboundImDedup.get(key);
+      if (typeof previous === "number" && now - previous < IM_OUTBOUND_DEDUP_WINDOW_MS) {
+        return true;
+      }
+      outboundImDedup.set(key, now);
+      return false;
+    };
+
     const clearFeishuRetryTimer = (key: string) => {
       const timer = feishuRetryTimers.get(key);
       if (timer) {
         clearTimeout(timer);
       }
       feishuRetryTimers.delete(key);
+    };
+
+    const clearImFallbackReplyTimer = (sessionId: string) => {
+      const ctx = sessionContexts.get(sessionId);
+      if (!ctx?.fallbackReplyTimer) return;
+      clearTimeout(ctx.fallbackReplyTimer);
+      ctx.fallbackReplyTimer = null;
     };
 
     const invokeFeishuSend = async (threadId: string, text: string) => {
@@ -1205,6 +1231,9 @@ export default function App() {
       const targetThreadId = threadId.trim();
       const messageText = text.trim().slice(0, 1800);
       if (!targetThreadId || !messageText) return;
+      if (shouldSuppressOutboundDuplicate(normalizedChannel, targetThreadId, messageText)) {
+        return;
+      }
 
       if (normalizedChannel === "wecom") {
         await invokeWecomSend(targetThreadId, messageText);
@@ -1278,7 +1307,8 @@ export default function App() {
     const unlistenDispatchPromise = listen<ImRoleDispatchRequest>("im-role-dispatch-request", async ({ payload }) => {
       const cleanedPrompt = sanitizeInboundPrompt(payload.prompt || "");
       const dispatchPrompt = cleanedPrompt || (payload.prompt || "").trim();
-      const key = `${payload.session_id}|${payload.role_id}|${dispatchPrompt}`;
+      const messageKey = (payload.message_id || "").trim();
+      const key = messageKey || `${payload.session_id}|${payload.role_id}|${dispatchPrompt}`;
       if (seen.has(key)) return;
       seen.add(key);
 
@@ -1293,6 +1323,7 @@ export default function App() {
         streamSentCount: 0,
         waitingForAnswer: existing?.waitingForAnswer ?? false,
         streamFlushTimer: existing?.streamFlushTimer ?? null,
+        fallbackReplyTimer: existing?.fallbackReplyTimer ?? null,
         lastStreamFlushAt: existing?.lastStreamFlushAt ?? 0,
         streamFlushInFlight: existing?.streamFlushInFlight ?? false,
       };
@@ -1309,29 +1340,49 @@ export default function App() {
           await invoke("answer_user_question", { answer: dispatchPrompt });
         } else {
           await invoke("send_message", {
-            sessionId: payload.session_id,
-            userMessage: dispatchPrompt,
+            request: {
+              sessionId: payload.session_id,
+              parts: [{ type: "text", text: dispatchPrompt }],
+            },
           });
         }
 
         await flushImStream(payload.session_id, { force: true });
         if (ctx.streamSentCount === 0) {
-          const messages = await invoke<Message[]>("get_messages", {
-            sessionId: payload.session_id,
-          });
-          const latestAssistant = [...messages]
-            .reverse()
-            .find((m) => m.role === "assistant" && m.content?.trim().length > 0);
-          if (latestAssistant) {
-            await sendTextToImThread(
-              ctx.sourceChannel,
-              ctx.threadId,
-              formatFeishuRoleMessage(ctx.roleName, latestAssistant.content.slice(0, 1800)),
-            );
-          }
+          clearImFallbackReplyTimer(payload.session_id);
+          ctx.fallbackReplyTimer = setTimeout(() => {
+            const latest = sessionContexts.get(payload.session_id);
+            if (!latest || latest.streamSentCount > 0) {
+              if (latest) {
+                latest.fallbackReplyTimer = null;
+              }
+              return;
+            }
+            latest.fallbackReplyTimer = null;
+            void (async () => {
+              const messages = await invoke<Message[]>("get_messages", {
+                sessionId: payload.session_id,
+              });
+              const latestAssistant = [...messages]
+                .reverse()
+                .find((m) => m.role === "assistant" && m.content?.trim().length > 0);
+              if (latestAssistant) {
+                await sendTextToImThread(
+                  latest.sourceChannel,
+                  latest.threadId,
+                  formatFeishuRoleMessage(latest.roleName, latestAssistant.content.slice(0, 1800)),
+                );
+              }
+            })();
+          }, 1200);
         }
       } catch (e) {
         console.error("IM 分发执行失败:", e);
+        void reportFrontendDiagnostic({
+          kind: "im_role_dispatch_failed",
+          message: extractErrorMessage(e, "IM 分发执行失败"),
+          href: typeof window !== "undefined" ? window.location?.href : undefined,
+        });
       } finally {
         setTimeout(() => seen.delete(key), 30_000);
       }
@@ -1347,6 +1398,7 @@ export default function App() {
     }>("stream-token", ({ payload }) => {
       const ctx = sessionContexts.get(payload.session_id);
       if (!ctx) return;
+      clearImFallbackReplyTimer(payload.session_id);
       if (payload.done) {
         void flushImStream(payload.session_id, { force: true });
         return;
@@ -1400,6 +1452,10 @@ export default function App() {
         if (ctx.streamFlushTimer) {
           clearTimeout(ctx.streamFlushTimer);
           ctx.streamFlushTimer = null;
+        }
+        if (ctx.fallbackReplyTimer) {
+          clearTimeout(ctx.fallbackReplyTimer);
+          ctx.fallbackReplyTimer = null;
         }
       });
       feishuRetryTimers.forEach((timer) => clearTimeout(timer));

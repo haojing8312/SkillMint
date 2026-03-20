@@ -63,7 +63,9 @@ fn skill_tool_denies_when_child_tools_outside_parent_scope() {
         err
     );
     assert!(err.to_string().contains("执行状态: blocked"));
-    assert!(err.to_string().contains("执行原因: 子 Skill 声明的工具不在当前会话允许范围内"));
+    assert!(err
+        .to_string()
+        .contains("执行原因: 子 Skill 声明的工具不在当前会话允许范围内"));
     assert!(!err.to_string().contains("Child prompt"));
 }
 

@@ -94,6 +94,7 @@ function createWsEvent(): FeishuWsEventRecord {
     mention_open_id: "ou_role_sales",
     mention_open_ids: ["ou_role_sales"],
     sender_open_id: "ou_user_1",
+    chat_type: "group",
     received_at: "2026-03-10T00:00:05Z",
     raw: {
       tenant_key: "tenant-1",
@@ -109,6 +110,15 @@ test("normalizeFeishuEvent maps websocket record into normalized event", () => {
   assert.equal(event.sender_id, "ou_user_1");
   assert.equal(event.routing_context.peer.kind, "group");
   assert.equal(event.mentions[0]?.id, "ou_role_sales");
+});
+
+test("normalizeFeishuEvent preserves p2p chat type as direct peer", () => {
+  const event = normalizeFeishuEvent({
+    ...createWsEvent(),
+    chat_type: "p2p",
+    chat_id: "ou_user_1",
+  });
+  assert.equal(event.routing_context.peer.kind, "direct");
 });
 
 test("feishu adapter exposes websocket health through channel adapter interface", async () => {
@@ -183,6 +193,40 @@ test("feishu adapter delegates outbound sendMessage to FeishuClient", async () =
     app_secret: "sec_b",
     receive_id: "chat-1",
     receive_id_type: "chat_id",
+    msg_type: "text",
+    content: JSON.stringify({ text: "已收到" }),
+    uuid: started.instance_id,
+  });
+});
+
+test("feishu adapter uses open_id receive type for direct user targets", async () => {
+  const client = new FakeFeishuClient();
+  const manager = new FakeFeishuWsManager();
+  manager.seedEmployee("connector-1", []);
+  const adapter = new FeishuChannelAdapter(client as never, manager as never);
+
+  const started = await adapter.start({
+    adapter_name: "feishu",
+    connector_id: "connector-1",
+    settings: {
+      employee_id: "connector-1",
+      app_id: "cli_a",
+      app_secret: "sec_b",
+    },
+  });
+
+  await adapter.sendMessage(started.instance_id, {
+    channel: "feishu",
+    thread_id: "ou_user_123",
+    reply_target: null,
+    text: "已收到",
+  });
+
+  assert.deepEqual(client.lastInput, {
+    app_id: "cli_a",
+    app_secret: "sec_b",
+    receive_id: "ou_user_123",
+    receive_id_type: "open_id",
     msg_type: "text",
     content: JSON.stringify({ text: "已收到" }),
     uuid: started.instance_id,

@@ -25,6 +25,10 @@ fn test_delete_file() {
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
         allowed_tools: None,
+        session_id: None,
+        task_temp_dir: None,
+        execution_caps: None,
+        file_task_caps: None,
     };
 
     let input = json!({
@@ -54,6 +58,10 @@ fn test_delete_empty_directory() {
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
         allowed_tools: None,
+        session_id: None,
+        task_temp_dir: None,
+        execution_caps: None,
+        file_task_caps: None,
     };
 
     let input = json!({
@@ -82,6 +90,10 @@ fn test_delete_nonempty_dir_without_recursive() {
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
         allowed_tools: None,
+        session_id: None,
+        task_temp_dir: None,
+        execution_caps: None,
+        file_task_caps: None,
     };
 
     let input = json!({
@@ -117,6 +129,10 @@ fn test_delete_nonempty_dir_with_recursive() {
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
         allowed_tools: None,
+        session_id: None,
+        task_temp_dir: None,
+        execution_caps: None,
+        file_task_caps: None,
     };
 
     let input = json!({
@@ -144,6 +160,10 @@ fn test_delete_nonexistent_path() {
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
         allowed_tools: None,
+        session_id: None,
+        task_temp_dir: None,
+        execution_caps: None,
+        file_task_caps: None,
     };
 
     let input = json!({

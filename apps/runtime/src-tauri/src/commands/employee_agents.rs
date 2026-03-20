@@ -4960,6 +4960,8 @@ mod tests {
             role_id: None,
             account_id: Some("tenant-wecom".to_string()),
             tenant_id: Some("tenant-wecom".to_string()),
+            sender_id: None,
+            chat_type: Some("group".to_string()),
         };
         assert!(super::im_binding_matches_event(&binding, &wecom_event));
 
@@ -5003,6 +5005,8 @@ mod tests {
             role_id: None,
             account_id: Some("tenant-wecom".to_string()),
             tenant_id: Some("tenant-wecom".to_string()),
+            sender_id: None,
+            chat_type: Some("group".to_string()),
         };
 
         assert_eq!(
@@ -5044,6 +5048,8 @@ mod tests {
             role_id: None,
             account_id: None,
             tenant_id: None,
+            sender_id: None,
+            chat_type: None,
         };
 
         assert_eq!(

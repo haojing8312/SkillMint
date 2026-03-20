@@ -1,0 +1,10 @@
+{
+  "name": "openclaw",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./plugin-sdk": "./plugin-sdk/index.js",
+    "./plugin-sdk/compat": "./plugin-sdk/compat.js",
+    "./plugin-sdk/feishu": "./plugin-sdk/feishu.js"
+  }
+}

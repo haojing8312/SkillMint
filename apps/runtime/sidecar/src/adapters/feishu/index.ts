@@ -1,4 +1,8 @@
-import { FeishuClient, type FeishuSendMessageInput } from "../../feishu.js";
+import {
+  FeishuClient,
+  inferFeishuReceiveIdType,
+  type FeishuSendMessageInput,
+} from "../../feishu.js";
 import {
   FeishuLongConnectionManager,
   type FeishuEmployeeWsStatus,
@@ -112,7 +116,7 @@ export class FeishuChannelAdapter implements ChannelAdapter {
       app_id: instance.appId,
       app_secret: instance.appSecret,
       receive_id: req.reply_target || req.thread_id,
-      receive_id_type: "chat_id",
+      receive_id_type: inferFeishuReceiveIdType(req.reply_target || req.thread_id),
       msg_type: "text",
       content: toTextContent(req.text),
       uuid: instanceId,

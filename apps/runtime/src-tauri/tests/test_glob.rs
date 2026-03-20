@@ -22,7 +22,10 @@ fn test_glob_find_files() {
     let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["tool"], "glob");
-    assert!(parsed["summary"].as_str().unwrap().contains("找到 3 个文件"));
+    assert!(parsed["summary"]
+        .as_str()
+        .unwrap()
+        .contains("找到 3 个文件"));
     let matches = parsed["details"]["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 3);
     let joined = matches

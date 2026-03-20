@@ -229,7 +229,7 @@ export function EmployeeFeishuAssociationSection({
 
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] text-gray-500">
-          飞书连接异常或未授权时，请前往设置中心中的飞书连接页面处理。
+          官方插件未运行或授权未完成时，请前往设置中心中的飞书连接页面处理。
         </div>
         <button
           type="button"

@@ -306,6 +306,7 @@ export interface ImRoleTimelineEvent {
 export interface ImRoleDispatchRequest {
   session_id: string;
   thread_id: string;
+  message_id?: string;
   role_id: string;
   role_name: string;
   message_type?: string;
@@ -335,6 +336,33 @@ export interface FeishuGatewaySettings {
   sidecar_base_url: string;
 }
 
+export interface OpenClawPluginFeishuAdvancedSettings {
+  groups_json: string;
+  dms_json: string;
+  footer_json: string;
+  account_overrides_json: string;
+  render_mode: string;
+  streaming: string;
+  text_chunk_limit: string;
+  chunk_mode: string;
+  reply_in_thread: string;
+  group_session_scope: string;
+  topic_session_mode: string;
+  markdown_mode: string;
+  markdown_table_mode: string;
+  heartbeat_visibility: string;
+  heartbeat_interval_ms: string;
+  media_max_mb: string;
+  http_timeout_ms: string;
+  config_writes: string;
+  webhook_host: string;
+  webhook_port: string;
+  dynamic_agent_creation_enabled: string;
+  dynamic_agent_creation_workspace_template: string;
+  dynamic_agent_creation_agent_dir_template: string;
+  dynamic_agent_creation_max_agents: string;
+}
+
 export interface WecomGatewaySettings {
   corp_id: string;
   agent_id: string;
@@ -346,6 +374,39 @@ export interface FeishuWsStatus {
   running: boolean;
   started_at?: string | null;
   queued_events: number;
+}
+
+export interface OpenClawPluginFeishuRuntimeStatus {
+  plugin_id: string;
+  account_id: string;
+  running: boolean;
+  started_at?: string | null;
+  last_stop_at?: string | null;
+  last_event_at?: string | null;
+  last_error?: string | null;
+  pid?: number | null;
+  port?: number | null;
+  recent_logs?: string[];
+}
+
+export interface OpenClawPluginFeishuCredentialProbeResult {
+  ok: boolean;
+  app_id: string;
+  bot_name?: string | null;
+  bot_open_id?: string | null;
+  error?: string | null;
+}
+
+export type OpenClawLarkInstallerMode = "create" | "link";
+
+export interface OpenClawLarkInstallerSessionStatus {
+  running: boolean;
+  mode?: OpenClawLarkInstallerMode | null;
+  started_at?: string | null;
+  last_output_at?: string | null;
+  last_error?: string | null;
+  prompt_hint?: string | null;
+  recent_output: string[];
 }
 
 export interface WecomConnectorStatus {
@@ -393,6 +454,71 @@ export interface ChannelConnectorDiagnostics {
   status: string;
   health: ChannelConnectorHealth;
   replay: ChannelConnectorReplayStats;
+}
+
+export interface OpenClawPluginChannelHost {
+  plugin_id: string;
+  npm_spec: string;
+  version: string;
+  channel: string;
+  display_name: string;
+  capabilities: string[];
+  reload_config_prefixes: string[];
+  target_hint?: string | null;
+  docs_path?: string | null;
+  status: string;
+  error?: string | null;
+}
+
+export interface OpenClawPluginInstallRecord {
+  plugin_id: string;
+  npm_spec: string;
+  version: string;
+  install_path: string;
+  source_type: string;
+  manifest_json: string;
+  installed_at: string;
+  updated_at: string;
+}
+
+export interface OpenClawPluginChannelAccountSnapshot {
+  accountId: string;
+  account: Record<string, unknown> | null;
+  describedAccount: Record<string, unknown> | null;
+  allowFrom: string[];
+  warnings: string[];
+}
+
+export interface OpenClawPluginChannelSnapshot {
+  channelId: string;
+  defaultAccountId?: string | null;
+  accountIds: string[];
+  accounts: OpenClawPluginChannelAccountSnapshot[];
+  reloadConfigPrefixes: string[];
+  targetHint?: string | null;
+}
+
+export interface OpenClawPluginChannelSnapshotResult {
+  pluginRoot: string;
+  preparedRoot: string;
+  manifest: Record<string, unknown>;
+  entryPath: string;
+  snapshot: OpenClawPluginChannelSnapshot;
+  logRecordCount: number;
+}
+
+export interface FeishuPairingRequestRecord {
+  id: string;
+  channel: string;
+  account_id: string;
+  sender_id: string;
+  chat_id: string;
+  code: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+  resolved_by_user: string;
 }
 
 export interface FeishuEmployeeWsStatus {

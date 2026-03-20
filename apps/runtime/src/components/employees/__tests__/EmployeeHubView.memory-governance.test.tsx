@@ -25,6 +25,17 @@ describe("EmployeeHubView memory governance", () => {
       if (command === "resolve_default_work_dir") {
         return Promise.resolve("C:\\Users\\test\\WorkClaw\\workspace");
       }
+      if (command === "get_openclaw_plugin_feishu_runtime_status") {
+        return Promise.resolve({
+          plugin_id: "@larksuite/openclaw-lark",
+          account_id: "default",
+          running: true,
+          started_at: "2026-03-04T00:00:00Z",
+          last_error: null,
+          last_event_at: null,
+          recent_logs: [],
+        });
+      }
       if (command === "get_feishu_employee_connection_statuses") {
         return Promise.resolve({
           relay: { running: true, generation: 1, interval_ms: 1500, total_accepted: 0, last_error: null },

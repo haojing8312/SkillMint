@@ -89,6 +89,10 @@ fn test_write_file_allows_absolute_nested_path_within_work_dir() {
     let ctx = ToolContext {
         work_dir: Some(work_dir.clone()),
         allowed_tools: None,
+        session_id: None,
+        task_temp_dir: None,
+        execution_caps: None,
+        file_task_caps: None,
     };
 
     let input = json!({

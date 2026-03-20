@@ -148,6 +148,10 @@ mod tests {
                 &ToolContext {
                     work_dir: Some(workspace.path().to_path_buf()),
                     allowed_tools: None,
+                    session_id: None,
+                    task_temp_dir: None,
+                    execution_caps: None,
+                    file_task_caps: None,
                 },
             )
             .expect("tool execution should succeed");
@@ -189,6 +193,10 @@ mod tests {
                 &ToolContext {
                     work_dir: None,
                     allowed_tools: None,
+                    session_id: None,
+                    task_temp_dir: None,
+                    execution_caps: None,
+                    file_task_caps: None,
                 },
             )
             .expect_err("workspace should be required");

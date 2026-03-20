@@ -1,4 +1,5 @@
 use super::browser_progress::BrowserProgressSnapshot;
+use super::execution_caps::detect_execution_caps;
 use super::permissions::PermissionMode;
 use super::registry::ToolRegistry;
 use super::run_guard::{
@@ -6,7 +7,6 @@ use super::run_guard::{
     RunGuardWarning, RunStopReason,
 };
 use super::system_prompts::SystemPromptBuilder;
-use super::execution_caps::detect_execution_caps;
 use super::types::{LLMResponse, StreamDelta, ToolContext, ToolResult};
 use crate::adapters;
 use crate::approval_bus::{
@@ -539,8 +539,7 @@ fn build_task_temp_dir(session_id: &str) -> Result<PathBuf> {
         .collect();
     let dir_name = format!("workclaw-task-{}", session_slug);
     let temp_dir = temp_root.join(dir_name);
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| anyhow!("创建任务临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| anyhow!("创建任务临时目录失败: {}", e))?;
     Ok(temp_dir)
 }
 
@@ -1719,11 +1718,14 @@ mod tests {
 
         let caps = ctx.execution_caps.expect("execution caps");
         assert_eq!(caps.platform.as_deref(), Some(std::env::consts::OS));
-        assert_eq!(caps.preferred_shell.as_deref(), Some(if cfg!(target_os = "windows") {
-            "cmd"
-        } else {
-            "bash"
-        }));
+        assert_eq!(
+            caps.preferred_shell.as_deref(),
+            Some(if cfg!(target_os = "windows") {
+                "cmd"
+            } else {
+                "bash"
+            })
+        );
         assert!(caps.python_candidates.is_empty());
         assert!(caps.node_candidates.is_empty());
         assert_eq!(caps.notes, vec!["static P0 detection".to_string()]);

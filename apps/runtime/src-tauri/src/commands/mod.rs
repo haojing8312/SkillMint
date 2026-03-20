@@ -24,6 +24,7 @@ pub mod mcp;
 pub mod models;
 pub mod models_repo;
 pub mod openclaw_gateway;
+pub mod openclaw_plugins;
 pub mod packaging;
 pub mod runtime_preferences;
 pub mod session_runs;

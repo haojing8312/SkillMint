@@ -26,16 +26,16 @@ fn test_read_file_success() {
     let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json payload");
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["tool"], "read_file");
-    assert!(parsed["summary"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(parsed["summary"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
     assert_eq!(parsed["details"]["path"], test_path);
     assert_eq!(parsed["details"]["content"], "Hello, World!");
     assert_eq!(parsed["details"]["line_count"], 1);
     assert_eq!(parsed["details"]["truncated"], false);
-    assert!(
-        parsed["details"]["absolute_path"]
-            .as_str()
-            .is_some_and(|value| Path::new(value).is_absolute() && value.ends_with(test_path))
-    );
+    assert!(parsed["details"]["absolute_path"]
+        .as_str()
+        .is_some_and(|value| Path::new(value).is_absolute() && value.ends_with(test_path)));
 
     // Cleanup
     fs::remove_file(test_path).unwrap();
@@ -65,17 +65,16 @@ fn test_read_file_docx_returns_structured_failure() {
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["tool"], "read_file");
     assert_eq!(parsed["error_code"], "UNSUPPORTED_RAW_FILE_READ");
-    assert!(
-        parsed["error_message"]
-            .as_str()
-            .is_some_and(|value| value.contains("raw-read"))
+    assert!(parsed["error_message"]
+        .as_str()
+        .is_some_and(|value| value.contains("raw-read")));
+    assert!(parsed["details"]["read_mode"]
+        .as_str()
+        .is_some_and(|value| value == "binary_or_office"));
+    assert_eq!(
+        parsed["details"]["path"],
+        test_path.to_str().expect("utf8 path")
     );
-    assert!(
-        parsed["details"]["read_mode"]
-            .as_str()
-            .is_some_and(|value| value == "binary_or_office")
-    );
-    assert_eq!(parsed["details"]["path"], test_path.to_str().expect("utf8 path"));
     assert_eq!(
         parsed["details"]["absolute_path"],
         test_path.to_str().expect("utf8 path")

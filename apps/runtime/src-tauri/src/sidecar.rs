@@ -129,9 +129,11 @@ impl SidecarManager {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let mut proc = self.process.lock().unwrap();
-        if proc.is_some() {
-            return Ok(()); // Already started
+        {
+            let proc = self.process.lock().unwrap();
+            if proc.is_some() {
+                return Ok(());
+            }
         }
 
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -153,9 +155,10 @@ impl SidecarManager {
         hide_console_window(&mut command);
 
         let child = command.spawn()?;
-
-        *proc = Some(child);
-        drop(proc); // Release lock before polling
+        {
+            let mut proc = self.process.lock().unwrap();
+            *proc = Some(child);
+        }
 
         // Wait for server to be ready (max 5 seconds)
         for _ in 0..50 {

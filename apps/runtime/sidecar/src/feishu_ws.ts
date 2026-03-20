@@ -18,6 +18,7 @@ export interface FeishuWsEventRecord {
   id: string;
   event_type: string;
   chat_id: string;
+  chat_type: string;
   message_id: string;
   text: string;
   mention_open_id: string;
@@ -254,6 +255,7 @@ export class FeishuLongConnectionManager {
         mention_open_id: mentionIds[0] || '',
         mention_open_ids: mentionIds,
         sender_open_id: existing.sender_open_id || rec.sender_open_id,
+        chat_type: existing.chat_type || rec.chat_type,
         received_at: rec.received_at || existing.received_at,
         raw: rec.raw ?? existing.raw,
       };
@@ -313,6 +315,7 @@ export class FeishuLongConnectionManager {
           id: buildStableEventId(chatId, messageId),
           event_type: 'im.message.receive_v1',
           chat_id: chatId,
+          chat_type: message?.chat_type || '',
           message_id: messageId,
           text: parseText(message?.content, mentions),
           mention_open_id: mentionOpenIds[0] || '',

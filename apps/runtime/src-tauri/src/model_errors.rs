@@ -64,6 +64,9 @@ pub(crate) fn normalize_model_error(raw_message: &str) -> NormalizedModelError {
         || lower.contains("dns")
         || lower.contains("connect")
         || lower.contains("socket")
+        || lower.contains("decoding response body")
+        || lower.contains("decode response body")
+        || lower.contains("error decoding response body")
         || lower.contains("error sending request for url")
         || lower.contains("sending request for url")
     {
@@ -188,6 +191,12 @@ mod tests {
     fn normalize_model_error_handles_plain_text_gateway_errors() {
         let raw = "error sending request for url (https://provider.example/v1/chat/completions)";
         let result = normalize_model_error(raw);
+        assert_eq!(result.kind, ModelErrorKind::Network);
+    }
+
+    #[test]
+    fn normalize_model_error_treats_response_body_decode_failures_as_network_errors() {
+        let result = normalize_model_error("error decoding response body");
         assert_eq!(result.kind, ModelErrorKind::Network);
     }
 

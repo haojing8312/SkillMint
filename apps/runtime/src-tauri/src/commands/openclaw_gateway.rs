@@ -40,6 +40,7 @@ struct OpenClawRawEvent {
     event_type: Option<String>,
     event_id: Option<String>,
     thread_id: Option<String>,
+    chat_type: Option<String>,
     message_id: Option<String>,
     text: Option<String>,
     account_id: Option<String>,
@@ -61,6 +62,8 @@ struct OpenClawMessage {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct OpenClawChat {
     id: Option<String>,
+    #[serde(rename = "type")]
+    chat_type: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -78,9 +81,10 @@ struct OpenClawMention {
 
 fn map_raw_event(raw: OpenClawRawEvent) -> Result<ImEvent, String> {
     let event_type = parse_event_type(raw.event_type.as_deref().unwrap_or("message.created"))?;
+    let chat = raw.chat.clone();
     let thread_id = raw
         .thread_id
-        .or_else(|| raw.chat.and_then(|c| c.id))
+        .or_else(|| chat.as_ref().and_then(|c| c.id.clone()))
         .ok_or_else(|| "openclaw event missing thread/chat id".to_string())?;
 
     let message_id = raw
@@ -111,8 +115,20 @@ fn map_raw_event(raw: OpenClawRawEvent) -> Result<ImEvent, String> {
         text,
         role_id,
         account_id: raw.account_id.clone().or_else(|| raw.tenant_id.clone()),
-        tenant_id: raw.tenant_id.or_else(|| raw.sender.and_then(|s| s.id)),
+        tenant_id: raw
+            .tenant_id
+            .clone()
+            .or_else(|| raw.sender.as_ref().and_then(|s| s.id.clone())),
+        sender_id: raw.sender.and_then(|s| s.id),
+        chat_type: raw.chat_type.or_else(|| chat.and_then(|c| c.chat_type)),
     })
+}
+
+fn peer_kind_for_event(event: &ImEvent) -> &'static str {
+    match event.chat_type.as_deref().map(str::trim) {
+        Some("p2p") | Some("direct") => "direct",
+        _ => "group",
+    }
 }
 
 fn parse_event_type(raw: &str) -> Result<ImEventType, String> {
@@ -245,7 +261,7 @@ pub async fn resolve_openclaw_route_with_pool(
         "channel": if event.channel.trim().is_empty() { "app" } else { event.channel.trim() },
         "account_id": event.account_id.clone().or_else(|| event.tenant_id.clone()).unwrap_or_default(),
         "peer": {
-            "kind": "group",
+            "kind": peer_kind_for_event(event),
             "id": event.thread_id.clone(),
         },
         "default_agent_id": default_agent_id,
@@ -311,4 +327,53 @@ pub async fn handle_openclaw_event(
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_openclaw_payload, peer_kind_for_event};
+    use crate::im::types::{ImEvent, ImEventType};
+
+    #[test]
+    fn parse_openclaw_payload_preserves_sender_and_chat_context() {
+        let payload = serde_json::json!({
+            "channel": "feishu",
+            "event_type": "message.created",
+            "message_id": "om_1",
+            "chat": {
+                "id": "oc_1",
+                "type": "group"
+            },
+            "sender": {
+                "id": "ou_sender"
+            },
+            "message": {
+                "id": "om_1",
+                "text": "请继续推进"
+            }
+        });
+
+        let parsed = parse_openclaw_payload(&payload.to_string()).expect("payload should parse");
+        assert_eq!(parsed.sender_id.as_deref(), Some("ou_sender"));
+        assert_eq!(parsed.chat_type.as_deref(), Some("group"));
+    }
+
+    #[test]
+    fn peer_kind_for_event_uses_direct_for_p2p_messages() {
+        let event = ImEvent {
+            channel: "feishu".to_string(),
+            event_type: ImEventType::MessageCreated,
+            thread_id: "ou_user_1".to_string(),
+            event_id: None,
+            message_id: None,
+            text: Some("hello".to_string()),
+            role_id: None,
+            account_id: Some("default".to_string()),
+            tenant_id: Some("tenant-1".to_string()),
+            sender_id: Some("ou_sender".to_string()),
+            chat_type: Some("p2p".to_string()),
+        };
+
+        assert_eq!(peer_kind_for_event(&event), "direct");
+    }
 }

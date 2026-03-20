@@ -166,8 +166,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-1",
-        userMessage: "请先拆解任务",
+        request: {
+          sessionId: "session-im-1",
+          parts: [{ type: "text", text: "请先拆解任务" }],
+        },
       });
     });
 
@@ -223,8 +225,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-mention-clean",
-        userMessage: "你细化一下技术方案",
+        request: {
+          sessionId: "session-im-mention-clean",
+          parts: [{ type: "text", text: "你细化一下技术方案" }],
+        },
       });
     });
   });
@@ -246,9 +250,46 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-plain-mention-clean",
-        userMessage: "你细化一下技术方案",
+        request: {
+          sessionId: "session-im-plain-mention-clean",
+          parts: [{ type: "text", text: "你细化一下技术方案" }],
+        },
       });
+    });
+  });
+
+  test("does not dedupe different inbound messages that share the same prompt text", async () => {
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-message-id-dedupe",
+        thread_id: "chat-feishu-message-id-dedupe",
+        message_id: "om_first",
+        role_id: "dev_team",
+        role_name: "开发团队",
+        source_channel: "feishu",
+        prompt: "你好",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-message-id-dedupe",
+        thread_id: "chat-feishu-message-id-dedupe",
+        message_id: "om_second",
+        role_id: "dev_team",
+        role_name: "开发团队",
+        source_channel: "feishu",
+        prompt: "你好",
+        agent_type: "general-purpose",
+      });
+    });
+
+    await waitFor(() => {
+      const sendMessageCalls = invokeMock.mock.calls.filter(([cmd]) => cmd === "send_message");
+      expect(sendMessageCalls).toHaveLength(2);
     });
   });
 
@@ -269,8 +310,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-stream",
-        userMessage: "请输出执行进度",
+        request: {
+          sessionId: "session-im-stream",
+          parts: [{ type: "text", text: "请输出执行进度" }],
+        },
       });
     });
 
@@ -311,8 +354,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-sub-agent",
-        userMessage: "请安排开发团队接管",
+        request: {
+          sessionId: "session-im-sub-agent",
+          parts: [{ type: "text", text: "请安排开发团队接管" }],
+        },
       });
     });
 
@@ -353,8 +398,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-throttle",
-        userMessage: "请持续汇报进度",
+        request: {
+          sessionId: "session-im-throttle",
+          parts: [{ type: "text", text: "请持续汇报进度" }],
+        },
       });
     });
 
@@ -391,6 +438,99 @@ describe("App feishu IM bridge", () => {
         (String(payload?.text ?? "").includes("AAAA") || String(payload?.text ?? "").includes("BBBB")),
     );
     expect(delayedStreamCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("does not send duplicate Feishu replies when stream tokens arrive after dispatch fallback window starts", async () => {
+    vi.useFakeTimers();
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-no-duplicate",
+        thread_id: "chat-feishu-no-duplicate",
+        role_id: "project_manager",
+        role_name: "项目经理",
+        source_channel: "feishu",
+        prompt: "请介绍一下自己",
+        agent_type: "general-purpose",
+      });
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("send_message", {
+      request: {
+        sessionId: "session-im-no-duplicate",
+        parts: [{ type: "text", text: "请介绍一下自己" }],
+      },
+    });
+
+    await act(async () => {
+      emit("stream-token", {
+        session_id: "session-im-no-duplicate",
+        token: "已收到。",
+        done: false,
+      });
+      emit("stream-token", {
+        session_id: "session-im-no-duplicate",
+        token: "",
+        done: true,
+      });
+      vi.advanceTimersByTime(1500);
+      await Promise.resolve();
+    });
+
+    const calls = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-no-duplicate" &&
+        String(payload?.text ?? "").includes("已收到。"),
+    );
+    expect(calls).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  test("suppresses identical Feishu outbound messages inside the dedup window", async () => {
+    vi.useFakeTimers();
+    render(<App />);
+
+    await act(async () => {
+      emit("im-role-dispatch-request", {
+        session_id: "session-im-outbound-dedup",
+        thread_id: "chat-feishu-outbound-dedup",
+        role_id: "project_manager",
+        role_name: "项目经理",
+        source_channel: "feishu",
+        prompt: "请介绍一下自己",
+        agent_type: "general-purpose",
+      });
+      emit("stream-token", {
+        session_id: "session-im-outbound-dedup",
+        token: "重复测试消息",
+        done: false,
+      });
+      emit("stream-token", {
+        session_id: "session-im-outbound-dedup",
+        token: "",
+        done: true,
+      });
+      emit("stream-token", {
+        session_id: "session-im-outbound-dedup",
+        token: "重复测试消息",
+        done: false,
+      });
+      emit("stream-token", {
+        session_id: "session-im-outbound-dedup",
+        token: "",
+        done: true,
+      });
+      await Promise.resolve();
+    });
+
+    const calls = listFeishuTextCalls().filter(
+      (payload) =>
+        String(payload?.chatId ?? "") === "chat-feishu-outbound-dedup" &&
+        String(payload?.text ?? "").includes("重复测试消息"),
+    );
+    expect(calls).toHaveLength(1);
+    vi.useRealTimers();
   });
 
   test("keeps Feishu closed-loop from delegated stream to clarification answer", async () => {
@@ -475,8 +615,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: dispatchPayload.session_id,
-        userMessage: "请先安排开发团队",
+        request: {
+          sessionId: dispatchPayload.session_id,
+          parts: [{ type: "text", text: "请先安排开发团队" }],
+        },
       });
     });
 
@@ -568,8 +710,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-retry",
-        userMessage: "请开始执行",
+        request: {
+          sessionId: "session-im-retry",
+          parts: [{ type: "text", text: "请开始执行" }],
+        },
       });
     });
 
@@ -641,8 +785,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-degrade",
-        userMessage: "请开始执行",
+        request: {
+          sessionId: "session-im-degrade",
+          parts: [{ type: "text", text: "请开始执行" }],
+        },
       });
     });
 
@@ -696,8 +842,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-wecom",
-        userMessage: "请同步项目状态",
+        request: {
+          sessionId: "session-im-wecom",
+          parts: [{ type: "text", text: "请同步项目状态" }],
+        },
       });
     });
 
@@ -744,8 +892,10 @@ describe("App feishu IM bridge", () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("send_message", {
-        sessionId: "session-im-generic",
-        userMessage: "请先拆解任务",
+        request: {
+          sessionId: "session-im-generic",
+          parts: [{ type: "text", text: "请先拆解任务" }],
+        },
       });
     });
 

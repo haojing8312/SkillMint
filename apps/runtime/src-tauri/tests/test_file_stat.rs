@@ -24,7 +24,10 @@ fn test_file_stat_regular_file() {
     assert_eq!(parsed["details"]["size"], 11); // "hello world" = 11 字节
     assert_eq!(parsed["details"]["readonly"], false);
     // 验证 modified 字段存在且为字符串
-    assert!(parsed["details"]["modified"].is_string(), "modified 应该是字符串");
+    assert!(
+        parsed["details"]["modified"].is_string(),
+        "modified 应该是字符串"
+    );
 }
 
 #[test]
@@ -45,7 +48,10 @@ fn test_file_stat_directory() {
     assert_eq!(parsed["tool"], "file_stat");
     assert_eq!(parsed["details"]["type"], "directory");
     assert_eq!(parsed["details"]["readonly"], false);
-    assert!(parsed["details"]["modified"].is_string(), "modified 应该是字符串");
+    assert!(
+        parsed["details"]["modified"].is_string(),
+        "modified 应该是字符串"
+    );
 }
 
 #[test]

@@ -22,6 +22,10 @@ pub struct ImEvent {
     pub account_id: Option<String>,
     #[serde(default)]
     pub tenant_id: Option<String>,
+    #[serde(default)]
+    pub sender_id: Option<String>,
+    #[serde(default)]
+    pub chat_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

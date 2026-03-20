@@ -1,5 +1,5 @@
-use crate::agent::types::{Tool, ToolContext};
 use crate::agent::tools::tool_result;
+use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs;
@@ -73,7 +73,10 @@ impl Tool for FileCopyTool {
             let count = copy_dir_recursive(&src, &dst)?;
             tool_result::success(
                 self.name(),
-                format!("已复制目录 {} → {}（{} 个文件）", source, destination, count),
+                format!(
+                    "已复制目录 {} → {}（{} 个文件）",
+                    source, destination, count
+                ),
                 json!({
                     "source": source,
                     "destination": destination,

@@ -8,8 +8,12 @@ use crate::commands::employee_agents::{
     list_agent_employees_with_pool, AgentEmployee,
 };
 use crate::commands::im_config::get_thread_role_config_with_pool;
-use crate::commands::im_gateway::process_im_event;
+use crate::commands::im_gateway::{process_im_event, FeishuCallbackResult};
 use crate::commands::openclaw_gateway::resolve_openclaw_route_with_pool;
+use crate::commands::openclaw_plugins::get_openclaw_plugin_feishu_channel_snapshot_with_pool;
+use crate::commands::openclaw_plugins::{
+    OpenClawPluginChannelAccountSnapshot, OpenClawPluginChannelSnapshotResult,
+};
 use crate::commands::skills::DbState;
 use crate::im::feishu_adapter::{build_feishu_markdown_message, build_feishu_text_message};
 use crate::im::feishu_formatter::format_role_message;
@@ -18,6 +22,7 @@ use crate::im::runtime_bridge::{
     ImRoleDispatchRequest, ImRoleEventPayload,
 };
 use crate::im::types::{ImEvent, ImEventType};
+use crate::sidecar::SidecarManager;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
@@ -28,6 +33,33 @@ use std::time::Duration;
 use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FeishuInboundGateDecision {
+    Allow,
+    Reject { reason: &'static str },
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct FeishuGateAccountConfig {
+    dm_policy: Option<String>,
+    group_policy: Option<String>,
+    require_mention: Option<bool>,
+    allow_from: Vec<String>,
+    group_allow_from: Vec<String>,
+    groups: std::collections::HashMap<String, FeishuGateGroupConfig>,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct FeishuGateGroupConfig {
+    enabled: Option<bool>,
+    group_policy: Option<String>,
+    require_mention: Option<bool>,
+    allow_from: Vec<String>,
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct FeishuGatewayResult {
@@ -52,6 +84,21 @@ pub struct FeishuGatewaySettings {
     pub ingress_token: String,
     pub encrypt_key: String,
     pub sidecar_base_url: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, FromRow)]
+pub struct FeishuPairingRequestRecord {
+    pub id: String,
+    pub channel: String,
+    pub account_id: String,
+    pub sender_id: String,
+    pub chat_id: String,
+    pub code: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub resolved_at: Option<String>,
+    pub resolved_by_user: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +132,7 @@ struct FeishuEvent {
 struct FeishuMessage {
     message_id: Option<String>,
     chat_id: Option<String>,
+    chat_type: Option<String>,
     content: Option<String>,
 }
 
@@ -179,6 +227,12 @@ pub fn parse_feishu_payload(payload: &str) -> Result<ParsedFeishuPayload, String
         text: content_text,
         role_id,
         account_id: header.tenant_key.clone(),
+        sender_id: event
+            .sender
+            .as_ref()
+            .and_then(|sender| sender.sender_id.as_ref())
+            .and_then(|id| id.open_id.clone()),
+        chat_type: message.chat_type,
         tenant_id: header.tenant_key.or_else(|| {
             event
                 .sender
@@ -242,7 +296,540 @@ fn parse_message_text(raw: &str, mention_keys: &[String]) -> Option<String> {
     }
 }
 
-pub async fn validate_feishu_auth_with_pool(
+fn normalize_optional_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+}
+
+fn resolve_fallback_default_feishu_account_id(
+    has_default_credentials: bool,
+    employee_account_ids: &[String],
+) -> Option<String> {
+    if has_default_credentials {
+        return Some("default".to_string());
+    }
+
+    employee_account_ids
+        .iter()
+        .map(|value| value.trim())
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+async fn resolve_default_feishu_account_id_with_pool(
+    pool: &SqlitePool,
+) -> Result<Option<String>, String> {
+    if let Ok(snapshot) =
+        get_openclaw_plugin_feishu_channel_snapshot_with_pool(pool, "openclaw-lark").await
+    {
+        if let Some(default_account_id) =
+            normalize_optional_non_empty(snapshot.snapshot.default_account_id)
+        {
+            return Ok(Some(default_account_id));
+        }
+        let fallback = snapshot
+            .snapshot
+            .account_ids
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .find(|value| !value.is_empty());
+        if fallback.is_some() {
+            return Ok(fallback);
+        }
+    }
+
+    let app_id = get_app_setting(pool, "feishu_app_id")
+        .await?
+        .unwrap_or_default();
+    let app_secret = get_app_setting(pool, "feishu_app_secret")
+        .await?
+        .unwrap_or_default();
+    let employee_account_ids = list_enabled_employee_feishu_connections_with_pool(pool)
+        .await?
+        .into_iter()
+        .map(|item| item.employee_id)
+        .collect::<Vec<_>>();
+
+    Ok(resolve_fallback_default_feishu_account_id(
+        !app_id.trim().is_empty() && !app_secret.trim().is_empty(),
+        &employee_account_ids,
+    ))
+}
+
+fn apply_default_feishu_account_id(event: &mut ImEvent, default_account_id: Option<&str>) {
+    let already_has_account = event
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    if already_has_account {
+        return;
+    }
+
+    if let Some(default_account_id) = default_account_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        event.account_id = Some(default_account_id.to_string());
+    }
+}
+
+fn is_direct_feishu_chat(event: &ImEvent) -> bool {
+    matches!(
+        event.chat_type.as_deref().map(str::trim),
+        Some("p2p") | Some("direct")
+    )
+}
+
+fn normalize_allow_entries(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn allowlist_matches_sender(sender_id: Option<&str>, allow_from: &[String]) -> bool {
+    let normalized_allow_from = normalize_allow_entries(allow_from);
+    if normalized_allow_from.iter().any(|entry| entry == "*") {
+        return true;
+    }
+
+    let Some(sender_id) = sender_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    let normalized_sender = sender_id.to_ascii_lowercase();
+    normalized_allow_from
+        .iter()
+        .any(|entry| entry == &normalized_sender)
+}
+
+fn split_legacy_group_allow_from(raw_group_allow_from: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut legacy_chat_ids = Vec::new();
+    let mut sender_allow_from = Vec::new();
+    for entry in raw_group_allow_from {
+        let normalized = entry.trim().to_string();
+        if normalized.is_empty() {
+            continue;
+        }
+        if normalized.starts_with("oc_") {
+            legacy_chat_ids.push(normalized);
+        } else {
+            sender_allow_from.push(normalized);
+        }
+    }
+    (legacy_chat_ids, sender_allow_from)
+}
+
+fn resolve_feishu_group_config<'a>(
+    groups: &'a std::collections::HashMap<String, FeishuGateGroupConfig>,
+    group_id: &str,
+) -> Option<&'a FeishuGateGroupConfig> {
+    if let Some(exact) = groups.get(group_id) {
+        return Some(exact);
+    }
+    let lowered = group_id.to_ascii_lowercase();
+    groups
+        .iter()
+        .find(|(key, _)| key.to_ascii_lowercase() == lowered)
+        .map(|(_, value)| value)
+}
+
+fn build_feishu_gate_account_config(
+    account_snapshot: &OpenClawPluginChannelAccountSnapshot,
+) -> FeishuGateAccountConfig {
+    account_snapshot
+        .account
+        .get("config")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<FeishuGateAccountConfig>(value).ok())
+        .unwrap_or_default()
+}
+
+fn select_feishu_channel_account_snapshot<'a>(
+    snapshot: &'a OpenClawPluginChannelSnapshotResult,
+    event: &ImEvent,
+) -> Option<&'a OpenClawPluginChannelAccountSnapshot> {
+    let normalized_event_account = event
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase);
+    let default_account = snapshot
+        .snapshot
+        .default_account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase);
+
+    if let Some(event_account_id) = normalized_event_account.as_deref() {
+        if let Some(found) = snapshot.snapshot.accounts.iter().find(|account| {
+            account
+                .account_id
+                .trim()
+                .eq_ignore_ascii_case(event_account_id)
+        }) {
+            return Some(found);
+        }
+    }
+
+    if let Some(default_account_id) = default_account.as_deref() {
+        if let Some(found) = snapshot.snapshot.accounts.iter().find(|account| {
+            account
+                .account_id
+                .trim()
+                .eq_ignore_ascii_case(default_account_id)
+        }) {
+            return Some(found);
+        }
+    }
+
+    snapshot.snapshot.accounts.first()
+}
+
+fn evaluate_openclaw_feishu_gate(
+    event: &ImEvent,
+    snapshot: &OpenClawPluginChannelSnapshotResult,
+) -> FeishuInboundGateDecision {
+    let Some(account_snapshot) = select_feishu_channel_account_snapshot(snapshot, event) else {
+        return FeishuInboundGateDecision::Allow;
+    };
+    let account_config = build_feishu_gate_account_config(account_snapshot);
+    let sender_id = event.sender_id.as_deref();
+
+    if is_direct_feishu_chat(event) {
+        let dm_policy = account_config.dm_policy.as_deref().unwrap_or("pairing");
+        return match dm_policy {
+            "disabled" => FeishuInboundGateDecision::Reject {
+                reason: "dm_disabled",
+            },
+            "open" => FeishuInboundGateDecision::Allow,
+            "allowlist" => {
+                if allowlist_matches_sender(sender_id, &account_snapshot.allow_from) {
+                    FeishuInboundGateDecision::Allow
+                } else {
+                    FeishuInboundGateDecision::Reject {
+                        reason: "dm_not_allowed",
+                    }
+                }
+            }
+            _ => {
+                if allowlist_matches_sender(sender_id, &account_snapshot.allow_from) {
+                    FeishuInboundGateDecision::Allow
+                } else {
+                    FeishuInboundGateDecision::Reject {
+                        reason: "pairing_pending",
+                    }
+                }
+            }
+        };
+    }
+
+    let group_id = event.thread_id.trim();
+    if group_id.is_empty() {
+        return FeishuInboundGateDecision::Allow;
+    }
+
+    let groups = &account_config.groups;
+    let group_config = resolve_feishu_group_config(groups, group_id);
+    let default_group_config = groups.get("*");
+    let (legacy_chat_ids, sender_group_allow_from) =
+        split_legacy_group_allow_from(&account_config.group_allow_from);
+
+    let groups_configured = groups.keys().any(|key| key.trim() != "*");
+    let group_level_policy =
+        account_config
+            .group_policy
+            .as_deref()
+            .unwrap_or(if groups_configured {
+                "allowlist"
+            } else {
+                "open"
+            });
+
+    let group_allowed = match group_level_policy {
+        "disabled" => false,
+        "open" if !groups_configured => true,
+        _ => {
+            group_config.is_some()
+                || default_group_config.is_some()
+                || legacy_chat_ids.iter().any(|chat_id| chat_id == group_id)
+        }
+    };
+    if !group_allowed {
+        return FeishuInboundGateDecision::Reject {
+            reason: "group_not_allowed",
+        };
+    }
+
+    if group_config.and_then(|item| item.enabled) == Some(false) {
+        return FeishuInboundGateDecision::Reject {
+            reason: "group_disabled",
+        };
+    }
+
+    let sender_policy = group_config
+        .and_then(|item| item.group_policy.as_deref())
+        .or_else(|| default_group_config.and_then(|item| item.group_policy.as_deref()))
+        .or(account_config.group_policy.as_deref())
+        .unwrap_or("open");
+    let mut sender_allow_from = sender_group_allow_from;
+    if let Some(group_config) = group_config {
+        sender_allow_from.extend(group_config.allow_from.iter().cloned());
+    } else if let Some(default_group_config) = default_group_config {
+        sender_allow_from.extend(default_group_config.allow_from.iter().cloned());
+    }
+
+    let sender_allowed = match sender_policy {
+        "disabled" => false,
+        "open" => true,
+        _ => allowlist_matches_sender(sender_id, &sender_allow_from),
+    };
+    if !sender_allowed {
+        return FeishuInboundGateDecision::Reject {
+            reason: "sender_not_allowed",
+        };
+    }
+
+    let require_mention = group_config
+        .and_then(|item| item.require_mention)
+        .or_else(|| default_group_config.and_then(|item| item.require_mention))
+        .or(account_config.require_mention)
+        .unwrap_or(true);
+    if require_mention
+        && event
+            .role_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return FeishuInboundGateDecision::Reject {
+            reason: "no_mention",
+        };
+    }
+
+    FeishuInboundGateDecision::Allow
+}
+
+async fn evaluate_openclaw_feishu_gate_with_pool(
+    pool: &SqlitePool,
+    event: &ImEvent,
+) -> Result<FeishuInboundGateDecision, String> {
+    let mut snapshot =
+        match get_openclaw_plugin_feishu_channel_snapshot_with_pool(pool, "openclaw-lark").await {
+            Ok(snapshot) => snapshot,
+            Err(_) => return Ok(FeishuInboundGateDecision::Allow),
+        };
+    if let Some(account_snapshot) = select_feishu_channel_account_snapshot(&snapshot, event) {
+        let pairing_allow_from =
+            list_feishu_pairing_allow_from_with_pool(pool, &account_snapshot.account_id).await?;
+        if !pairing_allow_from.is_empty() {
+            let target_account_id = account_snapshot.account_id.clone();
+            if let Some(account) = snapshot
+                .snapshot
+                .accounts
+                .iter_mut()
+                .find(|account| account.account_id == target_account_id)
+            {
+                for sender_id in pairing_allow_from {
+                    if !account.allow_from.iter().any(|entry| entry == &sender_id) {
+                        account.allow_from.push(sender_id);
+                    }
+                }
+            }
+        }
+    }
+    Ok(evaluate_openclaw_feishu_gate(event, &snapshot))
+}
+
+fn generate_feishu_pairing_code() -> String {
+    Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+
+pub(crate) async fn upsert_feishu_pairing_request_with_pool(
+    pool: &SqlitePool,
+    account_id: &str,
+    sender_id: &str,
+    chat_id: &str,
+) -> Result<(FeishuPairingRequestRecord, bool), String> {
+    let normalized_account_id = account_id.trim();
+    let normalized_sender_id = sender_id.trim();
+    let normalized_chat_id = chat_id.trim();
+    if normalized_account_id.is_empty() || normalized_sender_id.is_empty() {
+        return Err("pairing request requires account_id and sender_id".to_string());
+    }
+
+    if let Some(existing) = sqlx::query_as::<_, FeishuPairingRequestRecord>(
+        "SELECT id, channel, account_id, sender_id, chat_id, code, status, created_at, updated_at, resolved_at, resolved_by_user
+         FROM feishu_pairing_requests
+         WHERE channel = 'feishu' AND account_id = ? AND sender_id = ? AND status = 'pending'
+         LIMIT 1",
+    )
+    .bind(normalized_account_id)
+    .bind(normalized_sender_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    {
+        let now = chrono::Utc::now().to_rfc3339();
+        let next_chat_id = if normalized_chat_id.is_empty() {
+            existing.chat_id.clone()
+        } else {
+            normalized_chat_id.to_string()
+        };
+        sqlx::query(
+            "UPDATE feishu_pairing_requests
+             SET chat_id = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&next_chat_id)
+        .bind(&now)
+        .bind(&existing.id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        return Ok((
+            FeishuPairingRequestRecord {
+                chat_id: next_chat_id,
+                updated_at: now,
+                ..existing
+            },
+            false,
+        ));
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let code = generate_feishu_pairing_code();
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO feishu_pairing_requests (
+            id, channel, account_id, sender_id, chat_id, code, status, created_at, updated_at, resolved_at, resolved_by_user
+        ) VALUES (?, 'feishu', ?, ?, ?, ?, 'pending', ?, ?, NULL, '')",
+    )
+    .bind(&id)
+    .bind(normalized_account_id)
+    .bind(normalized_sender_id)
+    .bind(normalized_chat_id)
+    .bind(&code)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok((
+        FeishuPairingRequestRecord {
+            id,
+            channel: "feishu".to_string(),
+            account_id: normalized_account_id.to_string(),
+            sender_id: normalized_sender_id.to_string(),
+            chat_id: normalized_chat_id.to_string(),
+            code,
+            status: "pending".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+            resolved_at: None,
+            resolved_by_user: String::new(),
+        },
+        true,
+    ))
+}
+
+pub(crate) async fn list_feishu_pairing_allow_from_with_pool(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> Result<Vec<String>, String> {
+    let normalized_account_id = account_id.trim();
+    if normalized_account_id.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = sqlx::query_as::<_, (String,)>(
+        "SELECT sender_id
+         FROM feishu_pairing_allow_from
+         WHERE channel = 'feishu' AND account_id = ?
+         ORDER BY approved_at DESC",
+    )
+    .bind(normalized_account_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows.into_iter().map(|(sender_id,)| sender_id).collect())
+}
+
+fn build_feishu_pairing_request_text(record: &FeishuPairingRequestRecord) -> String {
+    format!(
+        "已收到你的配对申请。\n配对码：{code}\n发送者：{sender}\n请在 WorkClaw 桌面端审核通过后继续私聊本机器人。",
+        code = record.code,
+        sender = record.sender_id
+    )
+}
+
+fn build_feishu_pairing_resolution_text(record: &FeishuPairingRequestRecord) -> String {
+    match record.status.as_str() {
+        "approved" => format!(
+            "配对已通过。你现在可以直接私聊本机器人。\n配对码：{code}",
+            code = record.code
+        ),
+        "denied" => format!(
+            "配对申请未通过。\n配对码：{code}\n如需继续使用，请联系管理员后重新发起配对。",
+            code = record.code
+        ),
+        _ => format!("配对请求状态已更新：{}", record.status),
+    }
+}
+
+async fn maybe_create_feishu_pairing_request_with_pool(
+    pool: &SqlitePool,
+    event: &ImEvent,
+) -> Result<Option<FeishuPairingRequestRecord>, String> {
+    if !is_direct_feishu_chat(event) {
+        return Ok(None);
+    }
+    let account_id = event
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let Some(sender_id) = event
+        .sender_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    let (record, created) =
+        upsert_feishu_pairing_request_with_pool(pool, account_id, sender_id, &event.thread_id)
+            .await?;
+    if created && !record.chat_id.trim().is_empty() {
+        let _ = send_feishu_text_message_with_pool(
+            pool,
+            &record.chat_id,
+            &build_feishu_pairing_request_text(&record),
+            None,
+        )
+        .await;
+    }
+    Ok(Some(record))
+}
+
+pub(crate) async fn validate_feishu_auth_with_pool(
     pool: &SqlitePool,
     auth_token: Option<String>,
 ) -> Result<(), String> {
@@ -336,11 +923,11 @@ pub async fn resolve_feishu_app_credentials(
     Ok((resolved_app_id, resolved_app_secret))
 }
 
-pub async fn list_enabled_employee_feishu_connections_with_pool(
+pub(crate) async fn list_enabled_employee_feishu_connections_with_pool(
     pool: &SqlitePool,
 ) -> Result<Vec<FeishuEmployeeConnectionInput>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT employee_id, role_id, feishu_app_id, feishu_app_secret
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT employee_id, role_id, name, feishu_app_id, feishu_app_secret
          FROM agent_employees
          WHERE enabled = 1
            AND TRIM(feishu_app_id) <> ''
@@ -352,7 +939,7 @@ pub async fn list_enabled_employee_feishu_connections_with_pool(
     .map_err(|e| e.to_string())?;
 
     let mut result = Vec::with_capacity(rows.len());
-    for (employee_id_raw, role_id, app_id, app_secret) in rows {
+    for (employee_id_raw, role_id, name, app_id, app_secret) in rows {
         let employee_id = if employee_id_raw.trim().is_empty() {
             role_id.trim().to_string()
         } else {
@@ -363,6 +950,7 @@ pub async fn list_enabled_employee_feishu_connections_with_pool(
         }
         result.push(FeishuEmployeeConnectionInput {
             employee_id,
+            name: name.trim().to_string(),
             app_id: app_id.trim().to_string(),
             app_secret: app_secret.trim().to_string(),
         });
@@ -382,7 +970,7 @@ pub fn calculate_feishu_signature(
     format!("{:x}", digest)
 }
 
-pub async fn validate_feishu_signature_with_pool(
+pub(crate) async fn validate_feishu_signature_with_pool(
     pool: &SqlitePool,
     payload: &str,
     timestamp: Option<String>,
@@ -486,7 +1074,7 @@ pub async fn plan_role_dispatch_requests_for_feishu(
     Ok(roles
         .into_iter()
         .map(|role_id| {
-            build_im_role_dispatch_request_for_channel(
+            let mut req = build_im_role_dispatch_request_for_channel(
                 &session_id,
                 &event.thread_id,
                 &role_id,
@@ -494,7 +1082,9 @@ pub async fn plan_role_dispatch_requests_for_feishu(
                 "feishu",
                 &format!("场景={}。用户输入：{}", cfg.scenario_template, user_text),
                 agent_type,
-            )
+            );
+            req.message_id = event.message_id.clone().unwrap_or_default();
+            req
         })
         .collect())
 }
@@ -676,7 +1266,7 @@ fn build_feishu_approval_resolution_text(
     }
 }
 
-pub async fn notify_feishu_approval_requested_with_pool(
+pub(crate) async fn notify_feishu_approval_requested_with_pool(
     pool: &SqlitePool,
     session_id: &str,
     record: &PendingApprovalRecord,
@@ -697,7 +1287,7 @@ pub async fn notify_feishu_approval_requested_with_pool(
     Ok(())
 }
 
-pub async fn notify_feishu_approval_resolved_with_pool(
+pub(crate) async fn notify_feishu_approval_resolved_with_pool(
     pool: &SqlitePool,
     approval_id: &str,
     sidecar_base_url: Option<String>,
@@ -749,7 +1339,7 @@ pub async fn notify_feishu_approval_resolved_with_pool(
     Ok(())
 }
 
-pub async fn maybe_handle_feishu_approval_command_with_pool(
+pub(crate) async fn maybe_handle_feishu_approval_command_with_pool(
     pool: &SqlitePool,
     approvals: &ApprovalManager,
     event: &ImEvent,
@@ -790,6 +1380,152 @@ pub async fn maybe_handle_feishu_approval_command_with_pool(
     Ok(Some(resolution))
 }
 
+pub(crate) async fn list_feishu_pairing_requests_with_pool(
+    pool: &SqlitePool,
+    status: Option<String>,
+) -> Result<Vec<FeishuPairingRequestRecord>, String> {
+    let normalized_status = status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let records = if let Some(status) = normalized_status {
+        sqlx::query_as::<_, FeishuPairingRequestRecord>(
+            "SELECT id, channel, account_id, sender_id, chat_id, code, status, created_at, updated_at, resolved_at, resolved_by_user
+             FROM feishu_pairing_requests
+             WHERE channel = 'feishu' AND status = ?
+             ORDER BY updated_at DESC, created_at DESC",
+        )
+        .bind(status)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        sqlx::query_as::<_, FeishuPairingRequestRecord>(
+            "SELECT id, channel, account_id, sender_id, chat_id, code, status, created_at, updated_at, resolved_at, resolved_by_user
+             FROM feishu_pairing_requests
+             WHERE channel = 'feishu'
+             ORDER BY updated_at DESC, created_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?
+    };
+
+    Ok(records)
+}
+
+async fn resolve_feishu_pairing_request_with_pool(
+    pool: &SqlitePool,
+    request_id: &str,
+    status: &str,
+    resolved_by_user: Option<String>,
+) -> Result<FeishuPairingRequestRecord, String> {
+    let normalized_request_id = request_id.trim();
+    if normalized_request_id.is_empty() {
+        return Err("request_id is required".to_string());
+    }
+    if status != "approved" && status != "denied" {
+        return Err("status must be approved or denied".to_string());
+    }
+
+    let mut record = sqlx::query_as::<_, FeishuPairingRequestRecord>(
+        "SELECT id, channel, account_id, sender_id, chat_id, code, status, created_at, updated_at, resolved_at, resolved_by_user
+         FROM feishu_pairing_requests
+         WHERE id = ?
+         LIMIT 1",
+    )
+    .bind(normalized_request_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| format!("pairing request not found: {normalized_request_id}"))?;
+
+    if record.status != "pending" {
+        return Ok(record);
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let resolved_by_user = resolved_by_user.unwrap_or_default().trim().to_string();
+    sqlx::query(
+        "UPDATE feishu_pairing_requests
+         SET status = ?, updated_at = ?, resolved_at = ?, resolved_by_user = ?
+         WHERE id = ?",
+    )
+    .bind(status)
+    .bind(&now)
+    .bind(&now)
+    .bind(&resolved_by_user)
+    .bind(normalized_request_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if status == "approved" {
+        sqlx::query(
+            "INSERT INTO feishu_pairing_allow_from (
+                channel, account_id, sender_id, source_request_id, approved_at, approved_by_user
+            ) VALUES ('feishu', ?, ?, ?, ?, ?)
+            ON CONFLICT(channel, account_id, sender_id) DO UPDATE SET
+                source_request_id = excluded.source_request_id,
+                approved_at = excluded.approved_at,
+                approved_by_user = excluded.approved_by_user",
+        )
+        .bind(&record.account_id)
+        .bind(&record.sender_id)
+        .bind(&record.id)
+        .bind(&now)
+        .bind(&resolved_by_user)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    record.status = status.to_string();
+    record.updated_at = now.clone();
+    record.resolved_at = Some(now);
+    record.resolved_by_user = resolved_by_user;
+
+    if !record.chat_id.trim().is_empty() {
+        let _ = send_feishu_text_message_with_pool(
+            pool,
+            &record.chat_id,
+            &build_feishu_pairing_resolution_text(&record),
+            None,
+        )
+        .await;
+    }
+
+    Ok(record)
+}
+
+#[tauri::command]
+pub async fn list_feishu_pairing_requests(
+    status: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<Vec<FeishuPairingRequestRecord>, String> {
+    list_feishu_pairing_requests_with_pool(&db.0, status).await
+}
+
+#[tauri::command]
+pub async fn approve_feishu_pairing_request(
+    request_id: String,
+    resolved_by_user: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<FeishuPairingRequestRecord, String> {
+    resolve_feishu_pairing_request_with_pool(&db.0, &request_id, "approved", resolved_by_user).await
+}
+
+#[tauri::command]
+pub async fn deny_feishu_pairing_request(
+    request_id: String,
+    resolved_by_user: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<FeishuPairingRequestRecord, String> {
+    resolve_feishu_pairing_request_with_pool(&db.0, &request_id, "denied", resolved_by_user).await
+}
+
 #[tauri::command]
 pub async fn handle_feishu_event(
     payload: String,
@@ -809,115 +1545,30 @@ pub async fn handle_feishu_event(
             deduped: false,
             challenge: Some(challenge),
         }),
-        ParsedFeishuPayload::Event(event) => {
-            let r = process_im_event(&db.0, event.clone()).await?;
-            if !r.deduped {
-                let approval_command = parse_feishu_approval_command(event.text.as_deref());
-                if let Some(command) = approval_command {
-                    if maybe_handle_feishu_approval_command_with_pool(
-                        &db.0,
-                        approvals.inner().0.as_ref(),
-                        &event,
-                        None,
-                    )
-                    .await?
-                    .is_some()
-                    {
-                        if let Some(record) =
-                            load_approval_record_with_pool(&db.0, &command.approval_id).await?
-                        {
-                            let _ = app.emit("approval-resolved", &record);
-                        }
-                        return Ok(FeishuGatewayResult {
-                            accepted: r.accepted,
-                            deduped: r.deduped,
-                            challenge: None,
-                        });
+        ParsedFeishuPayload::Event(mut event) => {
+            let default_account_id = resolve_default_feishu_account_id_with_pool(&db.0).await?;
+            apply_default_feishu_account_id(&mut event, default_account_id.as_deref());
+            match evaluate_openclaw_feishu_gate_with_pool(&db.0, &event).await? {
+                FeishuInboundGateDecision::Allow => {}
+                FeishuInboundGateDecision::Reject { reason } => {
+                    if reason == "pairing_pending" {
+                        let _ =
+                            maybe_create_feishu_pairing_request_with_pool(&db.0, &event).await?;
                     }
-                }
-
-                let route_decision = resolve_openclaw_route_with_pool(&db.0, &event).await.ok();
-                let employee_sessions =
-                    ensure_employee_sessions_for_event_with_pool(&db.0, &event).await?;
-                for s in &employee_sessions {
-                    let _ = link_inbound_event_to_session_with_pool(
-                        &db.0,
-                        &event,
-                        &s.employee_id,
-                        &s.session_id,
-                    )
-                    .await;
-                    let route_agent_id = route_decision
-                        .as_ref()
-                        .and_then(|v| v.get("agentId"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or(&s.role_id)
-                        .to_string();
-                    let route_session_key = route_decision
-                        .as_ref()
-                        .and_then(|v| v.get("sessionKey"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or(&s.session_id)
-                        .to_string();
-                    let matched_by = route_decision
-                        .as_ref()
-                        .and_then(|v| v.get("matchedBy"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("default")
-                        .to_string();
-                    let _ = app.emit(
-                        "im-route-decision",
-                        ImRouteDecisionEvent {
-                            session_id: s.session_id.clone(),
-                            thread_id: event.thread_id.clone(),
-                            agent_id: route_agent_id,
-                            session_key: route_session_key,
-                            matched_by,
-                        },
-                    );
-
-                    let _ = app.emit(
-                        "im-role-event",
-                        build_im_role_event_payload_for_channel(
-                            &s.session_id,
-                            &event.thread_id,
-                            &s.role_id,
-                            &s.employee_name,
-                            "feishu",
-                            "running",
-                            "飞书消息已同步到桌面会话，正在执行",
-                            None,
-                        ),
-                    );
-                    let prompt = event
-                        .text
-                        .clone()
-                        .unwrap_or_else(|| "请继续基于当前上下文推进".to_string());
-                    let _ = app.emit(
-                        "im-role-dispatch-request",
-                        build_im_role_dispatch_request_for_channel(
-                            &s.session_id,
-                            &event.thread_id,
-                            &s.role_id,
-                            &s.employee_name,
-                            "feishu",
-                            &prompt,
-                            "general-purpose",
-                        ),
-                    );
-                }
-
-                if employee_sessions.is_empty() {
-                    let planned = plan_role_events_for_feishu(&db.0, &event).await?;
-                    for evt in planned {
-                        let _ = app.emit("im-role-event", evt);
-                    }
-                    let dispatches = plan_role_dispatch_requests_for_feishu(&db.0, &event).await?;
-                    for req in dispatches {
-                        let _ = app.emit("im-role-dispatch-request", req);
-                    }
+                    return Ok(FeishuGatewayResult {
+                        accepted: false,
+                        deduped: false,
+                        challenge: None,
+                    });
                 }
             }
+            let r = dispatch_feishu_inbound_to_workclaw_with_pool_and_app(
+                &db.0,
+                &app,
+                &event,
+                Some(approvals.inner().0.as_ref()),
+            )
+            .await?;
             Ok(FeishuGatewayResult {
                 accepted: r.accepted,
                 deduped: r.deduped,
@@ -943,6 +1594,7 @@ pub struct FeishuWsStatus {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct FeishuEmployeeConnectionInput {
     pub employee_id: String,
+    pub name: String,
     pub app_id: String,
     pub app_secret: String,
 }
@@ -989,6 +1641,8 @@ pub struct FeishuWsEventRecord {
     #[serde(default)]
     pub mention_open_ids: Vec<String>,
     pub sender_open_id: String,
+    #[serde(default)]
+    pub chat_type: String,
     pub received_at: String,
 }
 
@@ -1183,11 +1837,30 @@ pub async fn send_feishu_text_message(
     app_secret: Option<String>,
     sidecar_base_url: Option<String>,
     db: State<'_, DbState>,
+    sidecar_manager: State<'_, Arc<SidecarManager>>,
 ) -> Result<String, String> {
     let (resolved_app_id, resolved_app_secret) =
         resolve_feishu_app_credentials(&db.0, app_id, app_secret).await?;
     let resolved_sidecar_base_url =
         resolve_feishu_sidecar_base_url(&db.0, sidecar_base_url).await?;
+    let sidecar_base_url_label = resolved_sidecar_base_url
+        .as_deref()
+        .unwrap_or("http://localhost:8765");
+
+    if let Err(error) = sidecar_manager.health_check().await {
+        eprintln!(
+            "[feishu/send] sidecar health check failed before send: {}",
+            error
+        );
+        if let Err(start_error) = sidecar_manager.start().await {
+            eprintln!(
+                "[feishu/send] sidecar restart failed for target {}: {}",
+                chat_id.trim(),
+                start_error
+            );
+            return Err(format!("sidecar unavailable: {}", start_error));
+        }
+    }
 
     let mut payload = build_feishu_text_message(&chat_id, &text);
     if let Some(v) = resolved_app_id {
@@ -1196,7 +1869,27 @@ pub async fn send_feishu_text_message(
     if let Some(v) = resolved_app_secret {
         payload["app_secret"] = serde_json::Value::String(v);
     }
-    send_feishu_via_sidecar(payload, resolved_sidecar_base_url).await
+    eprintln!(
+        "[feishu/send] dispatch target={} base_url={} content_preview={}",
+        chat_id.trim(),
+        sidecar_base_url_label.trim(),
+        text.trim().chars().take(80).collect::<String>()
+    );
+    let result = send_feishu_via_sidecar(payload, resolved_sidecar_base_url.clone()).await;
+    match &result {
+        Ok(_) => eprintln!(
+            "[feishu/send] dispatch succeeded target={} base_url={}",
+            chat_id.trim(),
+            sidecar_base_url_label.trim()
+        ),
+        Err(error) => eprintln!(
+            "[feishu/send] dispatch failed target={} base_url={} error={}",
+            chat_id.trim(),
+            sidecar_base_url_label.trim(),
+            error
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -1321,7 +2014,7 @@ pub async fn start_feishu_long_connection(
     start_feishu_long_connection_with_pool(&db.0, sidecar_base_url, app_id, app_secret).await
 }
 
-pub async fn start_feishu_long_connection_with_pool(
+pub(crate) async fn start_feishu_long_connection_with_pool(
     pool: &SqlitePool,
     sidecar_base_url: Option<String>,
     app_id: Option<String>,
@@ -1338,7 +2031,7 @@ pub async fn start_feishu_long_connection_with_pool(
     serde_json::from_value(v).map_err(|e| format!("parse ws status failed: {}", e))
 }
 
-pub async fn reconcile_feishu_employee_connections_with_pool(
+pub(crate) async fn reconcile_feishu_employee_connections_with_pool(
     pool: &SqlitePool,
     sidecar_base_url: Option<String>,
 ) -> Result<FeishuWsStatusSummary, String> {
@@ -1351,7 +2044,7 @@ pub async fn reconcile_feishu_employee_connections_with_pool(
     serde_json::from_value(v).map_err(|e| format!("parse ws reconcile status failed: {}", e))
 }
 
-pub async fn get_feishu_long_connection_status_summary_with_pool(
+pub(crate) async fn get_feishu_long_connection_status_summary_with_pool(
     pool: &SqlitePool,
     sidecar_base_url: Option<String>,
 ) -> Result<FeishuWsStatusSummary, String> {
@@ -1404,14 +2097,6 @@ pub async fn sync_feishu_ws_events(
     sync_feishu_ws_events_core(&db.0, sidecar_base_url, limit, Some(&app)).await
 }
 
-pub async fn sync_feishu_ws_events_with_pool(
-    pool: &SqlitePool,
-    sidecar_base_url: Option<String>,
-    limit: Option<usize>,
-) -> Result<usize, String> {
-    sync_feishu_ws_events_core(pool, sidecar_base_url, limit, None).await
-}
-
 async fn sync_feishu_ws_events_core(
     pool: &SqlitePool,
     sidecar_base_url: Option<String>,
@@ -1428,6 +2113,7 @@ async fn sync_feishu_ws_events_core(
     .await?;
     let events: Vec<FeishuWsEventRecord> =
         serde_json::from_value(v).map_err(|e| format!("parse ws events failed: {}", e))?;
+    let default_account_id = resolve_default_feishu_account_id_with_pool(pool).await?;
     let enabled_employees = list_agent_employees_with_pool(pool)
         .await?
         .into_iter()
@@ -1463,17 +2149,32 @@ async fn sync_feishu_ws_events_core(
                 &source_employee_ids,
                 &enabled_employees,
             ),
-            account_id: if e.sender_open_id.trim().is_empty() {
-                None
-            } else {
-                Some(e.sender_open_id.clone())
-            },
+            account_id: default_account_id.clone(),
             tenant_id: if e.sender_open_id.trim().is_empty() {
                 None
             } else {
                 Some(e.sender_open_id.clone())
             },
+            sender_id: if e.sender_open_id.trim().is_empty() {
+                None
+            } else {
+                Some(e.sender_open_id.clone())
+            },
+            chat_type: if e.chat_type.trim().is_empty() {
+                None
+            } else {
+                Some(e.chat_type.trim().to_string())
+            },
         };
+        match evaluate_openclaw_feishu_gate_with_pool(pool, &inbound).await? {
+            FeishuInboundGateDecision::Allow => {}
+            FeishuInboundGateDecision::Reject { reason } => {
+                if reason == "pairing_pending" {
+                    let _ = maybe_create_feishu_pairing_request_with_pool(pool, &inbound).await?;
+                }
+                continue;
+            }
+        }
         let r = process_im_event(pool, inbound.clone()).await?;
         if r.accepted && !r.deduped {
             if let Some(app) = app {
@@ -1554,9 +2255,8 @@ async fn sync_feishu_ws_events_core(
                                 None,
                             ),
                         );
-                        let _ = app.emit(
-                            "im-role-dispatch-request",
-                            build_im_role_dispatch_request_for_channel(
+                        let _ = app.emit("im-role-dispatch-request", {
+                            let mut req = build_im_role_dispatch_request_for_channel(
                                 &s.session_id,
                                 &inbound.thread_id,
                                 &s.role_id,
@@ -1567,8 +2267,10 @@ async fn sync_feishu_ws_events_core(
                                     .clone()
                                     .unwrap_or_else(|| "请继续基于当前上下文推进".to_string()),
                                 "general-purpose",
-                            ),
-                        );
+                            );
+                            req.message_id = inbound.message_id.clone().unwrap_or_default();
+                            req
+                        });
                     }
                 }
             }
@@ -1598,25 +2300,7 @@ pub async fn start_feishu_event_relay(
     .await
 }
 
-pub async fn start_feishu_event_relay_with_pool(
-    pool: &SqlitePool,
-    relay_state: FeishuEventRelayState,
-    sidecar_base_url: Option<String>,
-    interval_ms: Option<u64>,
-    limit: Option<usize>,
-) -> Result<FeishuEventRelayStatus, String> {
-    start_feishu_event_relay_with_pool_and_app(
-        pool,
-        relay_state,
-        None,
-        sidecar_base_url,
-        interval_ms,
-        limit,
-    )
-    .await
-}
-
-pub async fn start_feishu_event_relay_with_pool_and_app(
+pub(crate) async fn start_feishu_event_relay_with_pool_and_app(
     pool: &SqlitePool,
     relay_state: FeishuEventRelayState,
     app: Option<tauri::AppHandle>,
@@ -1705,10 +2389,105 @@ pub async fn get_feishu_event_relay_status(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_feishu_payload, resolve_ws_role_id, sanitize_ws_inbound_text, FeishuWsEventRecord,
+        apply_default_feishu_account_id, evaluate_openclaw_feishu_gate,
+        generate_feishu_pairing_code, list_feishu_pairing_allow_from_with_pool,
+        parse_feishu_payload, resolve_fallback_default_feishu_account_id,
+        resolve_feishu_pairing_request_with_pool, resolve_ws_role_id, sanitize_ws_inbound_text,
+        upsert_feishu_pairing_request_with_pool, FeishuInboundGateDecision, FeishuWsEventRecord,
         ParsedFeishuPayload,
     };
     use crate::commands::employee_agents::AgentEmployee;
+    use crate::commands::openclaw_plugins::{
+        OpenClawPluginChannelAccountSnapshot, OpenClawPluginChannelSnapshot,
+        OpenClawPluginChannelSnapshotResult,
+    };
+    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+
+    fn sample_channel_snapshot(
+        account_id: &str,
+        allow_from: Vec<&str>,
+        account_config: serde_json::Value,
+    ) -> OpenClawPluginChannelSnapshotResult {
+        OpenClawPluginChannelSnapshotResult {
+            plugin_root: "plugin-root".to_string(),
+            prepared_root: "prepared-root".to_string(),
+            manifest: serde_json::json!({}),
+            entry_path: "index.js".to_string(),
+            snapshot: OpenClawPluginChannelSnapshot {
+                channel_id: "feishu".to_string(),
+                default_account_id: Some(account_id.to_string()),
+                account_ids: vec![account_id.to_string()],
+                accounts: vec![OpenClawPluginChannelAccountSnapshot {
+                    account_id: account_id.to_string(),
+                    account: serde_json::json!({
+                        "accountId": account_id,
+                        "config": account_config,
+                    }),
+                    described_account: serde_json::json!({
+                        "accountId": account_id,
+                    }),
+                    allow_from: allow_from.into_iter().map(str::to_string).collect(),
+                    warnings: Vec::new(),
+                }],
+                reload_config_prefixes: vec!["channels.feishu".to_string()],
+                target_hint: None,
+            },
+            log_record_count: 0,
+        }
+    }
+
+    async fn setup_pairing_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE feishu_pairing_requests (
+                id TEXT PRIMARY KEY,
+                channel TEXT NOT NULL DEFAULT 'feishu',
+                account_id TEXT NOT NULL DEFAULT 'default',
+                sender_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL DEFAULT '',
+                code TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                resolved_at TEXT,
+                resolved_by_user TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create feishu_pairing_requests");
+
+        sqlx::query(
+            "CREATE UNIQUE INDEX idx_feishu_pairing_requests_pending
+             ON feishu_pairing_requests(channel, account_id, sender_id)
+             WHERE status = 'pending'",
+        )
+        .execute(&pool)
+        .await
+        .expect("create feishu_pairing_requests index");
+
+        sqlx::query(
+            "CREATE TABLE feishu_pairing_allow_from (
+                channel TEXT NOT NULL DEFAULT 'feishu',
+                account_id TEXT NOT NULL DEFAULT 'default',
+                sender_id TEXT NOT NULL,
+                source_request_id TEXT NOT NULL DEFAULT '',
+                approved_at TEXT NOT NULL,
+                approved_by_user TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(channel, account_id, sender_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create feishu_pairing_allow_from");
+
+        pool
+    }
 
     #[test]
     fn parse_feishu_payload_extracts_mention_role_and_cleans_text() {
@@ -1722,6 +2501,7 @@ mod tests {
                 "message": {
                     "message_id": "om_1",
                     "chat_id": "oc_1",
+                    "chat_type": "group",
                     "content": "{\"text\":\"@_user_1 你细化一下技术方案\"}"
                 },
                 "sender": {
@@ -1747,6 +2527,8 @@ mod tests {
                 assert_eq!(event.thread_id, "oc_1");
                 assert_eq!(event.role_id.as_deref(), Some("ou_dev_agent"));
                 assert_eq!(event.text.as_deref(), Some("你细化一下技术方案"));
+                assert_eq!(event.sender_id.as_deref(), Some("ou_sender"));
+                assert_eq!(event.chat_type.as_deref(), Some("group"));
                 assert_eq!(event.tenant_id.as_deref(), Some("tenant_1"));
             }
             ParsedFeishuPayload::Challenge(_) => panic!("should parse as event"),
@@ -1840,6 +2622,7 @@ mod tests {
             mention_open_id: "ou_sender".to_string(),
             mention_open_ids: vec!["ou_sender".to_string(), "ou_dev_team".to_string()],
             sender_open_id: "ou_sender".to_string(),
+            chat_type: "group".to_string(),
             received_at: "2026-03-05T00:00:00Z".to_string(),
         };
 
@@ -1905,4 +2688,438 @@ mod tests {
         );
         assert_eq!(selected.as_deref(), Some("tech_lead"));
     }
+
+    #[test]
+    fn resolve_fallback_default_feishu_account_id_prefers_default_credentials() {
+        let resolved = resolve_fallback_default_feishu_account_id(
+            true,
+            &["employee-a".to_string(), "employee-b".to_string()],
+        );
+        assert_eq!(resolved.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn resolve_fallback_default_feishu_account_id_uses_first_employee_when_needed() {
+        let resolved = resolve_fallback_default_feishu_account_id(
+            false,
+            &["".to_string(), "employee-b".to_string()],
+        );
+        assert_eq!(resolved.as_deref(), Some("employee-b"));
+    }
+
+    #[test]
+    fn apply_default_feishu_account_id_only_fills_missing_values() {
+        let mut event = crate::im::types::ImEvent {
+            channel: "feishu".to_string(),
+            event_type: crate::im::types::ImEventType::MessageCreated,
+            thread_id: "oc_1".to_string(),
+            event_id: None,
+            message_id: None,
+            text: Some("hello".to_string()),
+            role_id: None,
+            account_id: None,
+            tenant_id: Some("tenant_1".to_string()),
+            sender_id: Some("ou_sender".to_string()),
+            chat_type: Some("group".to_string()),
+        };
+        apply_default_feishu_account_id(&mut event, Some("default"));
+        assert_eq!(event.account_id.as_deref(), Some("default"));
+
+        event.account_id = Some("tenant_key".to_string());
+        apply_default_feishu_account_id(&mut event, Some("another"));
+        assert_eq!(event.account_id.as_deref(), Some("tenant_key"));
+    }
+
+    #[test]
+    fn evaluate_openclaw_feishu_gate_allows_allowlisted_direct_sender() {
+        let snapshot = sample_channel_snapshot(
+            "default",
+            vec!["ou_allowed"],
+            serde_json::json!({
+                "dmPolicy": "allowlist"
+            }),
+        );
+        let event = crate::im::types::ImEvent {
+            channel: "feishu".to_string(),
+            event_type: crate::im::types::ImEventType::MessageCreated,
+            thread_id: "ou_allowed".to_string(),
+            event_id: None,
+            message_id: None,
+            text: Some("hello".to_string()),
+            role_id: None,
+            account_id: Some("default".to_string()),
+            tenant_id: Some("tenant_1".to_string()),
+            sender_id: Some("ou_allowed".to_string()),
+            chat_type: Some("p2p".to_string()),
+        };
+
+        assert_eq!(
+            evaluate_openclaw_feishu_gate(&event, &snapshot),
+            FeishuInboundGateDecision::Allow
+        );
+    }
+
+    #[test]
+    fn evaluate_openclaw_feishu_gate_rejects_unpaired_direct_sender() {
+        let snapshot = sample_channel_snapshot(
+            "default",
+            vec![],
+            serde_json::json!({
+                "dmPolicy": "pairing"
+            }),
+        );
+        let event = crate::im::types::ImEvent {
+            channel: "feishu".to_string(),
+            event_type: crate::im::types::ImEventType::MessageCreated,
+            thread_id: "ou_stranger".to_string(),
+            event_id: None,
+            message_id: None,
+            text: Some("hello".to_string()),
+            role_id: None,
+            account_id: Some("default".to_string()),
+            tenant_id: Some("tenant_1".to_string()),
+            sender_id: Some("ou_stranger".to_string()),
+            chat_type: Some("p2p".to_string()),
+        };
+
+        assert_eq!(
+            evaluate_openclaw_feishu_gate(&event, &snapshot),
+            FeishuInboundGateDecision::Reject {
+                reason: "pairing_pending"
+            }
+        );
+    }
+
+    #[test]
+    fn evaluate_openclaw_feishu_gate_rejects_group_without_required_mention() {
+        let snapshot = sample_channel_snapshot(
+            "default",
+            vec![],
+            serde_json::json!({
+                "groupPolicy": "open",
+                "requireMention": true
+            }),
+        );
+        let event = crate::im::types::ImEvent {
+            channel: "feishu".to_string(),
+            event_type: crate::im::types::ImEventType::MessageCreated,
+            thread_id: "oc_group_1".to_string(),
+            event_id: None,
+            message_id: None,
+            text: Some("大家看一下".to_string()),
+            role_id: None,
+            account_id: Some("default".to_string()),
+            tenant_id: Some("tenant_1".to_string()),
+            sender_id: Some("ou_sender".to_string()),
+            chat_type: Some("group".to_string()),
+        };
+
+        assert_eq!(
+            evaluate_openclaw_feishu_gate(&event, &snapshot),
+            FeishuInboundGateDecision::Reject {
+                reason: "no_mention"
+            }
+        );
+    }
+
+    #[test]
+    fn evaluate_openclaw_feishu_gate_rejects_group_outside_allowlist() {
+        let snapshot = sample_channel_snapshot(
+            "default",
+            vec![],
+            serde_json::json!({
+                "groupPolicy": "allowlist",
+                "groups": {
+                    "oc_allowed": {
+                        "enabled": true
+                    }
+                }
+            }),
+        );
+        let event = crate::im::types::ImEvent {
+            channel: "feishu".to_string(),
+            event_type: crate::im::types::ImEventType::MessageCreated,
+            thread_id: "oc_denied".to_string(),
+            event_id: None,
+            message_id: None,
+            text: Some("hello".to_string()),
+            role_id: Some("ou_role".to_string()),
+            account_id: Some("default".to_string()),
+            tenant_id: Some("tenant_1".to_string()),
+            sender_id: Some("ou_sender".to_string()),
+            chat_type: Some("group".to_string()),
+        };
+
+        assert_eq!(
+            evaluate_openclaw_feishu_gate(&event, &snapshot),
+            FeishuInboundGateDecision::Reject {
+                reason: "group_not_allowed"
+            }
+        );
+    }
+
+    #[test]
+    fn generate_feishu_pairing_code_returns_eight_chars() {
+        let code = generate_feishu_pairing_code();
+        assert_eq!(code.len(), 8);
+        assert!(code.chars().all(|ch| ch.is_ascii_alphanumeric()));
+    }
+
+    #[tokio::test]
+    async fn upsert_feishu_pairing_request_reuses_existing_pending_record() {
+        let pool = setup_pairing_pool().await;
+
+        let (first, created_first) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender", "oc_chat")
+                .await
+                .expect("create first request");
+        let (second, created_second) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender", "oc_chat_new")
+                .await
+                .expect("reuse pending request");
+
+        assert!(created_first);
+        assert!(!created_second);
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.chat_id, "oc_chat_new");
+        assert_eq!(first.code, second.code);
+    }
+
+    #[tokio::test]
+    async fn approve_feishu_pairing_request_persists_allow_from_entry() {
+        let pool = setup_pairing_pool().await;
+
+        let (request, _) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender", "")
+                .await
+                .expect("create request");
+        let resolved = resolve_feishu_pairing_request_with_pool(
+            &pool,
+            &request.id,
+            "approved",
+            Some("tester".to_string()),
+        )
+        .await
+        .expect("approve request");
+
+        assert_eq!(resolved.status, "approved");
+        assert_eq!(resolved.resolved_by_user, "tester");
+
+        let allow_from = list_feishu_pairing_allow_from_with_pool(&pool, "default")
+            .await
+            .expect("list allow from");
+        assert_eq!(allow_from, vec!["ou_sender".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn deny_feishu_pairing_request_does_not_persist_allow_from_entry() {
+        let pool = setup_pairing_pool().await;
+
+        let (request, _) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender", "")
+                .await
+                .expect("create request");
+        let resolved = resolve_feishu_pairing_request_with_pool(
+            &pool,
+            &request.id,
+            "denied",
+            Some("tester".to_string()),
+        )
+        .await
+        .expect("deny request");
+
+        assert_eq!(resolved.status, "denied");
+
+        let allow_from = list_feishu_pairing_allow_from_with_pool(&pool, "default")
+            .await
+            .expect("list allow from");
+        assert!(allow_from.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_feishu_pairing_requests_filters_by_status() {
+        let pool = setup_pairing_pool().await;
+
+        let (first, _) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender_a", "")
+                .await
+                .expect("create first request");
+        let (_second, _) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender_b", "")
+                .await
+                .expect("create second request");
+        let _ = resolve_feishu_pairing_request_with_pool(
+            &pool,
+            &first.id,
+            "approved",
+            Some("tester".to_string()),
+        )
+        .await
+        .expect("approve request");
+
+        let pending =
+            super::list_feishu_pairing_requests_with_pool(&pool, Some("pending".to_string()))
+                .await
+                .expect("list pending requests");
+        let approved =
+            super::list_feishu_pairing_requests_with_pool(&pool, Some("approved".to_string()))
+                .await
+                .expect("list approved requests");
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].sender_id, "ou_sender_b");
+        assert_eq!(approved.len(), 1);
+        assert_eq!(approved[0].sender_id, "ou_sender_a");
+    }
+
+    #[tokio::test]
+    async fn approve_new_pending_request_still_succeeds_when_sender_has_old_approved_record() {
+        let pool = setup_pairing_pool().await;
+
+        let (first, _) = upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender", "")
+            .await
+            .expect("create first request");
+        let _ = resolve_feishu_pairing_request_with_pool(
+            &pool,
+            &first.id,
+            "approved",
+            Some("tester".to_string()),
+        )
+        .await
+        .expect("approve first request");
+
+        let (second, _) =
+            upsert_feishu_pairing_request_with_pool(&pool, "default", "ou_sender", "")
+                .await
+                .expect("create second pending request");
+        let resolved = resolve_feishu_pairing_request_with_pool(
+            &pool,
+            &second.id,
+            "approved",
+            Some("tester-2".to_string()),
+        )
+        .await
+        .expect("approve second request");
+
+        assert_eq!(resolved.status, "approved");
+
+        let approved =
+            super::list_feishu_pairing_requests_with_pool(&pool, Some("approved".to_string()))
+                .await
+                .expect("list approved requests");
+        assert_eq!(approved.len(), 2);
+    }
+}
+
+pub(crate) async fn dispatch_feishu_inbound_to_workclaw_with_pool_and_app(
+    pool: &SqlitePool,
+    app: &tauri::AppHandle,
+    event: &ImEvent,
+    approval_manager: Option<&ApprovalManager>,
+) -> Result<FeishuCallbackResult, String> {
+    let result = process_im_event(pool, event.clone()).await?;
+    if result.deduped {
+        return Ok(result);
+    }
+
+    if let Some(approval_manager) = approval_manager {
+        let approval_command = parse_feishu_approval_command(event.text.as_deref());
+        if let Some(command) = approval_command {
+            if maybe_handle_feishu_approval_command_with_pool(pool, approval_manager, event, None)
+                .await?
+                .is_some()
+            {
+                if let Some(record) =
+                    load_approval_record_with_pool(pool, &command.approval_id).await?
+                {
+                    let _ = app.emit("approval-resolved", &record);
+                }
+                return Ok(result);
+            }
+        }
+    }
+
+    let route_decision = resolve_openclaw_route_with_pool(pool, event).await.ok();
+    let employee_sessions = ensure_employee_sessions_for_event_with_pool(pool, event).await?;
+    for session in &employee_sessions {
+        let _ = link_inbound_event_to_session_with_pool(
+            pool,
+            event,
+            &session.employee_id,
+            &session.session_id,
+        )
+        .await;
+        let route_agent_id = route_decision
+            .as_ref()
+            .and_then(|value| value.get("agentId"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&session.role_id)
+            .to_string();
+        let route_session_key = route_decision
+            .as_ref()
+            .and_then(|value| value.get("sessionKey"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&session.session_id)
+            .to_string();
+        let matched_by = route_decision
+            .as_ref()
+            .and_then(|value| value.get("matchedBy"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("default")
+            .to_string();
+        let _ = app.emit(
+            "im-route-decision",
+            ImRouteDecisionEvent {
+                session_id: session.session_id.clone(),
+                thread_id: event.thread_id.clone(),
+                agent_id: route_agent_id,
+                session_key: route_session_key,
+                matched_by,
+            },
+        );
+
+        let _ = app.emit(
+            "im-role-event",
+            build_im_role_event_payload_for_channel(
+                &session.session_id,
+                &event.thread_id,
+                &session.role_id,
+                &session.employee_name,
+                "feishu",
+                "running",
+                "飞书消息已同步到桌面会话，正在执行",
+                None,
+            ),
+        );
+        let prompt = event
+            .text
+            .clone()
+            .unwrap_or_else(|| "请继续基于当前上下文推进".to_string());
+        let _ = app.emit("im-role-dispatch-request", {
+            let mut req = build_im_role_dispatch_request_for_channel(
+                &session.session_id,
+                &event.thread_id,
+                &session.role_id,
+                &session.employee_name,
+                "feishu",
+                &prompt,
+                "general-purpose",
+            );
+            req.message_id = event.message_id.clone().unwrap_or_default();
+            req
+        });
+    }
+
+    if employee_sessions.is_empty() {
+        let planned = plan_role_events_for_feishu(pool, event).await?;
+        for evt in planned {
+            let _ = app.emit("im-role-event", evt);
+        }
+        let dispatches = plan_role_dispatch_requests_for_feishu(pool, event).await?;
+        for req in dispatches {
+            let _ = app.emit("im-role-dispatch-request", req);
+        }
+    }
+
+    Ok(result)
 }

@@ -37,6 +37,18 @@ interface FeishuApiResult {
   data?: unknown;
 }
 
+export function inferFeishuReceiveIdType(target: string): FeishuSendMessageInput["receive_id_type"] {
+  const normalized = target.trim();
+  if (
+    normalized.startsWith("ou_") ||
+    normalized.startsWith("on_") ||
+    normalized.startsWith("ou-")
+  ) {
+    return "open_id";
+  }
+  return "chat_id";
+}
+
 export class FeishuClient {
   private client: any | null = null;
   private clientKey = '';
@@ -62,7 +74,7 @@ export class FeishuClient {
 
   async sendMessage(input: FeishuSendMessageInput): Promise<FeishuApiResult> {
     const client = this.getClient(input);
-    const receiveIdType = input.receive_id_type || 'chat_id';
+    const receiveIdType = input.receive_id_type || inferFeishuReceiveIdType(input.receive_id);
     const resp = await client.im.v1.message.create({
       params: { receive_id_type: receiveIdType },
       data: {
@@ -72,7 +84,11 @@ export class FeishuClient {
         uuid: input.uuid,
       },
     });
-    return resp as FeishuApiResult;
+    const result = resp as FeishuApiResult;
+    if (typeof result?.code === "number" && result.code !== 0) {
+      throw new Error(result.msg || `Feishu API error: ${result.code}`);
+    }
+    return result;
   }
 
   async listChats(input: FeishuListChatsInput): Promise<FeishuListChatsResult> {

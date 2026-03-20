@@ -1,0 +1,15 @@
+{
+  "name": "@workclaw/openclaw-plugin-host",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "test": "pnpm --dir ../ exec vitest run ./plugin-host/src ./plugin-host/openclaw --passWithNoTests",
+    "smoke:real-package": "node ./scripts/real-package-smoke.mjs",
+    "inspect:plugin": "node ./scripts/inspect-plugin.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.5"
+  }
+}

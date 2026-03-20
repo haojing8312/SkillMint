@@ -55,7 +55,7 @@ describe("SettingsView connector tab", () => {
     });
     expect(screen.getByText("飞书连接")).toBeInTheDocument();
     expect(screen.getByText("先完成飞书连接，再到员工详情中指定谁来接待飞书消息。")).toBeInTheDocument();
-    expect(screen.getAllByText("连接器概览").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("飞书接入概览").length).toBeGreaterThan(0);
     expect(screen.getByText("员工关联入口")).toBeInTheDocument();
     expect(screen.getByText("查看飞书连接是否已启动并可接收事件。")).toBeInTheDocument();
     expect(screen.queryByTestId("connector-panel-wecom")).not.toBeInTheDocument();
@@ -63,5 +63,6 @@ describe("SettingsView connector tab", () => {
     expect(screen.queryByText("消息处理规则")).not.toBeInTheDocument();
 
     expect(invokeMock.mock.calls.some(([command]) => command === "list_im_routing_bindings")).toBe(false);
+    expect(invokeMock.mock.calls.some(([command]) => command === "get_feishu_long_connection_status")).toBe(false);
   });
 });

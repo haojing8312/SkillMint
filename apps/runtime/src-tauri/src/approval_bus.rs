@@ -415,6 +415,10 @@ pub async fn recover_approved_pending_work_with_pool(
                 let ctx = ToolContext {
                     work_dir: payload.work_dir.as_deref().map(PathBuf::from),
                     allowed_tools: None,
+                    session_id: None,
+                    task_temp_dir: None,
+                    execution_caps: None,
+                    file_task_caps: None,
                 };
                 match tool.execute(payload.input.clone(), &ctx) {
                     Ok(output) => (output, false),

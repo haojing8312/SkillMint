@@ -179,6 +179,14 @@ pub async fn replay_channel_events_with_pool(
                 .get("workspace_id")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
+            sender_id: event
+                .get("sender_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            chat_type: event
+                .get("chat_type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
         })
         .collect::<Vec<_>>();
     Ok(events)

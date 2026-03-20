@@ -10,9 +10,8 @@ import {
   AgentProfileFilesView,
   EmployeeMemoryExport,
   EmployeeMemoryStats,
-  FeishuEmployeeConnectionStatuses,
-  FeishuEmployeeWsStatus,
   ImRoutingBinding,
+  OpenClawPluginFeishuRuntimeStatus,
   RuntimePreferences,
   SaveFeishuEmployeeAssociationInput,
   SkillManifest,
@@ -118,7 +117,8 @@ export function EmployeeHubView({
   const [activeTab, setActiveTab] = useState<EmployeeHubTab>(selectedEmployeeId ? "employees" : "overview");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [feishuStatuses, setFeishuStatuses] = useState<FeishuEmployeeConnectionStatuses | null>(null);
+  const [officialFeishuRuntimeStatus, setOfficialFeishuRuntimeStatus] =
+    useState<OpenClawPluginFeishuRuntimeStatus | null>(null);
   const [globalDefaultWorkDir, setGlobalDefaultWorkDir] = useState("");
   const [savingGlobalWorkDir, setSavingGlobalWorkDir] = useState(false);
   const [pendingDeleteEmployee, setPendingDeleteEmployee] = useState<{ id: string; name: string } | null>(null);
@@ -266,12 +266,20 @@ export function EmployeeHubView({
     let disposed = false;
     const loadStatuses = async () => {
       try {
-        const snapshot = await invoke<FeishuEmployeeConnectionStatuses>("get_feishu_employee_connection_statuses", {
-          sidecarBaseUrl: null,
-        });
-        if (!disposed) setFeishuStatuses(snapshot);
+        const runtimeStatus = await invoke<OpenClawPluginFeishuRuntimeStatus | null>(
+          "get_openclaw_plugin_feishu_runtime_status",
+          {
+            pluginId: "@larksuite/openclaw-lark",
+            accountId: "default",
+          },
+        ).catch(() => null);
+        if (!disposed) {
+          setOfficialFeishuRuntimeStatus(runtimeStatus);
+        }
       } catch {
-        if (!disposed) setFeishuStatuses(null);
+        if (!disposed) {
+          setOfficialFeishuRuntimeStatus(null);
+        }
       }
     };
     void loadStatuses();
@@ -335,15 +343,7 @@ export function EmployeeHubView({
     };
   }, [selectedEmployee]);
 
-  const feishuStatusByEmployeeId = useMemo(() => {
-    const map = new Map<string, FeishuEmployeeWsStatus>();
-    for (const item of feishuStatuses?.sidecar?.items || []) {
-      map.set((item.employee_id || "").trim().toLowerCase(), item);
-    }
-    return map;
-  }, [feishuStatuses]);
-
-  const relayRunning = feishuStatuses?.relay?.running ?? false;
+  const officialFeishuRuntimeRunning = officialFeishuRuntimeStatus?.running === true;
 
   function resolveFeishuStatus(employee: AgentEmployee): { dotClass: string; label: string; detail: string; error: string } {
     const enabled = !!employee.enabled;
@@ -361,19 +361,31 @@ export function EmployeeHubView({
     if (!receivesFeishu) {
       return { dotClass: "bg-gray-300", label: "未关联飞书接待", detail: "请在员工详情中启用飞书接待。", error: "" };
     }
-    const key = employeeKey(employee).toLowerCase();
-    const sidecarStatus = key ? feishuStatusByEmployeeId.get(key) : undefined;
-    if (sidecarStatus?.running && relayRunning) {
-      return { dotClass: "bg-emerald-500", label: "飞书连接正常", detail: "长连接与事件转发器均已运行。", error: "" };
+    if (officialFeishuRuntimeRunning && !officialFeishuRuntimeStatus?.last_error?.trim()) {
+      return {
+        dotClass: "bg-emerald-500",
+        label: "飞书接入正常",
+        detail: "官方插件宿主已运行，飞书接待规则已生效。",
+        error: "",
+      };
     }
     const error =
-      sidecarStatus?.last_error?.trim() ||
-      feishuStatuses?.relay?.last_error?.trim() ||
-      (!relayRunning ? "事件 relay 未运行" : "飞书长连接未运行");
-    if (!relayRunning) {
-      return { dotClass: "bg-amber-500", label: "待启动飞书事件转发", detail: "请前往设置中心中的飞书连接页面检查。", error };
+      officialFeishuRuntimeStatus?.last_error?.trim() ||
+      (!officialFeishuRuntimeRunning ? "官方插件宿主未运行" : "飞书消息桥接未运行");
+    if (!officialFeishuRuntimeRunning) {
+      return {
+        dotClass: "bg-amber-500",
+        label: "待启动飞书接入",
+        detail: "请前往设置中心中的飞书连接页面检查官方插件状态。",
+        error,
+      };
     }
-    return { dotClass: "bg-red-500", label: "飞书连接异常", detail: "请检查飞书连接状态或员工接待规则。", error };
+    return {
+      dotClass: "bg-red-500",
+      label: "飞书接入异常",
+      detail: "请检查官方插件运行状态或员工接待规则。",
+      error,
+    };
   }
 
   async function refreshEmployeeMemoryStats(scopeSkillId?: string) {
@@ -776,11 +788,14 @@ export function EmployeeHubView({
     : `确定清空${clearMemoryScopeLabel}下的长期记忆吗？`;
   const clearMemoryDialogImpact = selectedEmployeeMemoryId ? `员工编号: ${selectedEmployeeMemoryId}` : undefined;
   const selectedEmployeeFeishuStatus = selectedEmployee ? resolveFeishuStatus(selectedEmployee) : null;
-  const selectedEmployeeFeishuRuntimeStatus = useMemo(() => {
-    if (!selectedEmployee) return null;
-    const key = employeeKey(selectedEmployee).toLowerCase();
-    return key ? feishuStatusByEmployeeId.get(key) ?? null : null;
-  }, [feishuStatusByEmployeeId, selectedEmployee]);
+  const selectedEmployeeFeishuRuntimeStatus = officialFeishuRuntimeStatus
+    ? {
+        queued_events: 0,
+        reconnect_attempts: 0,
+        last_event_at: officialFeishuRuntimeStatus.last_event_at ?? null,
+        last_error: officialFeishuRuntimeStatus.last_error ?? null,
+      }
+    : null;
   const tabs: Array<{ id: EmployeeHubTab; label: string }> = [
     { id: "overview", label: "总览" },
     { id: "employees", label: "员工" },

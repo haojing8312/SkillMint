@@ -11,6 +11,7 @@ function readWorkspaceId(raw: unknown): string {
 
 export function normalizeFeishuEvent(event: FeishuWsEventRecord): NormalizedImEvent {
   const workspaceId = readWorkspaceId(event.raw);
+  const peerKind = event.chat_type === "p2p" || event.chat_type === "direct" ? "direct" : "group";
   return {
     channel: "feishu",
     workspace_id: workspaceId,
@@ -31,7 +32,7 @@ export function normalizeFeishuEvent(event: FeishuWsEventRecord): NormalizedImEv
     reply_target: event.message_id || null,
     routing_context: {
       peer: {
-        kind: "group",
+        kind: peerKind,
         id: event.chat_id,
       },
       parent_peer: null,

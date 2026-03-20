@@ -10,9 +10,7 @@ fn read_mode_from_extension(path: &Path) -> &'static str {
         .as_deref()
     {
         Some("doc") | Some("docx") | Some("xls") | Some("xlsx") | Some("ppt") | Some("pptx")
-        | Some("pdf") | Some("odt") | Some("ods") | Some("odp") | Some("zip") => {
-            "binary_or_office"
-        }
+        | Some("pdf") | Some("odt") | Some("ods") | Some("odp") | Some("zip") => "binary_or_office",
         _ => "text_direct",
     }
 }

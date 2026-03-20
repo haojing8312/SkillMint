@@ -68,6 +68,8 @@ pub struct ImRoleEventPayload {
 pub struct ImRoleDispatchRequest {
     pub session_id: String,
     pub thread_id: String,
+    #[serde(default)]
+    pub message_id: String,
     pub role_id: String,
     pub role_name: String,
     #[serde(default = "default_message_type_user_input")]
@@ -194,6 +196,7 @@ pub fn build_im_role_dispatch_request_for_channel(
     ImRoleDispatchRequest {
         session_id: session_id.to_string(),
         thread_id: thread_id.to_string(),
+        message_id: String::new(),
         role_id: role_id.to_string(),
         role_name: role_name.to_string(),
         message_type: default_message_type_user_input(),

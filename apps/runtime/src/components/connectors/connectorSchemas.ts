@@ -44,6 +44,19 @@ export const FEISHU_CONNECTOR_SCHEMA: ConnectorSchema = {
       placeholder: "机器人 App Secret",
       type: "password",
     },
+    {
+      key: "ingressToken",
+      label: "Verification Token",
+      placeholder: "飞书事件订阅 Verification Token",
+      helperText: "用于飞书事件回调校验；使用 webhook 模式时必填。",
+    },
+    {
+      key: "encryptKey",
+      label: "Encrypt Key",
+      placeholder: "飞书事件订阅 Encrypt Key",
+      type: "password",
+      helperText: "用于飞书事件内容验签/解密；使用 webhook 模式时建议配置。",
+    },
   ],
 };
 

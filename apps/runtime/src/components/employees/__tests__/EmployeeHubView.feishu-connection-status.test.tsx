@@ -37,41 +37,14 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\WorkClaw\\workspace" });
       }
-      if (command === "get_feishu_employee_connection_statuses") {
+      if (command === "get_openclaw_plugin_feishu_runtime_status") {
         return Promise.resolve({
-          relay: {
-            running: true,
-            generation: 1,
-            interval_ms: 1500,
-            total_accepted: 0,
-            last_error: null,
-          },
-          sidecar: {
-            running: true,
-            started_at: "2026-03-04T00:00:00Z",
-            queued_events: 0,
-            running_count: 1,
-            items: [
-              {
-                employee_id: "pm",
-                running: true,
-                started_at: "2026-03-04T00:00:00Z",
-                queued_events: 0,
-                last_event_at: "2026-03-04T00:00:00Z",
-                last_error: null,
-                reconnect_attempts: 0,
-              },
-              {
-                employee_id: "tech",
-                running: false,
-                started_at: null,
-                queued_events: 0,
-                last_event_at: null,
-                last_error: "auth failed",
-                reconnect_attempts: 3,
-              },
-            ],
-          },
+          plugin_id: "@larksuite/openclaw-lark",
+          account_id: "default",
+          running: true,
+          started_at: "2026-03-04T00:00:00Z",
+          last_error: null,
+          recent_logs: [],
         });
       }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
@@ -113,11 +86,14 @@ describe("EmployeeHubView feishu connection status", () => {
     );
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("get_feishu_employee_connection_statuses", { sidecarBaseUrl: null });
+      expect(invokeMock).toHaveBeenCalledWith("get_openclaw_plugin_feishu_runtime_status", {
+        pluginId: "@larksuite/openclaw-lark",
+        accountId: "default",
+      });
     });
 
     expect(screen.getByTestId("employee-connection-dot-emp-green")).toHaveClass("bg-emerald-500");
-    expect(screen.getByTestId("employee-connection-dot-emp-red")).toHaveClass("bg-red-500");
+    expect(screen.getByTestId("employee-connection-dot-emp-red")).toHaveClass("bg-emerald-500");
     expect(screen.getByTestId("employee-connection-dot-emp-gray")).toHaveClass("bg-gray-300");
     expect(screen.getByTestId("employee-feishu-association")).toBeInTheDocument();
     expect(screen.getByText("飞书接待")).toBeInTheDocument();
@@ -125,7 +101,6 @@ describe("EmployeeHubView feishu connection status", () => {
     expect(screen.getByText("飞书连接在设置中心统一管理。这里仅决定该员工是否接待飞书入口，以及接待哪些会话。")).toBeInTheDocument();
     expect(screen.queryByTestId("connector-panel-wecom")).not.toBeInTheDocument();
     expect(screen.queryByText("企业微信")).not.toBeInTheDocument();
-    expect(screen.getByText("auth failed")).toBeInTheDocument();
   });
 
   test("treats legacy feishu bindings as active reception even when scopes are empty", async () => {
@@ -133,22 +108,14 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\WorkClaw\\workspace" });
       }
-      if (command === "get_feishu_employee_connection_statuses") {
+      if (command === "get_openclaw_plugin_feishu_runtime_status") {
         return Promise.resolve({
-          relay: {
-            running: true,
-            generation: 1,
-            interval_ms: 1500,
-            total_accepted: 0,
-            last_error: null,
-          },
-          sidecar: {
-            running: true,
-            started_at: "2026-03-04T00:00:00Z",
-            queued_events: 0,
-            running_count: 0,
-            items: [],
-          },
+          plugin_id: "@larksuite/openclaw-lark",
+          account_id: "default",
+          running: true,
+          started_at: "2026-03-04T00:00:00Z",
+          last_error: null,
+          recent_logs: [],
         });
       }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
@@ -195,7 +162,7 @@ describe("EmployeeHubView feishu connection status", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("employee-connection-dot-emp-ops")).toHaveClass("bg-red-500");
+      expect(screen.getByTestId("employee-connection-dot-emp-ops")).toHaveClass("bg-emerald-500");
     });
   });
 
@@ -317,6 +284,16 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\WorkClaw\\workspace" });
       }
+      if (command === "get_openclaw_plugin_feishu_runtime_status") {
+        return Promise.resolve({
+          plugin_id: "@larksuite/openclaw-lark",
+          account_id: "default",
+          running: true,
+          started_at: "2026-03-04T00:00:00Z",
+          last_error: null,
+          recent_logs: [],
+        });
+      }
       if (command === "get_feishu_employee_connection_statuses") {
         return Promise.resolve({
           relay: { running: true, generation: 1, interval_ms: 1500, total_accepted: 0, last_error: null },
@@ -393,6 +370,16 @@ describe("EmployeeHubView feishu connection status", () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\WorkClaw\\workspace" });
+      }
+      if (command === "get_openclaw_plugin_feishu_runtime_status") {
+        return Promise.resolve({
+          plugin_id: "@larksuite/openclaw-lark",
+          account_id: "default",
+          running: true,
+          started_at: "2026-03-04T00:00:00Z",
+          last_error: null,
+          recent_logs: [],
+        });
       }
       if (command === "get_feishu_employee_connection_statuses") {
         return Promise.resolve({

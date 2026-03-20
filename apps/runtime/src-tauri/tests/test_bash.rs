@@ -1,7 +1,7 @@
 use runtime_lib::agent::{BashTool, Tool, ToolContext};
 use serde_json::json;
-use tempfile::tempdir;
 use std::path::PathBuf;
+use tempfile::tempdir;
 
 fn parse_bash_result(result: &str) -> serde_json::Value {
     serde_json::from_str(result).expect("valid bash result json")
@@ -21,7 +21,10 @@ fn test_bash_simple_command() {
     assert_eq!(parsed["details"]["timed_out"], false);
     assert_eq!(parsed["details"]["background"], false);
     assert_eq!(parsed["details"]["exit_code"], 0);
-    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("Hello"));
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Hello"));
 }
 
 #[test]
@@ -120,7 +123,10 @@ fn test_bash_dangerous_command_blocked() {
     let parsed = parse_bash_result(&result);
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["error_code"], "DANGEROUS_COMMAND_BLOCKED");
-    assert!(parsed["error_message"].as_str().unwrap_or_default().contains("危险命令"));
+    assert!(parsed["error_message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("危险命令"));
 }
 
 #[test]
@@ -142,7 +148,10 @@ fn test_bash_safe_command_not_blocked() {
     let result = tool.execute(input, &ctx).unwrap();
     let parsed = parse_bash_result(&result);
     assert_eq!(parsed["ok"], true);
-    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("safe"));
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("safe"));
 }
 
 #[test]
@@ -159,7 +168,10 @@ fn test_bash_timeout() {
     let parsed = parse_bash_result(&result);
     assert_eq!(parsed["ok"], false);
     assert_eq!(parsed["details"]["timed_out"], true);
-    assert!(parsed["summary"].as_str().unwrap_or_default().contains("超时"));
+    assert!(parsed["summary"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("超时"));
 }
 
 #[test]
@@ -171,5 +183,8 @@ fn test_bash_no_timeout_fast_command() {
     let parsed = parse_bash_result(&result);
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["details"]["timed_out"], false);
-    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("fast"));
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("fast"));
 }

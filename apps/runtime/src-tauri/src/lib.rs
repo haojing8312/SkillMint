@@ -159,6 +159,65 @@ fn spawn_sidecar_bootstrap(sidecar_manager: Arc<SidecarManager>) {
     });
 }
 
+fn spawn_openclaw_feishu_runtime_bootstrap(
+    app: tauri::AppHandle,
+    pool: sqlx::SqlitePool,
+    runtime_state: OpenClawPluginFeishuRuntimeState,
+) {
+    tauri::async_runtime::spawn(async move {
+        let has_openclaw_lark_install = sqlx::query_scalar::<_, String>(
+            "SELECT plugin_id
+             FROM installed_openclaw_plugins
+             WHERE plugin_id = 'openclaw-lark'
+             LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+
+        if !has_openclaw_lark_install {
+            return;
+        }
+
+        let app_id = commands::feishu_gateway::get_app_setting(&pool, "feishu_app_id")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let app_secret = commands::feishu_gateway::get_app_setting(&pool, "feishu_app_secret")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+
+        if app_id.trim().is_empty() || app_secret.trim().is_empty() {
+            return;
+        }
+
+        match commands::openclaw_plugins::start_openclaw_plugin_feishu_runtime_with_pool(
+            &pool,
+            &runtime_state,
+            "openclaw-lark",
+            Some("default"),
+            Some(app),
+        )
+        .await
+        {
+            Ok(status) => {
+                eprintln!(
+                    "[openclaw-feishu] auto-started official runtime pid={:?} running={}",
+                    status.pid, status.running
+                );
+            }
+            Err(error) => {
+                eprintln!("[openclaw-feishu] auto-start skipped/failed: {}", error);
+            }
+        }
+    });
+}
+
 fn restore_saved_mcp_servers(pool: sqlx::SqlitePool, registry: Arc<ToolRegistry>) {
     tauri::async_runtime::spawn(async move {
         let servers = sqlx::query_as::<_, (String, String, String, String)>(
@@ -360,6 +419,11 @@ pub fn run() {
                 Arc::clone(&handles.registry),
             );
             spawn_sidecar_bootstrap(handles.sidecar_manager.clone());
+            spawn_openclaw_feishu_runtime_bootstrap(
+                app.handle().clone(),
+                pool.clone(),
+                app.state::<OpenClawPluginFeishuRuntimeState>().inner().clone(),
+            );
             restore_saved_mcp_servers(pool.clone(), Arc::clone(&handles.registry));
             let _ = (&pool, &handles.feishu_relay_state);
 
@@ -426,6 +490,8 @@ pub fn run() {
             commands::openclaw_plugins::start_openclaw_plugin_feishu_runtime,
             commands::openclaw_plugins::stop_openclaw_plugin_feishu_runtime,
             commands::openclaw_plugins::get_openclaw_plugin_feishu_runtime_status,
+            commands::openclaw_plugins::get_openclaw_plugin_feishu_advanced_settings,
+            commands::openclaw_plugins::set_openclaw_plugin_feishu_advanced_settings,
             commands::openclaw_plugins::start_openclaw_lark_installer_session,
             commands::openclaw_plugins::get_openclaw_lark_installer_session_status,
             commands::openclaw_plugins::send_openclaw_lark_installer_input,

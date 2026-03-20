@@ -47,7 +47,10 @@ fn test_bash_background_false_runs_sync() {
     let parsed = parse_bash_result(&result);
     assert_eq!(parsed["ok"], true);
     assert_eq!(parsed["details"]["background"], false);
-    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("sync_test"));
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("sync_test"));
     assert!(parsed["details"].get("process_id").is_none());
 }
 
@@ -100,7 +103,10 @@ fn test_bash_output_gets_finished_process() {
     assert_eq!(parsed["details"]["process_id"], process_id);
     assert_eq!(parsed["details"]["exited"], true);
     assert_eq!(parsed["details"]["exit_code"], 0);
-    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("output_test"));
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("output_test"));
 }
 
 #[test]
@@ -132,7 +138,10 @@ fn test_bash_output_block_mode() {
     assert_eq!(parsed["details"]["block"], true);
     assert_eq!(parsed["details"]["exited"], true);
     assert_eq!(parsed["details"]["exit_code"], 0);
-    assert!(parsed["details"]["stdout"].as_str().unwrap_or_default().contains("block_test"));
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("block_test"));
 }
 
 #[test]

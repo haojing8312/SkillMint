@@ -354,13 +354,16 @@ mod tests {
 
     #[test]
     fn format_run_stop_message_includes_detail_and_step() {
-        let reason = RunStopReason::policy_blocked("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。")
-            .with_last_completed_step("已读取当前工作区");
+        let reason = RunStopReason::policy_blocked(
+            "目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。",
+        )
+        .with_last_completed_step("已读取当前工作区");
 
         let formatted = format_run_stop_message(&reason);
 
         assert!(formatted.contains("本次请求触发了安全或工作区限制"));
-        assert!(formatted.contains("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。"));
+        assert!(formatted
+            .contains("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。"));
         assert!(formatted.contains("最后完成步骤：已读取当前工作区"));
     }
 }

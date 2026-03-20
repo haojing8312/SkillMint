@@ -501,6 +501,20 @@ export function createSidecarApp(overrides: Partial<SidecarDeps> = {}) {
       const body = await c.req.json().catch(() => ({}));
       try {
         const result = await deps.feishu.sendMessage(body);
+        if (
+          result &&
+          typeof result === "object" &&
+          "code" in result &&
+          typeof (result as { code?: unknown }).code === "number" &&
+          Number((result as { code?: unknown }).code) !== 0
+        ) {
+          const message =
+            typeof (result as { msg?: unknown }).msg === "string" &&
+            String((result as { msg?: unknown }).msg).trim()
+              ? String((result as { msg?: unknown }).msg).trim()
+              : `Feishu API error: ${String((result as { code?: unknown }).code)}`;
+          throw new Error(message);
+        }
         return c.json({ output: JSON.stringify(result) } as ApiResponse);
       } catch (fallbackError: any) {
         return c.json({ error: fallbackError.message || e.message } as ApiResponse, 500);

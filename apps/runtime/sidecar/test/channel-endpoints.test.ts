@@ -159,6 +159,24 @@ class FakeChannelKernel {
   }
 }
 
+class FakeChannelKernelFailure extends FakeChannelKernel {
+  override async sendMessage(instanceId: string, request: unknown) {
+    this.sendCalls.push({ instanceId, request });
+    throw new Error("kernel send failed");
+  }
+}
+
+class FakeFeishuClient {
+  public sendCalls: unknown[] = [];
+
+  constructor(private readonly response: unknown) {}
+
+  async sendMessage(input: unknown) {
+    this.sendCalls.push(input);
+    return this.response;
+  }
+}
+
 test("channel endpoints start and query adapter instances", async () => {
   const kernel = new FakeChannelKernel();
   const app = createSidecarApp({ channelKernel: kernel as never });
@@ -366,4 +384,33 @@ test("channel endpoints acknowledge and replay retained events", async () => {
     instanceId: "feishu:connector-1",
     limit: 10,
   });
+});
+
+test("feishu send-message fallback returns error when Feishu API reports non-zero code", async () => {
+  const kernel = new FakeChannelKernelFailure();
+  const feishu = new FakeFeishuClient({
+    code: 99991663,
+    msg: "no permission to call im:message:send_as_bot",
+  });
+  const app = createSidecarApp({
+    channelKernel: kernel as never,
+    feishu: feishu as never,
+  });
+
+  const res = await app.fetch(
+    new Request("http://localhost/api/feishu/send-message", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        receive_id: "ou_user_123",
+        receive_id_type: "open_id",
+        msg_type: "text",
+        content: JSON.stringify({ text: "已收到" }),
+      }),
+    }),
+  );
+
+  assert.equal(res.status, 500);
+  const json = await res.json();
+  assert.match(String(json.error || ""), /no permission/i);
 });

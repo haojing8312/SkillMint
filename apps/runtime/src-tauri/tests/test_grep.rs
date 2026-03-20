@@ -24,7 +24,9 @@ fn test_grep_find_matches() {
     assert_eq!(parsed["tool"], "grep");
     assert_eq!(parsed["details"]["total_matches"], 2);
     assert_eq!(parsed["details"]["files_searched"], 1);
-    let matches = parsed["details"]["matches"].as_array().expect("matches array");
+    let matches = parsed["details"]["matches"]
+        .as_array()
+        .expect("matches array");
     assert_eq!(matches.len(), 2);
     assert_eq!(matches[0]["line"], 1);
     assert_eq!(matches[0]["text"], "line 1: hello");
