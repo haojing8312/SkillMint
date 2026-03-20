@@ -149,6 +149,10 @@ pub struct SessionExecutionContextSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatExecutionGuidance {
     pub effective_work_dir: String,
+    pub local_timezone: String,
+    pub local_date: String,
+    pub local_tomorrow: String,
+    pub local_month_range: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

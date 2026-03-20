@@ -6,6 +6,7 @@ use crate::types::{
     PreparedSessionCreation, SessionCreationRequest, SessionExecutionContextSnapshot,
     SessionModelSnapshot,
 };
+use chrono::{Datelike, Duration, Local, NaiveDate};
 use serde_json::Value;
 
 pub struct ChatPreparationService;
@@ -301,7 +302,30 @@ impl ChatExecutionPreparationService {
             request.work_dir.as_deref().unwrap_or("").trim().to_string()
         };
 
-        Ok(ChatExecutionGuidance { effective_work_dir })
+        let now = Local::now();
+        let today = now.date_naive();
+        let tomorrow = today + Duration::days(1);
+        let month_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
+            .ok_or_else(|| "failed to resolve month start".to_string())?;
+        let next_month_start = if today.month() == 12 {
+            NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
+        }
+        .ok_or_else(|| "failed to resolve next month start".to_string())?;
+        let month_end = next_month_start - Duration::days(1);
+
+        Ok(ChatExecutionGuidance {
+            effective_work_dir,
+            local_timezone: format!("UTC{}", now.format("%:z")),
+            local_date: today.format("%Y-%m-%d").to_string(),
+            local_tomorrow: tomorrow.format("%Y-%m-%d").to_string(),
+            local_month_range: format!(
+                "{} ~ {}",
+                month_start.format("%Y-%m-%d"),
+                month_end.format("%Y-%m-%d")
+            ),
+        })
     }
 
     pub async fn prepare_route_decisions<R: ChatSettingsRepository>(
@@ -694,6 +718,16 @@ pub fn compose_system_prompt(
     }
     if let Some(memory_content) = memory_content.filter(|value| !value.trim().is_empty()) {
         system_prompt = format!("{}\n\n---\n持久内存:\n{}", system_prompt, memory_content);
+    }
+    if !guidance.local_date.trim().is_empty() {
+        system_prompt = format!(
+            "{}\n\n---\n时间上下文:\n- 本地时区: {}\n- 今天: {}\n- 明天: {}\n- 本月范围: {}\n- 遇到“今天”“明天”“昨天”“本周”“这个月”等相对时间表达时，先换算为上面的绝对日期或日期范围，再进行推理、搜索和回答。\n- 对新闻、政策、价格、日程等时效性内容，优先在回答中写出绝对日期，避免只写相对时间。",
+            system_prompt,
+            guidance.local_timezone,
+            guidance.local_date,
+            guidance.local_tomorrow,
+            guidance.local_month_range
+        );
     }
     if let Some(browser_runtime_note) =
         browser_runtime_note.filter(|value| !value.trim().is_empty())

@@ -9,6 +9,10 @@ fn compose_system_prompt_includes_execution_guidance_and_optional_sections() {
         8,
         &ChatExecutionGuidance {
             effective_work_dir: "E:/workspace/demo".to_string(),
+            local_timezone: "Asia/Shanghai".to_string(),
+            local_date: "2026-03-20".to_string(),
+            local_tomorrow: "2026-03-21".to_string(),
+            local_month_range: "2026-03-01 ~ 2026-03-31".to_string(),
         },
         Some(
             "<available_skills>\n<skill><name>xhs</name><invoke_name>xhs</invoke_name><location>E:/workspace/demo/skills/xhs/SKILL.md</location></skill>\n</available_skills>",
@@ -33,6 +37,12 @@ fn compose_system_prompt_includes_execution_guidance_and_optional_sections() {
     assert!(prompt.contains("不要要求固定安装目录"));
     assert!(prompt.contains("Collaborate with employee-1"));
     assert!(prompt.contains("持久内存:\nRemember previous delivery constraints."));
+    assert!(prompt.contains("时间上下文:"));
+    assert!(prompt.contains("本地时区: Asia/Shanghai"));
+    assert!(prompt.contains("今天: 2026-03-20"));
+    assert!(prompt.contains("明天: 2026-03-21"));
+    assert!(prompt.contains("本月范围: 2026-03-01 ~ 2026-03-31"));
+    assert!(prompt.contains("遇到“今天”“明天”“昨天”“本周”“这个月”"));
 }
 
 #[test]
@@ -44,6 +54,10 @@ fn compose_system_prompt_includes_file_tool_guidance_when_directory_tools_are_av
         8,
         &ChatExecutionGuidance {
             effective_work_dir: "E:/workspace/demo".to_string(),
+            local_timezone: "Asia/Shanghai".to_string(),
+            local_date: "2026-03-20".to_string(),
+            local_tomorrow: "2026-03-21".to_string(),
+            local_month_range: "2026-03-01 ~ 2026-03-31".to_string(),
         },
         None,
         None,
@@ -66,6 +80,10 @@ fn compose_system_prompt_includes_structured_tool_result_guidance_for_core_tools
         8,
         &ChatExecutionGuidance {
             effective_work_dir: "E:/workspace/demo".to_string(),
+            local_timezone: "Asia/Shanghai".to_string(),
+            local_date: "2026-03-20".to_string(),
+            local_tomorrow: "2026-03-21".to_string(),
+            local_month_range: "2026-03-01 ~ 2026-03-31".to_string(),
         },
         None,
         None,

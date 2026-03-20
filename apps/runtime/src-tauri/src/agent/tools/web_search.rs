@@ -3,11 +3,79 @@ use crate::agent::tools::search_providers::{
 };
 use crate::agent::types::{Tool, ToolContext};
 use anyhow::{anyhow, Result};
+use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 /// 输出最大字符数，超出时截断
 const MAX_OUTPUT_CHARS: usize = 30_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSearchRequest {
+    query: String,
+    freshness: Option<String>,
+}
+
+fn replace_all(query: &str, replacements: &[(&str, String)]) -> String {
+    replacements
+        .iter()
+        .fold(query.to_string(), |acc, (needle, value)| acc.replace(needle, value))
+}
+
+fn start_of_week(reference_date: NaiveDate) -> NaiveDate {
+    let days_from_monday = match reference_date.weekday() {
+        Weekday::Mon => 0,
+        Weekday::Tue => 1,
+        Weekday::Wed => 2,
+        Weekday::Thu => 3,
+        Weekday::Fri => 4,
+        Weekday::Sat => 5,
+        Weekday::Sun => 6,
+    };
+    reference_date - Duration::days(days_from_monday)
+}
+
+fn normalize_relative_date_query(query: &str, reference_date: NaiveDate) -> NormalizedSearchRequest {
+    let tomorrow = reference_date + Duration::days(1);
+    let yesterday = reference_date - Duration::days(1);
+    let week_start = start_of_week(reference_date);
+    let week_end = week_start + Duration::days(6);
+    let month_label = format!("{}年{}月", reference_date.year(), reference_date.month());
+    let week_label = format!(
+        "{} 至 {}",
+        week_start.format("%Y-%m-%d"),
+        week_end.format("%Y-%m-%d")
+    );
+    let replacements = [
+        ("今天", reference_date.format("%Y-%m-%d").to_string()),
+        ("明天", tomorrow.format("%Y-%m-%d").to_string()),
+        ("昨天", yesterday.format("%Y-%m-%d").to_string()),
+        ("昨日", yesterday.format("%Y-%m-%d").to_string()),
+        ("这个月", month_label.clone()),
+        ("本月", month_label.clone()),
+        ("这周", week_label.clone()),
+        ("本周", week_label.clone()),
+    ];
+    let normalized_query = replace_all(query, &replacements);
+
+    let inferred_freshness = if query.contains("今天")
+        || query.contains("昨天")
+        || query.contains("昨日")
+    {
+        Some("day".to_string())
+    } else if query.contains("这周") || query.contains("本周") {
+        Some("week".to_string())
+    } else if query.contains("这个月") || query.contains("本月") {
+        Some("month".to_string())
+    } else {
+        None
+    };
+
+    NormalizedSearchRequest {
+        query: normalized_query,
+        freshness: inferred_freshness,
+    }
+}
 
 /// Web 搜索工具 — 通过可插拔的 SearchProvider 执行搜索，支持结果缓存
 pub struct WebSearchTool {
@@ -63,18 +131,23 @@ impl Tool for WebSearchTool {
         }
 
         let count = input["count"].as_i64().unwrap_or(5).clamp(1, 10) as usize;
-        let freshness = input["freshness"].as_str().map(String::from);
+        let normalized = normalize_relative_date_query(query, Local::now().date_naive());
+        let query = normalized.query;
+        let freshness = input["freshness"]
+            .as_str()
+            .map(String::from)
+            .or(normalized.freshness);
 
         // 带时效性过滤的请求不使用缓存，确保结果实时性
         if freshness.is_none() {
-            if let Some(cached_items) = self.cache.get(self.provider.name(), query, count) {
+            if let Some(cached_items) = self.cache.get(self.provider.name(), &query, count) {
                 let output = format_results(&cached_items, self.provider.display_name());
                 return Ok(truncate_output(&output));
             }
         }
 
         let params = SearchParams {
-            query: query.to_string(),
+            query: query.clone(),
             count,
             freshness,
         };
@@ -87,7 +160,7 @@ impl Tool for WebSearchTool {
         // 将结果写入缓存（freshness 请求跳过缓存写入）
         if params.freshness.is_none() {
             self.cache
-                .put(self.provider.name(), query, count, response.items.clone());
+                .put(self.provider.name(), &query, count, response.items.clone());
         }
 
         let output = format_results(&response.items, self.provider.display_name());
@@ -128,6 +201,7 @@ fn truncate_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
     use crate::agent::tools::search_providers::{
         SearchItem, SearchParams, SearchProvider, SearchResponse,
     };
@@ -240,5 +314,29 @@ mod tests {
         // 输出长度不应超过截断上限加上截断提示的少量字节
         assert!(result.len() <= 30_100);
         assert!(result.contains("... (结果已截断)"));
+    }
+
+    #[test]
+    fn test_normalize_relative_date_query_for_today() {
+        let normalized = normalize_relative_date_query(
+            "帮我搜一下今天的 AI 新闻，并给我一个简报",
+            NaiveDate::from_ymd_opt(2026, 3, 20).expect("valid date"),
+        );
+
+        assert_eq!(normalized.freshness.as_deref(), Some("day"));
+        assert!(normalized.query.contains("2026-03-20"));
+        assert!(!normalized.query.contains("今天"));
+    }
+
+    #[test]
+    fn test_normalize_relative_date_query_for_this_month() {
+        let normalized = normalize_relative_date_query(
+            "整理一下这个月的 AI 融资新闻",
+            NaiveDate::from_ymd_opt(2026, 3, 20).expect("valid date"),
+        );
+
+        assert_eq!(normalized.freshness.as_deref(), Some("month"));
+        assert!(normalized.query.contains("2026年3月"));
+        assert!(!normalized.query.contains("这个月"));
     }
 }

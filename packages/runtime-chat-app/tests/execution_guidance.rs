@@ -1,8 +1,9 @@
 use async_trait::async_trait;
+use chrono::{Datelike, Duration, NaiveDate};
 use runtime_chat_app::{
-    ChatExecutionGuidance, ChatExecutionPreparationRequest, ChatExecutionPreparationService,
-    ChatRoutePolicySnapshot, ChatRoutingSnapshot, ChatSettingsRepository,
-    ProviderConnectionSnapshot, RoutingSettingsSnapshot, SessionModelSnapshot,
+    ChatExecutionPreparationRequest, ChatExecutionPreparationService, ChatRoutePolicySnapshot,
+    ChatRoutingSnapshot, ChatSettingsRepository, ProviderConnectionSnapshot,
+    RoutingSettingsSnapshot, SessionModelSnapshot,
 };
 
 struct FakeGuidanceRepo;
@@ -73,10 +74,18 @@ async fn prepare_execution_guidance_uses_request_context() {
         .await
         .expect("execution guidance");
 
-    assert_eq!(
-        guidance,
-        ChatExecutionGuidance {
-            effective_work_dir: "E:/request-workdir".to_string(),
-        }
-    );
+    assert_eq!(guidance.effective_work_dir, "E:/request-workdir");
+    assert!(guidance.local_timezone.starts_with("UTC"));
+    let today = NaiveDate::parse_from_str(&guidance.local_date, "%Y-%m-%d").expect("today date");
+    let tomorrow =
+        NaiveDate::parse_from_str(&guidance.local_tomorrow, "%Y-%m-%d").expect("tomorrow date");
+    assert_eq!(tomorrow, today + Duration::days(1));
+
+    let mut parts = guidance.local_month_range.split(" ~ ");
+    let month_start = NaiveDate::parse_from_str(parts.next().expect("month start"), "%Y-%m-%d")
+        .expect("valid month start");
+    let month_end = NaiveDate::parse_from_str(parts.next().expect("month end"), "%Y-%m-%d")
+        .expect("valid month end");
+    assert_eq!(month_start.day(), 1);
+    assert!(month_end >= today);
 }

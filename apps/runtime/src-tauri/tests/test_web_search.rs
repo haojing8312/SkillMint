@@ -5,7 +5,7 @@ use runtime_lib::agent::tools::search_providers::{
 use runtime_lib::agent::tools::WebSearchTool;
 use runtime_lib::agent::{Tool, ToolContext};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// 用于测试的 Mock Provider
@@ -26,6 +26,36 @@ impl SearchProvider for MockProvider {
                 title: "Mock Result".to_string(),
                 url: "https://example.com".to_string(),
                 snippet: "A mock search result".to_string(),
+            }],
+            elapsed_ms: 1,
+        })
+    }
+}
+
+struct RecordingProvider {
+    last_query: Arc<Mutex<Option<String>>>,
+    last_freshness: Arc<Mutex<Option<String>>>,
+}
+
+impl SearchProvider for RecordingProvider {
+    fn name(&self) -> &str {
+        "recording"
+    }
+
+    fn display_name(&self) -> &str {
+        "Recording Search"
+    }
+
+    fn search(&self, params: &SearchParams) -> anyhow::Result<SearchResponse> {
+        *self.last_query.lock().expect("query lock") = Some(params.query.clone());
+        *self.last_freshness.lock().expect("freshness lock") = params.freshness.clone();
+        Ok(SearchResponse {
+            query: params.query.clone(),
+            provider: "recording".to_string(),
+            items: vec![SearchItem {
+                title: "Recorded Result".to_string(),
+                url: "https://example.com/recorded".to_string(),
+                snippet: "Recorded request".to_string(),
             }],
             elapsed_ms: 1,
         })
@@ -94,6 +124,73 @@ fn test_web_search_cache_hit() {
     let result2 = tool.execute(json!({"query": "cached query"}), &ctx);
     assert!(result2.is_ok());
     assert_eq!(result1.unwrap(), result2.unwrap());
+}
+
+#[test]
+fn test_web_search_normalizes_today_queries() {
+    let last_query = Arc::new(Mutex::new(None));
+    let last_freshness = Arc::new(Mutex::new(None));
+    let tool = WebSearchTool::with_provider(
+        Box::new(RecordingProvider {
+            last_query: Arc::clone(&last_query),
+            last_freshness: Arc::clone(&last_freshness),
+        }),
+        Arc::new(SearchCache::new(Duration::from_secs(60), 10)),
+    );
+
+    let result = tool.execute(
+        json!({"query": "帮我搜一下今天的 AI 新闻，并给我一个简报"}),
+        &ToolContext::default(),
+    );
+
+    assert!(result.is_ok(), "搜索失败: {:?}", result);
+    let query = last_query
+        .lock()
+        .expect("query lock")
+        .clone()
+        .expect("query should be recorded");
+    let freshness = last_freshness
+        .lock()
+        .expect("freshness lock")
+        .clone();
+    assert!(query.contains("AI 新闻"));
+    assert!(!query.contains("今天"));
+    assert!(query.contains("20"));
+    assert_eq!(freshness.as_deref(), Some("day"));
+}
+
+#[test]
+fn test_web_search_normalizes_this_month_queries() {
+    let last_query = Arc::new(Mutex::new(None));
+    let last_freshness = Arc::new(Mutex::new(None));
+    let tool = WebSearchTool::with_provider(
+        Box::new(RecordingProvider {
+            last_query: Arc::clone(&last_query),
+            last_freshness: Arc::clone(&last_freshness),
+        }),
+        Arc::new(SearchCache::new(Duration::from_secs(60), 10)),
+    );
+
+    let result = tool.execute(
+        json!({"query": "整理一下这个月的 AI 融资新闻"}),
+        &ToolContext::default(),
+    );
+
+    assert!(result.is_ok(), "搜索失败: {:?}", result);
+    let query = last_query
+        .lock()
+        .expect("query lock")
+        .clone()
+        .expect("query should be recorded");
+    let freshness = last_freshness
+        .lock()
+        .expect("freshness lock")
+        .clone();
+    assert!(query.contains("AI 融资新闻"));
+    assert!(!query.contains("这个月"));
+    assert!(query.contains("年"));
+    assert!(query.contains("月"));
+    assert_eq!(freshness.as_deref(), Some("month"));
 }
 
 #[test]
