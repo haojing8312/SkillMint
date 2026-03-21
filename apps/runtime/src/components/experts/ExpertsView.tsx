@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { ClawhubInstallRequest, SkillManifest } from "../../types";
 import { SkillLibraryView } from "./SkillLibraryView";
-import { FindSkillsView } from "./FindSkillsView";
 import { RiskConfirmDialog } from "../RiskConfirmDialog";
 
 interface Props {
@@ -49,7 +48,7 @@ export function ExpertsView({
   busySkillId,
   busyAction,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<"mine" | "library" | "finder">("mine");
+  const [activeTab, setActiveTab] = useState<"mine" | "library">("mine");
   const [pendingRiskAction, setPendingRiskAction] = useState<PendingExpertsRiskAction | null>(null);
   const visibleSkills = skills.filter((skill) => skill.id !== "builtin-general");
   const totalSkills = visibleSkills.length;
@@ -192,16 +191,6 @@ export function ExpertsView({
             >
               技能库
             </button>
-            <button
-              onClick={() => setActiveTab("finder")}
-              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "finder"
-                  ? "border-[var(--sm-primary)] text-[var(--sm-primary-strong)]"
-                  : "border-transparent text-[var(--sm-text-muted)] hover:text-[var(--sm-text)]"
-              }`}
-            >
-              找技能
-            </button>
           </div>
         </div>
 
@@ -284,17 +273,10 @@ export function ExpertsView({
             })}
           </div>
         ) : (
-          activeTab === "library" ? (
-            <SkillLibraryView
-              installedSkillIds={installedSkillIds}
-              onInstall={onInstallFromLibrary}
-            />
-          ) : (
-            <FindSkillsView
-              installedSkillIds={installedSkillIds}
-              onInstall={onInstallFromLibrary}
-            />
-          )
+          <SkillLibraryView
+            installedSkillIds={installedSkillIds}
+            onInstall={onInstallFromLibrary}
+          />
         )}
       </div>
       <RiskConfirmDialog

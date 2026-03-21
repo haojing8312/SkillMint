@@ -112,4 +112,28 @@ describe("ExpertsView", () => {
 
     expect(screen.getByText("创建会话失败，请稍后重试")).toBeInTheDocument();
   });
+
+  test("keeps builtin find-skills card but removes the dedicated finder tab", () => {
+    render(
+      <ExpertsView
+        skills={[
+          buildSkill({ id: "builtin-find-skills", name: "找技能" }),
+          buildSkill({ id: "builtin-skill-creator", name: "创建技能" }),
+        ]}
+        onInstallSkill={() => {}}
+        onCreate={() => {}}
+        onOpenPackaging={() => {}}
+        onInstallFromLibrary={async () => {}}
+        onStartTaskWithSkill={() => {}}
+        onRefreshLocalSkill={() => {}}
+        onCheckClawhubUpdate={() => {}}
+        onUpdateClawhubSkill={() => {}}
+        onDeleteSkill={() => {}}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: "找技能" })).not.toBeInTheDocument();
+    expect(screen.getByText("找技能")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "开始任务" })).toHaveLength(2);
+  });
 });

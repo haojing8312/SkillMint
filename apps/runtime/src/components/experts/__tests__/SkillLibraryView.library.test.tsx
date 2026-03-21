@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { SkillLibraryView } from "../SkillLibraryView";
 
 const invokeMock = vi.fn();
@@ -67,7 +67,11 @@ describe("SkillLibraryView library behavior", () => {
       expect(screen.getByText("Beta")).toBeInTheDocument();
     });
 
-    MockIntersectionObserver.instances.at(-1)?.triggerIntersect();
+    act(() => {
+      for (const observer of MockIntersectionObserver.instances) {
+        observer.triggerIntersect();
+      }
+    });
 
     await waitFor(() => {
       expect(screen.getByText("Gamma")).toBeInTheDocument();
