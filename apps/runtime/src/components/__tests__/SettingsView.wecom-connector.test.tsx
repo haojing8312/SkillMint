@@ -4,6 +4,7 @@ import {
   buildFeishuOnboardingState,
   type FeishuOnboardingInput,
 } from "../SettingsView";
+import type { OpenClawLarkInstallerSessionStatus } from "../../types";
 
 const invokeMock = vi.fn();
 const { openExternalUrlMock } = vi.hoisted(() => ({
@@ -649,7 +650,7 @@ describe("SettingsView connector visibility", () => {
   });
 
   test("shows an immediate launching state for the advanced create-bot flow", async () => {
-    let resolveStart: ((value: unknown) => void) | null = null;
+    let resolveStart: ((value: OpenClawLarkInstallerSessionStatus) => void) | null = null;
     installInvokeMock({
       get_feishu_setup_progress: async () => ({
         environment: {
@@ -673,7 +674,7 @@ describe("SettingsView connector visibility", () => {
         summary_state: "ready_to_bind",
       }),
       start_openclaw_lark_installer_session: () =>
-        new Promise((resolve) => {
+        new Promise<OpenClawLarkInstallerSessionStatus>((resolve) => {
           resolveStart = resolve;
         }),
     });
@@ -686,7 +687,9 @@ describe("SettingsView connector visibility", () => {
     expect(within(onboardingStep).getByRole("button", { name: "启动中..." })).toBeDisabled();
     expect(within(onboardingStep).getByText("正在启动飞书官方创建机器人向导，请稍候...")).toBeInTheDocument();
 
-    resolveStart?.({
+    const startResolver = resolveStart as ((value: OpenClawLarkInstallerSessionStatus) => void) | null;
+    expect(startResolver).not.toBeNull();
+    (startResolver as (value: OpenClawLarkInstallerSessionStatus) => void)({
       running: true,
       mode: "create",
       started_at: "2026-03-22T00:00:00Z",

@@ -6,24 +6,18 @@ use runtime_lib::commands::feishu_gateway::{
     maybe_handle_feishu_approval_command_with_pool, notify_feishu_approval_requested_with_pool,
     parse_feishu_payload, plan_role_dispatch_requests_for_feishu, plan_role_events_for_feishu,
     remember_feishu_runtime_state_for_outbound, resolve_feishu_app_credentials,
-    resolve_feishu_sidecar_base_url, send_feishu_text_message_with_pool, set_app_setting,
+    resolve_feishu_sidecar_base_url, send_feishu_text_message_with_pool,
+    set_app_setting, set_feishu_official_runtime_outbound_send_hook_for_tests,
     validate_feishu_auth_with_pool, validate_feishu_signature_with_pool, ParsedFeishuPayload,
 };
 use runtime_lib::commands::openclaw_plugins::{
-    handle_openclaw_plugin_feishu_runtime_send_result_event,
+    OpenClawPluginFeishuOutboundDeliveryResult, OpenClawPluginFeishuOutboundSendRequest,
     OpenClawPluginFeishuOutboundSendResult, OpenClawPluginFeishuRuntimeState,
-    OpenClawPluginFeishuRuntimeStatus,
 };
 use runtime_lib::commands::im_config::bind_thread_roles_with_pool;
 use runtime_lib::im::types::{ImEvent, ImEventType};
-use std::fs;
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 use tokio::sync::Mutex as TokioMutex;
 
 fn feishu_runtime_test_lock() -> &'static TokioMutex<()> {
@@ -31,181 +25,28 @@ fn feishu_runtime_test_lock() -> &'static TokioMutex<()> {
     LOCK.get_or_init(|| TokioMutex::new(()))
 }
 
-struct MockFeishuRuntime {
-    state: OpenClawPluginFeishuRuntimeState,
-    capture_path: PathBuf,
-    script_path: PathBuf,
-    process_slot: Arc<Mutex<Option<Child>>>,
-    stdout_thread: thread::JoinHandle<()>,
-}
-
-#[repr(C)]
-struct FeishuRuntimeStoreMirror {
-    process: Option<Arc<Mutex<Option<Child>>>>,
-    stdin: Option<Arc<Mutex<ChildStdin>>>,
-    pending_outbound_send_results: HashMap<
-        String,
-        std::sync::mpsc::SyncSender<Result<OpenClawPluginFeishuOutboundSendResult, String>>,
-    >,
-    status: OpenClawPluginFeishuRuntimeStatus,
-}
-
-fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time before unix epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!(
-        "{}-{}-{}{}",
-        prefix,
-        std::process::id(),
-        stamp,
-        suffix
-    ))
-}
-
-async fn spawn_mock_feishu_runtime() -> MockFeishuRuntime {
-    clear_feishu_runtime_state_for_outbound();
-    eprintln!("[test-fixture] spawn mock feishu runtime start");
-    let capture_path = unique_temp_path("workclaw-feishu-runtime-capture", ".json");
-    let script_path = unique_temp_path("workclaw-feishu-runtime-mock", ".cjs");
-    let script = r#"
-const fs = require('fs');
-const readline = require('readline');
-const capturePath = process.env.FEISHU_RUNTIME_CAPTURE_PATH;
-let sequence = 0;
-const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on('line', (line) => {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    return;
-  }
-  let payload;
-  try {
-    payload = JSON.parse(trimmed);
-  } catch (error) {
-    return;
-  }
-  fs.writeFileSync(capturePath, JSON.stringify(payload, null, 2));
-  sequence += 1;
-  const response = {
-    event: 'send_result',
-    requestId: payload.request_id,
-    request: {
-      requestId: payload.request_id,
-      accountId: payload.account_id,
-      target: payload.target,
-      threadId: payload.thread_id ?? null,
-      text: payload.text,
-      mode: payload.mode,
-    },
-    result: {
-      delivered: true,
-      channel: 'feishu',
-      accountId: payload.account_id,
-      target: payload.target,
-      threadId: payload.thread_id ?? null,
-      text: payload.text,
-      mode: payload.mode,
-      messageId: `om_mock_${sequence}`,
-      chatId: payload.target,
-      sequence,
-    },
-  };
-  process.stdout.write(JSON.stringify(response) + '\n');
-});
-"#;
-    fs::write(
-        &script_path,
-        script,
-    )
-    .expect("write mock runtime script");
-
-    let mut child = Command::new("node")
-        .arg(&script_path)
-        .env("FEISHU_RUNTIME_CAPTURE_PATH", &capture_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn mock runtime");
-    let stdout = child.stdout.take().expect("runtime stdout");
-    let process_slot = Arc::new(Mutex::new(Some(child)));
-    let stdin_slot = Arc::new(Mutex::new(
-        process_slot
-            .lock()
-            .expect("lock runtime process")
-            .as_mut()
-            .expect("child process")
-            .stdin
-            .take()
-            .expect("runtime stdin"),
-    ));
-    let state = OpenClawPluginFeishuRuntimeState::default();
-    eprintln!("[test-fixture] created default runtime state");
-    let mirror_state: Arc<Mutex<FeishuRuntimeStoreMirror>> =
-        unsafe { std::mem::transmute(state.0.clone()) };
-    eprintln!("[test-fixture] transmuted runtime state arc");
-    {
-        let mut guard = mirror_state.lock().expect("lock mirror runtime state");
-        eprintln!("[test-fixture] locked mirror runtime state");
-        guard.process = Some(process_slot.clone());
-        eprintln!("[test-fixture] wrote process");
-        guard.stdin = Some(stdin_slot.clone());
-        eprintln!("[test-fixture] wrote stdin");
-        guard.pending_outbound_send_results = HashMap::new();
-        eprintln!("[test-fixture] wrote pending map");
-        guard.status = OpenClawPluginFeishuRuntimeStatus {
-            running: true,
-            ..Default::default()
-        };
-        eprintln!("[test-fixture] wrote mirror runtime state");
-    }
-    remember_feishu_runtime_state_for_outbound(&state);
-    eprintln!("[test-fixture] remembered runtime state for outbound");
-
-    let state_for_stdout = state.clone();
-    let stdout_thread = thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-                continue;
-            };
-            let _ = handle_openclaw_plugin_feishu_runtime_send_result_event(&state_for_stdout, &value);
-        }
-    });
-
-    MockFeishuRuntime {
-        state,
-        capture_path,
-        script_path,
-        process_slot,
-        stdout_thread,
-    }
-}
-
-fn shutdown_mock_feishu_runtime(runtime: MockFeishuRuntime) {
-    let MockFeishuRuntime {
-        state,
-        capture_path,
-        script_path,
-        process_slot,
-        stdout_thread,
-    } = runtime;
-    clear_feishu_runtime_state_for_outbound();
-    drop(state);
-    if let Ok(mut guard) = process_slot.lock() {
-        if let Some(mut child) = guard.take() {
-            let _ = child.wait();
-        }
-    }
-    let _ = stdout_thread.join();
-    let _ = fs::remove_file(capture_path);
-    let _ = fs::remove_file(script_path);
+fn install_feishu_official_runtime_outbound_send_hook(
+    captured_request: Arc<Mutex<Option<OpenClawPluginFeishuOutboundSendRequest>>>,
+) {
+    set_feishu_official_runtime_outbound_send_hook_for_tests(Some(Arc::new(
+        move |request: &OpenClawPluginFeishuOutboundSendRequest| {
+            *captured_request
+                .lock()
+                .expect("capture official runtime outbound request") = Some(request.clone());
+            Ok(OpenClawPluginFeishuOutboundDeliveryResult {
+                delivered: true,
+                channel: "feishu".to_string(),
+                account_id: request.account_id.clone(),
+                target: request.target.clone(),
+                thread_id: request.thread_id.clone(),
+                text: request.text.clone(),
+                mode: request.mode.clone(),
+                message_id: format!("plugin_message_{}", request.request_id),
+                chat_id: format!("plugin:{}", request.target),
+                sequence: 1,
+            })
+        },
+    )));
 }
 
 #[test]
@@ -433,8 +274,20 @@ async fn resolve_feishu_sidecar_base_url_falls_back_to_generic_im_sidecar_key() 
 async fn feishu_outbound_send_uses_official_runtime_helper() {
     let _guard = feishu_runtime_test_lock().lock().await;
     let (pool, _tmp) = helpers::setup_test_db().await;
-    let runtime = spawn_mock_feishu_runtime().await;
-    eprintln!("[test-fixture] outbound send about to call helper");
+    clear_feishu_runtime_state_for_outbound();
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
+    set_app_setting(&pool, "feishu_app_id", "demo-app")
+        .await
+        .expect("seed feishu app id");
+    set_app_setting(&pool, "feishu_app_secret", "demo-secret")
+        .await
+        .expect("seed feishu app secret");
+    let runtime_state = OpenClawPluginFeishuRuntimeState::default();
+    remember_feishu_runtime_state_for_outbound(&runtime_state);
+
+    let captured_request: Arc<Mutex<Option<OpenClawPluginFeishuOutboundSendRequest>>> =
+        Arc::new(Mutex::new(None));
+    install_feishu_official_runtime_outbound_send_hook(captured_request.clone());
 
     let result_json = send_feishu_text_message_with_pool(
         &pool,
@@ -444,7 +297,6 @@ async fn feishu_outbound_send_uses_official_runtime_helper() {
     )
     .await
     .expect("send via official runtime");
-    eprintln!("[test-fixture] outbound send helper returned");
 
     let result: OpenClawPluginFeishuOutboundSendResult =
         serde_json::from_str(&result_json).expect("parse outbound send result");
@@ -457,10 +309,21 @@ async fn feishu_outbound_send_uses_official_runtime_helper() {
     assert_eq!(result.result.channel, "feishu");
     assert_eq!(result.result.account_id, "default");
     assert_eq!(result.result.target, "chat-outbound-1");
-    assert_eq!(result.result.chat_id, "chat-outbound-1");
+    assert_eq!(result.result.chat_id, "plugin:chat-outbound-1");
     assert_eq!(result.result.text, "你好，来自官方 runtime");
+    let captured = captured_request
+        .lock()
+        .expect("capture official runtime outbound request")
+        .clone()
+        .expect("captured outbound request");
+    assert_eq!(captured.account_id, "default");
+    assert_eq!(captured.target, "chat-outbound-1");
+    assert_eq!(captured.thread_id.as_deref(), Some("chat-outbound-1"));
+    assert_eq!(captured.text, "你好，来自官方 runtime");
+    assert_eq!(captured.mode, "text");
 
-    shutdown_mock_feishu_runtime(runtime);
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
+    clear_feishu_runtime_state_for_outbound();
 }
 
 #[tokio::test]
@@ -468,6 +331,7 @@ async fn feishu_outbound_send_requires_registered_runtime() {
     let _guard = feishu_runtime_test_lock().lock().await;
     let (pool, _tmp) = helpers::setup_test_db().await;
     clear_feishu_runtime_state_for_outbound();
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
 
     let error = send_feishu_text_message_with_pool(&pool, "chat-outbound-2", "你好", None)
         .await
@@ -479,7 +343,20 @@ async fn feishu_outbound_send_requires_registered_runtime() {
 async fn feishu_pending_approval_notification_targets_bound_thread() {
     let _guard = feishu_runtime_test_lock().lock().await;
     let (pool, _tmp) = helpers::setup_test_db().await;
-    let runtime = spawn_mock_feishu_runtime().await;
+    clear_feishu_runtime_state_for_outbound();
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
+    set_app_setting(&pool, "feishu_app_id", "demo-app")
+        .await
+        .expect("seed feishu app id");
+    set_app_setting(&pool, "feishu_app_secret", "demo-secret")
+        .await
+        .expect("seed feishu app secret");
+    let runtime_state = OpenClawPluginFeishuRuntimeState::default();
+    remember_feishu_runtime_state_for_outbound(&runtime_state);
+
+    let captured_request: Arc<Mutex<Option<OpenClawPluginFeishuOutboundSendRequest>>> =
+        Arc::new(Mutex::new(None));
+    install_feishu_official_runtime_outbound_send_hook(captured_request.clone());
 
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
@@ -532,14 +409,38 @@ async fn feishu_pending_approval_notification_targets_bound_thread() {
     .await
     .expect("notify approval request");
 
-    shutdown_mock_feishu_runtime(runtime);
+    let captured = captured_request
+        .lock()
+        .expect("capture official runtime outbound request")
+        .clone()
+        .expect("captured outbound request");
+    assert_eq!(captured.account_id, "default");
+    assert_eq!(captured.target, "chat-approval-1");
+    assert_eq!(captured.thread_id.as_deref(), Some("chat-approval-1"));
+    assert!(captured.text.contains("待审批 #approval-feishu-1"));
+
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
+    clear_feishu_runtime_state_for_outbound();
 }
 
 #[tokio::test]
 async fn feishu_approve_command_resolves_pending_approval() {
     let _guard = feishu_runtime_test_lock().lock().await;
     let (pool, _tmp) = helpers::setup_test_db().await;
-    let runtime = spawn_mock_feishu_runtime().await;
+    clear_feishu_runtime_state_for_outbound();
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
+    set_app_setting(&pool, "feishu_app_id", "demo-app")
+        .await
+        .expect("seed feishu app id");
+    set_app_setting(&pool, "feishu_app_secret", "demo-secret")
+        .await
+        .expect("seed feishu app secret");
+    let runtime_state = OpenClawPluginFeishuRuntimeState::default();
+    remember_feishu_runtime_state_for_outbound(&runtime_state);
+
+    let captured_request: Arc<Mutex<Option<OpenClawPluginFeishuOutboundSendRequest>>> =
+        Arc::new(Mutex::new(None));
+    install_feishu_official_runtime_outbound_send_hook(captured_request.clone());
 
     let approvals = ApprovalManager::default();
     approvals
@@ -613,5 +514,15 @@ async fn feishu_approve_command_resolves_pending_approval() {
     assert_eq!(row.2, "feishu");
     assert_eq!(row.3, "ou_approver_1");
 
-    shutdown_mock_feishu_runtime(runtime);
+    let captured = captured_request
+        .lock()
+        .expect("capture official runtime outbound request")
+        .clone()
+        .expect("captured outbound request");
+    assert_eq!(captured.account_id, "default");
+    assert_eq!(captured.thread_id.as_deref(), Some("chat-approval-2"));
+    assert!(captured.text.contains("审批 approval-feishu-cmd-1 已处理"));
+
+    set_feishu_official_runtime_outbound_send_hook_for_tests(None);
+    clear_feishu_runtime_state_for_outbound();
 }

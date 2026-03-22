@@ -14,7 +14,8 @@ use crate::commands::openclaw_plugins::get_openclaw_plugin_feishu_channel_snapsh
 use crate::commands::openclaw_plugins::{
     send_openclaw_plugin_feishu_runtime_outbound_message_in_state,
     OpenClawPluginChannelAccountSnapshot, OpenClawPluginChannelSnapshotResult,
-    OpenClawPluginFeishuOutboundSendRequest, OpenClawPluginFeishuRuntimeState,
+    OpenClawPluginFeishuOutboundDeliveryResult, OpenClawPluginFeishuOutboundSendRequest,
+    OpenClawPluginFeishuOutboundSendResult, OpenClawPluginFeishuRuntimeState,
 };
 use crate::commands::skills::DbState;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
@@ -1224,6 +1225,120 @@ async fn lookup_feishu_thread_for_session_with_pool(
     Ok(row.map(|(thread_id,)| thread_id))
 }
 
+async fn lookup_latest_feishu_inbox_message_id_for_thread_with_pool(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Option<String>, String> {
+    let normalized_thread_id = thread_id.trim();
+    if normalized_thread_id.is_empty() {
+        return Ok(None);
+    }
+
+    let row = sqlx::query_as::<_, (String,)>(
+        "SELECT message_id
+         FROM im_inbox_events
+         WHERE thread_id = ?
+           AND source = 'feishu'
+           AND message_id <> ''
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(normalized_thread_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("查询飞书线程最新消息失败: {e}"))?;
+
+    Ok(row.map(|(message_id,)| message_id))
+}
+
+async fn lookup_feishu_chat_id_for_sender_with_pool(
+    pool: &SqlitePool,
+    account_id: &str,
+    sender_id: &str,
+) -> Result<Option<String>, String> {
+    let normalized_account_id = account_id.trim();
+    let normalized_sender_id = sender_id.trim();
+    if normalized_account_id.is_empty() || normalized_sender_id.is_empty() {
+        return Ok(None);
+    }
+
+    let row = sqlx::query_as::<_, (String,)>(
+        "SELECT chat_id
+         FROM feishu_pairing_requests
+         WHERE channel = 'feishu'
+           AND account_id = ?
+           AND sender_id = ?
+           AND chat_id <> ''
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1",
+    )
+    .bind(normalized_account_id)
+    .bind(normalized_sender_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("查询飞书发送者 chat_id 失败: {e}"))?;
+
+    Ok(row.map(|(chat_id,)| chat_id))
+}
+
+async fn remember_feishu_chat_id_for_sender_with_pool(
+    pool: &SqlitePool,
+    account_id: &str,
+    sender_id: &str,
+    chat_id: &str,
+) -> Result<(), String> {
+    let normalized_account_id = account_id.trim();
+    let normalized_sender_id = sender_id.trim();
+    let normalized_chat_id = chat_id.trim();
+    if normalized_account_id.is_empty()
+        || normalized_sender_id.is_empty()
+        || normalized_chat_id.is_empty()
+        || !normalized_chat_id.starts_with("oc_")
+    {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "UPDATE feishu_pairing_requests
+         SET chat_id = ?, updated_at = ?
+         WHERE channel = 'feishu'
+           AND account_id = ?
+           AND sender_id = ?",
+    )
+    .bind(normalized_chat_id)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(normalized_account_id)
+    .bind(normalized_sender_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("回填飞书 chat_id 失败: {e}"))?;
+
+    Ok(())
+}
+
+fn build_feishu_outbound_route_target(thread_id: &str, reply_to_message_id: Option<&str>) -> String {
+    let normalized_thread_id = thread_id.trim();
+    let normalized_reply_to = reply_to_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if normalized_thread_id.is_empty() {
+        return String::new();
+    }
+
+    if normalized_thread_id.starts_with("ou_") {
+        if let Some(reply_to_message_id) = normalized_reply_to {
+            return format!(
+                "{thread}#__feishu_reply_to={reply}&__feishu_thread_id={thread}",
+                thread = normalized_thread_id,
+                reply = reply_to_message_id,
+            );
+        }
+    }
+
+    normalized_thread_id.to_string()
+}
+
 fn build_feishu_approval_request_text(record: &PendingApprovalRecord) -> String {
     let impact = record
         .impact
@@ -1310,6 +1425,18 @@ fn feishu_runtime_outbound_state_slot() -> &'static Mutex<Option<OpenClawPluginF
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
+pub type FeishuOfficialRuntimeOutboundSendHook =
+    dyn Fn(&OpenClawPluginFeishuOutboundSendRequest) -> Result<OpenClawPluginFeishuOutboundDeliveryResult, String>
+        + Send
+        + Sync;
+
+fn feishu_official_runtime_outbound_send_hook_slot()
+-> &'static Mutex<Option<Arc<FeishuOfficialRuntimeOutboundSendHook>>> {
+    static SLOT: OnceLock<Mutex<Option<Arc<FeishuOfficialRuntimeOutboundSendHook>>>> =
+        OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
 pub fn remember_feishu_runtime_state_for_outbound(
     runtime_state: &OpenClawPluginFeishuRuntimeState,
 ) {
@@ -1321,6 +1448,15 @@ pub fn remember_feishu_runtime_state_for_outbound(
 pub fn clear_feishu_runtime_state_for_outbound() {
     if let Ok(mut guard) = feishu_runtime_outbound_state_slot().lock() {
         *guard = None;
+    }
+}
+
+#[doc(hidden)]
+pub fn set_feishu_official_runtime_outbound_send_hook_for_tests(
+    hook: Option<Arc<FeishuOfficialRuntimeOutboundSendHook>>,
+) {
+    if let Ok(mut guard) = feishu_official_runtime_outbound_send_hook_slot().lock() {
+        *guard = hook;
     }
 }
 
@@ -1355,18 +1491,67 @@ async fn send_feishu_text_message_via_official_runtime_with_pool(
             .await?
             .unwrap_or_else(|| "default".to_string()),
     };
+    let normalized_thread_id = chat_id.trim().to_string();
+    let outbound_target = if normalized_thread_id.starts_with("ou_") {
+        if let Some(mapped_chat_id) = lookup_feishu_chat_id_for_sender_with_pool(
+            pool,
+            &resolved_account_id,
+            &normalized_thread_id,
+        )
+        .await?
+        {
+            mapped_chat_id
+        } else {
+            let reply_to_message_id =
+                lookup_latest_feishu_inbox_message_id_for_thread_with_pool(pool, chat_id).await?;
+            build_feishu_outbound_route_target(chat_id, reply_to_message_id.as_deref())
+        }
+    } else {
+        normalized_thread_id.clone()
+    };
+
+    if let Ok(guard) = feishu_official_runtime_outbound_send_hook_slot().lock() {
+        if let Some(hook) = guard.as_ref() {
+            let request = OpenClawPluginFeishuOutboundSendRequest {
+                request_id: Uuid::new_v4().to_string(),
+                account_id: resolved_account_id.clone(),
+                target: outbound_target.clone(),
+                thread_id: Some(chat_id.trim().to_string()),
+                text: text.trim().to_string(),
+                mode: "text".to_string(),
+            };
+            let result = hook(&request)?;
+            let outbound = OpenClawPluginFeishuOutboundSendResult {
+                request_id: request.request_id.clone(),
+                request,
+                result,
+            };
+            return serde_json::to_string(&outbound)
+                .map_err(|error| format!("failed to serialize outbound send result: {error}"));
+        }
+    }
 
     let result = send_openclaw_plugin_feishu_runtime_outbound_message_in_state(
         runtime_state,
         OpenClawPluginFeishuOutboundSendRequest {
             request_id: Uuid::new_v4().to_string(),
             account_id: resolved_account_id,
-            target: chat_id.trim().to_string(),
+            target: outbound_target,
             thread_id: Some(chat_id.trim().to_string()),
             text: text.trim().to_string(),
             mode: "text".to_string(),
         },
     )?;
+
+    if normalized_thread_id.starts_with("ou_") && result.result.chat_id.trim().starts_with("oc_") {
+        remember_feishu_chat_id_for_sender_with_pool(
+            pool,
+            &result.request.account_id,
+            &normalized_thread_id,
+            &result.result.chat_id,
+        )
+        .await?;
+    }
 
     serde_json::to_string(&result)
         .map_err(|error| format!("failed to serialize outbound send result: {error}"))
@@ -3208,6 +3393,116 @@ mod tests {
         assert!(!created);
         assert_eq!(first.id, second.id);
         assert_eq!(second.code, "4965D3B0");
+    }
+
+    #[tokio::test]
+    async fn build_direct_outbound_target_uses_latest_inbox_message_as_reply_context() {
+        let pool = setup_pairing_pool().await;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS im_inbox_events (
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL DEFAULT '',
+                thread_id TEXT NOT NULL,
+                message_id TEXT NOT NULL DEFAULT '',
+                text_preview TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create im_inbox_events table");
+
+        sqlx::query(
+            "INSERT INTO im_inbox_events (id, event_id, thread_id, message_id, text_preview, source, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("inbox-direct-outbound-1")
+        .bind("evt-direct-outbound-1")
+        .bind("ou_direct_sender_1")
+        .bind("om_direct_latest_1")
+        .bind("你好")
+        .bind("feishu")
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .expect("seed direct feishu inbox event");
+
+        let latest = super::lookup_latest_feishu_inbox_message_id_for_thread_with_pool(
+            &pool,
+            "ou_direct_sender_1",
+        )
+        .await
+        .expect("lookup latest feishu inbox message id");
+        assert_eq!(latest.as_deref(), Some("om_direct_latest_1"));
+
+        let target = super::build_feishu_outbound_route_target(
+            "ou_direct_sender_1",
+            latest.as_deref(),
+        );
+        assert_eq!(
+            target,
+            "ou_direct_sender_1#__feishu_reply_to=om_direct_latest_1&__feishu_thread_id=ou_direct_sender_1"
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_direct_outbound_target_prefers_known_chat_id_mapping() {
+        let pool = setup_pairing_pool().await;
+
+        let (_request, _created) = upsert_feishu_pairing_request_with_pool(
+            &pool,
+            "default",
+            "ou_direct_sender_2",
+            "oc_direct_chat_2",
+            Some("abcd1234"),
+        )
+        .await
+        .expect("seed direct sender chat mapping");
+
+        let mapped = super::lookup_feishu_chat_id_for_sender_with_pool(
+            &pool,
+            "default",
+            "ou_direct_sender_2",
+        )
+        .await
+        .expect("lookup direct chat mapping");
+        assert_eq!(mapped.as_deref(), Some("oc_direct_chat_2"));
+    }
+
+    #[tokio::test]
+    async fn remember_direct_outbound_chat_id_backfills_sender_mapping() {
+        let pool = setup_pairing_pool().await;
+
+        let (_request, _created) = upsert_feishu_pairing_request_with_pool(
+            &pool,
+            "default",
+            "ou_direct_sender_3",
+            "",
+            Some("efgh5678"),
+        )
+        .await
+        .expect("seed pending direct sender record");
+
+        super::remember_feishu_chat_id_for_sender_with_pool(
+            &pool,
+            "default",
+            "ou_direct_sender_3",
+            "oc_direct_chat_3",
+        )
+        .await
+        .expect("backfill direct sender chat mapping");
+
+        let mapped = super::lookup_feishu_chat_id_for_sender_with_pool(
+            &pool,
+            "default",
+            "ou_direct_sender_3",
+        )
+        .await
+        .expect("lookup backfilled direct chat mapping");
+        assert_eq!(mapped.as_deref(), Some("oc_direct_chat_3"));
     }
 }
 

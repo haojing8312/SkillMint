@@ -1,14 +1,14 @@
 ## WorkClaw Windows Release
 
-- Highlights in `v0.5.0`:
+- Highlights in `v0.5.1`:
   - 中文:
-    - 新增 OpenClaw 飞书官方插件兼容宿主，WorkClaw 现在可以安装、识别并运行 `@larksuite/openclaw-lark`。
-    - 重构飞书接入流程，支持官方插件安装、已有机器人绑定、配对审批、自动接待与高级配置面板。
-    - 修复飞书消息入站、配对放行、自动启动和回复回传链路，并补强会话恢复、审计诊断与任务防护能力。
+    - 新增本地 SkillHub 技能库索引和技能发现页，专家能力浏览与检索体验更完整。
+    - 新增豆包模型预设，并优化模型鉴权与错误反馈，模型连接失败时更容易定位问题。
+    - 继续重构飞书接入链路，统一官方插件 runtime 的收发与审批流程，补强自动恢复、会话显示和单聊外发稳定性。
   - English:
-    - Adds an OpenClaw-compatible host for the official Feishu plugin so WorkClaw can install, recognize, and run `@larksuite/openclaw-lark`.
-    - Redesigns the Feishu onboarding flow with official-plugin install, existing-bot linking, pairing approval, auto-routing, and an advanced settings console.
-    - Hardens the Feishu inbound, pairing, autostart, and reply return path while also improving session recovery, audit diagnostics, and task guardrails.
+    - Adds a local SkillHub index and improved skill discovery flows for a more complete expert browsing experience.
+    - Adds a Doubao provider preset and improves model authentication plus error feedback so connection issues are easier to diagnose.
+    - Continues the Feishu connector rebuild by unifying more of the official-plugin runtime flow, including approvals, auto-recovery, session visibility, and more reliable direct-message outbound delivery.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.
