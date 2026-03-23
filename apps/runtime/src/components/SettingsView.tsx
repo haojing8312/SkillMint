@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openExternalUrl } from "../utils/openExternalUrl";
-import { SearchConfigForm } from "./SearchConfigForm";
 import { SettingsShell } from "./settings/SettingsShell";
 import { ModelsSettingsSection } from "./settings/models/ModelsSettingsSection";
 import { DesktopSettingsSection } from "./settings/desktop/DesktopSettingsSection";
+import { SearchSettingsSection } from "./settings/search/SearchSettingsSection";
+import { McpSettingsSection } from "./settings/mcp/McpSettingsSection";
 import { SettingsTabNav, type SettingsTabName } from "./settings/SettingsTabNav";
-import {
-  applySearchPresetToForm,
-  EMPTY_SEARCH_CONFIG_FORM,
-  validateSearchConfigForm,
-} from "../lib/search-config";
 import {
   listModelConfigs,
   listProviderConfigs,
@@ -37,34 +33,6 @@ import {
   RouteAttemptLog,
   RouteAttemptStat,
 } from "../types";
-
-const MCP_PRESETS = [
-  { label: "— 快速选择 —", value: "", name: "", command: "", args: "", env: "" },
-  { label: "Filesystem", value: "filesystem", name: "filesystem", command: "npx", args: "-y @anthropic/mcp-server-filesystem /tmp", env: "" },
-  { label: "Brave Search", value: "brave-search", name: "brave-search", command: "npx", args: "-y @anthropic/mcp-server-brave-search", env: '{"BRAVE_API_KEY": ""}' },
-  { label: "Memory", value: "memory", name: "memory", command: "npx", args: "-y @anthropic/mcp-server-memory", env: "" },
-  { label: "Puppeteer", value: "puppeteer", name: "puppeteer", command: "npx", args: "-y @anthropic/mcp-server-puppeteer", env: "" },
-  { label: "Fetch", value: "fetch", name: "fetch", command: "npx", args: "-y @anthropic/mcp-server-fetch", env: "" },
-];
-
-function parseMcpEnvJson(text: string): { env: Record<string, string>; error: string | null } {
-  if (!text.trim()) {
-    return { env: {}, error: null };
-  }
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { env: {}, error: "环境变量 JSON 必须是对象格式" };
-    }
-    const normalized: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      normalized[key] = typeof value === "string" ? value : String(value ?? "");
-    }
-    return { env: normalized, error: null };
-  } catch {
-    return { env: {}, error: "环境变量 JSON 格式错误" };
-  }
-}
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string") {
@@ -644,25 +612,7 @@ export function SettingsView({
   onDevOpenQuickModelSetup,
 }: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
-
-  // MCP 服务器管理
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [mcpServers, setMcpServers] = useState<any[]>([]);
-  const [mcpForm, setMcpForm] = useState({ name: "", command: "", args: "", env: "" });
-  const [mcpError, setMcpError] = useState("");
-  const [showMcpEnvJson, setShowMcpEnvJson] = useState(false);
   const [activeTab, setActiveTab] = useState<SettingsTabName>(initialTab);
-
-  // 搜索引擎配置
-  const [searchConfigs, setSearchConfigs] = useState<ModelConfig[]>([]);
-  const [searchForm, setSearchForm] = useState(EMPTY_SEARCH_CONFIG_FORM);
-  const [searchError, setSearchError] = useState("");
-  const [searchTesting, setSearchTesting] = useState(false);
-  const [searchTestResult, setSearchTestResult] = useState<boolean | null>(null);
-
-  // 搜索引擎编辑状态 + API Key 可见性
-  const [editingSearchId, setEditingSearchId] = useState<string | null>(null);
-  const [showSearchApiKey, setShowSearchApiKey] = useState(false);
   const [routeSettings, setRouteSettings] = useState<RoutingSettings>({
     max_call_depth: 4,
     node_timeout_seconds: 60,
@@ -780,10 +730,6 @@ export function SettingsView({
 
   useEffect(() => {
     void loadSharedModelData();
-    loadSearchConfigs();
-    if (SHOW_MCP_SETTINGS) {
-      loadMcpServers();
-    }
     if (SHOW_AUTO_ROUTING_SETTINGS) {
       loadRoutingSettings();
     }
@@ -854,15 +800,6 @@ export function SettingsView({
 
     return () => window.clearInterval(timer);
   }, [activeTab]);
-
-  async function loadSearchConfigs() {
-    try {
-      const list = await invoke<ModelConfig[]>("list_search_configs");
-      setSearchConfigs(list);
-    } catch (e) {
-      console.error("加载搜索配置失败:", e);
-    }
-  }
 
   async function loadRoutingSettings() {
     try {
@@ -2057,163 +1994,8 @@ export function SettingsView({
     }
   }
 
-  // 加载已保存的搜索配置到表单（用于编辑）
-  async function handleEditSearch(s: ModelConfig) {
-    try {
-      const apiKey = await invoke<string>("get_model_api_key", { modelId: s.id });
-      setSearchForm({
-        name: s.name,
-        api_format: s.api_format,
-        base_url: s.base_url,
-        model_name: s.model_name,
-        api_key: apiKey,
-      });
-      setEditingSearchId(s.id);
-      setShowSearchApiKey(false);
-      setSearchError("");
-      setSearchTestResult(null);
-    } catch (e) {
-      setSearchError("加载配置失败: " + String(e));
-    }
-  }
-
-  function applyMcpPreset(value: string) {
-    const preset = MCP_PRESETS.find((p) => p.value === value);
-    if (!preset || !preset.value) return;
-    setShowMcpEnvJson(false);
-    setMcpForm({
-      name: preset.name,
-      command: preset.command,
-      args: preset.args,
-      env: preset.env,
-    });
-  }
-
-  function updateMcpEnvField(envKey: string, value: string) {
-    const parsed = parseMcpEnvJson(mcpForm.env);
-    const next = { ...parsed.env, [envKey]: value };
-    setMcpForm((s) => ({ ...s, env: JSON.stringify(next) }));
-  }
-
-  function applySearchPreset(value: string) {
-    setSearchForm((current) => applySearchPresetToForm(value, current));
-  }
-
-  async function loadMcpServers() {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const list = await invoke<any[]>("list_mcp_servers");
-      setMcpServers(list);
-    } catch (e) {
-      console.error("加载 MCP 服务器失败:", e);
-    }
-  }
-
-  async function handleAddMcp() {
-    setMcpError("");
-    try {
-      const args = mcpForm.args.split(/\s+/).filter(Boolean);
-      const parsedEnv = parseMcpEnvJson(mcpForm.env);
-      if (parsedEnv.error) {
-        setMcpError(parsedEnv.error);
-        return;
-      }
-      await invoke("add_mcp_server", {
-        name: mcpForm.name,
-        command: mcpForm.command,
-        args,
-        env: parsedEnv.env,
-      });
-      setMcpForm({ name: "", command: "", args: "", env: "" });
-      setShowMcpEnvJson(false);
-      loadMcpServers();
-    } catch (e) {
-      setMcpError(String(e));
-    }
-  }
-
-  async function handleRemoveMcp(id: string) {
-    await invoke("remove_mcp_server", { id });
-    loadMcpServers();
-  }
-
-  async function handleSaveSearch() {
-    const validationError = validateSearchConfigForm(searchForm);
-    if (validationError) {
-      setSearchError(validationError);
-      setSearchTestResult(null);
-      return;
-    }
-    setSearchError("");
-    try {
-      await invoke("save_model_config", {
-        config: {
-          id: editingSearchId || "",
-          name: searchForm.name,
-          api_format: searchForm.api_format,
-          base_url: searchForm.base_url,
-          model_name: searchForm.model_name,
-          is_default: editingSearchId
-            ? searchConfigs.find((s) => s.id === editingSearchId)?.is_default ?? false
-            : searchConfigs.length === 0,
-        },
-        apiKey: searchForm.api_key,
-      });
-      setSearchForm(EMPTY_SEARCH_CONFIG_FORM);
-      setEditingSearchId(null);
-      setShowSearchApiKey(false);
-      loadSearchConfigs();
-    } catch (e) {
-      setSearchError(String(e));
-    }
-  }
-
-  async function handleTestSearch() {
-    setSearchTesting(true);
-    setSearchTestResult(null);
-    try {
-      const ok = await invoke<boolean>("test_search_connection", {
-        config: {
-          id: "",
-          name: searchForm.name,
-          api_format: searchForm.api_format,
-          base_url: searchForm.base_url,
-          model_name: searchForm.model_name,
-          is_default: false,
-        },
-        apiKey: searchForm.api_key,
-      });
-      setSearchTestResult(ok);
-    } catch (e) {
-      setSearchError(String(e));
-      setSearchTestResult(false);
-    } finally {
-      setSearchTesting(false);
-    }
-  }
-
-  async function handleSetDefaultSearch(id: string) {
-    await invoke("set_default_search", { configId: id });
-    loadSearchConfigs();
-  }
-
-  async function handleDeleteSearch(id: string) {
-    await invoke("delete_model_config", { modelId: id });
-    // 若删除的是当前编辑项，重置表单
-    if (editingSearchId === id) {
-      setEditingSearchId(null);
-      setShowSearchApiKey(false);
-      setSearchForm(EMPTY_SEARCH_CONFIG_FORM);
-      setSearchError("");
-      setSearchTestResult(null);
-    }
-    loadSearchConfigs();
-  }
-
   const inputCls = "sm-input w-full text-sm py-1.5";
   const labelCls = "sm-field-label";
-  const parsedMcpEnv = parseMcpEnvJson(mcpForm.env);
-  const mcpApiKeyEnvKeys = Object.keys(parsedMcpEnv.env).filter((key) => key.toUpperCase().includes("API_KEY"));
   const feishuSetupSummary = getFeishuSetupSummary();
   // 眼睛图标：显示状态（可见）
   function EyeOpenIcon() {
@@ -2264,36 +2046,6 @@ export function SettingsView({
       )}
       <DesktopSettingsSection models={models} visible={activeTab === "desktop"} />
 
-      {activeTab === "models" && showDevModelSetupTools && (
-        <div
-          data-testid="model-setup-dev-tools"
-          className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4"
-        >
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">
-            Dev Only
-          </div>
-          <div className="mt-1 text-sm font-medium text-amber-950">首次引导调试入口</div>
-          <div className="mt-1 text-xs leading-5 text-amber-800/80">
-            用于在开发阶段反复测试首次连接引导，不会在正式环境展示。
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={onDevResetFirstUseOnboarding}
-              className="sm-btn rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm text-amber-900 hover:bg-amber-100"
-            >
-              重置首次引导状态
-            </button>
-            <button
-              type="button"
-              onClick={onDevOpenQuickModelSetup}
-              className="sm-btn rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm text-amber-900 hover:bg-amber-100"
-            >
-              打开首次配置弹层
-            </button>
-          </div>
-        </div>
-      )}
       {SHOW_CAPABILITY_ROUTING_SETTINGS && activeTab === "capabilities" && (
         <div className="bg-white rounded-lg p-4 space-y-3">
           <div className="text-xs font-medium text-gray-500 mb-2">能力路由</div>
@@ -2692,179 +2444,9 @@ export function SettingsView({
         </div>
       )}
 
-      {SHOW_MCP_SETTINGS && activeTab === "mcp" && (<>
-      {/* MCP 服务器管理 */}
-      <div className="bg-white rounded-lg p-4 space-y-3">
-        <div className="text-xs font-medium text-gray-500 mb-2">MCP 服务器</div>
+      {SHOW_MCP_SETTINGS && activeTab === "mcp" && <McpSettingsSection />}
 
-        {mcpServers.length > 0 && (
-          <div className="space-y-2 mb-3">
-            {mcpServers.map((s) => (
-              <div key={s.id} className="flex items-center justify-between bg-gray-100 rounded px-3 py-2 text-sm">
-                <div>
-                  <span className="font-medium">{s.name}</span>
-                  <span className="text-gray-500 ml-2 text-xs">{s.command} {s.args?.join(" ")}</span>
-                </div>
-                <button onClick={() => handleRemoveMcp(s.id)} className="text-red-400 hover:text-red-300 text-xs">
-                  删除
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div>
-          <label className={labelCls}>快速选择 MCP 服务器</label>
-          <select
-            className={inputCls}
-            defaultValue=""
-            onChange={(e) => applyMcpPreset(e.target.value)}
-          >
-            {MCP_PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>名称</label>
-          <input className={inputCls} placeholder="例: filesystem" value={mcpForm.name} onChange={(e) => setMcpForm({ ...mcpForm, name: e.target.value })} />
-        </div>
-        <div>
-          <label className={labelCls}>命令</label>
-          <input className={inputCls} placeholder="例: npx" value={mcpForm.command} onChange={(e) => setMcpForm({ ...mcpForm, command: e.target.value })} />
-        </div>
-        <div>
-          <label className={labelCls}>参数（空格分隔）</label>
-          <input className={inputCls} placeholder="例: @anthropic/mcp-server-filesystem /tmp" value={mcpForm.args} onChange={(e) => setMcpForm({ ...mcpForm, args: e.target.value })} />
-        </div>
-        {mcpApiKeyEnvKeys.map((envKey) => (
-          <div key={envKey}>
-            <label className={labelCls}>API Key（可选）</label>
-            <input
-              className={inputCls}
-              type="password"
-              placeholder={`请输入 ${envKey}`}
-              value={parsedMcpEnv.env[envKey] || ""}
-              onChange={(e) => updateMcpEnvField(envKey, e.target.value)}
-            />
-            <div className="text-[11px] text-gray-400 mt-1">变量名：{envKey}</div>
-          </div>
-        ))}
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => setShowMcpEnvJson((v) => !v)}
-            className="text-xs text-blue-500 hover:text-blue-600"
-          >
-            {showMcpEnvJson ? "收起高级 JSON 配置" : "高级：环境变量 JSON 配置"}
-          </button>
-          {showMcpEnvJson && (
-            <div>
-              <label className={labelCls}>环境变量（JSON 格式，可选）</label>
-              <input
-                className={inputCls}
-                placeholder='例: {"API_KEY": "xxx"}'
-                value={mcpForm.env}
-                onChange={(e) => setMcpForm({ ...mcpForm, env: e.target.value })}
-              />
-              {parsedMcpEnv.error && (
-                <div className="text-[11px] text-red-500 mt-1">{parsedMcpEnv.error}</div>
-              )}
-            </div>
-          )}
-        </div>
-        {mcpError && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{mcpError}</div>}
-        <button
-          onClick={handleAddMcp}
-          disabled={!mcpForm.name || !mcpForm.command}
-          className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
-        >
-          添加 MCP 服务器
-        </button>
-      </div>
-      </>)}
-
-      {activeTab === "search" && (<>
-        {searchConfigs.length > 0 && (
-          <div className="mb-6 space-y-2">
-            <div className="text-xs text-gray-500 mb-2">已配置搜索引擎</div>
-            {searchConfigs.map((s) => (
-              <div
-                key={s.id}
-                className={
-                  "flex items-center justify-between bg-white rounded-lg px-4 py-2.5 text-sm border transition-colors " +
-                  (editingSearchId === s.id ? "border-blue-400 ring-1 ring-blue-400" : "border-transparent hover:border-gray-200")
-                }
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-800">{s.name}</span>
-                    {s.is_default && (
-                      <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded">默认</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-0.5 truncate">
-                    {s.api_format.replace("search_", "")} · {s.base_url}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                  {!s.is_default && (
-                    <button onClick={() => handleSetDefaultSearch(s.id)} className="text-blue-400 hover:text-blue-500 text-xs">
-                      设为默认
-                    </button>
-                  )}
-                  <button onClick={() => handleEditSearch(s)} className="text-blue-500 hover:text-blue-600 text-xs">
-                    编辑
-                  </button>
-                  <button onClick={() => handleDeleteSearch(s.id)} className="text-red-400 hover:text-red-500 text-xs">
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="bg-white rounded-lg p-4 space-y-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-medium text-gray-500">
-              {editingSearchId ? "编辑搜索引擎" : "添加搜索引擎"}
-            </div>
-            {editingSearchId && (
-              <button
-                onClick={() => {
-                  setEditingSearchId(null);
-                  setShowSearchApiKey(false);
-                  setSearchForm(EMPTY_SEARCH_CONFIG_FORM);
-                  setSearchError("");
-                  setSearchTestResult(null);
-                }}
-                className="text-xs text-gray-400 hover:text-gray-600"
-              >
-                取消编辑
-              </button>
-            )}
-          </div>
-          <SearchConfigForm
-            form={searchForm}
-            onFormChange={setSearchForm}
-            onApplyPreset={applySearchPreset}
-            showApiKey={showSearchApiKey}
-            onToggleApiKey={() => setShowSearchApiKey((value) => !value)}
-            error={searchError}
-            testResult={searchTestResult}
-            testing={searchTesting}
-            saving={false}
-            onTest={handleTestSearch}
-            onSave={handleSaveSearch}
-            labelClassName={labelCls}
-            inputClassName={inputCls}
-            panelClassName="space-y-3"
-            actionClassName="flex gap-2 pt-1"
-            saveLabel={editingSearchId ? "保存修改" : "保存"}
-          />
-        </div>
-      </>)}
+      {activeTab === "search" && <SearchSettingsSection />}
 
       {activeTab === "feishu" && (
         <div className="space-y-3">
