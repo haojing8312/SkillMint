@@ -7,9 +7,17 @@ export default mergeConfig(
   defineConfig({
     resolve: {
       alias: {
+        "./ChatView": path.resolve(
+          __dirname,
+          "./stubs/ChatView.tsx",
+        ),
         "./components/ChatView": path.resolve(
           __dirname,
           "./stubs/ChatView.tsx",
+        ),
+        "../../components/employees/EmployeeHubView": path.resolve(
+          __dirname,
+          "./stubs/EmployeeHubView.tsx",
         ),
         "./components/employees/EmployeeHubView": path.resolve(
           __dirname,

@@ -321,8 +321,8 @@ test("settings hides wecom-specific setup entry points from the current connecto
   await page.getByRole("button", { name: "设置" }).first().click();
   await page.getByRole("button", { name: "渠道连接器" }).click();
 
-  await expect(page.getByText("检查运行环境", { exact: true })).toBeVisible();
-  await expect(page.getByText("绑定已有机器人", { exact: true })).toBeVisible();
+  await expect(page.getByText("飞书连接", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新检测环境" })).toBeVisible();
   await expect(page.getByPlaceholder("企业微信 Corp ID")).toHaveCount(0);
   await expect(page.getByText("企业微信连接器")).toHaveCount(0);
 

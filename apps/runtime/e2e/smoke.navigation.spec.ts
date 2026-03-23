@@ -220,6 +220,10 @@ async function readInvokeCalls(page: Page): Promise<TauriInvokeCall[]> {
   });
 }
 
+function getTaskTab(page: Page, title: string) {
+  return page.getByRole("tab", { name: title, exact: true });
+}
+
 test.describe.configure({ timeout: 60_000 });
 
 test.beforeEach(async ({ page }) => {
@@ -326,8 +330,9 @@ test("keeps sessions visible across reload and employee page navigation", async 
 });
 
 test("opens a new task tab from a running session and can switch back", async ({ page }) => {
+  const sessionTitle = "帮我整理一下待办事项";
   const input = page.getByPlaceholder("先描述你要完成什么任务...");
-  await input.fill("帮我整理一下待办事项");
+  await input.fill(sessionTitle);
   await input.press("Enter");
 
   await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
@@ -340,18 +345,19 @@ test("opens a new task tab from a running session and can switch back", async ({
   await expect(
     page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" }),
   ).toBeVisible();
-  await expect(page.getByRole("tab", { name: "E2E Session" })).toBeVisible();
+  await expect(getTaskTab(page, sessionTitle)).toBeVisible();
   await expect(page.getByRole("tab", { name: "开始任务" })).toBeVisible();
 
-  await page.getByRole("tab", { name: "E2E Session" }).click();
+  await getTaskTab(page, sessionTitle).click();
 
   await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
   await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
 });
 
 test("restores persisted runtime state after tab and sidebar session switches", async ({ page }) => {
+  const firstSessionTitle = "帮我整理一下发布任务";
   const input = page.getByPlaceholder("先描述你要完成什么任务...");
-  await input.fill("帮我整理一下发布任务");
+  await input.fill(firstSessionTitle);
   await input.press("Enter");
 
   await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
@@ -364,7 +370,7 @@ test("restores persisted runtime state after tab and sidebar session switches", 
   await page.getByRole("button", { name: "开始任务" }).first().click();
   await expect(page.getByRole("heading", { name: "你的电脑任务，交给打工虾们协作完成" })).toBeVisible();
 
-  await page.getByRole("tab", { name: "E2E Session" }).click();
+  await getTaskTab(page, firstSessionTitle).click();
   await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
   await expect(page.getByTestId("e2e-chat-runtime-stream-text")).toContainText("已缓存的运行中输出");
   await expect(page.getByTestId("e2e-chat-runtime-agent-state")).toContainText("thinking");
@@ -383,8 +389,9 @@ test("restores persisted runtime state after tab and sidebar session switches", 
 });
 
 test("shows runtime progress appended while the session is hidden and restores it on return", async ({ page }) => {
+  const sessionTitle = "帮我持续整理交付内容";
   const input = page.getByPlaceholder("先描述你要完成什么任务...");
-  await input.fill("帮我持续整理交付内容");
+  await input.fill(sessionTitle);
   await input.press("Enter");
 
   await expect(page.getByTestId("e2e-chat-view")).toBeVisible();
@@ -399,7 +406,7 @@ test("shows runtime progress appended while the session is hidden and restores i
 
   await page.waitForTimeout(700);
 
-  await page.getByRole("tab", { name: "E2E Session" }).click();
+  await getTaskTab(page, sessionTitle).click();
   await expect(page.getByTestId("e2e-chat-session-id")).toContainText("session-e2e-1");
   await expect(page.getByTestId("e2e-chat-runtime-stream-text")).toContainText("后台新增片段");
   await expect(page.getByTestId("e2e-chat-runtime-agent-state")).toContainText("thinking");
