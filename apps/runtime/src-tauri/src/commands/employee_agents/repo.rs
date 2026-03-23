@@ -126,6 +126,17 @@ pub(super) struct PendingReviewStepRow {
     pub assignee_employee_id: String,
 }
 
+pub(super) struct GroupRunReviewStateRow {
+    pub main_employee_id: String,
+    pub review_round: i64,
+    pub review_step_id: String,
+}
+
+pub(super) struct PlanRevisionSeedRow {
+    pub input: String,
+    pub assignee_employee_id: String,
+}
+
 pub(super) struct GroupRunFinalizeStateRow {
     pub session_id: String,
     pub user_goal: String,
@@ -778,6 +789,178 @@ pub(super) async fn find_group_run_state(
         state: record.try_get(0).expect("group run state"),
         current_phase: record.try_get(1).expect("group run current_phase"),
     }))
+}
+
+pub(super) async fn find_group_run_review_state(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Option<GroupRunReviewStateRow>, String> {
+    let run_row = sqlx::query(
+        "SELECT COALESCE(main_employee_id, ''), COALESCE(review_round, 0)
+         FROM group_runs
+         WHERE id = ?",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(run_row) = run_row else {
+        return Ok(None);
+    };
+
+    let review_step_row = sqlx::query_as::<_, (String,)>(
+        "SELECT id
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'review'
+         ORDER BY round_no DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(review_step_row.map(|(review_step_id,)| GroupRunReviewStateRow {
+        main_employee_id: run_row
+            .try_get(0)
+            .expect("group run review state main_employee_id"),
+        review_round: run_row
+            .try_get(1)
+            .expect("group run review state review_round"),
+        review_step_id,
+    }))
+}
+
+pub(super) async fn mark_review_step_completed(
+    tx: &mut Transaction<'_, Sqlite>,
+    review_step_id: &str,
+    comment: &str,
+    review_status: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'completed',
+             output = ?,
+             output_summary = ?,
+             review_status = ?,
+             finished_at = ?
+         WHERE id = ?",
+    )
+    .bind(comment)
+    .bind(comment)
+    .bind(review_status)
+    .bind(now)
+    .bind(review_step_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn find_plan_revision_seed(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+) -> Result<Option<PlanRevisionSeedRow>, String> {
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT COALESCE(input, ''), COALESCE(assignee_employee_id, '')
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'plan'
+         ORDER BY round_no DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.map(|(input, assignee_employee_id)| PlanRevisionSeedRow {
+        input,
+        assignee_employee_id,
+    }))
+}
+
+pub(super) async fn insert_plan_revision_step(
+    tx: &mut Transaction<'_, Sqlite>,
+    revision_step_id: &str,
+    run_id: &str,
+    review_step_id: &str,
+    revision_assignee_employee_id: &str,
+    revision_input: &str,
+    comment: &str,
+    next_review_round: i64,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO group_run_steps (
+            id, run_id, round_no, parent_step_id, assignee_employee_id, phase, step_type, step_kind,
+            input, input_summary, output, output_summary, status, requires_review, review_status,
+            attempt_no, session_id, visibility, started_at, finished_at
+         ) VALUES (?, ?, ?, ?, ?, 'plan', 'plan', 'plan', ?, ?, '', '', 'pending', 1, 'pending', ?, '', 'internal', '', '')",
+    )
+    .bind(revision_step_id)
+    .bind(run_id)
+    .bind(0_i64)
+    .bind(review_step_id)
+    .bind(revision_assignee_employee_id)
+    .bind(revision_input)
+    .bind(comment)
+    .bind(next_review_round)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_review_rejected(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    next_review_round: i64,
+    comment: &str,
+    revision_assignee_employee_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'planning',
+             current_phase = 'plan',
+             review_round = ?,
+             status_reason = ?,
+             waiting_for_employee_id = ?,
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(next_review_round)
+    .bind(comment)
+    .bind(revision_assignee_employee_id)
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_review_approved(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'planning',
+             current_phase = 'execute',
+             status_reason = '',
+             waiting_for_employee_id = '',
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(super) async fn resume_group_run(

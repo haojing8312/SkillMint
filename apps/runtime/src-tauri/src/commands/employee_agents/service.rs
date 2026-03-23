@@ -5,12 +5,13 @@ use super::repo::{
     find_displaced_scoped_feishu_agent_ids, find_employee_db_id_by_employee_id,
     find_employee_session_seed_row, find_existing_session_skill_id, find_group_step_session_row,
     find_latest_thread_session_id, find_model_config_row, find_recent_group_step_session_id,
-    find_recent_route_session_id, find_thread_session_record,
+    find_plan_revision_seed, find_recent_route_session_id, find_thread_session_record,
     find_group_run_execute_step_context, find_group_run_finalize_state, find_group_run_snapshot_row,
-    find_group_run_state, find_latest_assistant_message_content, find_pending_review_step,
+    find_group_run_review_state, find_group_run_state, find_latest_assistant_message_content,
+    find_pending_review_step,
     get_employee_association_row, get_employee_group_entry_row, get_group_run_session_id,
     insert_feishu_binding, insert_group_run_assistant_message, insert_group_run_event,
-    insert_inbound_event_link, insert_session_message, insert_session_seed,
+    insert_inbound_event_link, insert_plan_revision_step, insert_session_message, insert_session_seed,
     list_agent_employee_rows,
     list_agent_scope_rows, list_failed_execute_assignees, list_failed_group_run_steps,
     list_group_run_event_snapshot_rows, list_group_run_execute_outputs,
@@ -19,6 +20,7 @@ use super::repo::{
     mark_group_run_done_after_retry, mark_group_run_executing,
     mark_group_run_failed, mark_group_run_finalized, mark_group_run_step_completed,
     mark_group_run_step_dispatched, mark_group_run_step_failed, mark_group_run_waiting_review,
+    mark_group_run_review_approved, mark_group_run_review_rejected, mark_review_step_completed,
     pause_group_run, replace_employee_skill_bindings, reset_group_run_step_for_reassignment,
     resume_group_run, review_requested_event_exists, update_employee_enabled_scopes,
     update_group_run_after_reassignment, update_session_employee_id, upsert_agent_employee_record,
@@ -1316,6 +1318,118 @@ pub(super) async fn ensure_group_step_session_with_pool(
     .await?;
 
     Ok(session_id)
+}
+
+pub(super) async fn review_group_run_step_with_pool(
+    pool: &SqlitePool,
+    run_id: &str,
+    action: &str,
+    comment: &str,
+) -> Result<(), String> {
+    let normalized_action = action.trim().to_lowercase();
+    if normalized_action != "approve" && normalized_action != "reject" {
+        return Err("review action must be approve or reject".to_string());
+    }
+
+    let review_state = find_group_run_review_state(pool, run_id)
+        .await?
+        .ok_or_else(|| "group run not found".to_string())?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let review_status = if normalized_action == "approve" {
+        "approved"
+    } else {
+        "rejected"
+    };
+    mark_review_step_completed(
+        &mut tx,
+        &review_state.review_step_id,
+        comment,
+        review_status,
+        &now,
+    )
+    .await?;
+
+    if normalized_action == "reject" {
+        let next_review_round = review_state.review_round + 1;
+        let revision_seed = find_plan_revision_seed(&mut tx, run_id)
+            .await?
+            .unwrap_or_else(|| super::repo::PlanRevisionSeedRow {
+                input: String::new(),
+                assignee_employee_id: review_state.main_employee_id.clone(),
+            });
+        let revision_assignee_employee_id = if revision_seed.assignee_employee_id.trim().is_empty() {
+            review_state.main_employee_id.clone()
+        } else {
+            revision_seed.assignee_employee_id.trim().to_lowercase()
+        };
+        let revision_step_id = Uuid::new_v4().to_string();
+        insert_plan_revision_step(
+            &mut tx,
+            &revision_step_id,
+            run_id,
+            &review_state.review_step_id,
+            &revision_assignee_employee_id,
+            &revision_seed.input,
+            comment,
+            next_review_round,
+        )
+        .await?;
+        mark_group_run_review_rejected(
+            &mut tx,
+            run_id,
+            next_review_round,
+            comment,
+            &revision_assignee_employee_id,
+            &now,
+        )
+        .await?;
+        insert_group_run_event(
+            &mut tx,
+            run_id,
+            &review_state.review_step_id,
+            "review_rejected",
+            &serde_json::json!({
+                "reason": comment,
+                "review_round": next_review_round,
+            })
+            .to_string(),
+            &now,
+        )
+        .await?;
+        insert_group_run_event(
+            &mut tx,
+            run_id,
+            &revision_step_id,
+            "step_created",
+            &serde_json::json!({
+                "phase": "plan",
+                "step_type": "plan",
+                "status": "pending",
+            })
+            .to_string(),
+            &now,
+        )
+        .await?;
+    } else {
+        mark_group_run_review_approved(&mut tx, run_id, &now).await?;
+        insert_group_run_event(
+            &mut tx,
+            run_id,
+            &review_state.review_step_id,
+            "review_passed",
+            &serde_json::json!({
+                "comment": comment,
+            })
+            .to_string(),
+            &now,
+        )
+        .await?;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(super) async fn get_group_run_session_id_with_pool(
