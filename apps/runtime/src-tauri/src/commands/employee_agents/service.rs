@@ -4,19 +4,21 @@ use super::repo::{
     delete_feishu_bindings_for_agent, find_displaced_default_feishu_agent_ids,
     find_displaced_scoped_feishu_agent_ids, find_employee_db_id_by_employee_id,
     find_latest_thread_session_id, find_recent_route_session_id, find_thread_session_record,
-    find_group_run_execute_step_context, find_group_run_state, get_employee_association_row,
-    get_employee_group_entry_row, insert_feishu_binding, insert_group_run_event,
-    insert_inbound_event_link, insert_session_seed, list_agent_employee_rows,
-    list_agent_scope_rows, list_failed_execute_assignees, list_failed_group_run_steps,
-    list_skill_ids_for_employee, mark_group_run_done_after_retry, mark_group_run_executing,
-    mark_group_run_failed, mark_group_run_step_completed, mark_group_run_step_dispatched,
-    mark_group_run_step_failed, pause_group_run, replace_employee_skill_bindings,
-    reset_group_run_step_for_reassignment, resume_group_run, update_employee_enabled_scopes,
-    update_group_run_after_reassignment, update_session_employee_id, upsert_agent_employee_record,
-    upsert_thread_session_link, cancel_group_run, clear_group_run_execute_waiting_state,
-    complete_failed_group_run_step, employee_exists_for_reassignment,
-    find_group_run_step_reassign_row, InboundEventLinkInput, InsertFeishuBindingInput,
-    SessionSeedInput, ThreadSessionLinkInput, UpsertAgentEmployeeRecordInput,
+    find_group_run_execute_step_context, find_group_run_state, find_pending_review_step,
+    get_employee_association_row, get_employee_group_entry_row, insert_feishu_binding,
+    insert_group_run_event, insert_inbound_event_link, insert_session_seed,
+    list_agent_employee_rows, list_agent_scope_rows, list_failed_execute_assignees,
+    list_failed_group_run_steps, list_pending_execute_step_ids, list_skill_ids_for_employee,
+    mark_group_run_done_after_retry, mark_group_run_executing, mark_group_run_failed,
+    mark_group_run_step_completed, mark_group_run_step_dispatched, mark_group_run_step_failed,
+    mark_group_run_waiting_review, pause_group_run, replace_employee_skill_bindings,
+    reset_group_run_step_for_reassignment, resume_group_run, review_requested_event_exists,
+    update_employee_enabled_scopes, update_group_run_after_reassignment,
+    update_session_employee_id, upsert_agent_employee_record, upsert_thread_session_link,
+    cancel_group_run, clear_group_run_execute_waiting_state, complete_failed_group_run_step,
+    employee_exists_for_reassignment, find_group_run_step_reassign_row, InboundEventLinkInput,
+    InsertFeishuBindingInput, SessionSeedInput, ThreadSessionLinkInput,
+    UpsertAgentEmployeeRecordInput,
 };
 use super::{
     AgentEmployee, EmployeeInboundDispatchSession, EnsuredEmployeeSession,
@@ -950,6 +952,66 @@ pub(super) async fn mark_group_run_step_completed_with_pool(
     clear_group_run_execute_waiting_state(&mut tx, run_id, now).await?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub(super) async fn load_group_run_continue_state(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<(String, String), String> {
+    let normalized_run_id = run_id.trim();
+    if normalized_run_id.is_empty() {
+        return Err("run_id is required".to_string());
+    }
+    let run_row = find_group_run_state(pool, normalized_run_id)
+        .await?
+        .ok_or_else(|| "group run not found".to_string())?;
+    Ok((run_row.state, run_row.current_phase))
+}
+
+pub(super) async fn maybe_mark_group_run_waiting_review(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(review_row) = find_pending_review_step(pool, run_id).await? else {
+        return Ok(None);
+    };
+
+    let review_requested_exists = review_requested_event_exists(pool, run_id, &review_row.step_id).await?;
+    let default_reason = format!("等待{}审议", review_row.assignee_employee_id.trim());
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    mark_group_run_waiting_review(
+        &mut tx,
+        run_id,
+        &review_row.assignee_employee_id,
+        &default_reason,
+        &now,
+    )
+    .await?;
+    if !review_requested_exists {
+        insert_group_run_event(
+            &mut tx,
+            run_id,
+            &review_row.step_id,
+            "review_requested",
+            &serde_json::json!({
+                "assignee_employee_id": review_row.assignee_employee_id,
+                "phase": "review",
+            })
+            .to_string(),
+            &now,
+        )
+        .await?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(Some(review_row.assignee_employee_id))
+}
+
+pub(super) async fn list_pending_execute_steps_for_continue(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Vec<String>, String> {
+    list_pending_execute_step_ids(pool, run_id).await
 }
 
 async fn create_employee_route_session(

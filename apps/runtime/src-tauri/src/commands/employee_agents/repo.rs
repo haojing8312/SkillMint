@@ -98,6 +98,11 @@ pub(super) struct GroupRunExecuteStepContextRow {
     pub user_goal: String,
 }
 
+pub(super) struct PendingReviewStepRow {
+    pub step_id: String,
+    pub assignee_employee_id: String,
+}
+
 pub(super) async fn list_agent_employee_rows(
     pool: &SqlitePool,
 ) -> Result<Vec<AgentEmployeeRow>, String> {
@@ -987,6 +992,93 @@ pub(super) async fn clear_group_run_execute_waiting_state(
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub(super) async fn find_pending_review_step(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Option<PendingReviewStepRow>, String> {
+    let row = sqlx::query(
+        "SELECT id, assignee_employee_id
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'review' AND status IN ('pending', 'running', 'blocked')
+         ORDER BY round_no DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.map(|record| PendingReviewStepRow {
+        step_id: record.try_get(0).expect("pending review step_id"),
+        assignee_employee_id: record
+            .try_get(1)
+            .expect("pending review assignee_employee_id"),
+    }))
+}
+
+pub(super) async fn review_requested_event_exists(
+    pool: &SqlitePool,
+    run_id: &str,
+    step_id: &str,
+) -> Result<bool, String> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM group_run_events
+         WHERE run_id = ? AND step_id = ? AND event_type = 'review_requested'",
+    )
+    .bind(run_id)
+    .bind(step_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+pub(super) async fn mark_group_run_waiting_review(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    waiting_for_employee_id: &str,
+    default_reason: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'waiting_review',
+             current_phase = 'review',
+             waiting_for_employee_id = ?,
+             status_reason = CASE
+               WHEN TRIM(status_reason) = '' THEN ?
+               ELSE status_reason
+             END,
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(waiting_for_employee_id)
+    .bind(default_reason)
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn list_pending_execute_step_ids(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Vec<String>, String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT id
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute' AND status = 'pending'
+         ORDER BY round_no ASC, id ASC",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())
 }
 
 pub(super) async fn delete_feishu_bindings_for_agent(

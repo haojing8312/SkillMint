@@ -2576,22 +2576,7 @@ pub async fn continue_employee_group_run_with_pool(
     run_id: &str,
 ) -> Result<EmployeeGroupRunSnapshot, String> {
     let normalized_run_id = run_id.trim();
-    if normalized_run_id.is_empty() {
-        return Err("run_id is required".to_string());
-    }
-
-    let run_row = sqlx::query(
-        "SELECT state, COALESCE(current_phase, 'plan')
-         FROM group_runs
-         WHERE id = ?",
-    )
-    .bind(normalized_run_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "group run not found".to_string())?;
-    let state: String = run_row.try_get(0).map_err(|e| e.to_string())?;
-    let current_phase: String = run_row.try_get(1).map_err(|e| e.to_string())?;
+    let (state, current_phase) = service::load_group_run_continue_state(pool, normalized_run_id).await?;
 
     if state == "paused" {
         return Err("group run is paused".to_string());
@@ -2602,94 +2587,21 @@ pub async fn continue_employee_group_run_with_pool(
 
     let _ = advance_pending_plan_revision_with_pool(pool, normalized_run_id).await?;
 
-    if let Some(review_row) = sqlx::query(
-        "SELECT id, assignee_employee_id
-         FROM group_run_steps
-         WHERE run_id = ? AND step_type = 'review' AND status IN ('pending', 'running', 'blocked')
-         ORDER BY round_no DESC, id DESC
-         LIMIT 1",
-    )
-    .bind(normalized_run_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?
+    if service::maybe_mark_group_run_waiting_review(pool, normalized_run_id)
+        .await?
+        .is_some()
     {
-        let review_step_id: String = review_row.try_get(0).map_err(|e| e.to_string())?;
-        let reviewer_employee_id: String = review_row.try_get(1).map_err(|e| e.to_string())?;
-        let default_reason = format!("等待{}审议", reviewer_employee_id.trim());
-        let review_requested_exists = sqlx::query_as::<_, (i64,)>(
-            "SELECT COUNT(*)
-             FROM group_run_events
-             WHERE run_id = ? AND step_id = ? AND event_type = 'review_requested'",
-        )
-        .bind(normalized_run_id)
-        .bind(&review_step_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?
-        .0;
-
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-        sqlx::query(
-            "UPDATE group_runs
-             SET state = 'waiting_review',
-                 current_phase = 'review',
-                 waiting_for_employee_id = ?,
-                 status_reason = CASE
-                   WHEN TRIM(status_reason) = '' THEN ?
-                   ELSE status_reason
-                 END,
-                 updated_at = ?
-             WHERE id = ?",
-        )
-        .bind(&reviewer_employee_id)
-        .bind(&default_reason)
-        .bind(&now)
-        .bind(normalized_run_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-        if review_requested_exists == 0 {
-            sqlx::query(
-                "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
-                 VALUES (?, ?, ?, 'review_requested', ?, ?)",
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(normalized_run_id)
-            .bind(&review_step_id)
-            .bind(
-                serde_json::json!({
-                    "assignee_employee_id": reviewer_employee_id,
-                    "phase": "review",
-                })
-                .to_string(),
-            )
-            .bind(&now)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().await.map_err(|e| e.to_string())?;
         return get_employee_group_run_snapshot_by_run_id_with_pool(pool, normalized_run_id).await;
     }
 
-    let pending_execute_steps = sqlx::query_as::<_, (String,)>(
-        "SELECT id
-         FROM group_run_steps
-         WHERE run_id = ? AND step_type = 'execute' AND status = 'pending'
-         ORDER BY round_no ASC, id ASC",
-    )
-    .bind(normalized_run_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let pending_execute_steps =
+        service::list_pending_execute_steps_for_continue(pool, normalized_run_id).await?;
 
     if pending_execute_steps.is_empty() && current_phase == "review" {
         return get_employee_group_run_snapshot_by_run_id_with_pool(pool, normalized_run_id).await;
     }
 
-    for (step_id,) in pending_execute_steps {
+    for step_id in pending_execute_steps {
         run_group_step_with_pool(pool, &step_id).await?;
     }
     maybe_finalize_group_run_with_pool(pool, normalized_run_id).await?;
