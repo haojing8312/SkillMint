@@ -335,6 +335,20 @@ pub struct EnsuredEmployeeSession {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct EmployeeInboundDispatchSession {
+    pub session_id: String,
+    pub thread_id: String,
+    pub employee_id: String,
+    pub role_id: String,
+    pub employee_name: String,
+    pub route_agent_id: String,
+    pub route_session_key: String,
+    pub matched_by: String,
+    pub prompt: String,
+    pub message_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct EmployeeGroup {
     pub id: String,
     pub name: String,
@@ -3726,6 +3740,14 @@ pub async fn link_inbound_event_to_session_with_pool(
     session_id: &str,
 ) -> Result<(), String> {
     service::link_inbound_event_to_session_with_pool(pool, event, employee_id, session_id).await
+}
+
+pub async fn bridge_inbound_event_to_employee_sessions_with_pool(
+    pool: &SqlitePool,
+    event: &ImEvent,
+    route_decision: Option<&Value>,
+) -> Result<Vec<EmployeeInboundDispatchSession>, String> {
+    service::bridge_inbound_event_to_employee_sessions_with_pool(pool, event, route_decision).await
 }
 
 #[tauri::command]

@@ -4,8 +4,8 @@ use crate::approval_bus::{
 use crate::commands::approvals::load_approval_record_with_pool;
 use crate::commands::chat::ApprovalManagerState;
 use crate::commands::employee_agents::{
-    ensure_employee_sessions_for_event_with_pool, link_inbound_event_to_session_with_pool,
-    list_agent_employees_with_pool, AgentEmployee,
+    bridge_inbound_event_to_employee_sessions_with_pool, list_agent_employees_with_pool,
+    AgentEmployee, EmployeeInboundDispatchSession,
 };
 use crate::commands::im_config::get_thread_role_config_with_pool;
 use crate::commands::im_gateway::{process_im_event, FeishuCallbackResult};
@@ -79,6 +79,53 @@ pub struct ImRouteDecisionEvent {
     pub agent_id: String,
     pub session_key: String,
     pub matched_by: String,
+}
+
+fn emit_employee_inbound_dispatch_sessions(
+    app: &tauri::AppHandle,
+    channel: &str,
+    dispatches: &[EmployeeInboundDispatchSession],
+) {
+    for dispatch in dispatches {
+        let _ = app.emit(
+            "im-route-decision",
+            ImRouteDecisionEvent {
+                session_id: dispatch.session_id.clone(),
+                thread_id: dispatch.thread_id.clone(),
+                agent_id: dispatch.route_agent_id.clone(),
+                session_key: dispatch.route_session_key.clone(),
+                matched_by: dispatch.matched_by.clone(),
+            },
+        );
+
+        let _ = app.emit(
+            "im-role-event",
+            build_im_role_event_payload_for_channel(
+                &dispatch.session_id,
+                &dispatch.thread_id,
+                &dispatch.role_id,
+                &dispatch.employee_name,
+                channel,
+                "running",
+                "飞书消息已同步到桌面会话，正在执行",
+                None,
+            ),
+        );
+
+        let _ = app.emit("im-role-dispatch-request", {
+            let mut req = build_im_role_dispatch_request_for_channel(
+                &dispatch.session_id,
+                &dispatch.thread_id,
+                &dispatch.role_id,
+                &dispatch.employee_name,
+                channel,
+                &dispatch.prompt,
+                "general-purpose",
+            );
+            req.message_id = dispatch.message_id.clone();
+            req
+        });
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -2512,77 +2559,16 @@ async fn sync_feishu_ws_events_core(
                     }
                 }
             }
-            if let Ok(employee_sessions) =
-                ensure_employee_sessions_for_event_with_pool(pool, &inbound).await
+            let route_decision = resolve_openclaw_route_with_pool(pool, &inbound).await.ok();
+            if let Ok(dispatches) = bridge_inbound_event_to_employee_sessions_with_pool(
+                pool,
+                &inbound,
+                route_decision.as_ref(),
+            )
+            .await
             {
-                let route_decision = resolve_openclaw_route_with_pool(pool, &inbound).await.ok();
-                for s in employee_sessions {
-                    let _ = link_inbound_event_to_session_with_pool(
-                        pool,
-                        &inbound,
-                        &s.employee_id,
-                        &s.session_id,
-                    )
-                    .await;
-                    if let Some(app) = app {
-                        let route_agent_id = route_decision
-                            .as_ref()
-                            .and_then(|v| v.get("agentId"))
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or(&s.role_id)
-                            .to_string();
-                        let route_session_key = route_decision
-                            .as_ref()
-                            .and_then(|v| v.get("sessionKey"))
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or(&s.session_id)
-                            .to_string();
-                        let matched_by = route_decision
-                            .as_ref()
-                            .and_then(|v| v.get("matchedBy"))
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("default")
-                            .to_string();
-                        let _ = app.emit(
-                            "im-route-decision",
-                            ImRouteDecisionEvent {
-                                session_id: s.session_id.clone(),
-                                thread_id: inbound.thread_id.clone(),
-                                agent_id: route_agent_id,
-                                session_key: route_session_key,
-                                matched_by,
-                            },
-                        );
-                        let _ = app.emit(
-                            "im-role-event",
-                            build_im_role_event_payload_for_channel(
-                                &s.session_id,
-                                &inbound.thread_id,
-                                &s.role_id,
-                                &s.employee_name,
-                                "feishu",
-                                "running",
-                                "飞书消息已同步到桌面会话，正在执行",
-                                None,
-                            ),
-                        );
-                        let _ = app.emit("im-role-dispatch-request", {
-                            let mut req = build_im_role_dispatch_request_for_channel(
-                                &s.session_id,
-                                &inbound.thread_id,
-                                &s.role_id,
-                                &s.employee_name,
-                                "feishu",
-                                &inbound
-                                    .text
-                                    .clone()
-                                    .unwrap_or_else(|| "请继续基于当前上下文推进".to_string()),
-                                "general-purpose",
-                            );
-                            req.message_id = inbound.message_id.clone().unwrap_or_default();
-                            req
-                        });
-                    }
+                if let Some(app) = app {
+                    emit_employee_inbound_dispatch_sessions(app, "feishu", &dispatches);
                 }
             }
             accepted += 1;
@@ -3538,77 +3524,12 @@ pub(crate) async fn dispatch_feishu_inbound_to_workclaw_with_pool_and_app(
     }
 
     let route_decision = resolve_openclaw_route_with_pool(pool, event).await.ok();
-    let employee_sessions = ensure_employee_sessions_for_event_with_pool(pool, event).await?;
-    for session in &employee_sessions {
-        let _ = link_inbound_event_to_session_with_pool(
-            pool,
-            event,
-            &session.employee_id,
-            &session.session_id,
-        )
-        .await;
-        let route_agent_id = route_decision
-            .as_ref()
-            .and_then(|value| value.get("agentId"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(&session.role_id)
-            .to_string();
-        let route_session_key = route_decision
-            .as_ref()
-            .and_then(|value| value.get("sessionKey"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(&session.session_id)
-            .to_string();
-        let matched_by = route_decision
-            .as_ref()
-            .and_then(|value| value.get("matchedBy"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("default")
-            .to_string();
-        let _ = app.emit(
-            "im-route-decision",
-            ImRouteDecisionEvent {
-                session_id: session.session_id.clone(),
-                thread_id: event.thread_id.clone(),
-                agent_id: route_agent_id,
-                session_key: route_session_key,
-                matched_by,
-            },
-        );
+    let dispatches =
+        bridge_inbound_event_to_employee_sessions_with_pool(pool, event, route_decision.as_ref())
+            .await?;
+    emit_employee_inbound_dispatch_sessions(app, "feishu", &dispatches);
 
-        let _ = app.emit(
-            "im-role-event",
-            build_im_role_event_payload_for_channel(
-                &session.session_id,
-                &event.thread_id,
-                &session.role_id,
-                &session.employee_name,
-                "feishu",
-                "running",
-                "飞书消息已同步到桌面会话，正在执行",
-                None,
-            ),
-        );
-        let prompt = event
-            .text
-            .clone()
-            .unwrap_or_else(|| "请继续基于当前上下文推进".to_string());
-        let _ = app.emit("im-role-dispatch-request", {
-            let mut req = build_im_role_dispatch_request_for_channel(
-                &session.session_id,
-                &event.thread_id,
-                &session.role_id,
-                &session.employee_name,
-                "feishu",
-                &prompt,
-                "general-purpose",
-            );
-            req.message_id = event.message_id.clone().unwrap_or_default();
-            req
-        });
-    }
-
-    if employee_sessions.is_empty() {
+    if dispatches.is_empty() {
         let planned = plan_role_events_for_feishu(pool, event).await?;
         for evt in planned {
             let _ = app.emit("im-role-event", evt);

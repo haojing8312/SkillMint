@@ -12,13 +12,15 @@ use super::repo::{
     UpsertAgentEmployeeRecordInput,
 };
 use super::{
-    AgentEmployee, EnsuredEmployeeSession, SaveFeishuEmployeeAssociationInput,
+    AgentEmployee, EmployeeInboundDispatchSession, EnsuredEmployeeSession,
+    SaveFeishuEmployeeAssociationInput,
     UpsertAgentEmployeeInput,
 };
 use crate::commands::im_routing::{list_im_routing_bindings_with_pool, ImRoutingBinding};
 use crate::commands::models::resolve_default_model_id_with_pool;
 use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use crate::im::types::ImEvent;
+use serde_json::Value;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -581,6 +583,52 @@ pub(super) async fn link_inbound_event_to_session_with_pool(
         },
     )
     .await
+}
+
+pub(super) async fn bridge_inbound_event_to_employee_sessions_with_pool(
+    pool: &SqlitePool,
+    event: &ImEvent,
+    route_decision: Option<&Value>,
+) -> Result<Vec<EmployeeInboundDispatchSession>, String> {
+    let employee_sessions = ensure_employee_sessions_for_event_with_pool(pool, event).await?;
+    let prompt = event
+        .text
+        .clone()
+        .unwrap_or_else(|| "请继续基于当前上下文推进".to_string());
+    let message_id = event.message_id.clone().unwrap_or_default();
+
+    let mut bridged = Vec::with_capacity(employee_sessions.len());
+    for session in employee_sessions {
+        let _ =
+            link_inbound_event_to_session_with_pool(pool, event, &session.employee_id, &session.session_id)
+                .await;
+        bridged.push(EmployeeInboundDispatchSession {
+            session_id: session.session_id.clone(),
+            thread_id: event.thread_id.clone(),
+            employee_id: session.employee_id,
+            role_id: session.role_id.clone(),
+            employee_name: session.employee_name,
+            route_agent_id: route_decision
+                .and_then(|value| value.get("agentId"))
+                .and_then(Value::as_str)
+                .unwrap_or(&session.role_id)
+                .to_string(),
+            route_session_key: route_decision
+                .and_then(|value| value.get("sessionKey"))
+                .and_then(Value::as_str)
+                .unwrap_or(&session.session_id)
+                .to_string(),
+            matched_by: route_decision
+                .and_then(|value| value.get("matchedBy"))
+                .and_then(Value::as_str)
+                .unwrap_or("default")
+                .to_string(),
+            prompt: prompt.clone(),
+            message_id: message_id.clone(),
+        });
+    }
+
+    Ok(bridged)
 }
 
 async fn create_employee_route_session(
