@@ -1,22 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  DEFAULT_MODEL_PROVIDER_ID,
-  MODEL_PROVIDER_CATALOG,
-  buildModelFormFromCatalogItem,
-  getModelProviderCatalogItem,
-  resolveCatalogItemForConfig,
-  resolveCatalogItemForProviderIdentity,
-} from "../model-provider-catalog";
 import { openExternalUrl } from "../utils/openExternalUrl";
 import { SearchConfigForm } from "./SearchConfigForm";
 import { SettingsShell } from "./settings/SettingsShell";
+import { ModelsSettingsSection } from "./settings/models/ModelsSettingsSection";
 import { SettingsTabNav, type SettingsTabName } from "./settings/SettingsTabNav";
 import {
   applySearchPresetToForm,
   EMPTY_SEARCH_CONFIG_FORM,
   validateSearchConfigForm,
 } from "../lib/search-config";
+import {
+  listModelConfigs,
+  listProviderConfigs,
+  syncModelConnections,
+} from "./settings/models/modelSettingsService";
 import {
   CapabilityRouteTemplateInfo,
   CapabilityRoutingPolicy,
@@ -33,14 +31,12 @@ import {
   OpenClawLarkInstallerMode,
   OpenClawLarkInstallerSessionStatus,
   ModelConfig,
-  ModelConnectionTestResult,
   ProviderConfig,
   ProviderHealthInfo,
   RuntimePreferences,
   RouteAttemptLog,
   RouteAttemptStat,
 } from "../types";
-import { getModelErrorDisplay } from "../lib/model-error-display";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
 
 const MCP_PRESETS = [
@@ -161,7 +157,6 @@ const DEFAULT_RUNTIME_PREFERENCES: RuntimePreferences = {
   operation_permission_mode: "standard",
 };
 
-const DEFAULT_MODEL_PROVIDER = getModelProviderCatalogItem(DEFAULT_MODEL_PROVIDER_ID);
 const FEISHU_OFFICIAL_PLUGIN_DOC_URL =
   "https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh#M0usd9GLwoiBxtx1UyjcpeMhnRe";
 
@@ -693,20 +688,6 @@ export function SettingsView({
   onDevOpenQuickModelSetup,
 }: Props) {
   const [models, setModels] = useState<ModelConfig[]>([]);
-  const [selectedModelProviderId, setSelectedModelProviderId] = useState(DEFAULT_MODEL_PROVIDER.id);
-  const [form, setForm] = useState({
-    ...buildModelFormFromCatalogItem(DEFAULT_MODEL_PROVIDER),
-    api_key: "",
-  });
-  const [error, setError] = useState("");
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<ModelConnectionTestResult | null>(null);
-  const [modelSuggestions, setModelSuggestions] = useState<string[]>(DEFAULT_MODEL_PROVIDER.models);
-  const [modelSaveMessage, setModelSaveMessage] = useState("");
-
-  // 编辑状态 + API Key 可见性
-  const [editingModelId, setEditingModelId] = useState<string | null>(null);
-  const [showApiKey, setShowApiKey] = useState(false);
 
   // MCP 服务器管理
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -860,14 +841,6 @@ export function SettingsView({
   const [desktopLifecycleMessage, setDesktopLifecycleMessage] = useState("");
   const [desktopDiagnosticsStatus, setDesktopDiagnosticsStatus] =
     useState<DesktopDiagnosticsStatus | null>(null);
-  const selectedModelProvider = getModelProviderCatalogItem(selectedModelProviderId);
-  const connectionTestDisplay = testResult ? getModelErrorDisplay(testResult) : null;
-  const shouldShowConnectionRawMessage = Boolean(
-    connectionTestDisplay?.rawMessage &&
-      connectionTestDisplay.rawMessage !== connectionTestDisplay.title &&
-      connectionTestDisplay.rawMessage !== connectionTestDisplay.message,
-  );
-
   async function persistRuntimePreferencesInput(input: Record<string, unknown>) {
     const saved = await invoke<RuntimePreferences>("set_runtime_preferences", { input });
     const normalized = normalizeRuntimePreferences(saved);
@@ -875,99 +848,12 @@ export function SettingsView({
     return normalized;
   }
 
-  function resetModelForm(providerId = DEFAULT_MODEL_PROVIDER_ID) {
-    const provider = getModelProviderCatalogItem(providerId);
-    setSelectedModelProviderId(provider.id);
-    setForm({
-      ...buildModelFormFromCatalogItem(provider),
-      api_key: "",
-    });
-    setModelSuggestions(provider.models);
-    setEditingModelId(null);
-    setShowApiKey(false);
-    setError("");
-    setTestResult(null);
-    setModelSaveMessage("");
-  }
-
-  function validateModelForm() {
-    if (!form.name.trim()) {
-      return "请输入名称";
-    }
-    if (!form.base_url.trim()) {
-      return "请输入 Base URL";
-    }
-    if (!form.model_name.trim()) {
-      return "请输入模型名称";
-    }
-    if (!form.api_key.trim()) {
-      return "请输入 API Key";
-    }
-    return null;
-  }
-
-  function inferConnectionKey(baseUrl: string, apiFormat: string): string {
-    const normalized = (baseUrl || "").toLowerCase();
-    if (normalized.includes("deepseek")) return "deepseek";
-    if (normalized.includes("dashscope")) return "qwen";
-    if (normalized.includes("moonshot") || normalized.includes("kimi")) return "moonshot";
-    if (normalized.includes("bigmodel") || normalized.includes("open.bigmodel")) return "zhipu";
-    if (normalized.includes("anthropic")) return "anthropic";
-    if (normalized.includes("minimax")) return "minimax";
-    if (normalized.includes("lingyiwanwu")) return "yi";
-    if (normalized.includes("openai")) return "openai";
-    if (apiFormat === "anthropic") return "anthropic";
-    return "openai";
-  }
-
-  async function syncConnectionToRouting(
-    model: ModelConfig,
-    apiKey: string,
-    preferredProviderKey?: string,
-  ) {
-    await invoke("save_provider_config", {
-      config: {
-        id: model.id,
-        provider_key:
-          preferredProviderKey || inferConnectionKey(model.base_url, model.api_format),
-        display_name: model.name || model.model_name || model.id,
-        protocol_type: model.api_format === "anthropic" ? "anthropic" : "openai",
-        base_url: model.base_url,
-        auth_type: "api_key",
-        api_key_encrypted: apiKey,
-        org_id: "",
-        extra_json: "{}",
-        enabled: true,
-      },
-    });
-  }
-
-  async function syncModelConnections(modelList: ModelConfig[]) {
-    let existingProviders: ProviderConfig[] = [];
-    try {
-      existingProviders = await invoke<ProviderConfig[]>("list_provider_configs");
-    } catch (e) {
-      console.warn("读取已保存 Provider 配置失败:", e);
-    }
-    await Promise.all(
-      modelList.map(async (model) => {
-        try {
-          const apiKey = await invoke<string>("get_model_api_key", { modelId: model.id });
-          const existingProviderKey = existingProviders.find((provider) => provider.id === model.id)?.provider_key;
-          await syncConnectionToRouting(model, apiKey, existingProviderKey);
-        } catch (e) {
-          console.warn("同步连接配置失败:", model.id, e);
-        }
-      }),
-    );
-  }
-
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
 
   useEffect(() => {
-    loadModels();
+    void loadSharedModelData();
     loadSearchConfigs();
     loadRuntimePreferences();
     loadDesktopLifecyclePaths();
@@ -995,6 +881,25 @@ export function SettingsView({
       loadRouteStats();
     }
   }, [activeTab]);
+
+  async function loadSharedModelData() {
+    try {
+      const list = await listModelConfigs();
+      setModels(list);
+      await syncModelConnections(list);
+      const providerList = await listProviderConfigs();
+      const ids = new Set(list.map((model) => model.id));
+      const aligned = providerList.filter((provider) => ids.has(provider.id));
+      setProviders(aligned);
+      if (aligned.length === 0) {
+        setHealthProviderId("");
+      } else if (!healthProviderId || !aligned.some((provider) => provider.id === healthProviderId)) {
+        setHealthProviderId(aligned[0].id);
+      }
+    } catch (error) {
+      console.warn("加载模型共享数据失败:", error);
+    }
+  }
 
   useEffect(() => {
     if (activeTab !== "feishu") {
@@ -1025,23 +930,6 @@ export function SettingsView({
 
     return () => window.clearInterval(timer);
   }, [activeTab]);
-
-  useEffect(() => {
-    if (!modelSaveMessage) return;
-    const timer = window.setTimeout(() => setModelSaveMessage(""), 1200);
-    return () => window.clearTimeout(timer);
-  }, [modelSaveMessage]);
-
-  async function loadModels() {
-    try {
-      const list = await invoke<ModelConfig[]>("list_model_configs");
-      setModels(list);
-      await syncModelConnections(list);
-      await loadProviderConfigs(list);
-    } catch (e) {
-      setError("加载模型连接失败: " + String(e));
-    }
-  }
 
   async function loadSearchConfigs() {
     try {
@@ -1275,22 +1163,6 @@ export function SettingsView({
     } catch (e) {
       setRouteError("加载自动路由设置失败: " + String(e));
       setRouteSaveState("error");
-    }
-  }
-
-  async function loadProviderConfigs(modelList: ModelConfig[] = models) {
-    try {
-      const list = await invoke<ProviderConfig[]>("list_provider_configs");
-      const ids = new Set(modelList.map((m) => m.id));
-      const aligned = list.filter((p) => ids.has(p.id));
-      setProviders(aligned);
-      if (aligned.length === 0) {
-        setHealthProviderId("");
-      } else if (!healthProviderId || !aligned.some((p) => p.id === healthProviderId)) {
-        setHealthProviderId(aligned[0].id);
-      }
-    } catch (e) {
-      console.warn("加载连接路由配置失败:", e);
     }
   }
 
@@ -2477,35 +2349,6 @@ export function SettingsView({
     }
   }
 
-  // 加载已保存的模型配置到表单（用于编辑）
-  async function handleEditModel(m: ModelConfig) {
-    try {
-      const apiKey = await invoke<string>("get_model_api_key", { modelId: m.id });
-      const apiFormat = m.api_format === "anthropic" ? "anthropic" : "openai";
-      const providerConfig = providers.find((item) => item.id === m.id);
-      const provider = resolveCatalogItemForProviderIdentity({
-        providerKey: providerConfig?.provider_key,
-        apiFormat,
-        baseUrl: m.base_url,
-      });
-      setForm({
-        name: m.name,
-        api_format: apiFormat,
-        base_url: m.base_url,
-        model_name: m.model_name,
-        api_key: apiKey,
-      });
-      setSelectedModelProviderId(provider.id);
-      setEditingModelId(m.id);
-      setShowApiKey(false);
-      setError("");
-      setTestResult(null);
-      setModelSuggestions(provider.models);
-    } catch (e) {
-      setError("加载配置失败: " + String(e));
-    }
-  }
-
   // 加载已保存的搜索配置到表单（用于编辑）
   async function handleEditSearch(s: ModelConfig) {
     try {
@@ -2524,100 +2367,6 @@ export function SettingsView({
     } catch (e) {
       setSearchError("加载配置失败: " + String(e));
     }
-  }
-
-  async function handleSave() {
-    const validationError = validateModelForm();
-    if (validationError) {
-      setError(validationError);
-      setTestResult(null);
-      return;
-    }
-    setError("");
-    setModelSaveMessage("");
-    try {
-      const isCreateMode = !editingModelId;
-      let nextSaveMessage = "已保存";
-      const savedModelId = await invoke<string>("save_model_config", {
-        config: {
-          id: editingModelId || "",
-          name: form.name.trim(),
-          api_format: form.api_format,
-          base_url: form.base_url.trim(),
-          model_name: form.model_name.trim(),
-          is_default: editingModelId
-            ? models.find((m) => m.id === editingModelId)?.is_default ?? false
-            : models.length === 0,
-        },
-        apiKey: form.api_key.trim(),
-      });
-      const preferredProviderKey = getModelProviderCatalogItem(selectedModelProviderId).providerKey;
-      await syncConnectionToRouting(
-        {
-          id: savedModelId,
-          name: form.name.trim(),
-          api_format: form.api_format,
-          base_url: form.base_url.trim(),
-          model_name: form.model_name.trim(),
-          is_default: isCreateMode ? true : models.find((m) => m.id === editingModelId)?.is_default ?? false,
-        },
-        form.api_key.trim(),
-        preferredProviderKey,
-      );
-      if (isCreateMode) {
-        await invoke("set_default_model", { modelId: savedModelId });
-        nextSaveMessage = "已保存，并切换为默认模型";
-      }
-      resetModelForm();
-      setModelSaveMessage(nextSaveMessage);
-      await loadModels();
-    } catch (e: unknown) {
-      setError(String(e));
-    }
-  }
-
-  async function handleTest() {
-    const validationError = validateModelForm();
-    if (validationError) {
-      setError(validationError);
-      setTestResult(null);
-      return;
-    }
-    setError("");
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = await invoke<ModelConnectionTestResult>("test_connection_cmd", {
-        config: {
-          id: "",
-          name: form.name.trim(),
-          api_format: form.api_format,
-          base_url: form.base_url.trim(),
-          model_name: form.model_name.trim(),
-          is_default: false,
-        },
-        apiKey: form.api_key.trim(),
-      });
-      setTestResult(result);
-    } catch (e: unknown) {
-      setError(String(e));
-      setTestResult(null);
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  function applyPreset(value: string) {
-    const preset = getModelProviderCatalogItem(value);
-    setForm((f) => ({
-      ...f,
-      ...buildModelFormFromCatalogItem(preset),
-      api_key: f.api_key,
-    }));
-    setSelectedModelProviderId(preset.id);
-    setModelSuggestions(preset.models);
-    setError("");
-    setTestResult(null);
   }
 
   function applyMcpPreset(value: string) {
@@ -2640,21 +2389,6 @@ export function SettingsView({
 
   function applySearchPreset(value: string) {
     setSearchForm((current) => applySearchPresetToForm(value, current));
-  }
-
-  async function handleDelete(id: string) {
-    await invoke("delete_model_config", { modelId: id });
-    await invoke("delete_provider_config", { providerId: id }).catch(() => null);
-    // 若删除的是当前编辑项，重置表单
-    if (editingModelId === id) {
-      resetModelForm();
-    }
-    await loadModels();
-  }
-
-  async function handleSetDefaultModel(id: string) {
-    await invoke("set_default_model", { modelId: id });
-    await loadModels();
   }
 
   async function loadMcpServers() {
@@ -2807,255 +2541,18 @@ export function SettingsView({
       }
     >
 
-      {(activeTab === "models" || activeTab === "desktop") && (<>
-      {activeTab === "models" && models.length > 0 && (
-        <div className="mb-6 space-y-2">
-          <div className="text-xs text-gray-500 mb-2">已配置模型</div>
-          {models.map((m) => (
-            <div
-              key={m.id}
-              className={
-                "flex items-center justify-between bg-white rounded-lg px-4 py-2.5 text-sm border transition-colors " +
-                (editingModelId === m.id ? "border-blue-400 ring-1 ring-blue-400" : "border-transparent hover:border-gray-200")
-              }
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-800">{m.name}</span>
-                  {m.is_default && (
-                    <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded">默认</span>
-                  )}
-                </div>
-                <div className="text-xs text-gray-400 mt-0.5 truncate">
-                  {m.model_name} · {m.api_format === "anthropic" ? "Anthropic" : "OpenAI 兼容"} · {m.base_url}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                {!m.is_default && (
-                  <button
-                    onClick={() => handleSetDefaultModel(m.id)}
-                    className="text-blue-400 hover:text-blue-500 text-xs"
-                  >
-                    设为默认
-                  </button>
-                )}
-                <button
-                  onClick={() => handleEditModel(m)}
-                  className="text-blue-500 hover:text-blue-600 text-xs"
-                >
-                  编辑
-                </button>
-                <button
-                  onClick={() => handleDelete(m.id)}
-                  className="text-red-400 hover:text-red-500 text-xs"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {activeTab === "models" && (
-      <>
-      <div className="bg-white rounded-lg p-4 space-y-3">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-medium text-gray-500">
-            {editingModelId ? "编辑模型" : "添加模型"}
-          </div>
-          {editingModelId && (
-            <button
-              onClick={() => resetModelForm()}
-              className="text-xs text-gray-400 hover:text-gray-600"
-            >
-              取消编辑
-            </button>
-          )}
-        </div>
-        <div>
-          <label className={labelCls}>快速选择模型服务</label>
-          <select
-            data-testid="settings-model-provider-preset"
-            className={inputCls}
-            value={selectedModelProviderId}
-            onChange={(e) => applyPreset(e.target.value)}
-          >
-            {MODEL_PROVIDER_CATALOG.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>名称</label>
-          <input
-            data-testid="settings-model-provider-name"
-            className={inputCls}
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
+        <div className="space-y-4">
+          <ModelsSettingsSection
+            models={models}
+            providers={providers}
+            onModelsChange={setModels}
+            onProvidersChange={setProviders}
+            showDevModelSetupTools={showDevModelSetupTools}
+            onDevResetFirstUseOnboarding={onDevResetFirstUseOnboarding}
+            onDevOpenQuickModelSetup={onDevOpenQuickModelSetup}
           />
         </div>
-        <div>
-          <label className={labelCls}>API 格式</label>
-          <select
-            className={inputCls}
-            value={form.api_format}
-            disabled
-          >
-            <option value="openai">OpenAI 兼容</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>Base URL</label>
-          <input
-            data-testid="settings-model-provider-base-url"
-            className={inputCls}
-            value={form.base_url}
-            placeholder={selectedModelProvider.baseUrlPlaceholder}
-            onChange={(e) => setForm({ ...form, base_url: e.target.value })}
-          />
-        </div>
-        <div>
-          <label className={labelCls}>模型名称</label>
-          <input
-            data-testid="settings-model-provider-model-name"
-            className={inputCls}
-            list="model-suggestions"
-            value={form.model_name}
-            placeholder={selectedModelProvider.modelNamePlaceholder}
-            onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-          />
-          {modelSuggestions.length > 0 && (
-            <datalist id="model-suggestions">
-              {modelSuggestions.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          )}
-        </div>
-        <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-medium text-gray-800">{selectedModelProvider.label}</div>
-                <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-blue-700">
-                  {selectedModelProvider.protocolLabel}
-                </span>
-              </div>
-              <div className="mt-2 text-xs leading-5 text-gray-500">{selectedModelProvider.helper}</div>
-            </div>
-            {selectedModelProvider.officialConsoleUrl ? (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    openExternalUrl(selectedModelProvider.officialConsoleUrl ?? "").catch((e) => {
-                      setError("打开外部链接失败: " + String(e));
-                    })
-                  }
-                  className="sm-btn rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  {selectedModelProvider.officialConsoleLabel ?? "获取 API Key"}
-                </button>
-                {selectedModelProvider.officialDocsUrl ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openExternalUrl(selectedModelProvider.officialDocsUrl ?? "").catch((e) => {
-                        setError("打开外部链接失败: " + String(e));
-                      })
-                    }
-                    className="sm-btn rounded-xl border border-transparent px-4 py-2 text-sm text-gray-500 hover:bg-white hover:text-gray-700"
-                  >
-                    {selectedModelProvider.officialDocsLabel ?? "查看文档"}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          {selectedModelProvider.isCustom ? (
-            <div
-              data-testid="settings-model-provider-custom-guidance"
-              className="mt-3 rounded-2xl border border-dashed border-gray-200 bg-white px-3 py-3"
-            >
-              <div className="text-xs font-semibold text-gray-800">
-                {selectedModelProvider.customGuidanceTitle}
-              </div>
-              <div className="mt-2 space-y-1.5 text-[12px] leading-5 text-gray-500">
-                {selectedModelProvider.customGuidanceLines?.map((line) => (
-                  <div key={line}>{line}</div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-        <div>
-          <label className={labelCls}>API Key</label>
-          <div className="relative">
-            <input
-              data-testid="settings-model-provider-api-key"
-              className={inputCls + " pr-10"}
-              type={showApiKey ? "text" : "password"}
-              value={form.api_key}
-              onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-            />
-            <button
-              type="button"
-              onClick={() => setShowApiKey(!showApiKey)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
-              title={showApiKey ? "隐藏" : "显示"}
-            >
-              {showApiKey ? <EyeSlashIcon /> : <EyeOpenIcon />}
-            </button>
-          </div>
-        </div>
-        {error && <div className="bg-red-50 text-red-600 text-xs px-2 py-1 rounded">{error}</div>}
-        {testResult !== null && (
-          <div
-            className={
-              "space-y-1 rounded px-2 py-2 text-xs " +
-              (testResult.ok ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600")
-            }
-          >
-            <div className="font-medium">{testResult.ok ? "连接成功" : connectionTestDisplay?.title}</div>
-            {!testResult.ok && connectionTestDisplay?.message ? <div>{connectionTestDisplay.message}</div> : null}
-            {!testResult.ok && shouldShowConnectionRawMessage ? (
-              <div className="whitespace-pre-wrap break-all rounded border border-red-200/80 bg-white/70 px-2 py-2 font-mono text-[11px] text-red-700/90">
-                {connectionTestDisplay?.rawMessage}
-              </div>
-            ) : null}
-          </div>
-        )}
-        {modelSaveMessage && (
-          <div
-            data-testid="settings-model-provider-save-hint"
-            className="bg-green-50 text-green-600 text-xs px-2 py-1 rounded"
-          >
-            {modelSaveMessage}
-          </div>
-        )}
-        <div className="flex gap-2 pt-1">
-          <button
-            onClick={handleTest}
-            disabled={testing}
-            className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
-          >
-            {testing ? "测试中..." : "测试连接"}
-          </button>
-          <button
-            data-testid="settings-model-provider-save"
-            onClick={handleSave}
-            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
-          >
-            {editingModelId ? "保存修改" : "保存"}
-          </button>
-        </div>
-        <div className="text-xs text-gray-400">
-          保存后会自动同步到默认路由和健康检查，无需重复配置。
-        </div>
-      </div>
-      </>
       )}
       {activeTab === "desktop" && (
       <>
@@ -3234,8 +2731,6 @@ export function SettingsView({
           </div>
         </div>
       )}
-      </>)}
-
       {activeTab === "desktop" && (
         <>
           <div className="bg-white rounded-lg p-4 space-y-3">
