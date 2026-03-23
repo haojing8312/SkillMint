@@ -2700,31 +2700,16 @@ pub async fn run_group_step_with_pool(
     pool: &SqlitePool,
     step_id: &str,
 ) -> Result<GroupStepExecutionResult, String> {
-    let row = sqlx::query(
-        "SELECT s.id, s.run_id, s.assignee_employee_id, COALESCE(s.dispatch_source_employee_id, ''),
-                s.step_type, COALESCE(s.session_id, ''), COALESCE(s.input, ''), COALESCE(r.user_goal, '')
-         FROM group_run_steps s
-         INNER JOIN group_runs r ON r.id = s.run_id
-         WHERE s.id = ?",
-    )
-    .bind(step_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "group run step not found".to_string())?;
-
-    let step_id: String = row.try_get(0).map_err(|e| e.to_string())?;
-    let run_id: String = row.try_get(1).map_err(|e| e.to_string())?;
-    let assignee_employee_id: String = row.try_get(2).map_err(|e| e.to_string())?;
-    let dispatch_source_employee_id: String = row.try_get(3).map_err(|e| e.to_string())?;
-    let step_type: String = row.try_get(4).map_err(|e| e.to_string())?;
-    let existing_session_id: String = row.try_get(5).map_err(|e| e.to_string())?;
-    let step_input: String = row.try_get(6).map_err(|e| e.to_string())?;
-    let user_goal: String = row.try_get(7).map_err(|e| e.to_string())?;
-
-    if step_type != "execute" {
-        return Err("only execute steps can be run".to_string());
-    }
+    let (
+        step_id,
+        run_id,
+        assignee_employee_id,
+        dispatch_source_employee_id,
+        existing_session_id,
+        step_input,
+        user_goal,
+        _step_type,
+    ) = service::load_group_run_execute_step_context(pool, step_id).await?;
 
     let now = chrono::Utc::now().to_rfc3339();
     let session_id = if existing_session_id.trim().is_empty() {
@@ -2733,57 +2718,16 @@ pub async fn run_group_step_with_pool(
         existing_session_id
     };
 
-    let mut dispatch_tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query(
-        "UPDATE group_run_steps
-         SET status = 'running',
-             session_id = ?,
-             started_at = CASE WHEN TRIM(started_at) = '' THEN ? ELSE started_at END,
-             phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
-         WHERE id = ?",
+    service::mark_group_run_step_dispatched_with_pool(
+        pool,
+        &run_id,
+        &step_id,
+        &session_id,
+        &assignee_employee_id,
+        &dispatch_source_employee_id,
+        &now,
     )
-    .bind(&session_id)
-    .bind(&now)
-    .bind(&step_id)
-    .execute(&mut *dispatch_tx)
-    .await
-    .map_err(|e| e.to_string())?;
-    sqlx::query(
-        "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
-         VALUES (?, ?, ?, 'step_dispatched', ?, ?)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&run_id)
-    .bind(&step_id)
-    .bind(
-        serde_json::json!({
-            "step_id": step_id,
-            "session_id": session_id,
-            "assignee_employee_id": assignee_employee_id,
-            "dispatch_source_employee_id": dispatch_source_employee_id,
-        })
-        .to_string(),
-    )
-    .bind(&now)
-    .execute(&mut *dispatch_tx)
-    .await
-    .map_err(|e| e.to_string())?;
-    sqlx::query(
-        "UPDATE group_runs
-         SET state = 'executing',
-             current_phase = 'execute',
-             waiting_for_employee_id = ?,
-             status_reason = '',
-             updated_at = ?
-         WHERE id = ?",
-    )
-    .bind(&assignee_employee_id)
-    .bind(&now)
-    .bind(&run_id)
-    .execute(&mut *dispatch_tx)
-    .await
-    .map_err(|e| e.to_string())?;
-    dispatch_tx.commit().await.map_err(|e| e.to_string())?;
+    .await?;
 
     let execution = execute_group_step_in_employee_context_with_pool(
         pool,
@@ -2800,129 +2744,32 @@ pub async fn run_group_step_with_pool(
     let output = match execution {
         Ok(output) => output,
         Err(error) => {
-            let failed_summary = error.chars().take(120).collect::<String>();
-            let mut failed_tx = pool.begin().await.map_err(|e| e.to_string())?;
-            sqlx::query(
-                "UPDATE group_run_steps
-                 SET status = 'failed',
-                     output = ?,
-                     output_summary = ?,
-                     session_id = ?,
-                     finished_at = ?,
-                     phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
-                 WHERE id = ?",
+            service::mark_group_run_step_failed_with_pool(
+                pool,
+                &run_id,
+                &step_id,
+                &session_id,
+                &assignee_employee_id,
+                &dispatch_source_employee_id,
+                &error,
+                &now,
             )
-            .bind(&error)
-            .bind(&failed_summary)
-            .bind(&session_id)
-            .bind(&now)
-            .bind(&step_id)
-            .execute(&mut *failed_tx)
-            .await
-            .map_err(|e| e.to_string())?;
-            sqlx::query(
-                "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
-                 VALUES (?, ?, ?, 'step_failed', ?, ?)",
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(&run_id)
-            .bind(&step_id)
-            .bind(
-                serde_json::json!({
-                    "step_id": step_id,
-                    "session_id": session_id,
-                    "status": "failed",
-                    "error": error,
-                    "assignee_employee_id": assignee_employee_id,
-                    "dispatch_source_employee_id": dispatch_source_employee_id,
-                })
-                .to_string(),
-            )
-            .bind(&now)
-            .execute(&mut *failed_tx)
-            .await
-            .map_err(|e| e.to_string())?;
-            sqlx::query(
-                "UPDATE group_runs
-                 SET state = 'failed',
-                     current_phase = 'execute',
-                     waiting_for_employee_id = ?,
-                     status_reason = ?,
-                     updated_at = ?
-                 WHERE id = ?",
-            )
-            .bind(&assignee_employee_id)
-            .bind(&error)
-            .bind(&now)
-            .bind(&run_id)
-            .execute(&mut *failed_tx)
-            .await
-            .map_err(|e| e.to_string())?;
-            failed_tx.commit().await.map_err(|e| e.to_string())?;
+            .await?;
             return Err(error);
         }
     };
-    let output_summary = output.chars().take(120).collect::<String>();
 
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query(
-        "UPDATE group_run_steps
-         SET status = 'completed',
-             output = ?,
-             output_summary = ?,
-             session_id = ?,
-             finished_at = ?,
-             phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
-         WHERE id = ?",
+    service::mark_group_run_step_completed_with_pool(
+        pool,
+        &run_id,
+        &step_id,
+        &session_id,
+        &assignee_employee_id,
+        &dispatch_source_employee_id,
+        &output,
+        &now,
     )
-    .bind(&output)
-    .bind(&output_summary)
-    .bind(&session_id)
-    .bind(&now)
-    .bind(&step_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    sqlx::query(
-        "INSERT INTO group_run_events (id, run_id, step_id, event_type, payload_json, created_at)
-         VALUES (?, ?, ?, 'step_completed', ?, ?)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(&run_id)
-    .bind(&step_id)
-    .bind(
-        serde_json::json!({
-            "step_id": step_id,
-            "session_id": session_id,
-            "status": "completed",
-            "output_summary": output_summary,
-            "assignee_employee_id": assignee_employee_id,
-            "dispatch_source_employee_id": dispatch_source_employee_id,
-        })
-        .to_string(),
-    )
-    .bind(&now)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    sqlx::query(
-        "UPDATE group_runs
-         SET state = 'executing',
-             current_phase = 'execute',
-             status_reason = '',
-             waiting_for_employee_id = '',
-             updated_at = ?
-         WHERE id = ?",
-    )
-    .bind(&now)
-    .bind(&run_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    tx.commit().await.map_err(|e| e.to_string())?;
+    .await?;
     maybe_finalize_group_run_with_pool(pool, &run_id).await?;
 
     Ok(GroupStepExecutionResult {

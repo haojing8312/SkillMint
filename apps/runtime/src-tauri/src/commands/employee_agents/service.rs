@@ -4,14 +4,17 @@ use super::repo::{
     delete_feishu_bindings_for_agent, find_displaced_default_feishu_agent_ids,
     find_displaced_scoped_feishu_agent_ids, find_employee_db_id_by_employee_id,
     find_latest_thread_session_id, find_recent_route_session_id, find_thread_session_record,
-    find_group_run_state, get_employee_association_row, get_employee_group_entry_row,
-    insert_feishu_binding, insert_group_run_event, insert_inbound_event_link, insert_session_seed,
-    list_agent_employee_rows, list_agent_scope_rows, list_failed_execute_assignees,
-    list_failed_group_run_steps, list_skill_ids_for_employee, mark_group_run_done_after_retry,
-    pause_group_run, replace_employee_skill_bindings, reset_group_run_step_for_reassignment,
-    resume_group_run, update_employee_enabled_scopes, update_group_run_after_reassignment,
-    update_session_employee_id, upsert_agent_employee_record, upsert_thread_session_link,
-    cancel_group_run, complete_failed_group_run_step, employee_exists_for_reassignment,
+    find_group_run_execute_step_context, find_group_run_state, get_employee_association_row,
+    get_employee_group_entry_row, insert_feishu_binding, insert_group_run_event,
+    insert_inbound_event_link, insert_session_seed, list_agent_employee_rows,
+    list_agent_scope_rows, list_failed_execute_assignees, list_failed_group_run_steps,
+    list_skill_ids_for_employee, mark_group_run_done_after_retry, mark_group_run_executing,
+    mark_group_run_failed, mark_group_run_step_completed, mark_group_run_step_dispatched,
+    mark_group_run_step_failed, pause_group_run, replace_employee_skill_bindings,
+    reset_group_run_step_for_reassignment, resume_group_run, update_employee_enabled_scopes,
+    update_group_run_after_reassignment, update_session_employee_id, upsert_agent_employee_record,
+    upsert_thread_session_link, cancel_group_run, clear_group_run_execute_waiting_state,
+    complete_failed_group_run_step, employee_exists_for_reassignment,
     find_group_run_step_reassign_row, InboundEventLinkInput, InsertFeishuBindingInput,
     SessionSeedInput, ThreadSessionLinkInput, UpsertAgentEmployeeRecordInput,
 };
@@ -810,6 +813,141 @@ pub(super) async fn reassign_group_run_step_with_pool(
         &now,
     )
     .await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn load_group_run_execute_step_context(
+    pool: &SqlitePool,
+    step_id: &str,
+) -> Result<
+    (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ),
+    String,
+> {
+    let row = find_group_run_execute_step_context(pool, step_id)
+        .await?
+        .ok_or_else(|| "group run step not found".to_string())?;
+    if row.step_type != "execute" {
+        return Err("only execute steps can be run".to_string());
+    }
+    Ok((
+        row.step_id,
+        row.run_id,
+        row.assignee_employee_id,
+        row.dispatch_source_employee_id,
+        row.existing_session_id,
+        row.step_input,
+        row.user_goal,
+        row.step_type,
+    ))
+}
+
+pub(super) async fn mark_group_run_step_dispatched_with_pool(
+    pool: &SqlitePool,
+    run_id: &str,
+    step_id: &str,
+    session_id: &str,
+    assignee_employee_id: &str,
+    dispatch_source_employee_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    mark_group_run_step_dispatched(&mut tx, step_id, session_id, now).await?;
+    insert_group_run_event(
+        &mut tx,
+        run_id,
+        step_id,
+        "step_dispatched",
+        &serde_json::json!({
+            "step_id": step_id,
+            "session_id": session_id,
+            "assignee_employee_id": assignee_employee_id,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
+        })
+        .to_string(),
+        now,
+    )
+    .await?;
+    mark_group_run_executing(&mut tx, run_id, assignee_employee_id, now).await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_step_failed_with_pool(
+    pool: &SqlitePool,
+    run_id: &str,
+    step_id: &str,
+    session_id: &str,
+    assignee_employee_id: &str,
+    dispatch_source_employee_id: &str,
+    error: &str,
+    now: &str,
+) -> Result<(), String> {
+    let failed_summary = error.chars().take(120).collect::<String>();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    mark_group_run_step_failed(&mut tx, step_id, error, &failed_summary, session_id, now).await?;
+    insert_group_run_event(
+        &mut tx,
+        run_id,
+        step_id,
+        "step_failed",
+        &serde_json::json!({
+            "step_id": step_id,
+            "session_id": session_id,
+            "status": "failed",
+            "error": error,
+            "assignee_employee_id": assignee_employee_id,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
+        })
+        .to_string(),
+        now,
+    )
+    .await?;
+    mark_group_run_failed(&mut tx, run_id, assignee_employee_id, error, now).await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_step_completed_with_pool(
+    pool: &SqlitePool,
+    run_id: &str,
+    step_id: &str,
+    session_id: &str,
+    assignee_employee_id: &str,
+    dispatch_source_employee_id: &str,
+    output: &str,
+    now: &str,
+) -> Result<(), String> {
+    let output_summary = output.chars().take(120).collect::<String>();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    mark_group_run_step_completed(&mut tx, step_id, output, &output_summary, session_id, now).await?;
+    insert_group_run_event(
+        &mut tx,
+        run_id,
+        step_id,
+        "step_completed",
+        &serde_json::json!({
+            "step_id": step_id,
+            "session_id": session_id,
+            "status": "completed",
+            "output_summary": output_summary,
+            "assignee_employee_id": assignee_employee_id,
+            "dispatch_source_employee_id": dispatch_source_employee_id,
+        })
+        .to_string(),
+        now,
+    )
+    .await?;
+    clear_group_run_execute_waiting_state(&mut tx, run_id, now).await?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }

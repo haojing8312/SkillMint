@@ -87,6 +87,17 @@ pub(super) struct GroupRunStepReassignRow {
     pub previous_output: String,
 }
 
+pub(super) struct GroupRunExecuteStepContextRow {
+    pub step_id: String,
+    pub run_id: String,
+    pub assignee_employee_id: String,
+    pub dispatch_source_employee_id: String,
+    pub step_type: String,
+    pub existing_session_id: String,
+    pub step_input: String,
+    pub user_goal: String,
+}
+
 pub(super) async fn list_agent_employee_rows(
     pool: &SqlitePool,
 ) -> Result<Vec<AgentEmployeeRow>, String> {
@@ -783,6 +794,193 @@ pub(super) async fn update_group_run_after_reassignment(
     .bind(state)
     .bind(waiting_for_employee_id)
     .bind(status_reason)
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn find_group_run_execute_step_context(
+    pool: &SqlitePool,
+    step_id: &str,
+) -> Result<Option<GroupRunExecuteStepContextRow>, String> {
+    let row = sqlx::query(
+        "SELECT s.id, s.run_id, s.assignee_employee_id, COALESCE(s.dispatch_source_employee_id, ''),
+                s.step_type, COALESCE(s.session_id, ''), COALESCE(s.input, ''), COALESCE(r.user_goal, '')
+         FROM group_run_steps s
+         INNER JOIN group_runs r ON r.id = s.run_id
+         WHERE s.id = ?",
+    )
+    .bind(step_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.map(|record| GroupRunExecuteStepContextRow {
+        step_id: record.try_get(0).expect("execute step row step_id"),
+        run_id: record.try_get(1).expect("execute step row run_id"),
+        assignee_employee_id: record
+            .try_get(2)
+            .expect("execute step row assignee_employee_id"),
+        dispatch_source_employee_id: record
+            .try_get(3)
+            .expect("execute step row dispatch_source_employee_id"),
+        step_type: record.try_get(4).expect("execute step row step_type"),
+        existing_session_id: record
+            .try_get(5)
+            .expect("execute step row existing_session_id"),
+        step_input: record.try_get(6).expect("execute step row step_input"),
+        user_goal: record.try_get(7).expect("execute step row user_goal"),
+    }))
+}
+
+pub(super) async fn mark_group_run_step_dispatched(
+    tx: &mut Transaction<'_, Sqlite>,
+    step_id: &str,
+    session_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'running',
+             session_id = ?,
+             started_at = CASE WHEN TRIM(started_at) = '' THEN ? ELSE started_at END,
+             phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
+         WHERE id = ?",
+    )
+    .bind(session_id)
+    .bind(now)
+    .bind(step_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_executing(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    waiting_for_employee_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'executing',
+             current_phase = 'execute',
+             waiting_for_employee_id = ?,
+             status_reason = '',
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(waiting_for_employee_id)
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_step_failed(
+    tx: &mut Transaction<'_, Sqlite>,
+    step_id: &str,
+    output: &str,
+    output_summary: &str,
+    session_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'failed',
+             output = ?,
+             output_summary = ?,
+             session_id = ?,
+             finished_at = ?,
+             phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
+         WHERE id = ?",
+    )
+    .bind(output)
+    .bind(output_summary)
+    .bind(session_id)
+    .bind(now)
+    .bind(step_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_failed(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    waiting_for_employee_id: &str,
+    status_reason: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'failed',
+             current_phase = 'execute',
+             waiting_for_employee_id = ?,
+             status_reason = ?,
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(waiting_for_employee_id)
+    .bind(status_reason)
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn mark_group_run_step_completed(
+    tx: &mut Transaction<'_, Sqlite>,
+    step_id: &str,
+    output: &str,
+    output_summary: &str,
+    session_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET status = 'completed',
+             output = ?,
+             output_summary = ?,
+             session_id = ?,
+             finished_at = ?,
+             phase = CASE WHEN TRIM(phase) = '' THEN 'execute' ELSE phase END
+         WHERE id = ?",
+    )
+    .bind(output)
+    .bind(output_summary)
+    .bind(session_id)
+    .bind(now)
+    .bind(step_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn clear_group_run_execute_waiting_state(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = 'executing',
+             current_phase = 'execute',
+             status_reason = '',
+             waiting_for_employee_id = '',
+             updated_at = ?
+         WHERE id = ?",
+    )
     .bind(now)
     .bind(run_id)
     .execute(&mut **tx)
