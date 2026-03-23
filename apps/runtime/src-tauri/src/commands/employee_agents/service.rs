@@ -6,13 +6,14 @@ use super::repo::{
     find_latest_thread_session_id, find_recent_route_session_id, find_thread_session_record,
     find_group_run_state, get_employee_association_row, get_employee_group_entry_row,
     insert_feishu_binding, insert_group_run_event, insert_inbound_event_link, insert_session_seed,
-    list_agent_employee_rows, list_agent_scope_rows, list_failed_group_run_steps,
-    list_skill_ids_for_employee, mark_group_run_done_after_retry, pause_group_run,
-    replace_employee_skill_bindings, resume_group_run, update_employee_enabled_scopes,
+    list_agent_employee_rows, list_agent_scope_rows, list_failed_execute_assignees,
+    list_failed_group_run_steps, list_skill_ids_for_employee, mark_group_run_done_after_retry,
+    pause_group_run, replace_employee_skill_bindings, reset_group_run_step_for_reassignment,
+    resume_group_run, update_employee_enabled_scopes, update_group_run_after_reassignment,
     update_session_employee_id, upsert_agent_employee_record, upsert_thread_session_link,
-    cancel_group_run, complete_failed_group_run_step, InboundEventLinkInput,
-    InsertFeishuBindingInput, SessionSeedInput, ThreadSessionLinkInput,
-    UpsertAgentEmployeeRecordInput,
+    cancel_group_run, complete_failed_group_run_step, employee_exists_for_reassignment,
+    find_group_run_step_reassign_row, InboundEventLinkInput, InsertFeishuBindingInput,
+    SessionSeedInput, ThreadSessionLinkInput, UpsertAgentEmployeeRecordInput,
 };
 use super::{
     AgentEmployee, EmployeeInboundDispatchSession, EnsuredEmployeeSession,
@@ -722,6 +723,93 @@ pub(super) async fn retry_employee_group_run_failed_steps_with_pool(
         complete_failed_group_run_step(&mut tx, &row.step_id, &retried_output, &now).await?;
     }
     mark_group_run_done_after_retry(&mut tx, run_id, &now).await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn reassign_group_run_step_with_pool(
+    pool: &SqlitePool,
+    step_id: &str,
+    assignee_employee_id: &str,
+) -> Result<(), String> {
+    let new_assignee = assignee_employee_id.trim().to_lowercase();
+    if new_assignee.is_empty() {
+        return Err("assignee_employee_id is required".to_string());
+    }
+
+    let step_row = find_group_run_step_reassign_row(pool, step_id)
+        .await?
+        .ok_or_else(|| "group run step not found".to_string())?;
+    if step_row.step_type != "execute" {
+        return Err("only execute steps can be reassigned".to_string());
+    }
+    if step_row.status != "failed" && step_row.status != "pending" {
+        return Err("only failed or pending steps can be reassigned".to_string());
+    }
+
+    if !employee_exists_for_reassignment(pool, &new_assignee).await? {
+        return Err("target employee not found".to_string());
+    }
+
+    let (eligible_targets, has_execute_rules) = super::load_execute_reassignment_targets_with_pool(
+        pool,
+        &step_row.run_id,
+        Some(step_row.dispatch_source_employee_id.as_str()),
+    )
+    .await?;
+    if has_execute_rules && !eligible_targets.iter().any(|candidate| candidate == &new_assignee) {
+        return Err("target employee is not eligible for execute reassignment".to_string());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    reset_group_run_step_for_reassignment(&mut tx, step_id, &new_assignee).await?;
+
+    let remaining_failed_assignees = list_failed_execute_assignees(&mut tx, &step_row.run_id).await?;
+    if remaining_failed_assignees.is_empty() {
+        update_group_run_after_reassignment(
+            &mut tx,
+            &step_row.run_id,
+            "executing",
+            &new_assignee,
+            "",
+            &now,
+        )
+        .await?;
+    } else {
+        let waiting_for_employee_id = remaining_failed_assignees[0].clone();
+        let status_reason = format!("{}执行失败", remaining_failed_assignees.join("、"));
+        update_group_run_after_reassignment(
+            &mut tx,
+            &step_row.run_id,
+            "failed",
+            &waiting_for_employee_id,
+            &status_reason,
+            &now,
+        )
+        .await?;
+    }
+
+    let previous_output_summary = if step_row.previous_output_summary.trim().is_empty() {
+        step_row.previous_output.chars().take(120).collect::<String>()
+    } else {
+        step_row.previous_output_summary
+    };
+    insert_group_run_event(
+        &mut tx,
+        &step_row.run_id,
+        step_id,
+        "step_reassigned",
+        &serde_json::json!({
+            "assignee_employee_id": new_assignee,
+            "dispatch_source_employee_id": step_row.dispatch_source_employee_id,
+            "previous_assignee_employee_id": step_row.previous_assignee_employee_id,
+            "previous_output_summary": previous_output_summary,
+        })
+        .to_string(),
+        &now,
+    )
+    .await?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }

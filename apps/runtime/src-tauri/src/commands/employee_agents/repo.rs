@@ -77,6 +77,16 @@ pub(super) struct FailedGroupRunStepRow {
     pub output: String,
 }
 
+pub(super) struct GroupRunStepReassignRow {
+    pub run_id: String,
+    pub status: String,
+    pub step_type: String,
+    pub dispatch_source_employee_id: String,
+    pub previous_assignee_employee_id: String,
+    pub previous_output_summary: String,
+    pub previous_output: String,
+}
+
 pub(super) async fn list_agent_employee_rows(
     pool: &SqlitePool,
 ) -> Result<Vec<AgentEmployeeRow>, String> {
@@ -659,6 +669,120 @@ pub(super) async fn mark_group_run_done_after_retry(
          SET state = 'done', current_round = current_round + 1, updated_at = ?
          WHERE id = ?",
     )
+    .bind(now)
+    .bind(run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn find_group_run_step_reassign_row(
+    pool: &SqlitePool,
+    step_id: &str,
+) -> Result<Option<GroupRunStepReassignRow>, String> {
+    let row = sqlx::query(
+        "SELECT run_id, status, step_type, COALESCE(dispatch_source_employee_id, ''), COALESCE(assignee_employee_id, ''),
+                COALESCE(output_summary, ''), COALESCE(output, '')
+         FROM group_run_steps
+         WHERE id = ?",
+    )
+    .bind(step_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.map(|record| GroupRunStepReassignRow {
+        run_id: record.try_get(0).expect("reassign row run_id"),
+        status: record.try_get(1).expect("reassign row status"),
+        step_type: record.try_get(2).expect("reassign row step_type"),
+        dispatch_source_employee_id: record
+            .try_get(3)
+            .expect("reassign row dispatch_source_employee_id"),
+        previous_assignee_employee_id: record
+            .try_get(4)
+            .expect("reassign row previous_assignee_employee_id"),
+        previous_output_summary: record
+            .try_get(5)
+            .expect("reassign row previous_output_summary"),
+        previous_output: record.try_get(6).expect("reassign row previous_output"),
+    }))
+}
+
+pub(super) async fn employee_exists_for_reassignment(
+    pool: &SqlitePool,
+    employee_id: &str,
+) -> Result<bool, String> {
+    let row = sqlx::query("SELECT id FROM agent_employees WHERE lower(employee_id) = lower(?) OR lower(role_id) = lower(?) LIMIT 1")
+        .bind(employee_id)
+        .bind(employee_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(row.is_some())
+}
+
+pub(super) async fn reset_group_run_step_for_reassignment(
+    tx: &mut Transaction<'_, Sqlite>,
+    step_id: &str,
+    assignee_employee_id: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_run_steps
+         SET assignee_employee_id = ?,
+             status = 'pending',
+             output = '',
+             output_summary = '',
+             session_id = '',
+             started_at = '',
+             finished_at = '',
+             attempt_no = attempt_no + 1
+         WHERE id = ?",
+    )
+    .bind(assignee_employee_id)
+    .bind(step_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn list_failed_execute_assignees(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+) -> Result<Vec<String>, String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT assignee_employee_id
+         FROM group_run_steps
+         WHERE run_id = ? AND step_type = 'execute' AND status = 'failed'
+         ORDER BY round_no ASC, id ASC",
+    )
+    .bind(run_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+pub(super) async fn update_group_run_after_reassignment(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    state: &str,
+    waiting_for_employee_id: &str,
+    status_reason: &str,
+    now: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE group_runs
+         SET state = ?,
+             current_phase = 'execute',
+             waiting_for_employee_id = ?,
+             status_reason = ?,
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(state)
+    .bind(waiting_for_employee_id)
+    .bind(status_reason)
     .bind(now)
     .bind(run_id)
     .execute(&mut **tx)
