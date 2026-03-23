@@ -39,11 +39,6 @@ These files should be the first ongoing refactor targets. New feature work in th
   - First split direction: keep transport and command surface thin, move stateful orchestration and persistence into submodules
   - First safe step: separate read/write persistence helpers from session or runtime flow orchestration
 
-- `apps/runtime/src-tauri/src/commands/chat_session_io.rs` — 2048 lines
-  - Why first: startup-critical and persistence-heavy
-  - First split direction: `repo` for session storage plus `service` for session lifecycle rules
-  - First safe step: isolate raw SQLite access from session selection and lifecycle behavior
-
 ## Priority 2: Runtime Core And Infrastructure
 
 These files are not command entrypoints, but they are large enough to deserve planned thinning.
@@ -64,6 +59,12 @@ These files are not command entrypoints, but they are large enough to deserve pl
   - Status: completed as the first formal Rust splitting template
   - Outcome: root file is now below the `800` split-design threshold
   - Follow-up: reuse this module structure as the reference pattern for later command-file governance
+
+- `apps/runtime/src-tauri/src/commands/chat_session_io.rs` — now 757 lines
+  - Status: completed as the first formal chat/session data-plane split
+  - Outcome: root file is now below the `800` split-design threshold
+  - Delivered structure: `session_store`, `session_view`, `session_export`, and `session_compaction`
+  - Follow-up: reuse this structure when shrinking other session-facing Rust files such as `chat_runtime_io.rs`
 
 ## Priority 3: Large Child Modules And Tooling
 
@@ -114,7 +115,7 @@ These files are above 500 lines and should be watched, but they are not first in
 1. Use `employee_agents` as the formal reference template for future command splitting.
 2. Tackle `feishu_gateway.rs` next because it mixes external integration with runtime behavior and is now the most natural follow-on target.
 3. Tackle `openclaw_plugins.rs` as a dedicated multi-step effort because of its sheer size.
-4. Then move to `clawhub.rs`, `chat_runtime_io.rs`, and `chat_session_io.rs`.
+4. Then move to `clawhub.rs` and `chat_runtime_io.rs`.
 5. Re-run `node scripts/report-rust-large-files.mjs` after each split milestone and update this backlog rather than treating it as static.
 
 ## Definition Of Backlog Progress
