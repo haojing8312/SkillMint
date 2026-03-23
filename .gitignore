@@ -16,6 +16,7 @@ package-lock.json
 AGENTS.md
 !apps/runtime/src-tauri/AGENTS.md
 !apps/runtime/src-tauri/src/commands/AGENTS.md
+!apps/runtime/src/AGENTS.md
 nul
 apps/runtime/sidecar/nul
 temp/

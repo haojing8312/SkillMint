@@ -60,6 +60,15 @@ These skills should be treated as lightweight guardrails for the maintainer's ow
 - Keep the root file short; Rust-specific module placement and layering rules belong in the local Tauri guidance file.
 - `apps/runtime/src-tauri/src/commands/employee_agents.rs` is now the current Rust-side reference template for how a giant command file should be decomposed.
 
+## Frontend Runtime Guidance
+- For work under `apps/runtime/src/`, prefer the closer local guidance in `apps/runtime/src/AGENTS.md`.
+- Frontend runtime file budgets use governance triggers rather than hard bans:
+  - `<= 300` target
+  - `301-500` warning for new page state, Tauri I/O, or major render branches
+  - `501+` requires a short split plan before feature work
+- Keep the root file short; frontend-specific module placement and layering rules belong in the local runtime guidance file.
+- Use the current `App.tsx -> scenes/* -> components/*` direction as the baseline split pattern for shrinking large frontend runtime files.
+
 ## Skill Priority And Coordination
 - Treat repo-local `workclaw-*` skills as the project workflow layer. They decide which WorkClaw-specific path, commands, and output contract apply.
 - Treat `superpowers` skills as the general method layer. They guide how to design, debug, verify, review, and execute work once the WorkClaw-specific path is known.
