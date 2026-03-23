@@ -98,6 +98,24 @@ pub(super) struct GroupRunExecuteStepContextRow {
     pub user_goal: String,
 }
 
+pub(super) struct GroupStepSessionRow {
+    pub skill_id: String,
+    pub model_id: String,
+    pub work_dir: String,
+}
+
+pub(super) struct ModelConfigRow {
+    pub api_format: String,
+    pub base_url: String,
+    pub model_name: String,
+    pub api_key: String,
+}
+
+pub(super) struct SessionMessageRow {
+    pub role: String,
+    pub content: String,
+}
+
 pub(super) struct PendingReviewStepRow {
     pub step_id: String,
     pub assignee_employee_id: String,
@@ -569,6 +587,89 @@ pub(super) async fn insert_inbound_event_link(
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub(super) async fn find_group_step_session_row(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<Option<GroupStepSessionRow>, String> {
+    let row = sqlx::query(
+        "SELECT skill_id, model_id, COALESCE(work_dir, '')
+         FROM sessions
+         WHERE id = ?",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.map(|record| GroupStepSessionRow {
+        skill_id: record.try_get(0).expect("group step session skill_id"),
+        model_id: record.try_get(1).expect("group step session model_id"),
+        work_dir: record.try_get(2).expect("group step session work_dir"),
+    }))
+}
+
+pub(super) async fn find_model_config_row(
+    pool: &SqlitePool,
+    model_id: &str,
+) -> Result<Option<ModelConfigRow>, String> {
+    let row = sqlx::query(
+        "SELECT api_format, base_url, model_name, api_key
+         FROM model_configs
+         WHERE id = ?",
+    )
+    .bind(model_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row.map(|record| ModelConfigRow {
+        api_format: record.try_get(0).expect("model config api_format"),
+        base_url: record.try_get(1).expect("model config base_url"),
+        model_name: record.try_get(2).expect("model config model_name"),
+        api_key: record.try_get(3).expect("model config api_key"),
+    }))
+}
+
+pub(super) async fn insert_session_message(
+    pool: &SqlitePool,
+    session_id: &str,
+    role: &str,
+    content: &str,
+    created_at: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO messages (id, session_id, role, content, created_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(role)
+    .bind(content)
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(super) async fn list_session_message_rows(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<Vec<SessionMessageRow>, String> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(role, content)| SessionMessageRow { role, content })
+        .collect())
 }
 
 pub(super) async fn pause_group_run(

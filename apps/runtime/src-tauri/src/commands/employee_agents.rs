@@ -1,18 +1,13 @@
-use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{
-    parse_run_stop_reason, RunBudgetPolicy, RunBudgetScope, RunStopReasonKind,
+    RunBudgetPolicy, RunBudgetScope,
 };
 use crate::agent::skill_config::SkillConfig;
-use crate::agent::tools::{EmployeeManageTool, MemoryTool};
-use crate::agent::{AgentExecutor, ToolRegistry};
-use crate::commands::chat_runtime_io::extract_assistant_text_content;
 use crate::commands::models::resolve_default_model_id_with_pool;
 use crate::commands::skills::DbState;
 use crate::im::types::ImEvent;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
-use std::sync::Arc;
 use tauri::{Manager, State};
 use uuid::Uuid;
 
@@ -2078,183 +2073,16 @@ async fn execute_group_step_in_employee_context_with_pool(
     user_goal: &str,
     step_input: &str,
 ) -> Result<String, String> {
-    let session_row = sqlx::query(
-        "SELECT skill_id, model_id, COALESCE(work_dir, '')
-         FROM sessions
-         WHERE id = ?",
+    service::execute_group_step_in_employee_context_with_pool(
+        pool,
+        run_id,
+        step_id,
+        session_id,
+        assignee_employee_id,
+        user_goal,
+        step_input,
     )
-    .bind(session_id)
-    .fetch_optional(pool)
     .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "group step session not found".to_string())?;
-
-    let session_skill_id: String = session_row.try_get(0).map_err(|e| e.to_string())?;
-    let model_id: String = session_row.try_get(1).map_err(|e| e.to_string())?;
-    let work_dir: String = session_row.try_get(2).map_err(|e| e.to_string())?;
-
-    let employee = list_agent_employees_with_pool(pool)
-        .await?
-        .into_iter()
-        .find(|item| {
-            item.employee_id.eq_ignore_ascii_case(assignee_employee_id)
-                || item.role_id.eq_ignore_ascii_case(assignee_employee_id)
-                || item.id.eq_ignore_ascii_case(assignee_employee_id)
-        })
-        .ok_or_else(|| "assignee employee not found".to_string())?;
-
-    let model_row = sqlx::query(
-        "SELECT api_format, base_url, model_name, api_key
-         FROM model_configs
-         WHERE id = ?",
-    )
-    .bind(&model_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "model config not found".to_string())?;
-    let api_format: String = model_row.try_get(0).map_err(|e| e.to_string())?;
-    let base_url: String = model_row.try_get(1).map_err(|e| e.to_string())?;
-    let model_name: String = model_row.try_get(2).map_err(|e| e.to_string())?;
-    let api_key: String = model_row.try_get(3).map_err(|e| e.to_string())?;
-
-    let (system_prompt, allowed_tools, max_iterations) =
-        build_group_step_system_prompt(&employee, &session_skill_id);
-    let user_prompt =
-        build_group_step_user_prompt(run_id, step_id, user_goal, step_input, &employee);
-
-    let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO messages (id, session_id, role, content, created_at)
-         VALUES (?, ?, 'user', ?, ?)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(session_id)
-    .bind(&user_prompt)
-    .bind(&now)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let history_rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY created_at ASC",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    let messages: Vec<Value> = history_rows
-        .into_iter()
-        .map(|(role, content)| {
-            let normalized_content = if role == "assistant" {
-                extract_assistant_text_content(&content)
-            } else {
-                content
-            };
-            json!({ "role": role, "content": normalized_content })
-        })
-        .collect();
-
-    let registry = Arc::new(ToolRegistry::with_standard_tools());
-    let memory_root = if work_dir.trim().is_empty() {
-        std::env::temp_dir().join("workclaw-group-run-memory")
-    } else {
-        PathBuf::from(work_dir.trim())
-            .join("openclaw")
-            .join(employee.employee_id.trim())
-            .join("memory")
-    };
-    let memory_dir = memory_root.join(if session_skill_id.trim().is_empty() {
-        "builtin-general"
-    } else {
-        session_skill_id.trim()
-    });
-    std::fs::create_dir_all(&memory_dir).map_err(|e| e.to_string())?;
-    registry.register(Arc::new(MemoryTool::new(memory_dir)));
-    registry.register(Arc::new(EmployeeManageTool::new(pool.clone())));
-
-    let executor = AgentExecutor::with_max_iterations(Arc::clone(&registry), max_iterations);
-    let final_messages = match executor
-        .execute_turn(
-            &api_format,
-            &base_url,
-            &api_key,
-            &model_name,
-            &system_prompt,
-            messages,
-            |_| {},
-            None,
-            None,
-            allowed_tools.as_deref(),
-            PermissionMode::Unrestricted,
-            None,
-            if work_dir.trim().is_empty() {
-                None
-            } else {
-                Some(work_dir.clone())
-            },
-            Some(max_iterations),
-            None,
-            None,
-            None,
-        )
-        .await
-    {
-        Ok(final_messages) => final_messages,
-        Err(error) => {
-            let error_text = error.to_string();
-            let stop_reason = match parse_run_stop_reason(&error_text) {
-                Some(reason) => reason,
-                None => return Err(error_text),
-            };
-            if stop_reason.kind != RunStopReasonKind::MaxTurns {
-                return Err(error_text);
-            }
-
-            let fallback_output = build_group_step_iteration_fallback_output(
-                &employee,
-                user_goal,
-                step_input,
-                stop_reason
-                    .detail
-                    .as_deref()
-                    .unwrap_or(stop_reason.message.as_str()),
-            );
-            let finished_at = chrono::Utc::now().to_rfc3339();
-            sqlx::query(
-                "INSERT INTO messages (id, session_id, role, content, created_at)
-                 VALUES (?, ?, 'assistant', ?, ?)",
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(session_id)
-            .bind(&fallback_output)
-            .bind(&finished_at)
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-            return Ok(fallback_output);
-        }
-    };
-
-    let assistant_output = extract_assistant_text(&final_messages);
-    if assistant_output.trim().is_empty() {
-        return Err("employee step execution returned empty assistant output".to_string());
-    }
-
-    let finished_at = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO messages (id, session_id, role, content, created_at)
-         VALUES (?, ?, 'assistant', ?, ?)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(session_id)
-    .bind(&assistant_output)
-    .bind(&finished_at)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(assistant_output)
 }
 
 async fn maybe_finalize_group_run_with_pool(pool: &SqlitePool, run_id: &str) -> Result<(), String> {

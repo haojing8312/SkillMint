@@ -3,16 +3,19 @@ use super::repo::{
     delete_displaced_default_feishu_bindings, delete_displaced_scoped_feishu_bindings,
     delete_feishu_bindings_for_agent, find_displaced_default_feishu_agent_ids,
     find_displaced_scoped_feishu_agent_ids, find_employee_db_id_by_employee_id,
-    find_latest_thread_session_id, find_recent_route_session_id, find_thread_session_record,
+    find_group_step_session_row, find_latest_thread_session_id, find_model_config_row,
+    find_recent_route_session_id, find_thread_session_record,
     find_group_run_execute_step_context, find_group_run_finalize_state, find_group_run_snapshot_row,
     find_group_run_state, find_latest_assistant_message_content, find_pending_review_step,
     get_employee_association_row, get_employee_group_entry_row, get_group_run_session_id,
     insert_feishu_binding, insert_group_run_assistant_message, insert_group_run_event,
-    insert_inbound_event_link, insert_session_seed, list_agent_employee_rows,
+    insert_inbound_event_link, insert_session_message, insert_session_seed,
+    list_agent_employee_rows,
     list_agent_scope_rows, list_failed_execute_assignees, list_failed_group_run_steps,
     list_group_run_event_snapshot_rows, list_group_run_execute_outputs,
-    list_group_run_step_snapshot_rows, list_pending_execute_step_ids, list_skill_ids_for_employee,
-    load_group_run_blocking_counts, mark_group_run_done_after_retry, mark_group_run_executing,
+    list_group_run_step_snapshot_rows, list_pending_execute_step_ids, list_session_message_rows,
+    list_skill_ids_for_employee, load_group_run_blocking_counts,
+    mark_group_run_done_after_retry, mark_group_run_executing,
     mark_group_run_failed, mark_group_run_finalized, mark_group_run_step_completed,
     mark_group_run_step_dispatched, mark_group_run_step_failed, mark_group_run_waiting_review,
     pause_group_run, replace_employee_skill_bindings, reset_group_run_step_for_reassignment,
@@ -29,6 +32,11 @@ use super::{
     SaveFeishuEmployeeAssociationInput,
     UpsertAgentEmployeeInput,
 };
+use crate::agent::permissions::PermissionMode;
+use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
+use crate::agent::tools::{EmployeeManageTool, MemoryTool};
+use crate::agent::{AgentExecutor, ToolRegistry};
+use crate::commands::chat_runtime_io::extract_assistant_text_content;
 use crate::commands::im_routing::{list_im_routing_bindings_with_pool, ImRoutingBinding};
 use crate::commands::models::resolve_default_model_id_with_pool;
 use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
@@ -36,6 +44,7 @@ use crate::im::types::ImEvent;
 use serde_json::Value;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::PathBuf;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub(super) fn normalize_enabled_scopes_for_storage(enabled_scopes: &[String]) -> Vec<String> {
@@ -1065,6 +1074,137 @@ pub(super) async fn maybe_finalize_group_run_with_pool(
     .await?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub(super) async fn execute_group_step_in_employee_context_with_pool(
+    pool: &SqlitePool,
+    run_id: &str,
+    step_id: &str,
+    session_id: &str,
+    assignee_employee_id: &str,
+    user_goal: &str,
+    step_input: &str,
+) -> Result<String, String> {
+    let session_row = find_group_step_session_row(pool, session_id)
+        .await?
+        .ok_or_else(|| "group step session not found".to_string())?;
+
+    let employee = list_agent_employees_with_pool(pool)
+        .await?
+        .into_iter()
+        .find(|item| {
+            item.employee_id.eq_ignore_ascii_case(assignee_employee_id)
+                || item.role_id.eq_ignore_ascii_case(assignee_employee_id)
+                || item.id.eq_ignore_ascii_case(assignee_employee_id)
+        })
+        .ok_or_else(|| "assignee employee not found".to_string())?;
+
+    let model_row = find_model_config_row(pool, &session_row.model_id)
+        .await?
+        .ok_or_else(|| "model config not found".to_string())?;
+
+    let (system_prompt, allowed_tools, max_iterations) =
+        super::build_group_step_system_prompt(&employee, &session_row.skill_id);
+    let user_prompt =
+        super::build_group_step_user_prompt(run_id, step_id, user_goal, step_input, &employee);
+
+    let now = chrono::Utc::now().to_rfc3339();
+    insert_session_message(pool, session_id, "user", &user_prompt, &now).await?;
+
+    let messages: Vec<Value> = list_session_message_rows(pool, session_id)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let normalized_content = if row.role == "assistant" {
+                extract_assistant_text_content(&row.content)
+            } else {
+                row.content
+            };
+            serde_json::json!({ "role": row.role, "content": normalized_content })
+        })
+        .collect();
+
+    let registry = Arc::new(ToolRegistry::with_standard_tools());
+    let memory_root = if session_row.work_dir.trim().is_empty() {
+        std::env::temp_dir().join("workclaw-group-run-memory")
+    } else {
+        PathBuf::from(session_row.work_dir.trim())
+            .join("openclaw")
+            .join(employee.employee_id.trim())
+            .join("memory")
+    };
+    let memory_dir = memory_root.join(if session_row.skill_id.trim().is_empty() {
+        "builtin-general"
+    } else {
+        session_row.skill_id.trim()
+    });
+    std::fs::create_dir_all(&memory_dir).map_err(|e| e.to_string())?;
+    registry.register(Arc::new(MemoryTool::new(memory_dir)));
+    registry.register(Arc::new(EmployeeManageTool::new(pool.clone())));
+
+    let executor = AgentExecutor::with_max_iterations(Arc::clone(&registry), max_iterations);
+    let final_messages = match executor
+        .execute_turn(
+            &model_row.api_format,
+            &model_row.base_url,
+            &model_row.api_key,
+            &model_row.model_name,
+            &system_prompt,
+            messages,
+            |_| {},
+            None,
+            None,
+            allowed_tools.as_deref(),
+            PermissionMode::Unrestricted,
+            None,
+            if session_row.work_dir.trim().is_empty() {
+                None
+            } else {
+                Some(session_row.work_dir.clone())
+            },
+            Some(max_iterations),
+            None,
+            None,
+            None,
+        )
+        .await
+    {
+        Ok(final_messages) => final_messages,
+        Err(error) => {
+            let error_text = error.to_string();
+            let stop_reason = match parse_run_stop_reason(&error_text) {
+                Some(reason) => reason,
+                None => return Err(error_text),
+            };
+            if stop_reason.kind != RunStopReasonKind::MaxTurns {
+                return Err(error_text);
+            }
+
+            let fallback_output = super::build_group_step_iteration_fallback_output(
+                &employee,
+                user_goal,
+                step_input,
+                stop_reason
+                    .detail
+                    .as_deref()
+                    .unwrap_or(stop_reason.message.as_str()),
+            );
+            let finished_at = chrono::Utc::now().to_rfc3339();
+            insert_session_message(pool, session_id, "assistant", &fallback_output, &finished_at)
+                .await?;
+            return Ok(fallback_output);
+        }
+    };
+
+    let assistant_output = super::extract_assistant_text(&final_messages);
+    if assistant_output.trim().is_empty() {
+        return Err("employee step execution returned empty assistant output".to_string());
+    }
+
+    let finished_at = chrono::Utc::now().to_rfc3339();
+    insert_session_message(pool, session_id, "assistant", &assistant_output, &finished_at).await?;
+
+    Ok(assistant_output)
 }
 
 pub(super) async fn get_group_run_session_id_with_pool(
