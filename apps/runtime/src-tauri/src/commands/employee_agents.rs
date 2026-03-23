@@ -8,7 +8,6 @@ use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::commands::chat_runtime_io::extract_assistant_text_content;
 use crate::commands::im_routing::list_im_routing_bindings_with_pool;
 use crate::commands::models::resolve_default_model_id_with_pool;
-use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use crate::commands::skills::DbState;
 use crate::im::types::ImEvent;
 use serde_json::{json, Value};
@@ -17,6 +16,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use uuid::Uuid;
+
+#[path = "employee_agents/repo.rs"]
+mod repo;
+#[path = "employee_agents/service.rs"]
+mod service;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct AgentEmployee {
@@ -780,502 +784,37 @@ pub(crate) fn clear_employee_memory_from_root(
     Ok(())
 }
 
-pub async fn list_agent_employees_with_pool(
-    pool: &SqlitePool,
-) -> Result<Vec<AgentEmployee>, String> {
-    let rows = sqlx::query(
-        "SELECT id, employee_id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json, enabled, is_default, created_at, updated_at
-         FROM agent_employees
-         ORDER BY is_default DESC, updated_at DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let mut result = Vec::with_capacity(rows.len());
-    for row in rows {
-        let id: String = row.try_get("id").map_err(|e| e.to_string())?;
-        let employee_id_raw: String = row.try_get("employee_id").map_err(|e| e.to_string())?;
-        let name: String = row.try_get("name").map_err(|e| e.to_string())?;
-        let role_id: String = row.try_get("role_id").map_err(|e| e.to_string())?;
-        let persona: String = row.try_get("persona").map_err(|e| e.to_string())?;
-        let feishu_open_id: String = row.try_get("feishu_open_id").map_err(|e| e.to_string())?;
-        let feishu_app_id: String = row.try_get("feishu_app_id").map_err(|e| e.to_string())?;
-        let feishu_app_secret: String = row
-            .try_get("feishu_app_secret")
-            .map_err(|e| e.to_string())?;
-        let primary_skill_id: String =
-            row.try_get("primary_skill_id").map_err(|e| e.to_string())?;
-        let default_work_dir: String =
-            row.try_get("default_work_dir").map_err(|e| e.to_string())?;
-        let openclaw_agent_id: String = row
-            .try_get("openclaw_agent_id")
-            .map_err(|e| e.to_string())?;
-        let routing_priority: i64 = row.try_get("routing_priority").map_err(|e| e.to_string())?;
-        let enabled_scopes_json: String = row
-            .try_get("enabled_scopes_json")
-            .map_err(|e| e.to_string())?;
-        let enabled: i64 = row.try_get("enabled").map_err(|e| e.to_string())?;
-        let is_default: i64 = row.try_get("is_default").map_err(|e| e.to_string())?;
-        let created_at: String = row.try_get("created_at").map_err(|e| e.to_string())?;
-        let updated_at: String = row.try_get("updated_at").map_err(|e| e.to_string())?;
-
-        let skill_rows = sqlx::query_as::<_, (String,)>(
-            "SELECT skill_id FROM agent_employee_skills WHERE employee_id = ? ORDER BY sort_order ASC",
-        )
-        .bind(&id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        let enabled_scopes = serde_json::from_str::<Vec<String>>(&enabled_scopes_json)
-            .unwrap_or_else(|_| vec!["app".to_string()]);
-        let employee_id = if employee_id_raw.trim().is_empty() {
-            role_id.clone()
-        } else {
-            employee_id_raw
-        };
-        result.push(AgentEmployee {
-            id,
-            employee_id,
-            name,
-            role_id,
-            persona,
-            feishu_open_id,
-            feishu_app_id,
-            feishu_app_secret,
-            primary_skill_id,
-            default_work_dir,
-            openclaw_agent_id,
-            routing_priority,
-            enabled_scopes,
-            enabled: enabled != 0,
-            is_default: is_default != 0,
-            skill_ids: skill_rows.into_iter().map(|(skill_id,)| skill_id).collect(),
-            created_at,
-            updated_at,
-        });
-    }
-    Ok(result)
+pub async fn list_agent_employees_with_pool(pool: &SqlitePool) -> Result<Vec<AgentEmployee>, String> {
+    service::list_agent_employees_with_pool(pool).await
 }
 
 fn normalize_enabled_scopes_for_storage(enabled_scopes: &[String]) -> Vec<String> {
-    let normalized = enabled_scopes
-        .iter()
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_lowercase())
-        .collect::<Vec<_>>();
-    if normalized.is_empty() {
-        vec!["app".to_string()]
-    } else {
-        normalized
-    }
+    service::normalize_enabled_scopes_for_storage(enabled_scopes)
 }
 
 fn resolve_employee_agent_id(employee_id: &str, role_id: &str, openclaw_agent_id: &str) -> String {
-    let openclaw_agent_id = openclaw_agent_id.trim();
-    if !openclaw_agent_id.is_empty() {
-        return openclaw_agent_id.to_string();
-    }
-    let employee_id = employee_id.trim();
-    if !employee_id.is_empty() {
-        return employee_id.to_string();
-    }
-    role_id.trim().to_string()
-}
-
-async fn clear_feishu_scope_for_agent_if_unbound(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    agent_id: &str,
-    now: &str,
-) -> Result<(), String> {
-    let normalized_agent_id = agent_id.trim();
-    if normalized_agent_id.is_empty() {
-        return Ok(());
-    }
-
-    let remaining_binding_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(1)
-         FROM im_routing_bindings
-         WHERE channel = 'feishu' AND lower(agent_id) = lower(?)",
-    )
-    .bind(normalized_agent_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(|e| e.to_string())?;
-    if remaining_binding_count > 0 {
-        return Ok(());
-    }
-
-    let employee_rows = sqlx::query_as::<_, (String, String, String, String, String)>(
-        "SELECT id, employee_id, role_id, openclaw_agent_id, enabled_scopes_json
-         FROM agent_employees",
-    )
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    for (employee_db_id, employee_id, role_id, openclaw_agent_id, enabled_scopes_json) in
-        employee_rows
-    {
-        let resolved_agent_id =
-            resolve_employee_agent_id(&employee_id, &role_id, &openclaw_agent_id);
-        if !resolved_agent_id.eq_ignore_ascii_case(normalized_agent_id) {
-            continue;
-        }
-
-        let existing_scopes = serde_json::from_str::<Vec<String>>(&enabled_scopes_json)
-            .unwrap_or_else(|_| vec!["app".to_string()]);
-        let next_scopes = existing_scopes
-            .into_iter()
-            .filter(|scope| scope.trim().to_lowercase() != "feishu")
-            .collect::<Vec<_>>();
-        let next_scopes = normalize_enabled_scopes_for_storage(&next_scopes);
-        let next_scopes_json = serde_json::to_string(&next_scopes).map_err(|e| e.to_string())?;
-
-        sqlx::query(
-            "UPDATE agent_employees SET enabled_scopes_json = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(&next_scopes_json)
-        .bind(now)
-        .bind(&employee_db_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
+    service::resolve_employee_agent_id(employee_id, role_id, openclaw_agent_id)
 }
 
 pub async fn save_feishu_employee_association_with_pool(
     pool: &SqlitePool,
     input: SaveFeishuEmployeeAssociationInput,
 ) -> Result<(), String> {
-    let employee_db_id = input.employee_db_id.trim();
-    if employee_db_id.is_empty() {
-        return Err("employee_db_id is required".to_string());
-    }
-
-    let mode = input.mode.trim().to_lowercase();
-    if mode != "default" && mode != "scoped" {
-        return Err("mode must be default or scoped".to_string());
-    }
-
-    let peer_kind = input.peer_kind.trim().to_lowercase();
-    if mode == "scoped" && !matches!(peer_kind.as_str(), "group" | "channel" | "direct") {
-        return Err("peer_kind must be group, channel, or direct".to_string());
-    }
-    if mode == "scoped" && input.peer_id.trim().is_empty() {
-        return Err("peer_id is required for scoped feishu association".to_string());
-    }
-
-    let employee_row = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT employee_id, role_id, openclaw_agent_id, enabled_scopes_json
-         FROM agent_employees
-         WHERE id = ?",
-    )
-    .bind(employee_db_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "employee not found".to_string())?;
-
-    let employee_id = employee_row.0.trim().to_string();
-    let role_id = employee_row.1.trim().to_string();
-    let openclaw_agent_id = employee_row.2.trim().to_string();
-    let existing_scopes = serde_json::from_str::<Vec<String>>(&employee_row.3)
-        .unwrap_or_else(|_| vec!["app".to_string()]);
-    let agent_id = resolve_employee_agent_id(&employee_id, &role_id, &openclaw_agent_id);
-    if agent_id.is_empty() {
-        return Err("employee is missing agent identity".to_string());
-    }
-
-    let mut next_scopes = existing_scopes;
-    if input.enabled {
-        next_scopes.push("feishu".to_string());
-    } else {
-        next_scopes.retain(|scope| scope.trim().to_lowercase() != "feishu");
-    }
-    let next_scopes = normalize_enabled_scopes_for_storage(&next_scopes);
-    let next_scopes_json = serde_json::to_string(&next_scopes).map_err(|e| e.to_string())?;
-    let now = chrono::Utc::now().to_rfc3339();
-    let scoped_peer_id = input.peer_id.trim().to_string();
-
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-
-    sqlx::query("UPDATE agent_employees SET enabled_scopes_json = ?, updated_at = ? WHERE id = ?")
-        .bind(&next_scopes_json)
-        .bind(&now)
-        .bind(employee_db_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    sqlx::query(
-        "DELETE FROM im_routing_bindings WHERE channel = 'feishu' AND lower(agent_id) = lower(?)",
-    )
-    .bind(&agent_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let mut displaced_agent_ids: Vec<String> = Vec::new();
-    if input.enabled {
-        if mode == "default" {
-            displaced_agent_ids = sqlx::query_scalar::<_, String>(
-                "SELECT DISTINCT agent_id
-                 FROM im_routing_bindings
-                 WHERE channel = 'feishu'
-                   AND trim(peer_id) = ''
-                   AND lower(agent_id) != lower(?)",
-            )
-            .bind(&agent_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-            sqlx::query(
-                "DELETE FROM im_routing_bindings
-                 WHERE channel = 'feishu'
-                   AND trim(peer_id) = ''
-                   AND lower(agent_id) != lower(?)",
-            )
-            .bind(&agent_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        } else {
-            displaced_agent_ids = sqlx::query_scalar::<_, String>(
-                "SELECT DISTINCT agent_id
-                 FROM im_routing_bindings
-                 WHERE channel = 'feishu'
-                   AND lower(agent_id) != lower(?)
-                   AND lower(peer_kind) = ?
-                   AND trim(peer_id) = ?",
-            )
-            .bind(&agent_id)
-            .bind(&peer_kind)
-            .bind(&scoped_peer_id)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-            sqlx::query(
-                "DELETE FROM im_routing_bindings
-                 WHERE channel = 'feishu'
-                   AND lower(agent_id) != lower(?)
-                   AND lower(peer_kind) = ?
-                   AND trim(peer_id) = ?",
-            )
-            .bind(&agent_id)
-            .bind(&peer_kind)
-            .bind(&scoped_peer_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-
-        let binding_id = Uuid::new_v4().to_string();
-        let binding_peer_kind = if mode == "default" {
-            "group"
-        } else {
-            peer_kind.as_str()
-        };
-        let binding_peer_id = if mode == "default" {
-            ""
-        } else {
-            scoped_peer_id.as_str()
-        };
-
-        sqlx::query(
-            "INSERT INTO im_routing_bindings (
-                id, agent_id, channel, account_id, peer_kind, peer_id, guild_id, team_id,
-                role_ids_json, connector_meta_json, priority, enabled, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&binding_id)
-        .bind(&agent_id)
-        .bind("feishu")
-        .bind("*")
-        .bind(binding_peer_kind)
-        .bind(binding_peer_id)
-        .bind("")
-        .bind("")
-        .bind("[]")
-        .bind(
-            serde_json::to_string(&json!({ "connector_id": "feishu" }))
-                .map_err(|e| e.to_string())?,
-        )
-        .bind(input.priority)
-        .bind(1_i64)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-
-    for displaced_agent_id in displaced_agent_ids {
-        clear_feishu_scope_for_agent_if_unbound(&mut tx, &displaced_agent_id, &now).await?;
-    }
-
-    tx.commit().await.map_err(|e| e.to_string())?;
-    Ok(())
+    service::save_feishu_employee_association_with_pool(pool, input).await
 }
 
 pub async fn upsert_agent_employee_with_pool(
     pool: &SqlitePool,
     input: UpsertAgentEmployeeInput,
 ) -> Result<String, String> {
-    if input.name.trim().is_empty() {
-        return Err("employee name is required".to_string());
-    }
-    let employee_id = if !input.employee_id.trim().is_empty() {
-        input.employee_id.trim().to_string()
-    } else if !input.role_id.trim().is_empty() {
-        input.role_id.trim().to_string()
-    } else if !input.openclaw_agent_id.trim().is_empty() {
-        input.openclaw_agent_id.trim().to_string()
-    } else {
-        return Err("employee employee_id is required".to_string());
-    };
-    let role_id = employee_id.as_str();
-    let existing_role = sqlx::query_as::<_, (String,)>(
-        "SELECT id FROM agent_employees WHERE employee_id = ? LIMIT 1",
-    )
-    .bind(&employee_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
-    if let Some((existing_id,)) = existing_role {
-        if existing_id != id {
-            return Err("employee employee_id already exists".to_string());
-        }
-    }
-    let default_work_dir = if input.default_work_dir.trim().is_empty() {
-        let base = resolve_default_work_dir_with_pool(pool).await?;
-        let by_role = std::path::PathBuf::from(base)
-            .join("employees")
-            .join(&employee_id)
-            .to_string_lossy()
-            .to_string();
-        std::fs::create_dir_all(&by_role)
-            .map_err(|e| format!("failed to create employee work dir: {e}"))?;
-        by_role
-    } else {
-        input.default_work_dir.trim().to_string()
-    };
-    let openclaw_agent_id = if input.openclaw_agent_id.trim().is_empty() {
-        employee_id.clone()
-    } else {
-        input.openclaw_agent_id.trim().to_string()
-    };
-    let enabled_scopes = normalize_enabled_scopes_for_storage(&input.enabled_scopes);
-    let enabled_scopes_json = serde_json::to_string(&enabled_scopes).map_err(|e| e.to_string())?;
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-
-    if input.is_default {
-        sqlx::query("UPDATE agent_employees SET is_default = 0")
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-
-    sqlx::query(
-        "INSERT INTO agent_employees (
-            id, employee_id, name, role_id, persona, feishu_open_id, feishu_app_id, feishu_app_secret, primary_skill_id, default_work_dir, openclaw_agent_id, routing_priority, enabled_scopes_json,
-            enabled, is_default, created_at, updated_at
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-            employee_id = excluded.employee_id,
-            name = excluded.name,
-            role_id = excluded.role_id,
-            persona = excluded.persona,
-            feishu_open_id = excluded.feishu_open_id,
-            feishu_app_id = excluded.feishu_app_id,
-            feishu_app_secret = excluded.feishu_app_secret,
-            primary_skill_id = excluded.primary_skill_id,
-            default_work_dir = excluded.default_work_dir,
-            openclaw_agent_id = excluded.openclaw_agent_id,
-            routing_priority = excluded.routing_priority,
-            enabled_scopes_json = excluded.enabled_scopes_json,
-            enabled = excluded.enabled,
-            is_default = excluded.is_default,
-            updated_at = excluded.updated_at",
-    )
-    .bind(&id)
-    .bind(&employee_id)
-    .bind(input.name.trim())
-    .bind(role_id)
-    .bind(input.persona.trim())
-    .bind(input.feishu_open_id.trim())
-    .bind(input.feishu_app_id.trim())
-    .bind(input.feishu_app_secret.trim())
-    .bind(input.primary_skill_id.trim())
-    .bind(default_work_dir)
-    .bind(openclaw_agent_id)
-    .bind(input.routing_priority)
-    .bind(enabled_scopes_json)
-    .bind(if input.enabled { 1 } else { 0 })
-    .bind(if input.is_default { 1 } else { 0 })
-    .bind(&now)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    sqlx::query("DELETE FROM agent_employee_skills WHERE employee_id = ?")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    for (idx, skill_id) in input
-        .skill_ids
-        .iter()
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-        .enumerate()
-    {
-        sqlx::query(
-            "INSERT INTO agent_employee_skills (employee_id, skill_id, sort_order) VALUES (?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(skill_id)
-        .bind(idx as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-
-    tx.commit().await.map_err(|e| e.to_string())?;
-    Ok(id)
+    service::upsert_agent_employee_with_pool(pool, input).await
 }
 
 pub async fn delete_agent_employee_with_pool(
     pool: &SqlitePool,
     employee_id: &str,
 ) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM agent_employee_skills WHERE employee_id = ?")
-        .bind(employee_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM im_thread_sessions WHERE employee_id = ?")
-        .bind(employee_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM agent_employees WHERE id = ?")
-        .bind(employee_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    tx.commit().await.map_err(|e| e.to_string())?;
-    Ok(())
+    service::delete_agent_employee_with_pool(pool, employee_id).await
 }
 
 pub async fn create_employee_group_with_pool(

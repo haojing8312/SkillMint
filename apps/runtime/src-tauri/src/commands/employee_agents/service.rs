@@ -1,0 +1,328 @@
+use super::repo::{
+    clear_default_employee_flag, count_feishu_bindings_for_agent, delete_agent_employee_record,
+    delete_displaced_default_feishu_bindings, delete_displaced_scoped_feishu_bindings,
+    delete_feishu_bindings_for_agent, find_displaced_default_feishu_agent_ids,
+    find_displaced_scoped_feishu_agent_ids, find_employee_db_id_by_employee_id,
+    get_employee_association_row, insert_feishu_binding, list_agent_employee_rows,
+    list_agent_scope_rows, list_skill_ids_for_employee, replace_employee_skill_bindings,
+    update_employee_enabled_scopes, upsert_agent_employee_record, InsertFeishuBindingInput,
+    UpsertAgentEmployeeRecordInput,
+};
+use super::{AgentEmployee, SaveFeishuEmployeeAssociationInput, UpsertAgentEmployeeInput};
+use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
+use std::path::PathBuf;
+use uuid::Uuid;
+
+pub(super) fn normalize_enabled_scopes_for_storage(enabled_scopes: &[String]) -> Vec<String> {
+    let normalized = enabled_scopes
+        .iter()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_lowercase())
+        .collect::<Vec<_>>();
+    if normalized.is_empty() {
+        vec!["app".to_string()]
+    } else {
+        normalized
+    }
+}
+
+pub(super) fn resolve_employee_agent_id(
+    employee_id: &str,
+    role_id: &str,
+    openclaw_agent_id: &str,
+) -> String {
+    let openclaw_agent_id = openclaw_agent_id.trim();
+    if !openclaw_agent_id.is_empty() {
+        return openclaw_agent_id.to_string();
+    }
+    let employee_id = employee_id.trim();
+    if !employee_id.is_empty() {
+        return employee_id.to_string();
+    }
+    role_id.trim().to_string()
+}
+
+pub(super) async fn list_agent_employees_with_pool(
+    pool: &SqlitePool,
+) -> Result<Vec<AgentEmployee>, String> {
+    let rows = list_agent_employee_rows(pool).await?;
+    let mut result = Vec::with_capacity(rows.len());
+
+    for row in rows {
+        let skill_ids = list_skill_ids_for_employee(pool, &row.id).await?;
+        let enabled_scopes = serde_json::from_str::<Vec<String>>(&row.enabled_scopes_json)
+            .unwrap_or_else(|_| vec!["app".to_string()]);
+        let employee_id = if row.employee_id.trim().is_empty() {
+            row.role_id.clone()
+        } else {
+            row.employee_id
+        };
+
+        result.push(AgentEmployee {
+            id: row.id,
+            employee_id,
+            name: row.name,
+            role_id: row.role_id,
+            persona: row.persona,
+            feishu_open_id: row.feishu_open_id,
+            feishu_app_id: row.feishu_app_id,
+            feishu_app_secret: row.feishu_app_secret,
+            primary_skill_id: row.primary_skill_id,
+            default_work_dir: row.default_work_dir,
+            openclaw_agent_id: row.openclaw_agent_id,
+            routing_priority: row.routing_priority,
+            enabled_scopes,
+            enabled: row.enabled,
+            is_default: row.is_default,
+            skill_ids,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        });
+    }
+
+    Ok(result)
+}
+
+pub(super) async fn upsert_agent_employee_with_pool(
+    pool: &SqlitePool,
+    input: UpsertAgentEmployeeInput,
+) -> Result<String, String> {
+    if input.name.trim().is_empty() {
+        return Err("employee name is required".to_string());
+    }
+
+    let employee_id = if !input.employee_id.trim().is_empty() {
+        input.employee_id.trim().to_string()
+    } else if !input.role_id.trim().is_empty() {
+        input.role_id.trim().to_string()
+    } else if !input.openclaw_agent_id.trim().is_empty() {
+        input.openclaw_agent_id.trim().to_string()
+    } else {
+        return Err("employee employee_id is required".to_string());
+    };
+
+    let id = input.id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+    if let Some(existing_id) = find_employee_db_id_by_employee_id(pool, &employee_id).await? {
+        if existing_id != id {
+            return Err("employee employee_id already exists".to_string());
+        }
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let default_work_dir = if input.default_work_dir.trim().is_empty() {
+        let base = resolve_default_work_dir_with_pool(pool).await?;
+        let employee_dir = PathBuf::from(base)
+            .join("employees")
+            .join(&employee_id);
+        std::fs::create_dir_all(&employee_dir)
+            .map_err(|e| format!("failed to create employee work dir: {e}"))?;
+        employee_dir.to_string_lossy().to_string()
+    } else {
+        input.default_work_dir.trim().to_string()
+    };
+
+    let openclaw_agent_id = if input.openclaw_agent_id.trim().is_empty() {
+        employee_id.clone()
+    } else {
+        input.openclaw_agent_id.trim().to_string()
+    };
+    let role_id = employee_id.as_str();
+    let enabled_scopes = normalize_enabled_scopes_for_storage(&input.enabled_scopes);
+    let enabled_scopes_json = serde_json::to_string(&enabled_scopes).map_err(|e| e.to_string())?;
+    let skill_ids = input
+        .skill_ids
+        .iter()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    if input.is_default {
+        clear_default_employee_flag(&mut tx).await?;
+    }
+
+    upsert_agent_employee_record(
+        &mut tx,
+        &UpsertAgentEmployeeRecordInput {
+            id: &id,
+            employee_id: &employee_id,
+            name: input.name.trim(),
+            role_id,
+            persona: input.persona.trim(),
+            feishu_open_id: input.feishu_open_id.trim(),
+            feishu_app_id: input.feishu_app_id.trim(),
+            feishu_app_secret: input.feishu_app_secret.trim(),
+            primary_skill_id: input.primary_skill_id.trim(),
+            default_work_dir: &default_work_dir,
+            openclaw_agent_id: &openclaw_agent_id,
+            routing_priority: input.routing_priority,
+            enabled_scopes_json: &enabled_scopes_json,
+            enabled: input.enabled,
+            is_default: input.is_default,
+            now: &now,
+        },
+    )
+    .await?;
+
+    replace_employee_skill_bindings(&mut tx, &id, &skill_ids).await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+pub(super) async fn delete_agent_employee_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    delete_agent_employee_record(&mut tx, employee_id).await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn clear_feishu_scope_for_agent_if_unbound(
+    tx: &mut Transaction<'_, Sqlite>,
+    agent_id: &str,
+    now: &str,
+) -> Result<(), String> {
+    let normalized_agent_id = agent_id.trim();
+    if normalized_agent_id.is_empty() {
+        return Ok(());
+    }
+
+    if count_feishu_bindings_for_agent(tx, normalized_agent_id).await? > 0 {
+        return Ok(());
+    }
+
+    let employee_rows = list_agent_scope_rows(tx).await?;
+    for (employee_db_id, employee_id, role_id, openclaw_agent_id, enabled_scopes_json) in employee_rows {
+        let resolved_agent_id =
+            resolve_employee_agent_id(&employee_id, &role_id, &openclaw_agent_id);
+        if !resolved_agent_id.eq_ignore_ascii_case(normalized_agent_id) {
+            continue;
+        }
+
+        let existing_scopes = serde_json::from_str::<Vec<String>>(&enabled_scopes_json)
+            .unwrap_or_else(|_| vec!["app".to_string()]);
+        let next_scopes = existing_scopes
+            .into_iter()
+            .filter(|scope| scope.trim().to_lowercase() != "feishu")
+            .collect::<Vec<_>>();
+        let next_scopes = normalize_enabled_scopes_for_storage(&next_scopes);
+        let next_scopes_json = serde_json::to_string(&next_scopes).map_err(|e| e.to_string())?;
+        update_employee_enabled_scopes(tx, &employee_db_id, &next_scopes_json, now).await?;
+    }
+
+    Ok(())
+}
+
+pub(super) async fn save_feishu_employee_association_with_pool(
+    pool: &SqlitePool,
+    input: SaveFeishuEmployeeAssociationInput,
+) -> Result<(), String> {
+    let employee_db_id = input.employee_db_id.trim();
+    if employee_db_id.is_empty() {
+        return Err("employee_db_id is required".to_string());
+    }
+
+    let mode = input.mode.trim().to_lowercase();
+    if mode != "default" && mode != "scoped" {
+        return Err("mode must be default or scoped".to_string());
+    }
+
+    let peer_kind = input.peer_kind.trim().to_lowercase();
+    if mode == "scoped" && !matches!(peer_kind.as_str(), "group" | "channel" | "direct") {
+        return Err("peer_kind must be group, channel, or direct".to_string());
+    }
+    if mode == "scoped" && input.peer_id.trim().is_empty() {
+        return Err("peer_id is required for scoped feishu association".to_string());
+    }
+
+    let employee_row = get_employee_association_row(pool, employee_db_id)
+        .await?
+        .ok_or_else(|| "employee not found".to_string())?;
+
+    let existing_scopes = serde_json::from_str::<Vec<String>>(&employee_row.enabled_scopes_json)
+        .unwrap_or_else(|_| vec!["app".to_string()]);
+    let agent_id = resolve_employee_agent_id(
+        &employee_row.employee_id,
+        &employee_row.role_id,
+        &employee_row.openclaw_agent_id,
+    );
+    if agent_id.is_empty() {
+        return Err("employee is missing agent identity".to_string());
+    }
+
+    let mut next_scopes = existing_scopes;
+    if input.enabled {
+        next_scopes.push("feishu".to_string());
+    } else {
+        next_scopes.retain(|scope| scope.trim().to_lowercase() != "feishu");
+    }
+    let next_scopes = normalize_enabled_scopes_for_storage(&next_scopes);
+    let next_scopes_json = serde_json::to_string(&next_scopes).map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let scoped_peer_id = input.peer_id.trim().to_string();
+
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    update_employee_enabled_scopes(&mut tx, employee_db_id, &next_scopes_json, &now).await?;
+    delete_feishu_bindings_for_agent(&mut tx, &agent_id).await?;
+
+    let displaced_agent_ids = if input.enabled {
+        if mode == "default" {
+            let ids = find_displaced_default_feishu_agent_ids(&mut tx, &agent_id).await?;
+            delete_displaced_default_feishu_bindings(&mut tx, &agent_id).await?;
+            ids
+        } else {
+            let ids =
+                find_displaced_scoped_feishu_agent_ids(&mut tx, &agent_id, &peer_kind, &scoped_peer_id)
+                    .await?;
+            delete_displaced_scoped_feishu_bindings(&mut tx, &agent_id, &peer_kind, &scoped_peer_id)
+                .await?;
+            ids
+        }
+    } else {
+        Vec::new()
+    };
+
+    if input.enabled {
+        let binding_id = Uuid::new_v4().to_string();
+        let binding_peer_kind = if mode == "default" {
+            "group"
+        } else {
+            peer_kind.as_str()
+        };
+        let binding_peer_id = if mode == "default" {
+            ""
+        } else {
+            scoped_peer_id.as_str()
+        };
+        let connector_meta_json =
+            serde_json::to_string(&serde_json::json!({ "connector_id": "feishu" }))
+                .map_err(|e| e.to_string())?;
+
+        insert_feishu_binding(
+            &mut tx,
+            &InsertFeishuBindingInput {
+                id: &binding_id,
+                agent_id: &agent_id,
+                peer_kind: binding_peer_kind,
+                peer_id: binding_peer_id,
+                connector_meta_json: &connector_meta_json,
+                priority: input.priority,
+                now: &now,
+            },
+        )
+        .await?;
+    }
+
+    for displaced_agent_id in displaced_agent_ids {
+        clear_feishu_scope_for_agent_if_unbound(&mut tx, &displaced_agent_id, &now).await?;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}

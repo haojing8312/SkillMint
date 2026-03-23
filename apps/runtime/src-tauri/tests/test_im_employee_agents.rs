@@ -75,6 +75,8 @@ async fn employee_config_and_im_session_mapping_work() {
         role_id: None,
         account_id: None,
         tenant_id: Some("tenant-a".to_string()),
+        sender_id: None,
+        chat_type: None,
     };
 
     let sessions = ensure_employee_sessions_for_event_with_pool(&pool, &event)
@@ -183,6 +185,8 @@ async fn group_message_without_mention_routes_to_main_employee() {
             role_id: None,
             account_id: None,
             tenant_id: None,
+            sender_id: None,
+            chat_type: None,
         },
     )
     .await
@@ -263,6 +267,8 @@ async fn group_message_with_mention_routes_to_target_employee() {
             role_id: Some("ou_dev_team".to_string()),
             account_id: None,
             tenant_id: None,
+            sender_id: None,
+            chat_type: None,
         },
     )
     .await
@@ -399,6 +405,8 @@ async fn save_feishu_employee_association_replaces_default_binding_and_updates_s
             role_id: None,
             account_id: None,
             tenant_id: None,
+            sender_id: None,
+            chat_type: None,
         },
     )
     .await
@@ -545,6 +553,8 @@ async fn wecom_event_prefers_wecom_scoped_employee_and_creates_session() {
         role_id: None,
         account_id: Some("corp-123".to_string()),
         tenant_id: Some("corp-123".to_string()),
+        sender_id: None,
+        chat_type: None,
     };
 
     let targets = resolve_target_employees_for_event(&pool, &event)
@@ -638,6 +648,8 @@ async fn group_message_with_text_mention_routes_to_target_employee_when_role_id_
             role_id: None,
             account_id: None,
             tenant_id: None,
+            sender_id: None,
+            chat_type: None,
         },
     )
     .await
@@ -3577,6 +3589,8 @@ async fn ensure_employee_sessions_for_event_prefers_team_entry_employee_when_bin
         role_id: None,
         account_id: None,
         tenant_id: Some("tenant-a".to_string()),
+        sender_id: None,
+        chat_type: None,
     };
 
     let sessions = ensure_employee_sessions_for_event_with_pool(&pool, &event)
