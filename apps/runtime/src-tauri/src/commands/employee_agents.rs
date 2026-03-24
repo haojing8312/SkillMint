@@ -20,6 +20,9 @@ mod group_run_entry;
 mod memory_commands;
 #[path = "employee_agents/tauri_commands.rs"]
 mod tauri_commands;
+#[path = "employee_agents/test_support.rs"]
+#[doc(hidden)]
+pub mod test_support;
 
 pub use types::{
     AgentEmployee, CloneEmployeeGroupTemplateInput, CreateEmployeeGroupInput,
