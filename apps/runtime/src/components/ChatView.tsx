@@ -1,12 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { SkillManifest, ModelConfig, Message, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, EmployeeGroupRunSnapshot, SessionRunProjection, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
 import { motion } from "framer-motion";
-import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
 import { useImmersiveTranslation } from "../hooks/useImmersiveTranslation";
 import { ChatWorkspaceSidePanel } from "./chat-side-panel/ChatWorkspaceSidePanel";
@@ -15,6 +10,13 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { ChatComposer } from "./chat/ChatComposer";
 import { ChatMessageRail } from "./chat/ChatMessageRail";
 import { ChatShell } from "./chat/ChatShell";
+import { createChatMarkdownComponents } from "./chat/chatMarkdownComponents";
+import {
+  extractPlainTextFromStreamItems,
+  getRunFailureTechnicalToggleLabel,
+  renderChatRunFailureCard,
+  renderChatStreamItems,
+} from "./chat/chatMessageRailHelpers";
 import {
   buildTaskJourneyViewModel,
   buildTaskPanelViewModel,
@@ -76,14 +78,6 @@ type ChatSessionExecutionContext = {
 };
 
 const SESSION_DRAFT_STORAGE_PREFIX = "workclaw:session-draft:";
-const RUN_FAILURE_CARD_CLASS =
-  "mr-auto max-w-[80%] rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900 shadow-sm";
-const RUN_FAILURE_SECTION_LABEL_CLASS = "text-xs font-medium tracking-wide text-amber-700";
-const RUN_FAILURE_MESSAGE_CLASS = "mt-2 whitespace-pre-wrap text-sm text-amber-800";
-const RUN_FAILURE_TECHNICAL_DETAILS_TOGGLE_CLASS =
-  "inline-flex items-center rounded-lg border border-amber-200 bg-white/70 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-white";
-const RUN_FAILURE_TECHNICAL_DETAILS_PANEL_CLASS =
-  "mt-2 whitespace-pre-wrap break-all rounded-xl border border-white/70 bg-white/70 px-4 py-3 font-mono text-xs text-amber-900/90";
 
 function getSessionDraftStorageKey(sessionId: string): string {
   return `${SESSION_DRAFT_STORAGE_PREFIX}${sessionId}`;
@@ -98,10 +92,6 @@ function readSessionDraft(sessionId: string): string {
   } catch {
     return "";
   }
-}
-
-function getRunFailureTechnicalToggleLabel(expanded: boolean): string {
-  return expanded ? "隐藏技术详情" : "查看技术详情";
 }
 
 function persistSessionDraft(sessionId: string, value: string) {
@@ -179,22 +169,6 @@ function clonePersistedChatRuntimeState(state?: PersistedChatRuntimeState | null
 function shouldRenderCompletedJourneySummary(model: TaskJourneyViewModel) {
   if (model.deliverables.length === 0) return false;
   return model.status === "completed" || model.status === "partial";
-}
-
-function extractNodeText(node: unknown): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map((item) => extractNodeText(item)).join("");
-  if (node && typeof node === "object" && "props" in node) {
-    return extractNodeText((node as { props?: { children?: unknown } }).props?.children);
-  }
-  return "";
-}
-
-function extractPlainTextFromStreamItems(items: StreamItem[]): string {
-  return items
-    .filter((item) => item.type === "text")
-    .map((item) => item.content || "")
-    .join("");
 }
 
 function CopyActionIcon({ copied }: { copied: boolean }) {
@@ -1576,6 +1550,30 @@ export function ChatView({
   const showStreamingAssistantBubble =
     showStreamingThinkingState || streamItems.length > 0 || subAgentBuffer.length > 0;
   const streamText = useMemo(() => extractPlainTextFromStreamItems(streamItems), [streamItems]);
+  const markdownComponents = useMemo(() => createChatMarkdownComponents(), []);
+  const renderStreamItems = (items: StreamItem[], _isStreaming: boolean) =>
+    renderChatStreamItems({ items, subAgentBuffer, markdownComponents });
+  const handleToggleRunDetail = (runId: string) => {
+    setExpandedRunDetailIds((prev) =>
+      prev.includes(runId) ? prev.filter((item) => item !== runId) : [...prev, runId],
+    );
+  };
+  const handleContinueExecution = () =>
+    sendContent({
+      sessionId,
+      parts: [{ type: "text", text: CONTINUE_MESSAGE_TEXT }],
+      maxIterations: CONTINUE_BUDGET_INCREMENT,
+    });
+  const renderRunFailureCard = (run: SessionRunProjection) =>
+    renderChatRunFailureCard({
+      run,
+      streaming,
+      expandedRunDetailIds,
+      onToggleRunDetail: handleToggleRunDetail,
+      onContinueExecution: handleContinueExecution,
+      getRunFailureDisplay,
+      getRunFailureTechnicalToggleLabel,
+    });
   const liveBlockingStatus = useMemo(() => {
     if (pendingApprovals.length > 0 || agentState?.state === "waiting_approval") {
       return "waiting_approval";
@@ -1834,173 +1832,6 @@ export function ChatView({
     }, 1600);
   }
 
-  // Markdown 渲染组件配置
-  const markdownComponents = {
-    // 代码块
-    code({ className, children, ...props }: any) {
-      const match = /language-(\w+)/.exec(className || "");
-      const codeString = String(children).replace(/\n$/, "");
-      return match ? (
-        <SyntaxHighlighter
-          style={oneDark}
-          language={match[1]}
-          PreTag="div"
-          customStyle={{ margin: 0, borderRadius: "0.375rem", fontSize: "0.8125rem" }}
-        >
-          {codeString}
-        </SyntaxHighlighter>
-      ) : (
-        <code className={"bg-gray-200/60 px-1.5 py-0.5 rounded text-sm text-gray-800 font-mono " + (className || "")} {...props}>
-          {children}
-        </code>
-      );
-    },
-    // 标题
-    h1: ({ children }: any) => (
-      <h1 className="mt-7 mb-4 border-b border-slate-200 pb-3 text-[1.75rem] font-semibold tracking-[-0.02em] text-slate-950">
-        {children}
-      </h1>
-    ),
-    h2: ({ children }: any) => (
-      <h2 className="mt-6 mb-3 border-b border-slate-150 pb-2 text-[1.35rem] font-semibold tracking-[-0.015em] text-slate-900">
-        {children}
-      </h2>
-    ),
-    h3: ({ children }: any) => <h3 className="mt-5 mb-2.5 text-[1.1rem] font-semibold text-slate-900">{children}</h3>,
-    h4: ({ children }: any) => <h4 className="mt-4 mb-2 text-base font-semibold text-slate-800">{children}</h4>,
-    h5: ({ children }: any) => <h5 className="mt-3 mb-1.5 text-sm font-semibold uppercase tracking-[0.01em] text-slate-700">{children}</h5>,
-    h6: ({ children }: any) => <h6 className="mt-3 mb-1 text-sm font-medium text-slate-600">{children}</h6>,
-    // 段落
-    p: ({ children }: any) => {
-      const text = extractNodeText(children).trim();
-      const isSummaryBlock = /^(共计|总计|总结[:：]?|结论[:：]?)/.test(text);
-      return isSummaryBlock ? (
-        <p
-          data-testid="assistant-result-summary"
-          className="mb-4 rounded-2xl border border-slate-200/90 bg-slate-50/80 px-4 py-3 text-[15px] font-medium leading-7 text-slate-800"
-        >
-          {children}
-        </p>
-      ) : (
-        <p className="mb-4 text-[15px] leading-7 text-slate-700">{children}</p>
-      );
-    },
-    // 列表
-    ul: ({ children }: any) => <ul className="mb-4 list-disc space-y-1.5 pl-5 text-[15px] text-slate-700">{children}</ul>,
-    ol: ({ children }: any) => <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-[15px] text-slate-700">{children}</ol>,
-    li: ({ children }: any) => <li className="leading-7 text-slate-700">{children}</li>,
-    // 链接
-    a: ({ href, children }: any) => (
-      <a
-        href={href}
-        className="text-blue-500 hover:text-blue-600 underline underline-offset-2 text-sm"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {children}
-      </a>
-    ),
-    // 引用块
-    blockquote: ({ children }: any) => (
-      <blockquote className="my-4 rounded-r-lg border-l-[3px] border-slate-300 bg-slate-50/70 py-1 pl-4">
-        <div className="text-[15px] italic text-slate-600">{children}</div>
-      </blockquote>
-    ),
-    // 表格
-    table: ({ children }: any) => (
-      <div className="my-4 overflow-x-auto rounded-2xl border border-slate-200/90 bg-white/90 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-        <table className="min-w-full text-sm">{children}</table>
-      </div>
-    ),
-    thead: ({ children }: any) => <thead className="bg-slate-50/90">{children}</thead>,
-    tbody: ({ children }: any) => <tbody className="divide-y divide-slate-200/80 bg-white">{children}</tbody>,
-    tr: ({ children }: any) => <tr className="transition-colors hover:bg-slate-50/70">{children}</tr>,
-    th: ({ children }: any) => (
-      <th className="bg-slate-50/90 px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
-        {children}
-      </th>
-    ),
-    td: ({ children }: any) => {
-      const text = extractNodeText(children).trim();
-      const isNumericLike = /^(?:[\d,]+(?:\.\d+)?(?:\s*(?:字节|KB|MB|GB|%))?|[\d]{4}\/[\d]{1,2}\/[\d]{1,2}.*)$/.test(text);
-      return (
-        <td className={"px-4 py-3 text-[15px] text-slate-700 " + (isNumericLike ? "whitespace-nowrap tabular-nums" : "")}>
-          {children}
-        </td>
-      );
-    },
-    // 水平线
-    hr: () => <hr className="my-7 border-slate-200" />,
-    // 强调
-    strong: ({ children }: any) => <strong className="font-semibold text-slate-950">{children}</strong>,
-    em: ({ children }: any) => <em className="italic text-slate-700">{children}</em>,
-    input: ({ type, checked, disabled }: any) => {
-      if (type === "checkbox" && disabled) {
-        return (
-          <span
-            aria-hidden="true"
-            className={
-              "mr-2 inline-flex h-4 w-4 translate-y-[1px] items-center justify-center rounded border " +
-              (checked
-                ? "border-emerald-200 bg-emerald-50 text-emerald-600"
-                : "border-slate-300 bg-white text-transparent")
-            }
-          >
-            {checked ? (
-              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <span className="h-3 w-3" />
-            )}
-          </span>
-        );
-      }
-      return <input type={type} checked={checked} disabled={disabled} readOnly />;
-    },
-  };
-
-  /** 渲染有序的 StreamItem 列表（将连续的工具调用合并到一个 ToolIsland） */
-  function renderStreamItems(items: StreamItem[], isStreaming: boolean) {
-    const groups: { type: "text" | "tools"; items: StreamItem[] }[] = [];
-    for (const item of items) {
-      if (item.type === "tool_call") {
-        const last = groups[groups.length - 1];
-        if (last && last.type === "tools") {
-          last.items.push(item);
-        } else {
-          groups.push({ type: "tools", items: [item] });
-        }
-      } else {
-        groups.push({ type: "text", items: [item] });
-      }
-    }
-
-    return groups.map((g, i) => {
-      if (g.type === "tools") {
-        const toolCalls = g.items
-          .filter((it) => it.toolCall)
-          .map((it) => it.toolCall!);
-        const hasRunning = toolCalls.some((tc) => tc.status === "running");
-        return (
-          <ToolIsland
-            key={`island-${i}`}
-            toolCalls={toolCalls}
-            isRunning={hasRunning}
-            subAgentBuffer={hasRunning ? subAgentBuffer : undefined}
-          />
-        );
-      }
-      const text = g.items.map((it) => it.content || "").join("");
-      if (!text) return null;
-      return (
-        <div key={`txt-${i}`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>
-        </div>
-      );
-    });
-  }
-
   function getAgentStateLabel() {
     if (!agentState) return "";
     if (agentState.state === "thinking") return "正在分析任务";
@@ -2155,72 +1986,6 @@ export function ChatView({
     return isContinuationText(part.text);
   }
 
-  function renderRunFailureCard(run: SessionRunProjection) {
-    const display = getRunFailureDisplay(run);
-    const showContinueAction = run.error_kind === "max_turns";
-    const rawDetailsExpanded = expandedRunDetailIds.includes(run.id);
-    const technicalToggleLabel = getRunFailureTechnicalToggleLabel(rawDetailsExpanded);
-
-    return (
-      <motion.div
-        key={`run-failure-${run.id}`}
-        data-testid={`run-failure-card-${run.id}`}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className={RUN_FAILURE_CARD_CLASS}
-      >
-        <div className={RUN_FAILURE_SECTION_LABEL_CLASS}>本轮执行结果</div>
-        <div className="mt-1 text-lg font-semibold">{display.title}</div>
-        {display.message ? (
-          <div className={RUN_FAILURE_MESSAGE_CLASS}>{display.message}</div>
-        ) : null}
-        {display.rawMessage ? (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() =>
-                setExpandedRunDetailIds((prev) =>
-                  prev.includes(run.id) ? prev.filter((item) => item !== run.id) : [...prev, run.id],
-                )
-              }
-              className={RUN_FAILURE_TECHNICAL_DETAILS_TOGGLE_CLASS}
-            >
-              {technicalToggleLabel}
-            </button>
-            {rawDetailsExpanded ? (
-              <div className={RUN_FAILURE_TECHNICAL_DETAILS_PANEL_CLASS}>
-                {display.rawMessage}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {run.buffered_text && (
-          <div className="mt-3 rounded-xl border border-white/70 bg-white/70 px-4 py-3 text-sm text-gray-700">
-            <div className="mb-1 text-xs font-medium tracking-wide text-gray-500">已保留的部分输出</div>
-            <div className="whitespace-pre-wrap">{run.buffered_text}</div>
-          </div>
-        )}
-        {showContinueAction ? (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() =>
-                void sendContent({
-                  sessionId,
-                  parts: [{ type: "text", text: CONTINUE_MESSAGE_TEXT }],
-                  maxIterations: CONTINUE_BUDGET_INCREMENT,
-                })
-              }
-              disabled={streaming}
-              className="inline-flex items-center rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
-            >
-              继续执行
-            </button>
-          </div>
-        ) : null}
-      </motion.div>
-    );
-  }
   const shouldShowAgentStateBanner = !(
     agentState?.state === "error" &&
     failedSessionRuns.some((run) => {
