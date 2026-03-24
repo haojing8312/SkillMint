@@ -112,7 +112,16 @@ export function useChatSessionController({
     }
     try {
       const approvals = await listPendingApprovalRecords(sid);
-      setPendingApprovals(approvals.map(mapPendingApprovalRecord));
+      const fetchedApprovals = approvals.map(mapPendingApprovalRecord);
+      setPendingApprovals((prev) => {
+        const merged = [...fetchedApprovals];
+        for (const approval of prev) {
+          if (approval.sessionId !== sid) continue;
+          if (merged.some((item) => item.approvalId === approval.approvalId)) continue;
+          merged.push(approval);
+        }
+        return merged;
+      });
     } catch (error) {
       console.error("加载待审批列表失败:", error);
       setPendingApprovals([]);

@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { useFeishuSettingsController } from "../useFeishuSettingsController";
+import type { SettingsTabName } from "../../SettingsTabNav";
 
 const invokeMock = vi.fn();
 
@@ -128,7 +129,7 @@ describe("useFeishuSettingsController", () => {
 
   test("stops the Feishu polling loop after leaving the tab", async () => {
     const { rerender } = renderHook(({ activeTab }) => useFeishuSettingsController({ activeTab }), {
-      initialProps: { activeTab: "feishu" as const },
+      initialProps: { activeTab: "feishu" as SettingsTabName },
     });
 
     await act(async () => {
@@ -144,7 +145,7 @@ describe("useFeishuSettingsController", () => {
     const currentCount = invokeMock.mock.calls.filter(([command]) => command === "get_feishu_setup_progress").length;
     expect(currentCount).toBeGreaterThan(beforePollCount);
 
-    rerender({ activeTab: "models" as const });
+    rerender({ activeTab: "models" as SettingsTabName });
     const afterLeaveCount = invokeMock.mock.calls.filter(([command]) => command === "get_feishu_setup_progress").length;
 
     await act(async () => {

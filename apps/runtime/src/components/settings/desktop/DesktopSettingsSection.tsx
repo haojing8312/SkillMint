@@ -139,7 +139,8 @@ export function DesktopSettingsSection({ models, visible }: DesktopSettingsSecti
         launch_at_login: runtimePreferences.launch_at_login,
         launch_minimized: runtimePreferences.launch_minimized,
         close_to_tray: runtimePreferences.close_to_tray,
-        operation_permission_mode: runtimePreferences.operation_permission_mode,
+        operation_permission_mode:
+          runtimePreferences.operation_permission_mode === "full_access" ? "full_access" : "standard",
       };
       const saved = await saveDesktopRuntimePreferences(input);
       setRuntimePreferences(normalizeRuntimePreferences(saved));

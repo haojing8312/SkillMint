@@ -81,6 +81,16 @@ export function useChatStreamController({
   removePendingApproval,
   onResetForSessionSwitch,
 }: UseChatStreamControllerArgs) {
+  const buildPendingApprovalRef = useRef(buildPendingApproval);
+  const upsertPendingApprovalRef = useRef(upsertPendingApproval);
+  const removePendingApprovalRef = useRef(removePendingApproval);
+
+  useEffect(() => {
+    buildPendingApprovalRef.current = buildPendingApproval;
+    upsertPendingApprovalRef.current = upsertPendingApproval;
+    removePendingApprovalRef.current = removePendingApproval;
+  }, [buildPendingApproval, upsertPendingApproval, removePendingApproval]);
+
   const [streaming, setStreaming] = useState(initialRuntimeState.streaming);
   const [streamItems, setStreamItems] = useState<StreamItem[]>(initialRuntimeState.streamItems);
   const streamItemsRef = useRef<StreamItem[]>(initialRuntimeState.streamItems);
@@ -260,7 +270,7 @@ export function useChatStreamController({
   useEffect(() => {
     const unlistenCreatedPromise = listen<PendingApprovalEventPayload>("approval-created", ({ payload }) => {
       if (payload.session_id !== sessionId) return;
-      upsertPendingApproval(buildPendingApproval(payload));
+      upsertPendingApprovalRef.current(buildPendingApprovalRef.current(payload));
     });
 
     const unlistenResolvedPromise = listen<{
@@ -271,13 +281,13 @@ export function useChatStreamController({
       if ((payload.session_id || "").trim() && payload.session_id !== sessionId) return;
       const approvalId = (payload.approval_id || "").trim();
       if (!approvalId) return;
-      removePendingApproval(approvalId);
+      removePendingApprovalRef.current(approvalId);
     });
 
     const unlistenLegacyPromise = listen<PendingApprovalEventPayload>("tool-confirm-event", ({ payload }) => {
       if (payload.session_id !== sessionId) return;
       if ((payload.approval_id || "").trim()) return;
-      upsertPendingApproval(buildPendingApproval(payload));
+      upsertPendingApprovalRef.current(buildPendingApprovalRef.current(payload));
     });
 
     return () => {
@@ -285,13 +295,13 @@ export function useChatStreamController({
       unlistenResolvedPromise.then((fn) => fn());
       unlistenLegacyPromise.then((fn) => fn());
     };
-  }, [buildPendingApproval, removePendingApproval, sessionId, upsertPendingApproval]);
+  }, [sessionId]);
 
   useEffect(() => {
     const cleanupSessionId = sessionId;
     return () => {
       const resolvingId = resolvingApprovalIdRef.current;
-      const staleApprovals = pendingApprovalsRef.current.filter(
+      const staleApprovals = (pendingApprovalsRef.current ?? []).filter(
         (item) => item.sessionId === cleanupSessionId && item.approvalId.trim() && item.approvalId !== resolvingId,
       );
       for (const approval of staleApprovals) {

@@ -1726,7 +1726,8 @@ export function ChatView({
     },
   );
 
-  function renderInstallCandidates(candidates: ClawhubInstallCandidate[]) {
+  function renderInstallCandidates(rawCandidates: unknown[]) {
+    const candidates = rawCandidates as ClawhubInstallCandidate[];
     if (candidates.length === 0) return null;
     return (
       <div className="mt-3 border border-blue-100 bg-blue-50/40 rounded-xl p-3">

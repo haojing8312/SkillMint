@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SettingsShell } from "./settings/SettingsShell";
 import { ModelsSettingsSection } from "./settings/models/ModelsSettingsSection";
@@ -122,6 +122,32 @@ export function SettingsView({
         : settingsSectionProps.feishuOnboardingPrimaryActionDisabled,
   };
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialData() {
+      try {
+        const [loadedModels, loadedProviders] = await Promise.all([
+          listModelConfigs(),
+          listProviderConfigs(),
+        ]);
+        if (cancelled) return;
+        setModels(loadedModels);
+        setProviders(loadedProviders);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("加载设置初始数据失败:", error);
+        }
+      }
+    }
+
+    void loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function loadChatPrimaryModels(providerId: string, capability: string) {
     if (!providerId) {
       setChatPrimaryModels([]);
@@ -135,6 +161,66 @@ export function SettingsView({
       setChatPrimaryModels(models);
     } catch {
       setChatPrimaryModels([]);
+    }
+  }
+
+  async function loadCapabilityRoutingPolicy(capability: string) {
+    try {
+      const loaded = await invoke<CapabilityRoutingPolicy | null>("get_capability_routing_policy", {
+        capability,
+      });
+      const defaults = getCapabilityRecommendedDefaults(capability);
+      const nextPolicy: CapabilityRoutingPolicy = loaded ?? {
+        capability,
+        primary_provider_id: "",
+        primary_model: "",
+        fallback_chain_json: "[]",
+        timeout_ms: defaults.timeout_ms,
+        retry_count: defaults.retry_count,
+        enabled: true,
+      };
+      setChatRoutingPolicy(nextPolicy);
+      const parsed = JSON.parse(nextPolicy.fallback_chain_json || "[]");
+      setChatFallbackRows(
+        Array.isArray(parsed)
+          ? parsed.map((item) => ({
+              provider_id: String(item?.provider_id || ""),
+              model: String(item?.model || ""),
+            }))
+          : [],
+      );
+      void loadChatPrimaryModels(nextPolicy.primary_provider_id, capability);
+    } catch {
+      const defaults = getCapabilityRecommendedDefaults(capability);
+      setChatRoutingPolicy({
+        capability,
+        primary_provider_id: "",
+        primary_model: "",
+        fallback_chain_json: "[]",
+        timeout_ms: defaults.timeout_ms,
+        retry_count: defaults.retry_count,
+        enabled: true,
+      });
+      setChatFallbackRows([]);
+      setChatPrimaryModels([]);
+    }
+  }
+
+  async function loadRouteTemplates(capability: string) {
+    try {
+      const templates = await invoke<CapabilityRouteTemplateInfo[]>("list_capability_route_templates", {
+        capability,
+      });
+      setRouteTemplates(templates);
+      setSelectedRouteTemplateId((current) => {
+        if (templates.some((item) => item.template_id === current)) {
+          return current;
+        }
+        return templates[0]?.template_id || "";
+      });
+    } catch {
+      setRouteTemplates([]);
+      setSelectedRouteTemplateId("");
     }
   }
 

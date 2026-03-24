@@ -495,13 +495,18 @@ export default function App() {
     return runtimeSessionCoordinator.createRuntimeSession(input);
   }
 
-  useImBridgeIntegration({
-    setImManagedSessionIds,
-  });
-
   async function loadSessions(_skillId: string, options?: { requestId?: number; attempt?: number }) {
     return runtimeSessionCoordinator.loadSessions(_skillId, options);
   }
+
+  const refreshImSessionList = useCallback(() => {
+    void loadSessions(selectedSkillId ?? "");
+  }, [selectedSkillId]);
+
+  useImBridgeIntegration({
+    setImManagedSessionIds,
+    refreshSessionList: refreshImSessionList,
+  });
 
   const {
     handleDeleteSession,

@@ -98,15 +98,15 @@ describe("SettingsView risk flow", () => {
     });
     expect(screen.getByText("切换为全自动模式")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "暂不切换" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "标准模式（推荐）" })).toBeChecked();
 
     fireEvent.click(screen.getByRole("radio", { name: "全自动模式" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "确认切换" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "切换为全自动模式" })).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByRole("button", { name: "确认切换" }));
+    fireEvent.click(screen.getByRole("button", { name: "切换为全自动模式" }));
 
     await waitFor(() => {
       expect(screen.getByRole("radio", { name: "全自动模式" })).toBeChecked();
