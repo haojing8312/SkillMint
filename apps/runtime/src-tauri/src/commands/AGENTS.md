@@ -44,6 +44,24 @@ Use these as defaults, not dogma. Explain deviations before editing.
   - explicit `service` / `repo` / command-helper boundaries
   - no giant replacement child file without a clear concern boundary
 
+- `openclaw_plugins` is the current reference split for giant plugin or integration command files.
+- Before designing a split for a command that mixes runtime state, setup, installation, and external host probing, inspect:
+  - `src/commands/openclaw_plugins.rs`
+  - `src/commands/openclaw_plugins/tauri_commands.rs`
+  - `src/commands/openclaw_plugins/runtime_service.rs`
+  - `src/commands/openclaw_plugins/settings_service.rs`
+  - `src/commands/openclaw_plugins/setup_service.rs`
+  - `src/commands/openclaw_plugins/install_repo.rs`
+  - `src/commands/openclaw_plugins/install_service.rs`
+  - `src/commands/openclaw_plugins/plugin_host_service.rs`
+  - `src/commands/openclaw_plugins/installer_session.rs`
+  - `src/commands/openclaw_plugins/tests.rs`
+- Reuse that pattern of:
+  - thin root command file
+  - command wrappers separated from setup, runtime, install, and host probing concerns
+  - explicit `service` / `repo` / command-helper boundaries
+  - tests moved out of the root file once the root starts crowding out entrypoint logic
+
 ## Giant File Rules
 - If a command file is above 500 lines, avoid placing net-new business logic directly in that file.
 - If a command file is above 800 lines, add or update a split plan in `docs/plans/` before feature work.
@@ -64,5 +82,6 @@ Use these as defaults, not dogma. Explain deviations before editing.
 - Keep user-visible side effects in the same order unless the task intentionally changes behavior.
 
 ## Next Target Reminder
-- The next preferred command-governance target is `feishu_gateway.rs`.
-- Use `employee_agents` as the baseline pattern when planning that split.
+- `feishu_gateway.rs`, `clawhub.rs`, `chat_runtime_io.rs`, and `openclaw_plugins.rs` are now completed command-governance examples.
+- The next preferred Rust command-governance target should come from the current large-file backlog rather than from those completed samples.
+- Use `employee_agents` as the baseline for business-heavy command surfaces and `openclaw_plugins` as the baseline for integration-heavy command surfaces.

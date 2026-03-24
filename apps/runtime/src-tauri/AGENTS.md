@@ -30,7 +30,8 @@ When a task does not naturally fit these landing zones, explain the chosen place
   - `feishu_service.rs` for employee/Feishu association orchestration
   - `routing_service.rs` and `session_service.rs` for employee routing and session flows
   - `group_management.rs` for team/group create, clone, list, and delete logic
-  - `group_run_service.rs`, `group_run_snapshot_service.rs`, `group_run_action_service.rs`, and `group_run_entry.rs` for group-run state, read, action, and entry flow
+  - `group_run_service.rs`, `group_run_snapshot_service.rs`, `group_run_action_service.rs`, `group_run_progress_service.rs`, `group_run_execution_service.rs`, and `group_run_entry.rs` for group-run state, read, action, progress, execution, and entry flow
+  - `group_run_repo.rs`, `session_repo.rs`, and `feishu_binding_repo.rs` for persistence lanes that should not bloat the root repo shell
   - `memory_commands.rs` and `tauri_commands.rs` for command implementation bodies that the root file wraps
 - Prefer matching this shape when splitting the next giant Rust command surface unless there is a clear reason not to.
 
@@ -78,7 +79,7 @@ When a task does not naturally fit these landing zones, explain the chosen place
 
 These thresholds are governance triggers, not blanket failure rules. Do not split files mechanically just to get under a number.
 
-`employee_agents.rs`, `openclaw_plugins.rs`, and `db.rs` have already been reduced below the `800` split-design threshold and should now be treated as maintained samples of the intended end state.
+`employee_agents.rs`, `employee_agents/service.rs`, `employee_agents/repo.rs`, `openclaw_plugins.rs`, and `db.rs` have already been reduced below the `800` split-design threshold and should now be treated as maintained samples of the intended end state.
 
 ## Avoid Micro-File Sprawl
 - Create a new file only when it owns a real persistence concern, integration concern, or distinct use case.

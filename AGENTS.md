@@ -58,7 +58,10 @@ These skills should be treated as lightweight guardrails for the maintainer's ow
   - `501-800` warning for new business logic
   - `801+` requires a short split plan before feature work
 - Keep the root file short; Rust-specific module placement and layering rules belong in the local Tauri guidance file.
-- `apps/runtime/src-tauri/src/commands/employee_agents.rs` is now the current Rust-side reference template for how a giant command file should be decomposed.
+- Current Rust-side reference templates for giant command-file governance are:
+  - `apps/runtime/src-tauri/src/commands/employee_agents.rs`
+  - `apps/runtime/src-tauri/src/commands/openclaw_plugins.rs`
+- Reuse these before inventing a new split pattern for the next giant Rust command surface.
 
 ## Frontend Runtime Guidance
 - For work under `apps/runtime/src/`, prefer the closer local guidance in `apps/runtime/src/AGENTS.md`.

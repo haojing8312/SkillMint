@@ -15,28 +15,22 @@
 
 These files are now the highest-value remaining Rust runtime split targets.
 
-- `apps/runtime/src-tauri/src/commands/employee_agents/repo.rs` — 2079 lines
-  - Why first: the root command file is healthy now, but persistence concerns remain too concentrated
-  - First split direction: split by persistence concern rather than by generic helper extraction
-  - First safe step: carve out one cohesive persistence lane, such as profile or group-run storage, into a child repo module
-
-- `apps/runtime/src-tauri/src/commands/employee_agents/service.rs` — 1748 lines
-  - Why first: the root command file is healthy now, but business orchestration is still too concentrated
-  - First split direction: split by use case such as listing, upsert, delete, association, reconciliation, or group-run flow
-  - First safe step: extract the next cohesive service lane without rebuilding a new giant child file
+- `apps/runtime/src-tauri/tests/test_im_employee_agents.rs` — 3612 lines
+  - Why first: the production employee module is now within budget, so the biggest remaining employee-domain maintenance risk has shifted into the integration test surface
+  - First split direction: split by scenario family rather than by assertion helper
+  - First safe step: separate legacy-schema coverage, IM routing coverage, and group-run coverage into focused test modules
 
 ## Priority 2: Large Child Modules And Tests
 
-These files are above the warning or split threshold, but they no longer lead the queue ahead of `db.rs` and the remaining `employee_agents` child layers.
-
-- `apps/runtime/src-tauri/tests/test_im_employee_agents.rs` — 3612 lines
-  - Risk: hard to evolve and diagnose failures
-  - First split direction: split by scenario family or legacy-compatibility lane
-  - Note: tests stay behind production runtime work unless they block refactors
+These files are above the warning or split threshold, but they no longer lead the queue ahead of the largest remaining production files and tests.
 
 - `apps/runtime/src-tauri/src/agent/tools/employee_manage.rs` — 988 lines
   - Risk: tool logic can accrete mixed validation, orchestration, and formatting concerns
   - First split direction: separate tool entrypoint glue from underlying use-case helpers
+
+- `apps/runtime/src-tauri/src/adapters/openai.rs` — 756 lines
+  - Risk: provider protocol shaping, streaming, and error normalization can keep accreting in one adapter
+  - First split direction: split request building, streaming/event handling, and response normalization into cohesive helpers only if a new feature needs one of those lanes
 
 ## Completed Templates
 
@@ -44,6 +38,16 @@ These files are above the warning or split threshold, but they no longer lead th
   - Status: completed as the first formal Rust splitting template
   - Outcome: root file is now below the `800` split-design threshold
   - Follow-up: reuse this module structure as the reference pattern for later command-file governance
+
+- `apps/runtime/src-tauri/src/commands/employee_agents/service.rs` — now 575 lines
+  - Status: completed as the current service-layer follow-up for the employee agents template
+  - Outcome: orchestration now lives across focused child services instead of one giant service shell
+  - Delivered structure: `group_run_progress_service.rs` and `group_run_execution_service.rs` now hold the remaining group-run progress and execution/session lanes
+
+- `apps/runtime/src-tauri/src/commands/employee_agents/repo.rs` — now 349 lines
+  - Status: completed as the current repo-layer follow-up for the employee agents template
+  - Outcome: the root repo is now a thin aggregation shell
+  - Delivered structure: `group_run_repo.rs`, `session_repo.rs`, and `feishu_binding_repo.rs`
 
 - `apps/runtime/src-tauri/src/commands/openclaw_plugins.rs` — now 650 lines
   - Status: completed as the formal Rust template for plugin and integration-heavy command surfaces
@@ -109,8 +113,8 @@ These files are above 500 lines and should be watched, but they are not first in
 
 1. Use `employee_agents` as the formal reference template for business-heavy command surfaces.
 2. Use `openclaw_plugins` as the formal reference template for integration-heavy command surfaces.
-3. Continue thinning `employee_agents/service.rs` and `employee_agents/repo.rs` so the giant-file problem does not simply live on in child modules.
-4. Then reassess the next runtime-core or tooling target from a fresh large-file report.
+3. Reassess the next runtime-core or tooling target from a fresh large-file report.
+4. Use the `employee_agents` child-module layout as the reference when a future business-heavy Rust module starts accumulating large service or repo files.
 5. Re-run `node scripts/report-rust-large-files.mjs` after each split milestone and update this backlog rather than treating it as static.
 
 ## Definition Of Backlog Progress
