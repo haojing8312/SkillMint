@@ -156,4 +156,19 @@ describe("useFeishuSettingsController", () => {
       invokeMock.mock.calls.filter(([command]) => command === "get_feishu_setup_progress").length,
     ).toBe(afterLeaveCount);
   });
+
+  test("loads connector and platform data on mount", async () => {
+    renderHook(({ activeTab }) => useFeishuSettingsController({ activeTab }), {
+      initialProps: { activeTab: "feishu" as SettingsTabName },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("get_feishu_gateway_settings");
+    expect(invokeMock).toHaveBeenCalledWith("get_openclaw_plugin_feishu_advanced_settings");
+    expect(invokeMock).toHaveBeenCalledWith("list_openclaw_plugin_channel_hosts");
+    expect(invokeMock).toHaveBeenCalledWith("list_feishu_pairing_requests", { status: null });
+  });
 });
