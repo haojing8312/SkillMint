@@ -11,6 +11,9 @@ import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
 import { useImmersiveTranslation } from "../hooks/useImmersiveTranslation";
 import { ChatWorkspaceSidePanel } from "./chat-side-panel/ChatWorkspaceSidePanel";
+import { ChatExecutionContextBar } from "./chat/ChatExecutionContextBar";
+import { ChatHeader } from "./chat/ChatHeader";
+import { ChatShell } from "./chat/ChatShell";
 import { ThinkingBlock } from "./ThinkingBlock";
 import {
   buildTaskJourneyViewModel,
@@ -2964,123 +2967,28 @@ export function ChatView({
     })
   );
   return (
-    <div className="flex flex-col h-full">
-      {/* 头部 */}
-      <div className="px-4 pt-4 sm:px-6 xl:px-8">
-        <div className="flex w-full items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div
-              data-testid="chat-session-display-title"
-              className="truncate text-[22px] font-semibold tracking-tight text-[var(--sm-text)]"
-            >
-              {sessionDisplayTitle}
-            </div>
-            {(sessionDisplaySubtitle || isImSource) && (
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--sm-text-muted)]">
-                {sessionDisplaySubtitle ? (
-                  <div
-                    data-testid="chat-session-display-subtitle"
-                    className="truncate"
-                  >
-                    {sessionDisplaySubtitle}
-                  </div>
-                ) : null}
-                {isImSource && (
-                  <span
-                    data-testid="chat-session-source-badge"
-                    title={`该会话由${sessionSourceBadgeText}触发`}
-                    className="inline-flex items-center rounded-full border border-[var(--sm-border)] bg-[var(--sm-surface)] px-2 py-0.5 font-medium text-[var(--sm-text-muted)]"
-                  >
-                    {sessionSourceBadgeText}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            aria-label="面板"
-            title="面板"
-            data-testid="chat-side-panel-trigger"
-            aria-pressed={sidePanelOpen}
-            onClick={() => setSidePanelOpen(!sidePanelOpen)}
-            className={
-              "sm-btn ml-auto h-10 w-10 rounded-xl border transition-colors " +
-              (sidePanelOpen
-                ? "border-[var(--sm-primary-soft)] bg-[var(--sm-primary-soft)] text-[var(--sm-primary-strong)]"
-                : "border-[var(--sm-border)] bg-[var(--sm-surface)] text-[var(--sm-text-muted)] hover:bg-[var(--sm-surface-soft)] hover:text-[var(--sm-text)]")
-            }
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      {sessionExecutionContext && (
-        <div
-          data-testid="chat-session-execution-context-bar"
-          className="border-b border-sky-100 bg-sky-50/80 text-[11px] text-sky-900"
-        >
-          <div className="mx-auto flex w-full max-w-[76rem] flex-wrap items-center justify-between gap-2 px-5 py-2 lg:px-8">
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex flex-wrap items-center gap-3">
-              <span>{`来源 step：${sessionExecutionContext.sourceStepId}`}</span>
-              {sessionExecutionContext.sourceEmployeeId && (
-                <span>{`来源员工：${sessionExecutionContext.sourceEmployeeId}`}</span>
-              )}
-              {sessionExecutionContext.assigneeEmployeeId && (
-                <span>{`当前负责人：${sessionExecutionContext.assigneeEmployeeId}`}</span>
-              )}
-            </div>
-            {(sessionExecutionContext.sourceStepTimeline || []).length > 0 && (
-              <div
-                data-testid="chat-session-execution-context-timeline"
-                className="space-y-1 text-[10px] text-sky-800/90"
-              >
-                {(sessionExecutionContext.sourceStepTimeline || []).map((item, index) => {
-                  const label = item.createdAt ? `${item.label} · ${item.createdAt}` : item.label;
-                  return onOpenSession ? (
-                    <button
-                      key={`${item.label}-${item.createdAt || index}`}
-                      type="button"
-                      data-testid={`chat-session-execution-context-timeline-item-${index}`}
-                      onClick={() =>
-                        void onOpenSession(sessionExecutionContext.sourceSessionId, {
-                          groupRunStepFocusId: sessionExecutionContext.sourceStepId,
-                          groupRunEventFocusId: item.eventId,
-                        })
-                      }
-                      className="block text-left underline underline-offset-2 hover:text-sky-900"
-                    >
-                      {label}
-                    </button>
-                  ) : (
-                    <div
-                      key={`${item.label}-${item.createdAt || index}`}
-                      data-testid={`chat-session-execution-context-timeline-item-${index}`}
-                    >
-                      {label}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            data-testid="chat-session-execution-context-back"
-            onClick={() => void onReturnToSourceSession?.(sessionExecutionContext.sourceSessionId)}
-            className="text-[11px] font-medium text-sky-700 underline underline-offset-2 hover:text-sky-800"
-          >
-            返回协作看板
-          </button>
-          </div>
-        </div>
-      )}
-
-      {/* 主内容区：消息列表 + 右侧面板 */}
-      <div className="flex-1 flex overflow-hidden bg-[#f7f7f4]">
+    <ChatShell
+      header={
+        <ChatHeader
+          sessionDisplayTitle={sessionDisplayTitle}
+          sessionDisplaySubtitle={sessionDisplaySubtitle}
+          isImSource={isImSource}
+          sessionSourceBadgeText={sessionSourceBadgeText}
+          sidePanelOpen={sidePanelOpen}
+          onToggleSidePanel={() => setSidePanelOpen(!sidePanelOpen)}
+        />
+      }
+      executionContextBar={
+        sessionExecutionContext ? (
+          <ChatExecutionContextBar
+            sessionExecutionContext={sessionExecutionContext}
+            onOpenSession={onOpenSession}
+            onReturnToSourceSession={onReturnToSourceSession}
+          />
+        ) : undefined
+      }
+      mainContent={
+        <>
         {/* 消息列表 */}
         <div className="relative flex-1 bg-[#f7f7f4]">
         <div
@@ -3775,9 +3683,9 @@ export function ChatView({
         </div>
       )}
       </div>
-
-      {/* 右侧面板 */}
-      <ChatWorkspaceSidePanel
+      </>
+      }
+      sidePanel={<ChatWorkspaceSidePanel
         open={sidePanelOpen}
         tab={sidePanelTab}
         onTabChange={setSidePanelTab}
@@ -3787,11 +3695,8 @@ export function ChatView({
         active={sidePanelOpen}
         taskModel={taskPanelModel}
         webSearchEntries={webSearchEntries}
-      />
-      </div>
-
-      {/* 输入区域 */}
-      <div className="border-t border-slate-200/80 bg-[#f4f4f1]/92 px-4 py-3 sm:px-6 xl:px-8">
+      />}
+      composer={<div className="border-t border-slate-200/80 bg-[#f4f4f1]/92 px-4 py-3 sm:px-6 xl:px-8">
         <div className="mx-auto w-full max-w-[76rem]">
         <div
           data-testid="chat-composer-shell"
@@ -3977,7 +3882,7 @@ export function ChatView({
           </div>
         </div>
         </div>
-      </div>
-    </div>
+      </div>}
+    />
   );
 }
