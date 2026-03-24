@@ -25,6 +25,31 @@ import type { TaskJourneyViewModel } from "./chat-side-panel/view-model";
 import { TaskJourneySummary } from "./chat-journey/TaskJourneySummary";
 import { getDefaultModel } from "../lib/default-model";
 import {
+  answerUserQuestion,
+  cancelAgent,
+  getMessages,
+  listSessionRuns,
+  listSessions,
+  sendMessage,
+  updateSessionWorkspace,
+} from "../services/chat/chatSessionService";
+import {
+  confirmLegacyToolExecution,
+  listPendingApprovals as listPendingApprovalRecords,
+  resolveApproval as resolvePendingApproval,
+} from "../services/chat/chatApprovalService";
+import {
+  continueEmployeeGroupRun,
+  getEmployeeGroupRunSnapshot,
+  listEmployeeGroupRules,
+  listEmployeeGroups,
+  pauseEmployeeGroupRun,
+  reassignGroupRunStep,
+  resumeEmployeeGroupRun,
+  retryEmployeeGroupRunFailedSteps,
+  reviewGroupRunStep,
+} from "../services/chat/chatGroupRunService";
+import {
   getModelErrorDisplay,
   inferModelErrorKindFromMessage,
   isModelErrorKind,
@@ -756,9 +781,8 @@ export function ChatView({
   // Secure Workspace: 加载会话的工作空间
   const loadWorkspace = async (sid: string) => {
     try {
-      const sessions = await invoke<any[]>("list_sessions");
-      const list = Array.isArray(sessions) ? sessions : [];
-      const current = list.find((s: any) => s.id === sid);
+      const sessions = await listSessions();
+      const current = sessions.find((s) => s.id === sid);
       if (current) {
         setWorkspace(current.work_dir || "");
       }
@@ -774,10 +798,7 @@ export function ChatView({
   // Secure Workspace: 更新会话的工作空间
   const updateWorkspace = async (newWorkspace: string) => {
     try {
-      await invoke("update_session_workspace", {
-        sessionId,
-        workspace: newWorkspace,
-      });
+      await updateSessionWorkspace(sessionId, newWorkspace);
       setWorkspace(newWorkspace);
     } catch (e) {
       console.error("更新工作空间失败:", e);
@@ -1262,7 +1283,7 @@ export function ChatView({
     let disposed = false;
     const loadSnapshot = async () => {
       try {
-        const snapshot = await invoke<EmployeeGroupRunSnapshot | null>("get_employee_group_run_snapshot", { sessionId });
+        const snapshot = await getEmployeeGroupRunSnapshot(sessionId);
         if (!disposed && snapshot) {
           setGroupRunSnapshot(snapshot);
         }
@@ -1296,19 +1317,17 @@ export function ChatView({
     const loadGroupMembers = async () => {
       try {
         const [groups, rules] = await Promise.all([
-          invoke<EmployeeGroup[] | null>("list_employee_groups"),
-          invoke<EmployeeGroupRule[] | null>("list_employee_group_rules", { groupId }),
+          listEmployeeGroups(),
+          listEmployeeGroupRules(groupId),
         ]);
         if (disposed) return;
-        const matchedGroup = Array.isArray(groups)
-          ? groups.find((group) => (group.id || "").trim() === groupId)
-          : null;
+        const matchedGroup = groups.find((group) => (group.id || "").trim() === groupId) ?? null;
         const memberIds = (matchedGroup?.member_employee_ids || [])
           .map((value) => (value || "").trim())
           .filter((value) => value.length > 0);
         setGroupRunMemberEmployeeIds(memberIds);
         setGroupRunCoordinatorEmployeeId((matchedGroup?.coordinator_employee_id || "").trim());
-        setGroupRunRules(Array.isArray(rules) ? rules : []);
+        setGroupRunRules(rules);
       } catch {
         if (!disposed) {
           setGroupRunMemberEmployeeIds([]);
@@ -1438,19 +1457,13 @@ export function ChatView({
 
       for (const approval of staleApprovals) {
         if (approval.approvalRecordId) {
-          void invoke("resolve_approval", {
-            approvalId: approval.approvalRecordId,
-            decision: "deny",
-            source: "desktop_cleanup",
-          }).catch((error) => {
+          void resolvePendingApproval(approval.approvalRecordId, "deny", "desktop_cleanup").catch((error) => {
             console.error("自动拒绝待审批操作失败:", error);
           });
           continue;
         }
         if (approval.usesLegacyConfirm) {
-          void invoke("confirm_tool_execution", {
-            confirmed: false,
-          }).catch((error) => {
+          void confirmLegacyToolExecution(false).catch((error) => {
             console.error("自动拒绝旧版待审批操作失败:", error);
           });
         }
@@ -1557,7 +1570,7 @@ export function ChatView({
 
   async function loadMessages(sid: string) {
     try {
-      const list = await invoke<Message[]>("get_messages", { sessionId: sid });
+      const list = await getMessages(sid);
       setMessages(list);
     } catch (e) {
       console.error("加载历史消息失败:", e);
@@ -1571,10 +1584,8 @@ export function ChatView({
       return;
     }
     try {
-      const runs = await invoke<SessionRunProjection[]>("list_session_runs", {
-        sessionId: sid,
-      });
-      setSessionRuns(Array.isArray(runs) ? runs : []);
+      const runs = await listSessionRuns(sid);
+      setSessionRuns(runs);
     } catch (e) {
       console.error("加载会话运行记录失败:", e);
       setSessionRuns([]);
@@ -1587,36 +1598,21 @@ export function ChatView({
       return;
     }
     try {
-      const approvals = await invoke<
-        Array<{
-          approval_id: string;
-          session_id: string;
-          tool_name: string;
-          input?: Record<string, unknown>;
-          summary: string;
-          impact?: string | null;
-          irreversible?: boolean;
-          status?: string;
-        }>
-      >("list_pending_approvals", {
-        sessionId: sid,
-      });
+      const approvals = await listPendingApprovalRecords(sid);
       setPendingApprovals(
-        Array.isArray(approvals)
-          ? approvals.map((item) =>
-              buildPendingApproval({
-                approval_id: item.approval_id,
-                session_id: item.session_id,
-                tool_name: item.tool_name,
-                input: item.input,
-                title: "高危操作确认",
-                summary: item.summary,
-                impact: item.impact,
-                irreversible: item.irreversible,
-                status: item.status,
-              })
-            )
-          : []
+        approvals.map((item) =>
+          buildPendingApproval({
+            approval_id: item.approval_id,
+            session_id: item.session_id,
+            tool_name: item.tool_name,
+            input: item.input,
+            title: "高危操作确认",
+            summary: item.summary,
+            impact: item.impact,
+            irreversible: item.irreversible,
+            status: item.status,
+          })
+        )
       );
     } catch (error) {
       console.error("加载待审批列表失败:", error);
@@ -1685,7 +1681,7 @@ export function ChatView({
     setSubAgentBuffer("");
     setSubAgentRoleName("");
     try {
-      await invoke("send_message", { request: continuationRequest });
+      await sendMessage(continuationRequest);
       onSessionUpdate?.();
     } catch (e) {
       const preserveInlineError = shouldPreserveInlineSendError(e);
@@ -1734,7 +1730,7 @@ export function ChatView({
 
   async function handleCancel() {
     try {
-      await invoke("cancel_agent");
+      await cancelAgent();
     } catch (e) {
       console.error("取消任务失败:", e);
     }
@@ -1766,7 +1762,7 @@ export function ChatView({
   async function handleAnswerUser(answer: string) {
     if (!answer.trim()) return;
     try {
-      await invoke("answer_user_question", { answer: answer.trim() });
+      await answerUserQuestion(answer.trim());
     } catch (e) {
       console.error("回答用户问题失败:", e);
     }
@@ -1780,11 +1776,7 @@ export function ChatView({
     if (!activeApproval || resolvingApprovalId) return;
     try {
       setResolvingApprovalId(activeApproval.approvalId);
-      await invoke("resolve_approval", {
-        approvalId: activeApproval.approvalId,
-        decision,
-        source: "desktop",
-      });
+      await resolvePendingApproval(activeApproval.approvalId, decision, "desktop");
       removePendingApproval(activeApproval.approvalId);
     } catch (e) {
       console.error("工具确认失败:", e);
@@ -1796,14 +1788,8 @@ export function ChatView({
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("approve");
     try {
-      await invoke("review_group_run_step", {
-        runId: groupRunSnapshot.run_id,
-        action: "approve",
-        comment: "前端确认通过",
-      });
-      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
-        runId: groupRunSnapshot.run_id,
-      });
+      await reviewGroupRunStep(groupRunSnapshot.run_id, "approve", "前端确认通过");
+      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
       setGroupRunSnapshot(snapshot);
     } catch (e) {
       console.error("审核通过失败:", e);
@@ -1815,9 +1801,7 @@ export function ChatView({
   async function refreshGroupRunSnapshot(targetSessionId?: string) {
     const snapshotSessionId = (targetSessionId || groupRunSnapshot?.session_id || sessionId || "").trim();
     if (!snapshotSessionId) return;
-    const snapshot = await invoke<EmployeeGroupRunSnapshot | null>("get_employee_group_run_snapshot", {
-      sessionId: snapshotSessionId,
-    });
+    const snapshot = await getEmployeeGroupRunSnapshot(snapshotSessionId);
     if (snapshot) {
       setGroupRunSnapshot(snapshot);
     }
@@ -1827,14 +1811,8 @@ export function ChatView({
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("reject");
     try {
-      await invoke("review_group_run_step", {
-        runId: groupRunSnapshot.run_id,
-        action: "reject",
-        comment: "前端要求补充方案",
-      });
-      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
-        runId: groupRunSnapshot.run_id,
-      });
+      await reviewGroupRunStep(groupRunSnapshot.run_id, "reject", "前端要求补充方案");
+      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
       setGroupRunSnapshot(snapshot);
     } catch (e) {
       console.error("审核打回失败:", e);
@@ -1847,10 +1825,7 @@ export function ChatView({
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("pause");
     try {
-      await invoke("pause_employee_group_run", {
-        runId: groupRunSnapshot.run_id,
-        reason: "前端人工暂停",
-      });
+      await pauseEmployeeGroupRun(groupRunSnapshot.run_id, "前端人工暂停");
       await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
     } catch (e) {
       console.error("暂停协作失败:", e);
@@ -1863,12 +1838,8 @@ export function ChatView({
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("resume");
     try {
-      await invoke("resume_employee_group_run", {
-        runId: groupRunSnapshot.run_id,
-      });
-      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
-        runId: groupRunSnapshot.run_id,
-      });
+      await resumeEmployeeGroupRun(groupRunSnapshot.run_id);
+      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
       setGroupRunSnapshot(snapshot);
     } catch (e) {
       console.error("继续协作失败:", e);
@@ -1881,9 +1852,7 @@ export function ChatView({
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("retry");
     try {
-      await invoke("retry_employee_group_run_failed_steps", {
-        runId: groupRunSnapshot.run_id,
-      });
+      await retryEmployeeGroupRunFailedSteps(groupRunSnapshot.run_id);
       await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
     } catch (e) {
       console.error("重试失败步骤失败:", e);
@@ -1896,13 +1865,8 @@ export function ChatView({
     if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
     setGroupRunActionLoading("reassign");
     try {
-      await invoke("reassign_group_run_step", {
-        stepId,
-        assigneeEmployeeId,
-      });
-      const snapshot = await invoke<EmployeeGroupRunSnapshot>("continue_employee_group_run", {
-        runId: groupRunSnapshot.run_id,
-      });
+      await reassignGroupRunStep(stepId, assigneeEmployeeId);
+      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
       setGroupRunSnapshot(snapshot);
     } catch (e) {
       console.error("改派失败步骤失败:", e);
