@@ -11,26 +11,26 @@
 - Prioritize tests and tools third unless they are actively blocking refactors.
 - Large child modules created during recent splits can stay in backlog, but they should not restart the pattern of becoming new giant files.
 
-## Priority 1: Runtime Core And Infrastructure
+## Priority 1: Large Child Modules And Integration Boundaries
 
 These files are now the highest-value remaining Rust runtime split targets.
 
-- `apps/runtime/src-tauri/tests/test_im_employee_agents.rs` — 3612 lines
-  - Why first: the production employee module is now within budget, so the biggest remaining employee-domain maintenance risk has shifted into the integration test surface
-  - First split direction: split by scenario family rather than by assertion helper
-  - First safe step: separate legacy-schema coverage, IM routing coverage, and group-run coverage into focused test modules
+- `apps/runtime/src-tauri/src/agent/tools/employee_manage.rs` — 988 lines
+  - Why first: it is now the only remaining Rust production file above the `800` split-design threshold
+  - First split direction: separate tool entrypoint glue, employee mutation use cases, and response-formatting helpers
+  - First safe step: define a split plan before adding new tool behavior
 
 ## Priority 2: Large Child Modules And Tests
 
 These files are above the warning or split threshold, but they no longer lead the queue ahead of the largest remaining production files and tests.
 
-- `apps/runtime/src-tauri/src/agent/tools/employee_manage.rs` — 988 lines
-  - Risk: tool logic can accrete mixed validation, orchestration, and formatting concerns
-  - First split direction: separate tool entrypoint glue from underlying use-case helpers
-
 - `apps/runtime/src-tauri/src/adapters/openai.rs` — 756 lines
   - Risk: provider protocol shaping, streaming, and error normalization can keep accreting in one adapter
   - First split direction: split request building, streaming/event handling, and response normalization into cohesive helpers only if a new feature needs one of those lanes
+
+- `apps/runtime/src-tauri/tests/helpers/mod.rs` — 658 lines
+  - Risk: shared integration-test setup can quietly become the next giant test utility surface
+  - First split direction: separate database fixture setup from skill/workspace helpers only when a new scenario family forces that distinction
 
 ## Completed Templates
 
@@ -85,6 +85,12 @@ These files are above the warning or split threshold, but they no longer lead th
   - Outcome: root file is now well below the `500` target zone
   - Delivered structure: `schema.rs`, `migrations.rs`, and `seed.rs`
   - Follow-up: place new tables in `schema.rs`, new columns in `migrations.rs`, and repeatable startup defaults in `seed.rs`
+
+- `apps/runtime/src-tauri/tests/test_im_employee_agents.rs` — now 93 lines
+  - Status: completed as the formal Rust integration-test split template
+  - Outcome: root test binary is now a thin shell that only registers scenario modules plus a small base sanity layer
+  - Delivered structure: `im_routing.rs`, `group_management.rs`, `group_run.rs`, and `team_entry.rs`
+  - Follow-up: reuse this scenario-family split pattern before letting another Rust integration test grow into a giant monolithic binary
 
 ## Current Warn Queue
 

@@ -65,6 +65,15 @@ When a task does not naturally fit these landing zones, explain the chosen place
   - `seed.rs` for repeatable startup defaults and builtin sync work
 - Prefer this shape when future runtime data work would otherwise keep accreting in `db.rs`.
 
+- Treat `tests/test_im_employee_agents.rs` plus the sibling directory `tests/test_im_employee_agents/` as the current reference template for large Rust integration-test governance.
+- Use that module when a giant integration test binary mixes multiple scenario families that should evolve independently.
+- The current `test_im_employee_agents` reference layout includes:
+  - `im_routing.rs` for routing, binding, and IM session-bridge scenarios
+  - `group_management.rs` for employee group and team create/list/clone/delete scenarios
+  - `group_run.rs` for run lifecycle, review, retry, reassignment, snapshot, and execution scenarios
+  - `team_entry.rs` for team-entry orchestration scenarios
+- Prefer this shape when the next large Rust integration test should be split by scenario family rather than by helper function.
+
 ## Responsibility Split
 - Commands own Tauri entrypoints, input parsing, response shaping, and handoff to deeper layers.
 - Services own business rules, validation, normalization, and multi-step orchestration.
@@ -79,7 +88,7 @@ When a task does not naturally fit these landing zones, explain the chosen place
 
 These thresholds are governance triggers, not blanket failure rules. Do not split files mechanically just to get under a number.
 
-`employee_agents.rs`, `employee_agents/service.rs`, `employee_agents/repo.rs`, `openclaw_plugins.rs`, and `db.rs` have already been reduced below the `800` split-design threshold and should now be treated as maintained samples of the intended end state.
+`employee_agents.rs`, `employee_agents/service.rs`, `employee_agents/repo.rs`, `openclaw_plugins.rs`, `db.rs`, and `tests/test_im_employee_agents.rs` have already been reduced below the `800` split-design threshold and should now be treated as maintained samples of the intended end state.
 
 ## Avoid Micro-File Sprawl
 - Create a new file only when it owns a real persistence concern, integration concern, or distinct use case.
