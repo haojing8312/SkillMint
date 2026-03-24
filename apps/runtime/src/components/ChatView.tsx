@@ -1,11 +1,10 @@
-import { Fragment, useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, ImRoleTimelineEvent, ImRoleDispatchRequest, EmployeeGroupRunSnapshot, EmployeeGroupRule, SessionRunProjection, PersistedChatRuntimeState, ChatRuntimeAgentState, ChatDelegationCardState } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, EmployeeGroupRunSnapshot, SessionRunProjection, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
 import { motion } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
@@ -13,8 +12,9 @@ import { useImmersiveTranslation } from "../hooks/useImmersiveTranslation";
 import { ChatWorkspaceSidePanel } from "./chat-side-panel/ChatWorkspaceSidePanel";
 import { ChatExecutionContextBar } from "./chat/ChatExecutionContextBar";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ChatComposer } from "./chat/ChatComposer";
+import { ChatMessageRail } from "./chat/ChatMessageRail";
 import { ChatShell } from "./chat/ChatShell";
-import { ThinkingBlock } from "./ThinkingBlock";
 import {
   buildTaskJourneyViewModel,
   buildTaskPanelViewModel,
@@ -22,7 +22,6 @@ import {
   extractSessionTouchedFiles,
 } from "./chat-side-panel/view-model";
 import type { TaskJourneyViewModel } from "./chat-side-panel/view-model";
-import { TaskJourneySummary } from "./chat-journey/TaskJourneySummary";
 import { getDefaultModel } from "../lib/default-model";
 import {
   answerUserQuestion,
@@ -30,35 +29,16 @@ import {
   sendMessage,
 } from "../services/chat/chatSessionService";
 import {
-  confirmLegacyToolExecution,
   resolveApproval as resolvePendingApproval,
 } from "../services/chat/chatApprovalService";
-import {
-  continueEmployeeGroupRun,
-  getEmployeeGroupRunSnapshot,
-  listEmployeeGroupRules,
-  listEmployeeGroups,
-  pauseEmployeeGroupRun,
-  reassignGroupRunStep,
-  resumeEmployeeGroupRun,
-  retryEmployeeGroupRunFailedSteps,
-  reviewGroupRunStep,
-} from "../services/chat/chatGroupRunService";
 import { useChatSessionController, type PendingApprovalView } from "../scenes/chat/useChatSessionController";
+import { useChatCollaborationController } from "../scenes/chat/useChatCollaborationController";
 import {
   getModelErrorDisplay,
   inferModelErrorKindFromMessage,
   isModelErrorKind,
 } from "../lib/model-error-display";
-import {
-  subscribeChatStreamEvent,
-  type AssistantReasoningCompletedEvent,
-  type AssistantReasoningDeltaEvent,
-  type AssistantReasoningInterruptedEvent,
-  type AssistantReasoningStartedEvent,
-  type StreamTokenEvent,
-  type ToolCallEvent,
-} from "../lib/chat-stream-events";
+import { useChatStreamController } from "../scenes/chat/useChatStreamController";
 
 type ClawhubInstallCandidate = {
   slug: string;
@@ -217,22 +197,6 @@ function extractPlainTextFromStreamItems(items: StreamItem[]): string {
     .join("");
 }
 
-function mergeStreamingTextChunk(currentText: string, incomingText: string): string {
-  if (!incomingText) return currentText;
-  if (!currentText) return incomingText;
-  if (currentText.endsWith(incomingText)) return currentText;
-  if (incomingText.startsWith(currentText)) return incomingText;
-
-  const maxOverlap = Math.min(currentText.length, incomingText.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (currentText.slice(-overlap) === incomingText.slice(0, overlap)) {
-      return currentText + incomingText.slice(overlap);
-    }
-  }
-
-  return currentText + incomingText;
-}
-
 function CopyActionIcon({ copied }: { copied: boolean }) {
   if (copied) {
     return (
@@ -322,32 +286,12 @@ export function ChatView({
   const initialRuntimeState = clonePersistedChatRuntimeState(persistedRuntimeState);
   const [expandedRunDetailIds, setExpandedRunDetailIds] = useState<string[]>([]);
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(initialRuntimeState.streaming);
-  // 有序的流式输出项：文字和工具调用按时间顺序排列
-  const [streamItems, setStreamItems] = useState<StreamItem[]>(initialRuntimeState.streamItems);
-  const streamItemsRef = useRef<StreamItem[]>(initialRuntimeState.streamItems);
-  const [streamReasoning, setStreamReasoning] = useState<{
-    status: "thinking" | "completed" | "interrupted";
-    content: string;
-    durationMs?: number;
-  } | null>(initialRuntimeState.streamReasoning);
-  const streamReasoningRef = useRef<{
-    status: "thinking" | "completed" | "interrupted";
-    content: string;
-    durationMs?: number;
-  } | null>(initialRuntimeState.streamReasoning);
-  const [askUserQuestion, setAskUserQuestion] = useState<string | null>(null);
-  const [askUserOptions, setAskUserOptions] = useState<string[]>([]);
-  const [askUserAnswer, setAskUserAnswer] = useState("");
-  const [agentState, setAgentState] = useState<ChatRuntimeAgentState | null>(initialRuntimeState.agentState);
   const [pendingInstallSkill, setPendingInstallSkill] = useState<ClawhubInstallCandidate | null>(null);
   const [showInstallConfirm, setShowInstallConfirm] = useState(false);
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [composerError, setComposerError] = useState<string | null>(null);
   const installInFlightRef = useRef(false);
-  const [subAgentBuffer, setSubAgentBuffer] = useState(initialRuntimeState.subAgentBuffer);
-  const [subAgentRoleName, setSubAgentRoleName] = useState(initialRuntimeState.subAgentRoleName);
   const [mainRoleName, setMainRoleName] = useState(initialRuntimeState.mainRoleName);
   const [mainSummaryDelivered, setMainSummaryDelivered] = useState(initialRuntimeState.mainSummaryDelivered);
   const [highlightedMessageIndex, setHighlightedMessageIndex] = useState<number | null>(null);
@@ -364,9 +308,12 @@ export function ChatView({
   const scrollAnimationFrameRef = useRef<number | null>(null);
   const scrollAnimationTargetRef = useRef<"top" | "bottom" | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const subAgentBufferRef = useRef("");
   const sessionIdRef = useRef(sessionId);
   const mainRoleNameRef = useRef("");
+  const loadMessagesRef = useRef<(sid: string) => Promise<void>>(async () => {});
+  const loadSessionRunsRef = useRef<(sid: string) => Promise<void>>(async () => {});
+  const pendingApprovalsSnapshotRef = useRef<PendingApprovalView[]>([]);
+  const resolvingApprovalSnapshotRef = useRef<string | null>(null);
   const lastHandledSessionFocusNonceRef = useRef<number | null>(null);
   const messageElementRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const lastHandledGroupRunStepFocusNonceRef = useRef<number | null>(null);
@@ -470,53 +417,55 @@ export function ChatView({
   // 右侧面板状态
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [sidePanelTab, setSidePanelTab] = useState<"tasks" | "files" | "websearch">("tasks");
-  const [imRoleEvents, setImRoleEvents] = useState<ImRoleTimelineEvent[]>([]);
-  const [groupRunSnapshot, setGroupRunSnapshot] = useState<EmployeeGroupRunSnapshot | null>(null);
-  const [groupRunMemberEmployeeIds, setGroupRunMemberEmployeeIds] = useState<string[]>([]);
-  const [groupRunCoordinatorEmployeeId, setGroupRunCoordinatorEmployeeId] = useState("");
-  const [groupRunRules, setGroupRunRules] = useState<EmployeeGroupRule[]>([]);
-  const [expandedGroupRunStepIds, setExpandedGroupRunStepIds] = useState<string[]>([]);
-  const [groupRunActionLoading, setGroupRunActionLoading] = useState<
-    "approve" | "reject" | "pause" | "resume" | "retry" | "reassign" | null
-  >(null);
   const [expandedThinkingKeys, setExpandedThinkingKeys] = useState<string[]>([]);
   const [copiedAssistantMessageKey, setCopiedAssistantMessageKey] = useState<string | null>(null);
 
   const toggleThinkingBlock = (key: string) => {
     setExpandedThinkingKeys((prev) => (prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]));
   };
-
-  const updateStreamReasoning = (
-    updater: (
-      prev: {
-        status: "thinking" | "completed" | "interrupted";
-        content: string;
-        durationMs?: number;
-      } | null,
-    ) => {
-      status: "thinking" | "completed" | "interrupted";
-      content: string;
-      durationMs?: number;
-    } | null,
-  ) => {
-    setStreamReasoning((prev) => {
-      const next = updater(prev);
-      streamReasoningRef.current = next;
-      return next;
-    });
+  const collaborationControllerState = {
+    resetForSessionSwitch: () => {},
   };
+
+  const {
+    streaming,
+    streamItems,
+    streamReasoning,
+    askUserQuestion,
+    askUserOptions,
+    askUserAnswer,
+    setAskUserAnswer,
+    agentState,
+    subAgentBuffer,
+    subAgentRoleName,
+    applyPersistedRuntimeState: applyStreamRuntimeState,
+    resetForSessionSwitch,
+    prepareForSend,
+    finishStreaming,
+    interruptStreaming,
+    clearAskUserPrompt,
+  } = useChatStreamController({
+    sessionId,
+    suppressAskUserPrompt,
+    initialRuntimeState,
+    loadMessages: (sid) => loadMessagesRef.current(sid),
+    loadSessionRuns: (sid) => loadSessionRunsRef.current(sid),
+    pendingApprovalsRef: pendingApprovalsSnapshotRef,
+    resolvingApprovalIdRef: resolvingApprovalSnapshotRef,
+    buildPendingApproval,
+    upsertPendingApproval,
+    removePendingApproval,
+    onResetForSessionSwitch: () => {
+      collaborationControllerState.resetForSessionSwitch();
+      setShowDelegationHistory(false);
+      setSidePanelTab("tasks");
+      setExpandedThinkingKeys([]);
+    },
+  });
 
   const applyPersistedRuntimeState = (state?: PersistedChatRuntimeState | null) => {
     const next = clonePersistedChatRuntimeState(state);
-    setStreaming(next.streaming);
-    setStreamItems(next.streamItems);
-    streamItemsRef.current = next.streamItems;
-    setStreamReasoning(next.streamReasoning);
-    streamReasoningRef.current = next.streamReasoning;
-    setAgentState(next.agentState);
-    setSubAgentBuffer(next.subAgentBuffer);
-    subAgentBufferRef.current = next.subAgentBuffer;
-    setSubAgentRoleName(next.subAgentRoleName);
+    applyStreamRuntimeState(next);
     setMainRoleName(next.mainRoleName);
     mainRoleNameRef.current = next.mainRoleName;
     setMainSummaryDelivered(next.mainSummaryDelivered);
@@ -537,7 +486,6 @@ export function ChatView({
     workspace,
     loadMessages,
     loadSessionRuns,
-    loadPendingApprovals,
     updateWorkspace,
   } = useChatSessionController({
     sessionId,
@@ -559,25 +507,7 @@ export function ChatView({
     onPersistRuntimeState,
     onApplyPersistedRuntimeState: applyPersistedRuntimeState,
     onDraftLoaded: setInput,
-    onResetForSessionSwitch: () => {
-      setShowDelegationHistory(false);
-      setAskUserQuestion(null);
-      setAskUserOptions([]);
-      setAskUserAnswer("");
-      setAgentState(null);
-      setSidePanelTab("tasks");
-      setImRoleEvents([]);
-      setGroupRunSnapshot(null);
-      setGroupRunMemberEmployeeIds([]);
-      setGroupRunCoordinatorEmployeeId("");
-      setGroupRunRules([]);
-      setExpandedGroupRunStepIds([]);
-      setHighlightedMessageIndex(null);
-      setHighlightedGroupRunStepId(null);
-      setHighlightedGroupRunStepEventId(null);
-      setExpandedThinkingKeys([]);
-      lastHandledGroupRunStepFocusNonceRef.current = null;
-    },
+    onResetForSessionSwitch: resetForSessionSwitch,
     readSessionDraft,
     clearSessionDraft,
     persistSessionDraft,
@@ -594,6 +524,50 @@ export function ChatView({
         status: item.status,
       }),
   });
+
+  const {
+    imRoleEvents,
+    groupRunSnapshot,
+    groupRunMemberEmployeeIds,
+    groupRunCoordinatorEmployeeId,
+    groupRunRules,
+    expandedGroupRunStepIds,
+    setExpandedGroupRunStepIds,
+    groupRunActionLoading,
+    resetForSessionSwitch: resetCollaborationForSessionSwitch,
+    handleApproveGroupRunReview,
+    handleRejectGroupRunReview,
+    handlePauseGroupRun,
+    handleResumeGroupRun,
+    handleRetryFailedGroupRunSteps,
+    handleReassignFailedGroupRunStep,
+  } = useChatCollaborationController({
+    sessionId,
+    mainRoleName,
+    getCurrentMainRoleName: () => mainRoleNameRef.current,
+    onMainRoleNameChange: (roleName) => {
+      mainRoleNameRef.current = roleName;
+      setMainRoleName(roleName);
+    },
+    onMainSummaryDeliveredChange: setMainSummaryDelivered,
+    onDelegationCardsChange: setDelegationCards,
+    onMessagesAppend: (message) => {
+      setMessages((prev) => [...prev, message]);
+    },
+    onResetForSessionSwitch: () => {
+      setShowDelegationHistory(false);
+      setHighlightedMessageIndex(null);
+      setHighlightedGroupRunStepId(null);
+      setHighlightedGroupRunStepEventId(null);
+      lastHandledGroupRunStepFocusNonceRef.current = null;
+    },
+  });
+  collaborationControllerState.resetForSessionSwitch = resetCollaborationForSessionSwitch;
+
+  loadMessagesRef.current = loadMessages;
+  loadSessionRunsRef.current = loadSessionRuns;
+  pendingApprovalsSnapshotRef.current = pendingApprovals;
+  resolvingApprovalSnapshotRef.current = resolvingApprovalId;
 
   // File Upload: 读取文件为文本
   const readFileAsText = (file: File): Promise<string> => {
@@ -1048,471 +1022,6 @@ export function ChatView({
     return () => clearTimeout(timer);
   }, [expandedGroupRunStepIds, groupRunSnapshot, groupRunStepFocusRequest, sessionId]);
 
-  // stream-token 事件监听
-  useLayoutEffect(() => {
-    let currentSessionId: string | null = sessionId;
-    const unsubscribe = subscribeChatStreamEvent(
-      "stream-token",
-      (payload: StreamTokenEvent) => {
-        if (payload.session_id !== currentSessionId) return;
-        if (payload.done) {
-          // 流结束：将 streamItems 转为历史消息
-          const items = streamItemsRef.current;
-          const finalText = items
-            .filter((i) => i.type === "text")
-            .map((i) => i.content || "")
-            .join("");
-          const toolCalls = items
-            .filter((i) => i.type === "tool_call" && i.toolCall)
-            .map((i) => i.toolCall!);
-          if (finalText || toolCalls.length > 0) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                content: finalText,
-                created_at: new Date().toISOString(),
-                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                reasoning: streamReasoningRef.current
-                  ? {
-                      status: streamReasoningRef.current.status,
-                      duration_ms: streamReasoningRef.current.durationMs,
-                      content: streamReasoningRef.current.content,
-                    }
-                  : undefined,
-                streamItems: items.length > 0 ? [...items] : undefined,
-              },
-            ]);
-          }
-          streamItemsRef.current = [];
-          setStreamItems([]);
-          setStreamReasoning(null);
-          streamReasoningRef.current = null;
-          subAgentBufferRef.current = "";
-          setSubAgentBuffer("");
-          setSubAgentRoleName("");
-          setStreaming(false);
-          if (currentSessionId) {
-            void Promise.all([loadMessages(currentSessionId), loadSessionRuns(currentSessionId)]);
-          }
-        } else if (payload.sub_agent) {
-          // 子 Agent 的 token 单独缓冲
-          const delegatedRole = (payload.role_name || payload.role_id || "").trim();
-          if (delegatedRole) {
-            setSubAgentRoleName(delegatedRole);
-          }
-          subAgentBufferRef.current += payload.token;
-          setSubAgentBuffer(subAgentBufferRef.current);
-        } else {
-          // 主 Agent 的文字 token → 追加到最后一个 text 项或新建
-          const items = [...streamItemsRef.current];
-          const last = items[items.length - 1];
-          if (last && last.type === "text") {
-            last.content = mergeStreamingTextChunk(last.content || "", payload.token);
-          } else {
-            items.push({ type: "text", content: payload.token });
-          }
-          streamItemsRef.current = items;
-          setStreamItems([...items]);
-        }
-      },
-    );
-    return () => {
-      currentSessionId = null;
-      unsubscribe();
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    const unlistenPromise = listen<ImRoleTimelineEvent>("im-role-event", ({ payload }) => {
-      if (payload.session_id !== sessionId) return;
-      setImRoleEvents((prev) => [...prev, payload]);
-      const roleLabel = (payload.role_name || payload.role_id || "").trim();
-      if (payload.sender_role === "main_agent" && roleLabel) {
-        mainRoleNameRef.current = roleLabel;
-        setMainRoleName(roleLabel);
-      }
-      if (payload.sender_role === "main_agent") {
-        if (payload.status === "completed") {
-          setMainSummaryDelivered(true);
-        } else if (payload.status === "running") {
-          setMainSummaryDelivered(false);
-        }
-      }
-      if (
-        payload.sender_role === "sub_agent" &&
-        roleLabel &&
-        (payload.status === "completed" || payload.status === "failed")
-      ) {
-        setDelegationCards((prev) => {
-          const next = [...prev];
-          let matchedIndex = -1;
-          for (let i = next.length - 1; i >= 0; i -= 1) {
-            const item = next[i];
-            const byTaskId = payload.task_id && item.taskId === payload.task_id;
-            const byRole = item.toRole === roleLabel;
-            if (item.status === "running" && (byTaskId || byRole)) {
-              matchedIndex = i;
-              break;
-            }
-          }
-          if (matchedIndex >= 0) {
-            next[matchedIndex] = {
-              ...next[matchedIndex],
-              status: payload.status === "failed" ? "failed" : "completed",
-            };
-          }
-          return next;
-        });
-      }
-    });
-    return () => {
-      unlistenPromise.then((fn) => fn());
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    const unlistenPromise = listen<ImRoleDispatchRequest>("im-role-dispatch-request", ({ payload }) => {
-      if (payload.session_id !== sessionId) return;
-      const cleanPrompt = (payload.prompt || "")
-        .replace(/@_[A-Za-z0-9_]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      const roleLabel = payload.role_name || payload.role_id;
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "user",
-          content: `【${roleLabel}】${cleanPrompt || payload.prompt || ""}`,
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      setImRoleEvents((prev) => [
-        ...prev,
-        {
-          session_id: payload.session_id,
-          thread_id: payload.thread_id,
-          role_id: payload.role_id,
-          role_name: roleLabel,
-          sender_role: payload.sender_role ?? "main_agent",
-          sender_employee_id: payload.sender_employee_id ?? payload.role_id,
-          target_employee_id: payload.target_employee_id ?? payload.role_id,
-          task_id: payload.task_id,
-          parent_task_id: payload.parent_task_id,
-          message_type: payload.message_type ?? "delegate_request",
-          source_channel: payload.source_channel ?? "app",
-          status: "running",
-          summary: `任务已分发(${payload.agent_type}) -> ${roleLabel}`,
-        },
-      ]);
-      const delegationId = (payload.task_id || "").trim() || `${payload.thread_id}-${Date.now()}`;
-      setMainSummaryDelivered(false);
-      setDelegationCards((prev) => {
-        const next = prev.filter((item) => item.id !== delegationId);
-        next.push({
-          id: delegationId,
-          fromRole: mainRoleNameRef.current || mainRoleName || "主员工",
-          toRole: roleLabel,
-          status: "running",
-          taskId: payload.task_id,
-        });
-        return next.slice(-8);
-      });
-    });
-    return () => {
-      unlistenPromise.then((fn) => fn());
-    };
-  }, [mainRoleName, sessionId]);
-
-  useEffect(() => {
-    let disposed = false;
-    const loadSnapshot = async () => {
-      try {
-        const snapshot = await getEmployeeGroupRunSnapshot(sessionId);
-        if (!disposed && snapshot) {
-          setGroupRunSnapshot(snapshot);
-        }
-      } catch {
-        if (!disposed) {
-          setGroupRunSnapshot(null);
-        }
-      }
-    };
-    void loadSnapshot();
-    const timer = setInterval(() => {
-      void loadSnapshot();
-    }, 3000);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    let disposed = false;
-    const groupId = (groupRunSnapshot?.group_id || "").trim();
-    if (!groupId) {
-      setGroupRunMemberEmployeeIds([]);
-      setGroupRunCoordinatorEmployeeId("");
-      setGroupRunRules([]);
-      return () => {
-        disposed = true;
-      };
-    }
-    const loadGroupMembers = async () => {
-      try {
-        const [groups, rules] = await Promise.all([
-          listEmployeeGroups(),
-          listEmployeeGroupRules(groupId),
-        ]);
-        if (disposed) return;
-        const matchedGroup = groups.find((group) => (group.id || "").trim() === groupId) ?? null;
-        const memberIds = (matchedGroup?.member_employee_ids || [])
-          .map((value) => (value || "").trim())
-          .filter((value) => value.length > 0);
-        setGroupRunMemberEmployeeIds(memberIds);
-        setGroupRunCoordinatorEmployeeId((matchedGroup?.coordinator_employee_id || "").trim());
-        setGroupRunRules(rules);
-      } catch {
-        if (!disposed) {
-          setGroupRunMemberEmployeeIds([]);
-          setGroupRunCoordinatorEmployeeId("");
-          setGroupRunRules([]);
-        }
-      }
-    };
-    void loadGroupMembers();
-    return () => {
-      disposed = true;
-    };
-  }, [groupRunSnapshot?.group_id]);
-
-  // ask-user-event 事件监听
-  useEffect(() => {
-    const unlistenPromise = listen<{
-      session_id: string;
-      question: string;
-      options: string[];
-    }>("ask-user-event", ({ payload }) => {
-      if (payload.session_id !== sessionId) return;
-      if (suppressAskUserPrompt) {
-        setAskUserQuestion(null);
-        setAskUserOptions([]);
-        return;
-      }
-      setAskUserQuestion(payload.question);
-      setAskUserOptions(payload.options);
-    });
-    return () => {
-      unlistenPromise.then((fn) => fn());
-    };
-  }, [sessionId, suppressAskUserPrompt]);
-
-  // agent-state-event 事件监听
-  useEffect(() => {
-    const unlistenPromise = listen<{
-      session_id: string;
-      state: string;
-      detail: string | null;
-      iteration: number;
-      stop_reason_kind?: string | null;
-      stop_reason_title?: string | null;
-      stop_reason_message?: string | null;
-      stop_reason_last_completed_step?: string | null;
-    }>("agent-state-event", ({ payload }) => {
-      if (payload.session_id !== sessionId) return;
-      if (payload.state === "finished") {
-        setAgentState(null);
-      } else {
-        setAgentState({
-          state: payload.state,
-          detail: payload.detail ?? undefined,
-          iteration: payload.iteration,
-          stopReasonKind: payload.stop_reason_kind ?? undefined,
-          stopReasonTitle: payload.stop_reason_title ?? undefined,
-          stopReasonMessage: payload.stop_reason_message ?? undefined,
-          stopReasonLastCompletedStep: payload.stop_reason_last_completed_step ?? undefined,
-        });
-      }
-    });
-    return () => {
-      unlistenPromise.then((fn) => fn());
-    };
-  }, [sessionId]);
-
-  // approval-created / approval-resolved 事件监听（权限审批）
-  useEffect(() => {
-    const unlistenCreatedPromise = listen<{
-      approval_id?: string;
-      session_id: string;
-      tool_name: string;
-      tool_input?: Record<string, unknown>;
-      input?: Record<string, unknown>;
-      title?: string;
-      summary?: string;
-      impact?: string | null;
-      irreversible?: boolean;
-      status?: string;
-    }>("approval-created", ({ payload }) => {
-      if (payload.session_id !== sessionId) return;
-      upsertPendingApproval(buildPendingApproval(payload));
-    });
-
-    const unlistenResolvedPromise = listen<{
-      approval_id?: string;
-      session_id?: string;
-      status?: string;
-    }>("approval-resolved", ({ payload }) => {
-      if ((payload.session_id || "").trim() && payload.session_id !== sessionId) return;
-      const approvalId = (payload.approval_id || "").trim();
-      if (!approvalId) return;
-      removePendingApproval(approvalId);
-    });
-
-    const unlistenLegacyPromise = listen<{
-      approval_id?: string;
-      session_id: string;
-      tool_name: string;
-      tool_input: Record<string, unknown>;
-      title?: string;
-      summary?: string;
-      impact?: string;
-      irreversible?: boolean;
-    }>("tool-confirm-event", ({ payload }) => {
-      if (payload.session_id !== sessionId) return;
-      if ((payload.approval_id || "").trim()) return;
-      upsertPendingApproval(buildPendingApproval(payload));
-    });
-
-    return () => {
-      unlistenCreatedPromise.then((fn) => fn());
-      unlistenResolvedPromise.then((fn) => fn());
-      unlistenLegacyPromise.then((fn) => fn());
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    const cleanupSessionId = sessionId;
-
-    return () => {
-      const resolvingId = resolvingApprovalIdRef.current;
-      const staleApprovals = pendingApprovalsRef.current.filter(
-        (item) => item.sessionId === cleanupSessionId && item.approvalId.trim() && item.approvalId !== resolvingId,
-      );
-
-      for (const approval of staleApprovals) {
-        if (approval.approvalRecordId) {
-          void resolvePendingApproval(approval.approvalRecordId, "deny", "desktop_cleanup").catch((error) => {
-            console.error("自动拒绝待审批操作失败:", error);
-          });
-          continue;
-        }
-        if (approval.usesLegacyConfirm) {
-          void confirmLegacyToolExecution(false).catch((error) => {
-            console.error("自动拒绝旧版待审批操作失败:", error);
-          });
-        }
-      }
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    const unlisteners = [
-      subscribeChatStreamEvent("assistant-reasoning-started", (payload: AssistantReasoningStartedEvent) => {
-        if (payload.session_id !== sessionId) return;
-        updateStreamReasoning((prev) => ({
-          status: "thinking",
-          content: prev?.content || "",
-          durationMs: prev?.durationMs,
-        }));
-      }),
-      subscribeChatStreamEvent("assistant-reasoning-delta", (payload: AssistantReasoningDeltaEvent) => {
-        if (payload.session_id !== sessionId) return;
-        updateStreamReasoning((prev) => ({
-          status: "thinking",
-          content: `${prev?.content || ""}${payload.text || ""}`,
-          durationMs: prev?.durationMs,
-        }));
-      }),
-      subscribeChatStreamEvent("assistant-reasoning-completed", (payload: AssistantReasoningCompletedEvent) => {
-        if (payload.session_id !== sessionId) return;
-        updateStreamReasoning((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: "completed",
-                durationMs: payload.duration_ms,
-              }
-            : {
-                status: "completed",
-                content: "",
-                durationMs: payload.duration_ms,
-              }
-        );
-      }),
-      subscribeChatStreamEvent("assistant-reasoning-interrupted", (payload: AssistantReasoningInterruptedEvent) => {
-        if (payload.session_id !== sessionId) return;
-        updateStreamReasoning((prev) => ({
-          status: "interrupted",
-          content: prev?.content || "",
-          durationMs: prev?.durationMs,
-        }));
-      }),
-    ];
-
-    return () => {
-      unlisteners.forEach((dispose) => dispose());
-    };
-  }, [sessionId]);
-
-  // tool-call-event 事件监听：按顺序插入到 streamItems
-  useEffect(() => {
-    const unsubscribe = subscribeChatStreamEvent("tool-call-event", (payload: ToolCallEvent) => {
-      if (payload.session_id !== sessionId) return;
-      if (payload.status === "started") {
-        // 新的工具调用 → 直接追加到 streamItems（文字和工具按时间排列）
-        const items = streamItemsRef.current;
-        items.push({
-          type: "tool_call",
-          toolCall: {
-            id: `${payload.tool_name}-${Date.now()}`,
-            name: payload.tool_name,
-            input: payload.tool_input,
-            status: "running" as const,
-          },
-        });
-        streamItemsRef.current = items;
-        setStreamItems([...items]);
-      } else {
-        // 工具完成/出错 → 更新对应项
-        const items = streamItemsRef.current.map((item) => {
-          if (
-            item.type === "tool_call" &&
-            item.toolCall?.name === payload.tool_name &&
-            item.toolCall?.status === "running"
-          ) {
-            return {
-              ...item,
-              toolCall: {
-                ...item.toolCall,
-                output: payload.tool_output ?? undefined,
-                status: (payload.status === "completed"
-                  ? "completed"
-                  : "error") as "completed" | "error",
-              },
-            };
-          }
-          return item;
-        });
-        streamItemsRef.current = items;
-        setStreamItems([...items]);
-      }
-    });
-    return () => {
-      unsubscribe();
-    };
-  }, [sessionId]);
-
   async function handleSend() {
     if (!input.trim() && attachedFiles.length === 0) return;
     if (streaming || !sessionId) return;
@@ -1565,14 +1074,7 @@ export function ChatView({
         created_at: new Date().toISOString(),
       },
     ]);
-    setStreaming(true);
-    streamItemsRef.current = [];
-    setStreamItems([]);
-    setStreamReasoning(null);
-    streamReasoningRef.current = null;
-    subAgentBufferRef.current = "";
-    setSubAgentBuffer("");
-    setSubAgentRoleName("");
+    prepareForSend();
     try {
       await sendMessage(continuationRequest);
       onSessionUpdate?.();
@@ -1596,7 +1098,7 @@ export function ChatView({
         ]);
       }
     } finally {
-      setStreaming(false);
+      finishStreaming();
     }
   }
 
@@ -1628,28 +1130,7 @@ export function ChatView({
       console.error("取消任务失败:", e);
     }
     // 即时清除状态，不等待后端返回
-    setStreaming(false);
-    setAgentState(null);
-    updateStreamReasoning((prev) => (prev ? { ...prev, status: "interrupted" } : prev));
-    // 将所有 running 状态的工具标记为 error，避免永远转圈
-    const items = streamItemsRef.current.map((item) => {
-      if (
-        item.type === "tool_call" &&
-        item.toolCall?.status === "running"
-      ) {
-        return {
-          ...item,
-          toolCall: {
-            ...item.toolCall,
-            output: "已取消",
-            status: "error" as const,
-          },
-        };
-      }
-      return item;
-    });
-    streamItemsRef.current = items;
-    setStreamItems([...items]);
+    interruptStreaming();
   }
 
   async function handleAnswerUser(answer: string) {
@@ -1659,9 +1140,7 @@ export function ChatView({
     } catch (e) {
       console.error("回答用户问题失败:", e);
     }
-    setAskUserQuestion(null);
-    setAskUserOptions([]);
-    setAskUserAnswer("");
+    clearAskUserPrompt();
   }
 
   async function handleResolveApproval(decision: "allow_once" | "allow_always" | "deny") {
@@ -1674,97 +1153,6 @@ export function ChatView({
     } catch (e) {
       console.error("工具确认失败:", e);
       setResolvingApprovalId(null);
-    }
-  }
-
-  async function handleApproveGroupRunReview() {
-    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
-    setGroupRunActionLoading("approve");
-    try {
-      await reviewGroupRunStep(groupRunSnapshot.run_id, "approve", "前端确认通过");
-      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
-      setGroupRunSnapshot(snapshot);
-    } catch (e) {
-      console.error("审核通过失败:", e);
-    } finally {
-      setGroupRunActionLoading(null);
-    }
-  }
-
-  async function refreshGroupRunSnapshot(targetSessionId?: string) {
-    const snapshotSessionId = (targetSessionId || groupRunSnapshot?.session_id || sessionId || "").trim();
-    if (!snapshotSessionId) return;
-    const snapshot = await getEmployeeGroupRunSnapshot(snapshotSessionId);
-    if (snapshot) {
-      setGroupRunSnapshot(snapshot);
-    }
-  }
-
-  async function handleRejectGroupRunReview() {
-    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
-    setGroupRunActionLoading("reject");
-    try {
-      await reviewGroupRunStep(groupRunSnapshot.run_id, "reject", "前端要求补充方案");
-      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
-      setGroupRunSnapshot(snapshot);
-    } catch (e) {
-      console.error("审核打回失败:", e);
-    } finally {
-      setGroupRunActionLoading(null);
-    }
-  }
-
-  async function handlePauseGroupRun() {
-    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
-    setGroupRunActionLoading("pause");
-    try {
-      await pauseEmployeeGroupRun(groupRunSnapshot.run_id, "前端人工暂停");
-      await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
-    } catch (e) {
-      console.error("暂停协作失败:", e);
-    } finally {
-      setGroupRunActionLoading(null);
-    }
-  }
-
-  async function handleResumeGroupRun() {
-    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
-    setGroupRunActionLoading("resume");
-    try {
-      await resumeEmployeeGroupRun(groupRunSnapshot.run_id);
-      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
-      setGroupRunSnapshot(snapshot);
-    } catch (e) {
-      console.error("继续协作失败:", e);
-    } finally {
-      setGroupRunActionLoading(null);
-    }
-  }
-
-  async function handleRetryFailedGroupRunSteps() {
-    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
-    setGroupRunActionLoading("retry");
-    try {
-      await retryEmployeeGroupRunFailedSteps(groupRunSnapshot.run_id);
-      await refreshGroupRunSnapshot(groupRunSnapshot.session_id);
-    } catch (e) {
-      console.error("重试失败步骤失败:", e);
-    } finally {
-      setGroupRunActionLoading(null);
-    }
-  }
-
-  async function handleReassignFailedGroupRunStep(stepId: string, assigneeEmployeeId: string) {
-    if (!groupRunSnapshot?.run_id || groupRunActionLoading) return;
-    setGroupRunActionLoading("reassign");
-    try {
-      await reassignGroupRunStep(stepId, assigneeEmployeeId);
-      const snapshot = await continueEmployeeGroupRun(groupRunSnapshot.run_id);
-      setGroupRunSnapshot(snapshot);
-    } catch (e) {
-      console.error("改派失败步骤失败:", e);
-    } finally {
-      setGroupRunActionLoading(null);
     }
   }
 
@@ -2411,6 +1799,29 @@ export function ChatView({
     if (installInFlightRef.current) return;
     setShowInstallConfirm(false);
     setPendingInstallSkill(null);
+  }
+
+  function handleComposerInputChange(nextValue: string) {
+    if (composerError) setComposerError(null);
+    setInput(nextValue);
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
+  }
+
+  function handleComposerWorkdirClick() {
+    invoke<string | null>("select_directory", {
+      defaultPath: workspace || undefined,
+    }).then((newDir) => {
+      if (newDir) {
+        updateWorkspace(newDir);
+      }
+    });
+  }
+
+  function handleComposerRemoveAttachment(fileId: string) {
+    removeAttachedFile(attachedFiles.findIndex((item) => item.id === fileId));
   }
 
   async function handleCopyAssistantMessage(messageKey: string, content: string) {
@@ -3267,213 +2678,40 @@ export function ChatView({
             )}
           </div>
         )}
-        {renderedMessages.map((m, i) => {
-          const isLatest = i === renderedMessages.length - 1;
-          const isSessionFocusTarget = highlightedMessageIndex === i;
-          const messageJourneyModel = m.role === "assistant" ? buildTaskJourneyViewModel([m]) : null;
-          const shouldRenderJourneySummary =
-            messageJourneyModel !== null && shouldRenderCompletedJourneySummary(messageJourneyModel);
-          const messageSummaryKey = (m.runId || m.id || `message-${i}`).trim();
-          const inlineFailedRuns =
-            m.role === "assistant" && (m.id || "").trim()
-              ? failedRunsByAssistantMessageId.get((m.id || "").trim()) ?? []
-              : m.role === "user" && (m.id || "").trim()
-              ? failedRunsByUserMessageId.get((m.id || "").trim()) ?? []
-              : [];
-          return (
-            <Fragment key={m.id || `${i}-${m.created_at}`}>
-              <motion.div
-                ref={(node) => {
-                  messageElementRefs.current[i] = node;
-                }}
-                data-testid={`chat-message-${i}`}
-                data-recovered-run-message={m.id?.startsWith("recovered-run-") ? "true" : "false"}
-                data-session-focus-highlighted={isSessionFocusTarget ? "true" : "false"}
-                initial={isLatest ? { opacity: 0, x: m.role === "user" ? 20 : -20 } : false}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ type: "spring", stiffness: 300, damping: 24 }}
-                className={"flex " + (m.role === "user" ? "justify-end" : "justify-start")}
-              >
-                <div
-                  data-testid={`chat-message-bubble-${m.id || i}`}
-                  className={
-                    "text-sm transition-all " +
-                    (isSessionFocusTarget ? "ring-2 ring-amber-300 " : "") +
-                    (m.role === "user"
-                      ? "max-w-[28rem] rounded-[1.4rem] bg-slate-100 px-4 py-2.5 text-slate-800 shadow-[0_1px_2px_rgba(15,23,42,0.04)] md:max-w-[32rem]"
-                      : "w-full max-w-[92%] px-0 py-1 text-slate-800 sm:max-w-[88%] md:max-w-[48rem] xl:max-w-[52rem]")
-                  }
-                >
-                  {m.role === "assistant" && m.reasoning && (
-                    <ThinkingBlock
-                      status={m.reasoning.status}
-                      content={m.reasoning.content}
-                      durationMs={m.reasoning.duration_ms}
-                      expanded={expandedThinkingKeys.includes(`message-${m.id || i}`)}
-                      onToggle={
-                        m.reasoning.content.trim()
-                          ? () => toggleThinkingBlock(`message-${m.id || i}`)
-                          : undefined
-                      }
-                      toggleTestId={`thinking-block-toggle-${m.id || i}`}
-                    />
-                  )}
-                  {m.role === "assistant" && m.streamItems ? (
-                    <>
-                      {renderStreamItems(m.streamItems, false)}
-                      {renderInstallCandidates(extractInstallCandidates(m.streamItems, m.content))}
-                    </>
-                  ) : m.role === "assistant" && m.toolCalls ? (
-                    <>
-                      <ToolIsland toolCalls={m.toolCalls} isRunning={false} />
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
-                    </>
-                  ) : m.role === "assistant" ? (
-                    <>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
-                    </>
-                  ) : m.role === "user" && m.contentParts?.length ? (
-                    renderUserContentParts(m.contentParts)
-                  ) : (
-                    m.content
-                  )}
-                  {m.role === "assistant" && m.content.trim() && (
-                    <div className="mt-3 flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        data-testid={`assistant-copy-action-${m.id || i}`}
-                        aria-label="复制回答"
-                        title={copiedAssistantMessageKey === `message-${m.id || i}` ? "已复制" : "复制回答"}
-                        onClick={() => void handleCopyAssistantMessage(`message-${m.id || i}`, m.content)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                      >
-                        <CopyActionIcon copied={copiedAssistantMessageKey === `message-${m.id || i}`} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-              {shouldRenderJourneySummary && messageJourneyModel && (
-                <div data-testid={`task-journey-summary-${messageSummaryKey}`}>
-                  <TaskJourneySummary
-                    model={messageJourneyModel}
-                    onViewFiles={handleViewFilesFromDelivery}
-                  />
-                </div>
-              )}
-              {inlineFailedRuns.map((run) => renderRunFailureCard(run))}
-            </Fragment>
-          );
-        })}
-        {orphanFailedRuns.map((run) => renderRunFailureCard(run))}
-        {/* 流式输出区域：按时间顺序渲染 */}
-        {showStreamingAssistantBubble && (
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="flex justify-start"
-          >
-            <div
-              data-testid="chat-streaming-bubble"
-              className="w-full max-w-[92%] px-0 py-1 text-sm text-slate-800 sm:max-w-[88%] md:max-w-[48rem] xl:max-w-[52rem]"
-            >
-              {showStreamingThinkingState && (
-                <ThinkingBlock
-                  status={streamReasoning?.status || "thinking"}
-                  content={streamReasoning?.content || ""}
-                  durationMs={streamReasoning?.durationMs}
-                  expanded={expandedThinkingKeys.includes("stream")}
-                  onToggle={
-                    (streamReasoning?.content || "").trim()
-                      ? () => toggleThinkingBlock("stream")
-                      : undefined
-                  }
-                />
-              )}
-              {streamItems.length > 0 && renderStreamItems(streamItems, true)}
-              {subAgentBuffer && (
-                <div
-                  data-testid="sub-agent-stream-buffer"
-                  className="mt-2 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2"
-                >
-                  <div className="mb-1 text-[11px] font-semibold text-slate-600">
-                    {subAgentRoleName ? `子员工 · ${subAgentRoleName}` : "子员工"}
-                  </div>
-                  <div className="prose prose-xs max-w-none text-slate-700">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{subAgentBuffer}</ReactMarkdown>
-                    <span className="animate-pulse text-slate-400">|</span>
-                  </div>
-                </div>
-              )}
-              {streamItems.length > 0 && (
-                <>
-                  {/* 光标闪烁效果 */}
-                  <span className="inline-block w-0.5 h-4 bg-blue-400 ml-0.5 align-middle animate-[blink_1s_infinite]" />
-                </>
-              )}
-              {streamText.trim() && (
-                <div className="mt-3 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    data-testid="assistant-copy-action-stream"
-                    aria-label="复制回答"
-                    title={copiedAssistantMessageKey === "stream" ? "已复制" : "复制回答"}
-                    onClick={() => void handleCopyAssistantMessage("stream", streamText)}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                  >
-                    <CopyActionIcon copied={copiedAssistantMessageKey === "stream"} />
-                  </button>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-        {/* AskUser 问答卡片 */}
-        {askUserQuestion && (
-          <div className="sticky top-0 z-20 flex justify-start">
-            <div
-              data-testid="ask-user-action-card"
-              className="max-w-[80%] bg-amber-50 border border-amber-300 rounded-2xl px-4 py-3 text-sm shadow-sm"
-            >
-              <div className="font-semibold text-amber-800 mb-1">需要你的确认</div>
-              <div className="font-medium text-amber-700 mb-2">{askUserQuestion}</div>
-              {askUserOptions.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {askUserOptions.map((opt, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleAnswerUser(opt)}
-                      className="bg-amber-100 hover:bg-amber-200 text-amber-800 px-3 py-1 rounded text-xs transition-colors border border-amber-300"
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <input
-                  value={askUserAnswer}
-                  onChange={(e) => setAskUserAnswer(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleAnswerUser(askUserAnswer);
-                    }
-                  }}
-                  placeholder="输入回答..."
-                  className="flex-1 bg-white border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-500"
-                />
-                <button
-                  onClick={() => handleAnswerUser(askUserAnswer)}
-                  disabled={!askUserAnswer.trim()}
-                  className="bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 px-3 py-1 rounded text-xs transition-colors"
-                >
-                  回答
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ChatMessageRail
+          renderedMessages={renderedMessages}
+          highlightedMessageIndex={highlightedMessageIndex}
+          messageElementRefs={messageElementRefs}
+          expandedThinkingKeys={expandedThinkingKeys}
+          onToggleThinkingBlock={toggleThinkingBlock}
+          buildTaskJourneyModel={buildTaskJourneyViewModel}
+          shouldRenderCompletedJourneySummary={shouldRenderCompletedJourneySummary}
+          failedRunsByAssistantMessageId={failedRunsByAssistantMessageId}
+          failedRunsByUserMessageId={failedRunsByUserMessageId}
+          renderRunFailureCard={renderRunFailureCard}
+          renderStreamItems={renderStreamItems}
+          renderInstallCandidates={renderInstallCandidates}
+          extractInstallCandidates={extractInstallCandidates}
+          renderUserContentParts={renderUserContentParts}
+          copiedAssistantMessageKey={copiedAssistantMessageKey}
+          onCopyAssistantMessage={handleCopyAssistantMessage}
+          CopyActionIcon={CopyActionIcon}
+          onViewFilesFromDelivery={handleViewFilesFromDelivery}
+          orphanFailedRuns={orphanFailedRuns}
+          showStreamingAssistantBubble={showStreamingAssistantBubble}
+          showStreamingThinkingState={showStreamingThinkingState}
+          streamReasoning={streamReasoning}
+          streamItems={streamItems}
+          subAgentBuffer={subAgentBuffer}
+          subAgentRoleName={subAgentRoleName}
+          streamText={streamText}
+          markdownComponents={markdownComponents}
+          askUserQuestion={askUserQuestion}
+          askUserOptions={askUserOptions}
+          askUserAnswer={askUserAnswer}
+          onAskUserAnswerChange={setAskUserAnswer}
+          onAnswerUser={handleAnswerUser}
+        />
         <RiskConfirmDialog
           open={Boolean(activePendingApproval)}
           level="high"
@@ -3553,193 +2791,26 @@ export function ChatView({
         taskModel={taskPanelModel}
         webSearchEntries={webSearchEntries}
       />}
-      composer={<div className="border-t border-slate-200/80 bg-[#f4f4f1]/92 px-4 py-3 sm:px-6 xl:px-8">
-        <div className="mx-auto w-full max-w-[76rem]">
-        <div
-          data-testid="chat-composer-shell"
-          className="mx-auto max-w-3xl rounded-[26px] border border-[var(--sm-border)] bg-white px-4 pt-4 pb-3 shadow-[0_8px_24px_-20px_rgba(59,130,246,0.35)] transition-all focus-within:border-[var(--sm-primary)] focus-within:shadow-[var(--sm-focus-ring)]"
-        >
-          {operationPermissionMode === "full_access" && (
-            <div className="pb-3">
-              <div
-                data-testid="full-access-badge"
-                className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-700"
-              >
-                全自动模式
-              </div>
-            </div>
-          )}
-          {quickPrompts.length > 0 && (
-            <div data-testid="chat-quick-prompts" className="flex flex-wrap gap-2 border-b border-gray-100 pb-2">
-              {quickPrompts.map((item, index) => (
-                <button
-                  key={`${item.label}-${index}`}
-                  data-testid={`chat-quick-prompt-${index}`}
-                  type="button"
-                  disabled={streaming}
-                  title={item.prompt}
-                  onClick={() => void sendContent(item.prompt)}
-                  className="h-7 px-2.5 rounded border border-blue-200 hover:bg-blue-50 disabled:bg-gray-100 disabled:text-gray-400 text-blue-700 text-[11px]"
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-          {/* 隐藏的文件输入 */}
-          <input
-            type="file"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-            id="file-upload"
-          />
-
-          {attachedFiles.length > 0 && (
-            <div className="pb-2 space-y-2">
-              <div className="text-[11px] text-gray-500">
-                已添加 {attachedFiles.length} 个附件
-              </div>
-              <div className="space-y-2">
-                {attachedFiles.map((file) => (
-                  <div
-                    key={file.id}
-                    className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2"
-                  >
-                    {file.kind === "image" ? (
-                      <img
-                        src={file.previewUrl}
-                        alt={file.name}
-                        className="h-10 w-10 rounded object-cover border border-gray-200"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded border border-gray-200 bg-gray-50 text-[11px] text-gray-600">
-                        TXT
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm text-gray-800">{file.name}</div>
-                      <div className="flex items-center gap-2 text-[11px] text-gray-500">
-                        <span>{file.kind === "image" ? "图片" : "文本"}</span>
-                        <span>{Math.ceil(file.size / 1024)} KB</span>
-                        {file.kind === "text-file" && file.truncated && <span>已截断</span>}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      aria-label="移除附件"
-                      onClick={() => removeAttachedFile(attachedFiles.findIndex((item) => item.id === file.id))}
-                      className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
-                    >
-                      删除
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {composerError && (
-            <div className="pb-2">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                {composerError}
-              </div>
-            </div>
-          )}
-
-          {/* 输入框主体 */}
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => {
-              if (composerError) setComposerError(null);
-              setInput(e.target.value);
-              // auto-expand
-              const el = e.target;
-              el.style.height = "auto";
-              el.style.height = Math.min(el.scrollHeight, 200) + "px";
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder="输入消息，Shift+Enter 换行..."
-            rows={3}
-            className="sm-textarea w-full min-h-[88px] max-h-[200px] border-0 bg-transparent px-0 py-0 focus:border-0 focus:shadow-none"
-          />
-          {/* 底部工具栏 */}
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                data-testid="chat-composer-workdir-button"
-                onClick={() => {
-                  invoke<string | null>("select_directory", {
-                    defaultPath: workspace || undefined,
-                  }).then((newDir) => {
-                    if (newDir) {
-                      updateWorkspace(newDir);
-                    }
-                  });
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 px-2.5 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-200"
-                title={displayWorkDirLabel}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2Z" />
-                </svg>
-                <span data-testid="chat-composer-workdir-label" className="max-w-[180px] truncate">
-                  {displayWorkDirLabel}
-                </span>
-              </button>
-              {currentModel && (
-                <span
-                  data-testid="chat-composer-model-chip"
-                  className="inline-flex items-center rounded-lg bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
-                >
-                  {currentModel.name}
-                </span>
-              )}
-              <label
-                htmlFor="file-upload"
-                className="sm-btn sm-btn-secondary h-8 gap-1.5 rounded-lg px-3 text-xs cursor-pointer"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-                附件
-              </label>
-            </div>
-            <div className="flex items-center gap-2">
-              {streaming ? (
-                <button
-                  onClick={handleCancel}
-                  className="sm-btn sm-btn-danger h-8 px-3 gap-1.5 rounded-lg text-xs"
-                >
-                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                  </svg>
-                  停止
-                </button>
-              ) : (
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() && attachedFiles.length === 0}
-                  className="sm-btn sm-btn-primary h-8 px-3 gap-1.5 rounded-lg text-xs disabled:bg-[var(--sm-surface-muted)] disabled:text-[var(--sm-text-muted)]"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-                  </svg>
-                  发送
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-        </div>
-      </div>}
+      composer={
+        <ChatComposer
+          operationPermissionMode={operationPermissionMode}
+          quickPrompts={quickPrompts}
+          streaming={streaming}
+          sendContent={sendContent}
+          attachedFiles={attachedFiles}
+          onFileSelect={handleFileSelect}
+          composerError={composerError}
+          input={input}
+          textareaRef={textareaRef}
+          onInputChange={handleComposerInputChange}
+          onSubmit={handleSend}
+          onWorkdirClick={handleComposerWorkdirClick}
+          displayWorkDirLabel={displayWorkDirLabel}
+          currentModel={currentModel}
+          onRemoveAttachment={handleComposerRemoveAttachment}
+          onCancel={handleCancel}
+        />
+      }
     />
   );
 }
