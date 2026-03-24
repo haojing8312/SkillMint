@@ -23,6 +23,34 @@ export interface EmployeeHubPendingItem {
   targetTab: "employees" | "teams";
 }
 
+export function resolveEmployeeHubDisplayName(employeeLabelById: Map<string, string>, employeeId: string): string {
+  const normalized = employeeId.trim().toLowerCase();
+  if (!normalized) return "未设置";
+  return employeeLabelById.get(normalized) || employeeId.trim();
+}
+
+export function resolveEmployeeHubRunStatusLabel(status: string): string {
+  switch (status.trim().toLowerCase()) {
+    case "running":
+      return "运行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "waiting_review":
+      return "等待审核";
+    case "cancelled":
+      return "已取消";
+    default:
+      return status.trim() || "未知";
+  }
+}
+
+export function formatEmployeeHubRunTimestamp(value: string): string {
+  if (!value.trim()) return "刚刚";
+  return value.replace("T", " ").replace("Z", "").slice(0, 16);
+}
+
 function hasIdentifier(employee: AgentEmployee): boolean {
   return Boolean((employee.employee_id || employee.role_id || "").trim());
 }
