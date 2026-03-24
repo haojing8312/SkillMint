@@ -43,7 +43,7 @@ const FEISHU_ADVANCED_DYNAMIC_AGENT_FIELDS: FeishuAdvancedFieldConfig[] = [
   { key: "dynamic_agent_creation_max_agents", label: "动态 Agent 数量上限", description: "限制动态创建 Agent 的最大数量。", kind: "input" },
 ];
 
-interface FeishuAdvancedSectionProps {
+export interface FeishuAdvancedSectionProps {
   connectionDetailSummary: string;
   feishuAdvancedSettings: OpenClawPluginFeishuAdvancedSettings;
   setFeishuAdvancedSettings: Dispatch<SetStateAction<OpenClawPluginFeishuAdvancedSettings>>;

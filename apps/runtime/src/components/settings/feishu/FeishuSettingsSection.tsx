@@ -42,7 +42,7 @@ type FeishuSetupSummary = {
   description: string;
 };
 
-interface FeishuSettingsSectionProps {
+export interface FeishuSettingsSectionProps {
   onOpenEmployees?: () => void;
   feishuConnectorSettings: FeishuGatewaySettings;
   setFeishuConnectorSettings: Dispatch<SetStateAction<FeishuGatewaySettings>>;
