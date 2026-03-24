@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { SkillManifest, ModelConfig, Message, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, ImRoleTimelineEvent, ImRoleDispatchRequest, EmployeeGroupRunSnapshot, EmployeeGroup, EmployeeGroupRule, SessionRunProjection, PersistedChatRuntimeState, ChatRuntimeAgentState, ChatDelegationCardState } from "../types";
+import { SkillManifest, ModelConfig, Message, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, ImRoleTimelineEvent, ImRoleDispatchRequest, EmployeeGroupRunSnapshot, EmployeeGroupRule, SessionRunProjection, PersistedChatRuntimeState, ChatRuntimeAgentState, ChatDelegationCardState } from "../types";
 import { motion } from "framer-motion";
 import { ToolIsland } from "./ToolIsland";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
@@ -27,15 +27,10 @@ import { getDefaultModel } from "../lib/default-model";
 import {
   answerUserQuestion,
   cancelAgent,
-  getMessages,
-  listSessionRuns,
-  listSessions,
   sendMessage,
-  updateSessionWorkspace,
 } from "../services/chat/chatSessionService";
 import {
   confirmLegacyToolExecution,
-  listPendingApprovals as listPendingApprovalRecords,
   resolveApproval as resolvePendingApproval,
 } from "../services/chat/chatApprovalService";
 import {
@@ -49,6 +44,7 @@ import {
   retryEmployeeGroupRunFailedSteps,
   reviewGroupRunStep,
 } from "../services/chat/chatGroupRunService";
+import { useChatSessionController, type PendingApprovalView } from "../scenes/chat/useChatSessionController";
 import {
   getModelErrorDisplay,
   inferModelErrorKindFromMessage,
@@ -200,20 +196,6 @@ function clonePersistedChatRuntimeState(state?: PersistedChatRuntimeState | null
   };
 }
 
-interface PendingApprovalView {
-  approvalId: string;
-  approvalRecordId?: string;
-  sessionId: string;
-  toolName: string;
-  toolInput: Record<string, unknown>;
-  title: string;
-  summary: string;
-  impact?: string;
-  irreversible?: boolean;
-  status?: string;
-  usesLegacyConfirm?: boolean;
-}
-
 function shouldRenderCompletedJourneySummary(model: TaskJourneyViewModel) {
   if (model.deliverables.length === 0) return false;
   return model.status === "completed" || model.status === "partial";
@@ -338,8 +320,6 @@ export function ChatView({
     return message.split(prefix)[1]?.trim() || null;
   };
   const initialRuntimeState = clonePersistedChatRuntimeState(persistedRuntimeState);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [sessionRuns, setSessionRuns] = useState<SessionRunProjection[]>([]);
   const [expandedRunDetailIds, setExpandedRunDetailIds] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(initialRuntimeState.streaming);
@@ -360,8 +340,6 @@ export function ChatView({
   const [askUserOptions, setAskUserOptions] = useState<string[]>([]);
   const [askUserAnswer, setAskUserAnswer] = useState("");
   const [agentState, setAgentState] = useState<ChatRuntimeAgentState | null>(initialRuntimeState.agentState);
-  const [pendingApprovals, setPendingApprovals] = useState<PendingApprovalView[]>([]);
-  const [resolvingApprovalId, setResolvingApprovalId] = useState<string | null>(null);
   const [pendingInstallSkill, setPendingInstallSkill] = useState<ClawhubInstallCandidate | null>(null);
   const [showInstallConfirm, setShowInstallConfirm] = useState(false);
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
@@ -386,8 +364,6 @@ export function ChatView({
   const scrollAnimationFrameRef = useRef<number | null>(null);
   const scrollAnimationTargetRef = useRef<"top" | "bottom" | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const pendingApprovalsRef = useRef<PendingApprovalView[]>([]);
-  const resolvingApprovalIdRef = useRef<string | null>(null);
   const subAgentBufferRef = useRef("");
   const sessionIdRef = useRef(sessionId);
   const mainRoleNameRef = useRef("");
@@ -481,11 +457,6 @@ export function ChatView({
   });
 
   useEffect(() => {
-    pendingApprovalsRef.current = pendingApprovals;
-    resolvingApprovalIdRef.current = resolvingApprovalId;
-  }, [pendingApprovals, resolvingApprovalId]);
-
-  useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
@@ -551,6 +522,78 @@ export function ChatView({
     setMainSummaryDelivered(next.mainSummaryDelivered);
     setDelegationCards(next.delegationCards);
   };
+
+  const {
+    messages,
+    setMessages,
+    sessionRuns,
+    setSessionRuns,
+    pendingApprovals,
+    setPendingApprovals,
+    pendingApprovalsRef,
+    resolvingApprovalId,
+    setResolvingApprovalId,
+    resolvingApprovalIdRef,
+    workspace,
+    loadMessages,
+    loadSessionRuns,
+    loadPendingApprovals,
+    updateWorkspace,
+  } = useChatSessionController({
+    sessionId,
+    workDir,
+    initialMessage,
+    draftInput: input,
+    persistedRuntimeState,
+    runtimeSnapshot: {
+      streaming,
+      streamItems: [...streamItems],
+      streamReasoning: streamReasoning ? { ...streamReasoning } : null,
+      agentState: agentState ? { ...agentState } : null,
+      subAgentBuffer,
+      subAgentRoleName,
+      mainRoleName,
+      mainSummaryDelivered,
+      delegationCards: delegationCards.map((item) => ({ ...item })),
+    },
+    onPersistRuntimeState,
+    onApplyPersistedRuntimeState: applyPersistedRuntimeState,
+    onDraftLoaded: setInput,
+    onResetForSessionSwitch: () => {
+      setShowDelegationHistory(false);
+      setAskUserQuestion(null);
+      setAskUserOptions([]);
+      setAskUserAnswer("");
+      setAgentState(null);
+      setSidePanelTab("tasks");
+      setImRoleEvents([]);
+      setGroupRunSnapshot(null);
+      setGroupRunMemberEmployeeIds([]);
+      setGroupRunCoordinatorEmployeeId("");
+      setGroupRunRules([]);
+      setExpandedGroupRunStepIds([]);
+      setHighlightedMessageIndex(null);
+      setHighlightedGroupRunStepId(null);
+      setHighlightedGroupRunStepEventId(null);
+      setExpandedThinkingKeys([]);
+      lastHandledGroupRunStepFocusNonceRef.current = null;
+    },
+    readSessionDraft,
+    clearSessionDraft,
+    persistSessionDraft,
+    mapPendingApprovalRecord: (item) =>
+      buildPendingApproval({
+        approval_id: item.approval_id,
+        session_id: item.session_id,
+        tool_name: item.tool_name,
+        input: item.input,
+        title: "高危操作确认",
+        summary: item.summary,
+        impact: item.impact,
+        irreversible: item.irreversible,
+        status: item.status,
+      }),
+  });
 
   // File Upload: 读取文件为文本
   const readFileAsText = (file: File): Promise<string> => {
@@ -774,104 +817,6 @@ export function ChatView({
       </div>
     );
   };
-
-  // Secure Workspace: 工作空间状态
-  const [workspace, setWorkspace] = useState<string>((workDir || "").trim());
-
-  // Secure Workspace: 加载会话的工作空间
-  const loadWorkspace = async (sid: string) => {
-    try {
-      const sessions = await listSessions();
-      const current = sessions.find((s) => s.id === sid);
-      if (current) {
-        setWorkspace(current.work_dir || "");
-      }
-    } catch (e) {
-      console.error("加载工作空间失败:", e);
-    }
-  };
-
-  useEffect(() => {
-    setWorkspace((workDir || "").trim());
-  }, [sessionId, workDir]);
-
-  // Secure Workspace: 更新会话的工作空间
-  const updateWorkspace = async (newWorkspace: string) => {
-    try {
-      await updateSessionWorkspace(sessionId, newWorkspace);
-      setWorkspace(newWorkspace);
-    } catch (e) {
-      console.error("更新工作空间失败:", e);
-    }
-  };
-
-  // sessionId 变化时加载历史消息
-  useEffect(() => {
-    // 新建会话带首条自动消息时，先发送首条，避免历史加载覆盖本地首句显示
-    if (!initialMessage?.trim()) {
-      loadMessages(sessionId);
-      setInput(readSessionDraft(sessionId));
-    } else {
-      setMessages([]);
-      clearSessionDraft(sessionId);
-      setInput("");
-    }
-    loadSessionRuns(sessionId);
-    void loadPendingApprovals(sessionId);
-    loadWorkspace(sessionId);
-    // 切换会话时重置流式状态
-    applyPersistedRuntimeState(persistedRuntimeState);
-    setShowDelegationHistory(false);
-    setAskUserQuestion(null);
-    setAskUserOptions([]);
-    setAskUserAnswer("");
-    setAgentState(null);
-    setPendingApprovals([]);
-    setResolvingApprovalId(null);
-    setSidePanelTab("tasks");
-    setImRoleEvents([]);
-    setGroupRunSnapshot(null);
-    setGroupRunMemberEmployeeIds([]);
-    setGroupRunCoordinatorEmployeeId("");
-    setGroupRunRules([]);
-    setExpandedGroupRunStepIds([]);
-    setHighlightedMessageIndex(null);
-    setHighlightedGroupRunStepId(null);
-    setHighlightedGroupRunStepEventId(null);
-    setSessionRuns([]);
-    setExpandedThinkingKeys([]);
-    lastHandledGroupRunStepFocusNonceRef.current = null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
-
-  useEffect(() => {
-    onPersistRuntimeState?.({
-      streaming,
-      streamItems: [...streamItems],
-      streamReasoning: streamReasoning ? { ...streamReasoning } : null,
-      agentState: agentState ? { ...agentState } : null,
-      subAgentBuffer,
-      subAgentRoleName,
-      mainRoleName,
-      mainSummaryDelivered,
-      delegationCards: delegationCards.map((item) => ({ ...item })),
-    });
-  }, [
-    agentState,
-    delegationCards,
-    mainRoleName,
-    mainSummaryDelivered,
-    onPersistRuntimeState,
-    streamItems,
-    streamReasoning,
-    streaming,
-    subAgentBuffer,
-    subAgentRoleName,
-  ]);
-
-  useEffect(() => {
-    persistSessionDraft(sessionId, input);
-  }, [input]);
 
   useEffect(() => {
     if (initialAttachments.length === 0) {
@@ -1567,58 +1512,6 @@ export function ChatView({
       unsubscribe();
     };
   }, [sessionId]);
-
-  async function loadMessages(sid: string) {
-    try {
-      const list = await getMessages(sid);
-      setMessages(list);
-    } catch (e) {
-      console.error("加载历史消息失败:", e);
-      setMessages([]);
-    }
-  }
-
-  async function loadSessionRuns(sid: string) {
-    if (!sid) {
-      setSessionRuns([]);
-      return;
-    }
-    try {
-      const runs = await listSessionRuns(sid);
-      setSessionRuns(runs);
-    } catch (e) {
-      console.error("加载会话运行记录失败:", e);
-      setSessionRuns([]);
-    }
-  }
-
-  async function loadPendingApprovals(sid: string) {
-    if (!sid) {
-      setPendingApprovals([]);
-      return;
-    }
-    try {
-      const approvals = await listPendingApprovalRecords(sid);
-      setPendingApprovals(
-        approvals.map((item) =>
-          buildPendingApproval({
-            approval_id: item.approval_id,
-            session_id: item.session_id,
-            tool_name: item.tool_name,
-            input: item.input,
-            title: "高危操作确认",
-            summary: item.summary,
-            impact: item.impact,
-            irreversible: item.irreversible,
-            status: item.status,
-          })
-        )
-      );
-    } catch (error) {
-      console.error("加载待审批列表失败:", error);
-      setPendingApprovals([]);
-    }
-  }
 
   async function handleSend() {
     if (!input.trim() && attachedFiles.length === 0) return;
