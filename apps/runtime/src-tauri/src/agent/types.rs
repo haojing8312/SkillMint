@@ -1,3 +1,4 @@
+use crate::agent::run_guard::RunStopReason;
 use anyhow::Result;
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
@@ -130,4 +131,140 @@ pub enum AgentState {
     ToolCalling,
     Finished,
     Error(String),
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct ToolCallEvent {
+    pub session_id: String,
+    pub tool_name: String,
+    pub tool_input: Value,
+    pub tool_output: Option<String>,
+    pub status: String, // "started" | "completed" | "error"
+}
+
+/// Agent 状态事件，用于前端展示当前执行阶段
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct AgentStateEvent {
+    pub session_id: String,
+    /// 状态类型: "thinking" | "tool_calling" | "finished" | "error"
+    pub state: String,
+    /// 工具名列表（tool_calling 时）或错误信息（error 时）
+    pub detail: Option<String>,
+    pub iteration: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason_last_completed_step: Option<String>,
+}
+
+impl AgentStateEvent {
+    pub fn basic(
+        session_id: impl Into<String>,
+        state: impl Into<String>,
+        detail: Option<String>,
+        iteration: usize,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            state: state.into(),
+            detail,
+            iteration,
+            stop_reason_kind: None,
+            stop_reason_title: None,
+            stop_reason_message: None,
+            stop_reason_last_completed_step: None,
+        }
+    }
+
+    pub fn stopped(
+        session_id: impl Into<String>,
+        iteration: usize,
+        reason: &RunStopReason,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            state: "stopped".to_string(),
+            detail: reason
+                .detail
+                .clone()
+                .or_else(|| Some(reason.message.clone())),
+            iteration,
+            stop_reason_kind: Some(reason.kind.as_key().to_string()),
+            stop_reason_title: Some(reason.title.clone()),
+            stop_reason_message: Some(reason.message.clone()),
+            stop_reason_last_completed_step: reason.last_completed_step.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AgentStateEvent, ToolCallEvent};
+    use serde_json::{json, Value};
+
+    #[test]
+    fn tool_call_event_serializes_expected_shape() {
+        let event = ToolCallEvent {
+            session_id: "sess-1".to_string(),
+            tool_name: "read_file".to_string(),
+            tool_input: json!({"path":"README.md"}),
+            tool_output: Some("ok".to_string()),
+            status: "completed".to_string(),
+        };
+
+        let value = serde_json::to_value(event).expect("serialize event");
+        assert_eq!(
+            value,
+            json!({
+                "session_id": "sess-1",
+                "tool_name": "read_file",
+                "tool_input": {"path":"README.md"},
+                "tool_output": "ok",
+                "status": "completed",
+            })
+        );
+    }
+
+    #[test]
+    fn agent_state_event_serializes_stop_reason_fields() {
+        let event = AgentStateEvent::basic("sess-2", "thinking", None, 3);
+        let value = serde_json::to_value(event).expect("serialize event");
+        assert_eq!(
+            value,
+            json!({
+                "session_id": "sess-2",
+                "state": "thinking",
+                "detail": null,
+                "iteration": 3,
+            })
+        );
+    }
+
+    #[test]
+    fn agent_state_event_omits_empty_stop_reason_fields() {
+        let event = AgentStateEvent::basic("sess-3", "finished", Some("done".to_string()), 7);
+        let value = serde_json::to_value(event).expect("serialize event");
+        let object = value.as_object().expect("object");
+        assert_eq!(
+            object.get("session_id"),
+            Some(&Value::String("sess-3".to_string()))
+        );
+        assert_eq!(
+            object.get("state"),
+            Some(&Value::String("finished".to_string()))
+        );
+        assert_eq!(
+            object.get("detail"),
+            Some(&Value::String("done".to_string()))
+        );
+        assert_eq!(object.get("iteration"), Some(&Value::from(7)));
+        assert!(!object.contains_key("stop_reason_kind"));
+        assert!(!object.contains_key("stop_reason_title"));
+        assert!(!object.contains_key("stop_reason_message"));
+        assert!(!object.contains_key("stop_reason_last_completed_step"));
+    }
 }
