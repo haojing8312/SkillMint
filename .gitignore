@@ -47,3 +47,5 @@ apps/runtime/src-tauri/target-verify/
 apps/runtime/.tmp/
 apps/runtime/.workclaw-plugin-host-cache/
 apps/runtime/.workclaw-plugin-host-fixtures/
+tmp/
+*.tgz
