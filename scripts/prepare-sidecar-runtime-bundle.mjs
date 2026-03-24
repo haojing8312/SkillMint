@@ -50,6 +50,21 @@ export function buildDeployCommand(runner, pnpmMajor, targetDir, baseEnv = proce
   };
 }
 
+export function isRetryableWindowsDeployError(output, platform = process.platform) {
+  if (platform !== "win32") {
+    return false;
+  }
+
+  const text = String(output ?? "");
+  return (
+    text.includes("playwright.CMD") ||
+    text.includes("playwright.ps1") ||
+    text.includes("Failed to create bin at") ||
+    text.includes("EPERM") ||
+    text.includes("ENOENT: no such file or directory, chmod")
+  );
+}
+
 function readPnpmMajorVersion(runner) {
   const result = spawnSync(runner.command, [...runner.args, "--version"], {
     cwd: projectRoot,
@@ -74,14 +89,25 @@ function readPnpmMajorVersion(runner) {
 function runOrThrow(command, args, env = process.env) {
   const result = spawnSync(command, args, {
     cwd: projectRoot,
-    stdio: "inherit",
+    stdio: "pipe",
+    encoding: "utf8",
     windowsHide: true,
     env,
     shell: process.platform === "win32",
   });
 
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+
   if (result.status !== 0) {
-    throw new Error(`Command failed: ${command} ${args.join(" ")}`);
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    const error = new Error(`Command failed: ${command} ${args.join(" ")}`);
+    error.cause = { output, status: result.status };
+    throw error;
   }
 }
 
@@ -97,12 +123,26 @@ function removeDirForWindowsBuild(targetDir) {
 }
 
 function main() {
-  removeDirForWindowsBuild(bundleDir);
-
   const runner = resolvePnpmRunner();
   const pnpmMajor = readPnpmMajorVersion(runner);
   const deployCommand = buildDeployCommand(runner, pnpmMajor, bundleDir);
-  runOrThrow(deployCommand.command, deployCommand.args, deployCommand.env);
+  let deployAttempt = 0;
+  while (true) {
+    deployAttempt += 1;
+    removeDirForWindowsBuild(bundleDir);
+    try {
+      runOrThrow(deployCommand.command, deployCommand.args, deployCommand.env);
+      break;
+    } catch (error) {
+      const output = error && typeof error === "object" && "cause" in error
+        ? error.cause?.output
+        : "";
+      if (deployAttempt >= 2 || !isRetryableWindowsDeployError(output)) {
+        throw error;
+      }
+      console.warn("Retrying sidecar runtime deploy after transient Windows bin creation failure...");
+    }
+  }
 
   const distEntry = path.join(bundleDir, "dist", "index.js");
   if (!existsSync(distEntry)) {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildDeployCommand } from "./prepare-sidecar-runtime-bundle.mjs";
+import { buildDeployCommand, isRetryableWindowsDeployError } from "./prepare-sidecar-runtime-bundle.mjs";
 
 test("buildDeployCommand disables bin links via environment on Windows-safe deploys", () => {
   const runner = { command: "pnpm.cmd", args: [] };
@@ -43,4 +43,18 @@ test("buildDeployCommand omits legacy flag for older pnpm versions", () => {
   ]);
   assert.equal(result.env.npm_config_bin_links, "false");
   assert.equal(result.env.pnpm_config_bin_links, "false");
+});
+
+test("isRetryableWindowsDeployError recognizes transient playwright bin failures on Windows", () => {
+  assert.equal(
+    isRetryableWindowsDeployError(
+      "WARN Failed to create bin at D:\\bundle\\node_modules\\.bin\\playwright. ENOENT: no such file or directory, chmod 'D:\\bundle\\node_modules\\.bin\\playwright.ps1'\nEPERM: operation not permitted, open 'D:\\bundle\\node_modules\\.bin\\playwright.CMD'",
+      "win32",
+    ),
+    true,
+  );
+});
+
+test("isRetryableWindowsDeployError ignores unrelated failures", () => {
+  assert.equal(isRetryableWindowsDeployError("ERR_PNPM_FETCH_404", "win32"), false);
 });
