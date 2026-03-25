@@ -8,6 +8,7 @@ use super::chat_route_execution::{self, RouteExecutionOutcome, RouteExecutionPar
 use super::chat_runtime_io as chat_io;
 use super::chat_tool_setup::{self, PreparedRuntimeTools, ToolSetupParams};
 use crate::agent::permissions::PermissionMode;
+use crate::agent::runtime::RuntimeTranscript;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::AgentExecutor;
 use crate::session_journal::SessionJournalStore;
@@ -234,7 +235,7 @@ pub(crate) async fn prepare_send_message_context(
     );
 
     let (api_format, base_url, model_name, api_key) = route_candidates[0].clone();
-    let mut messages = chat_io::reconstruct_history_messages(&history, &api_format);
+    let mut messages = RuntimeTranscript::reconstruct_history_messages(&history, &api_format);
     if let Some(current_turn) = build_current_turn_message(&api_format, params.user_message_parts) {
         if let Some(existing) = messages
             .iter_mut()
@@ -361,11 +362,10 @@ pub(crate) async fn finalize_send_message_execution(
         }
     };
 
-    let (final_text, has_tool_calls, content) =
-        chat_io::build_assistant_content_from_final_messages(
-            &final_messages,
-            reconstructed_history_len,
-        );
+    let (final_text, has_tool_calls, content) = RuntimeTranscript::build_assistant_content_from_final_messages(
+        &final_messages,
+        reconstructed_history_len,
+    );
 
     let finalize_result = chat_io::finalize_run_success_with_pool(
         db,
