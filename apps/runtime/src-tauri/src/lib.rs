@@ -401,6 +401,11 @@ pub fn run() {
                 let sidecar_manager = handles.sidecar_manager.clone();
                 async move {
                     bootstrap_sidecar(sidecar_manager).await;
+                    if let Ok(shim_root) =
+                        commands::openclaw_plugins::resolve_openclaw_shim_root(&app_handle)
+                    {
+                        let _ = commands::openclaw_plugins::ensure_openclaw_cli_shim(&shim_root);
+                    }
                     let _ = commands::openclaw_plugins::maybe_restore_openclaw_plugin_feishu_runtime_with_pool(
                         &pool,
                         &runtime_state,

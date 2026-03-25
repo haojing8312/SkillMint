@@ -128,10 +128,26 @@ if (args[0] === "config" && args[1] === "set" && typeof args[2] === "string" && 
   }}
 }}
 
-if (args[0] === "gateway" && (args[1] === "restart" || args[1] === "start" || args[1] === "stop")) {{
+if (args[0] === "gateway" && (args[1] === "restart" || args[1] === "start" || args[1] === "stop" || args[1] === "install")) {{
   recordCommand(state, args);
   saveState(state);
   console.log(`gateway ${{args[1]}} requested via WorkClaw shim`);
+  process.exit(0);
+}}
+
+if (args[0] === "health") {{
+  recordCommand(state, args);
+  saveState(state);
+  const payload = {{
+    ok: true,
+    source: "workclaw-openclaw-shim",
+    checkedAt: new Date().toISOString(),
+  }};
+  if (args.includes("--json")) {{
+    console.log(JSON.stringify(payload));
+  }} else {{
+    console.log("ok");
+  }}
   process.exit(0);
 }}
 

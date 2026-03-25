@@ -454,4 +454,449 @@ describe("plugin runtime", () => {
       child.kill();
     }
   });
+
+  it("supports CommonJS plugins that require openclaw plugin-sdk subpaths", async () => {
+    const pluginRoot = await createTempPluginRoot();
+    await fs.writeFile(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        openclaw: {
+          extensions: ["./index.js"],
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "index.js"),
+      [
+        "\"use strict\";",
+        "const { normalizeAccountId } = require('openclaw/plugin-sdk/account-id');",
+        "const { PAIRING_APPROVED_MESSAGE } = require('openclaw/plugin-sdk/channel-status');",
+        "module.exports = {",
+        "  register(api) {",
+        "    api.registerChannel({",
+        "      plugin: {",
+        "        id: 'feishu',",
+        "        config: {",
+        "          resolveAccount() {",
+        "            return { accountId: normalizeAccountId('default'), enabled: true, configured: true };",
+        "          },",
+        "        },",
+        "        outbound: {",
+        "          async sendText({ to, text, accountId }) {",
+        "            return { delivered: true, channel: 'feishu', accountId, target: to, text, chatId: `plugin:${to}`, messageId: 'plugin_cjs_message_1' };",
+        "          },",
+        "        },",
+        "        gateway: {",
+        "          async startAccount({ setStatus }) {",
+        "            setStatus({ running: true, pairingMessage: PAIRING_APPROVED_MESSAGE });",
+        "          },",
+        "        },",
+        "      },",
+        "    });",
+        "  },",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = spawn(
+      process.execPath,
+      [
+        path.join("scripts", "run-feishu-host.mjs"),
+        "--plugin-root",
+        pluginRoot,
+        "--fixture-name",
+        "runtime-cjs-plugin-sdk-subpaths",
+        "--account-id",
+        "default",
+      ],
+      {
+        cwd: pluginHostDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const collector = createEventCollector(child.stdout, child.stderr);
+    try {
+      const readyEvent = await collector.waitFor(
+        (event) => event.event === "ready",
+        "expected ready event from CommonJS plugin fixture",
+      );
+      expect(readyEvent).toMatchObject({
+        event: "ready",
+        accountId: "default",
+      });
+
+      const statusEvent = await collector.waitFor(
+        (event) =>
+          event.event === "status" &&
+          typeof event.patch === "object" &&
+          event.patch !== null &&
+          (event.patch as Record<string, unknown>).running === true,
+        "expected running status from CommonJS plugin fixture",
+      );
+      expect(statusEvent).toMatchObject({
+        event: "status",
+        patch: expect.objectContaining({
+          running: true,
+          pairingMessage: "Pairing approved. You can now message this bot directly.",
+        }),
+      });
+
+      child.stdin.end();
+      await collector.waitFor(
+        (event) => event.event === "stopped",
+        "expected stopped event after CommonJS fixture stdin close",
+      );
+      await once(child, "exit");
+    } finally {
+      collector.close();
+      child.kill();
+    }
+  }, 20000);
+
+  it("supports CommonJS plugins whose internal files use import.meta.url", async () => {
+    const pluginRoot = await createTempPluginRoot();
+    await fs.writeFile(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        openclaw: {
+          extensions: ["./index.js"],
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "index.js"),
+      [
+        "\"use strict\";",
+        "const { getPluginVersion } = require('./src/core/version.js');",
+        "module.exports = {",
+        "  register(api) {",
+        "    api.registerChannel({",
+        "      plugin: {",
+        "        id: 'feishu',",
+        "        config: {",
+        "          resolveAccount() {",
+        "            return { accountId: 'default', enabled: true, configured: true };",
+        "          },",
+        "        },",
+        "        outbound: {",
+        "          async sendText({ to, text, accountId }) {",
+        "            return { delivered: true, channel: 'feishu', accountId, target: to, text, chatId: `plugin:${to}`, messageId: 'plugin_cjs_import_meta_message_1' };",
+        "          },",
+        "        },",
+        "        gateway: {",
+        "          async startAccount({ setStatus }) {",
+        "            setStatus({ running: true, version: getPluginVersion() });",
+        "          },",
+        "        },",
+        "      },",
+        "    });",
+        "  },",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.mkdir(path.join(pluginRoot, "src", "core"), { recursive: true });
+    await fs.writeFile(
+      path.join(pluginRoot, "src", "core", "version.js"),
+      [
+        "\"use strict\";",
+        "Object.defineProperty(exports, \"__esModule\", { value: true });",
+        "exports.getPluginVersion = getPluginVersion;",
+        "const node_url_1 = require('node:url');",
+        "const node_path_1 = require('node:path');",
+        "const node_fs_1 = require('node:fs');",
+        "let cachedVersion;",
+        "function getPluginVersion() {",
+        "  if (cachedVersion) return cachedVersion;",
+        "  const __filename = (0, node_url_1.fileURLToPath)(import.meta.url);",
+        "  const __dirname = (0, node_path_1.dirname)(__filename);",
+        "  const pkg = JSON.parse((0, node_fs_1.readFileSync)((0, node_path_1.join)(__dirname, '..', '..', 'package.json'), 'utf8'));",
+        "  cachedVersion = pkg.version ?? 'unknown';",
+        "  return cachedVersion;",
+        "}",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = spawn(
+      process.execPath,
+      [
+        path.join("scripts", "run-feishu-host.mjs"),
+        "--plugin-root",
+        pluginRoot,
+        "--fixture-name",
+        "runtime-cjs-import-meta",
+        "--account-id",
+        "default",
+      ],
+      {
+        cwd: pluginHostDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const collector = createEventCollector(child.stdout, child.stderr);
+    try {
+      const readyEvent = await collector.waitFor(
+        (event) => event.event === "ready",
+        "expected ready event from CommonJS import.meta fixture",
+      );
+      expect(readyEvent).toMatchObject({
+        event: "ready",
+        accountId: "default",
+      });
+
+      const statusEvent = await collector.waitFor(
+        (event) =>
+          event.event === "status" &&
+          typeof event.patch === "object" &&
+          event.patch !== null &&
+          (event.patch as Record<string, unknown>).running === true,
+        "expected running status from CommonJS import.meta fixture",
+      );
+      expect(statusEvent).toMatchObject({
+        event: "status",
+        patch: expect.objectContaining({
+          running: true,
+          version: "unknown",
+        }),
+      });
+
+      child.stdin.end();
+      await collector.waitFor(
+        (event) => event.event === "stopped",
+        "expected stopped event after CommonJS import.meta fixture stdin close",
+      );
+      await once(child, "exit");
+    } finally {
+      collector.close();
+      child.kill();
+    }
+  }, 20000);
+
+  it("supports CommonJS plugins that expose the plugin via exports.default", async () => {
+    const pluginRoot = await createTempPluginRoot();
+    await fs.writeFile(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        openclaw: {
+          extensions: ["./index.js"],
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "index.js"),
+      [
+        "\"use strict\";",
+        "Object.defineProperty(exports, \"__esModule\", { value: true });",
+        "const plugin = {",
+        "  register(api) {",
+        "    api.registerChannel({",
+        "      plugin: {",
+        "        id: 'feishu',",
+        "        config: {",
+        "          resolveAccount() {",
+        "            return { accountId: 'default', enabled: true, configured: true };",
+        "          },",
+        "        },",
+        "        outbound: {",
+        "          async sendText({ to, text, accountId }) {",
+        "            return { delivered: true, channel: 'feishu', accountId, target: to, text, chatId: `plugin:${to}`, messageId: 'plugin_cjs_default_message_1' };",
+        "          },",
+        "        },",
+        "        gateway: {",
+        "          async startAccount({ setStatus }) {",
+        "            setStatus({ running: true, exportStyle: 'exports.default' });",
+        "          },",
+        "        },",
+        "      },",
+        "    });",
+        "  },",
+        "};",
+        "exports.default = plugin;",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = spawn(
+      process.execPath,
+      [
+        path.join("scripts", "run-feishu-host.mjs"),
+        "--plugin-root",
+        pluginRoot,
+        "--fixture-name",
+        "runtime-cjs-exports-default",
+        "--account-id",
+        "default",
+      ],
+      {
+        cwd: pluginHostDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const collector = createEventCollector(child.stdout, child.stderr);
+    try {
+      const readyEvent = await collector.waitFor(
+        (event) => event.event === "ready",
+        "expected ready event from CommonJS exports.default fixture",
+      );
+      expect(readyEvent).toMatchObject({
+        event: "ready",
+        accountId: "default",
+      });
+
+      const statusEvent = await collector.waitFor(
+        (event) =>
+          event.event === "status" &&
+          typeof event.patch === "object" &&
+          event.patch !== null &&
+          (event.patch as Record<string, unknown>).running === true,
+        "expected running status from CommonJS exports.default fixture",
+      );
+      expect(statusEvent).toMatchObject({
+        event: "status",
+        patch: expect.objectContaining({
+          running: true,
+          exportStyle: "exports.default",
+        }),
+      });
+
+      child.stdin.end();
+      await collector.waitFor(
+        (event) => event.event === "stopped",
+        "expected stopped event after CommonJS exports.default fixture stdin close",
+      );
+      await once(child, "exit");
+    } finally {
+      collector.close();
+      child.kill();
+    }
+  }, 20000);
+
+  it("captures plugin console output as structured log events instead of invalid protocol lines", async () => {
+    const pluginRoot = await createTempPluginRoot();
+    await fs.writeFile(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        type: "module",
+        openclaw: {
+          extensions: ["./index.js"],
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "index.js"),
+      [
+        "export default {",
+        "  register(api) {",
+        "    api.registerChannel({",
+        "      plugin: {",
+        "        id: 'feishu',",
+        "        config: {",
+        "          resolveAccount() {",
+        "            return { accountId: 'default', enabled: true, configured: true };",
+        "          },",
+        "        },",
+        "        outbound: {",
+        "          async sendText({ to, text, accountId }) {",
+        "            return { delivered: true, channel: 'feishu', accountId, target: to, text, chatId: `plugin:${to}`, messageId: 'plugin_console_message_1' };",
+        "          },",
+        "        },",
+        "        gateway: {",
+        "          async startAccount({ setStatus, abortSignal }) {",
+        "            console.log('        Receive events/callbacks through persistent connection(使用 长连接 接收事件/回调)');",
+        "            console.info(['[ws]', 'ws client ready']);",
+        "            setStatus({ running: true });",
+        "            await new Promise((resolve) => abortSignal.addEventListener('abort', resolve, { once: true }));",
+        "          },",
+        "        },",
+        "      },",
+        "    });",
+        "  },",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = spawn(
+      process.execPath,
+      [
+        path.join("scripts", "run-feishu-host.mjs"),
+        "--plugin-root",
+        pluginRoot,
+        "--fixture-name",
+        "runtime-console-bridge",
+        "--account-id",
+        "default",
+      ],
+      {
+        cwd: pluginHostDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const collector = createEventCollector(child.stdout, child.stderr);
+    try {
+      await collector.waitFor(
+        (event) => event.event === "ready",
+        "expected ready event from console bridge fixture",
+      );
+
+      const runningStatus = await collector.waitFor(
+        (event) =>
+          event.event === "status" &&
+          typeof event.patch === "object" &&
+          event.patch !== null &&
+          (event.patch as Record<string, unknown>).running === true,
+        "expected running status from console bridge fixture",
+      );
+      expect(runningStatus).toMatchObject({
+        event: "status",
+        patch: expect.objectContaining({
+          running: true,
+        }),
+      });
+
+      const bannerLog = await collector.waitFor(
+        (event) =>
+          event.event === "log" &&
+          event.scope === "console" &&
+          String(event.message ?? "").includes("Receive events/callbacks through persistent connection"),
+        "expected structured log event for console banner output",
+      );
+      expect(bannerLog).toMatchObject({
+        event: "log",
+        level: "info",
+        scope: "console",
+      });
+
+      const wsLog = await collector.waitFor(
+        (event) =>
+          event.event === "log" &&
+          event.scope === "console" &&
+          String(event.message ?? "").includes("[ws]"),
+        "expected structured log event for console array output",
+      );
+      expect(wsLog).toMatchObject({
+        event: "log",
+        level: "info",
+        scope: "console",
+      });
+
+      expect(collector.events.some((event) => event.event === "fatal")).toBe(false);
+
+      child.kill();
+      await once(child, "exit");
+    } finally {
+      collector.close();
+      child.kill();
+    }
+  }, 20000);
 });

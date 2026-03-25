@@ -48,10 +48,11 @@ use settings_service::{
 use setup_service::{
     build_openclaw_shim_state_file_path, get_feishu_setup_progress_with_pool,
     probe_openclaw_plugin_feishu_credentials_with_app_secret, resolve_controlled_openclaw_state_root,
-    resolve_openclaw_shim_root, should_auto_restore_feishu_runtime,
+    should_auto_restore_feishu_runtime,
     sync_feishu_gateway_credentials_from_openclaw_state_with_pool,
     sync_feishu_gateway_credentials_from_shim_with_pool,
 };
+pub(crate) use setup_service::resolve_openclaw_shim_root;
 pub(crate) use runtime_service::{
     current_feishu_runtime_status, maybe_restore_openclaw_plugin_feishu_runtime_with_pool,
     send_openclaw_plugin_feishu_runtime_outbound_message_in_state,
@@ -74,7 +75,7 @@ pub(crate) use plugin_host_service::{
 };
 pub(crate) use installer_session::{
     current_openclaw_lark_installer_session_status, send_openclaw_lark_installer_input_in_state,
-    start_openclaw_lark_installer_session_with_pool,
+    start_openclaw_lark_installer_session_with_pool, ensure_openclaw_cli_shim,
     stop_openclaw_lark_installer_session_in_state,
 };
 

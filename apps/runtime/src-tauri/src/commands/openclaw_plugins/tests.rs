@@ -12,6 +12,8 @@
         resolve_windows_node_command_path,
     };
     use super::runtime_service::{
+        handle_feishu_runtime_pairing_request_event,
+        handle_openclaw_plugin_feishu_runtime_stdout_line,
         handle_openclaw_plugin_feishu_runtime_command_error_event,
         handle_openclaw_plugin_feishu_runtime_send_result_event,
         matches_feishu_runtime_command_line, merge_feishu_runtime_status_event,
@@ -1183,9 +1185,12 @@
         assert!(script.contains("args[0] === \"config\" && args[1] === \"set\""));
         assert!(
             script.contains(
-                "args[0] === \"gateway\" && (args[1] === \"restart\" || args[1] === \"start\" || args[1] === \"stop\")"
+                "args[0] === \"gateway\" && (args[1] === \"restart\" || args[1] === \"start\" || args[1] === \"stop\" || args[1] === \"install\")"
             )
         );
+        assert!(script.contains("gateway ${args[1]} requested via WorkClaw shim"));
+        assert!(script.contains("args[0] === \"health\""));
+        assert!(script.contains("ok: true"));
         assert!(
             script.contains(
                 "(args[0] === \"plugins\" || args[0] === \"plugin\") && (args[1] === \"install\" || args[1] === \"uninstall\")"
@@ -1206,6 +1211,21 @@
         assert!(shim_dir.join("openclaw.cmd").exists());
         #[cfg(not(windows))]
         assert!(shim_dir.join("openclaw").exists());
+    }
+
+    #[test]
+    fn ensure_openclaw_cli_shim_rewrites_existing_script() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let script_path = temp.path().join("openclaw-shim.mjs");
+        std::fs::write(&script_path, "// stale shim\n").expect("write stale shim");
+
+        let shim_dir = ensure_openclaw_cli_shim(temp.path()).expect("refresh shim");
+        let script = std::fs::read_to_string(shim_dir.join("openclaw-shim.mjs"))
+            .expect("read refreshed shim");
+
+        assert!(script.contains("args[0] === \"health\""));
+        assert!(script.contains("args[1] === \"install\""));
+        assert!(script.contains("plugin ${args[1]} satisfied via WorkClaw shim"));
     }
 
     #[test]
@@ -1748,6 +1768,28 @@ rl.on('line', (line) => {
     }
 
     #[test]
+    fn clears_stale_runtime_error_when_status_patch_reports_healthy_state() {
+        let mut status = OpenClawPluginFeishuRuntimeStatus {
+            last_error: Some("transient startup failure".to_string()),
+            ..OpenClawPluginFeishuRuntimeStatus::default()
+        };
+        merge_feishu_runtime_status_event(
+            &mut status,
+            &serde_json::json!({
+                "event": "status",
+                "patch": {
+                    "accountId": "default",
+                    "port": 3101
+                }
+            }),
+        );
+
+        assert_eq!(status.account_id, "default");
+        assert_eq!(status.port, Some(3101));
+        assert_eq!(status.last_error, None);
+    }
+
+    #[test]
     fn merges_runtime_fatal_events_into_last_error() {
         let mut status = OpenClawPluginFeishuRuntimeStatus::default();
         merge_feishu_runtime_status_event(
@@ -1783,6 +1825,73 @@ rl.on('line', (line) => {
             Some("[error] channel/monitor: failed to dispatch inbound message")
         );
         assert!(status.last_event_at.is_some());
+    }
+
+    #[test]
+    fn clears_stale_runtime_error_after_pairing_request_is_persisted() {
+        let runtime = tokio::runtime::Runtime::new().expect("create tokio runtime");
+        let pool = runtime.block_on(setup_memory_pool());
+        let mut status = OpenClawPluginFeishuRuntimeStatus {
+            last_error: Some("old runtime error".to_string()),
+            ..OpenClawPluginFeishuRuntimeStatus::default()
+        };
+
+        handle_feishu_runtime_pairing_request_event(
+            &pool,
+            &mut status,
+            &serde_json::json!({
+                "event": "pairing_request",
+                "accountId": "default",
+                "senderId": "ou_sender",
+                "code": "6X4ZN54W"
+            }),
+        );
+
+        assert_eq!(status.last_error, None);
+        assert!(
+            status
+                .recent_logs
+                .iter()
+                .any(|line| line.contains("[pairing] feishu: created request")),
+            "expected pairing log entry after persisting request"
+        );
+    }
+
+    #[tokio::test]
+    async fn ignores_non_protocol_stdout_lines_without_marking_runtime_error() {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+
+        let pool = setup_memory_pool().await;
+        let state = OpenClawPluginFeishuRuntimeState(Arc::new(Mutex::new(
+            OpenClawPluginFeishuRuntimeStore {
+                process: None,
+                stdin: None,
+                status: OpenClawPluginFeishuRuntimeStatus {
+                    running: true,
+                    ..Default::default()
+                },
+                pending_outbound_send_results: HashMap::new(),
+            },
+        )));
+
+        handle_openclaw_plugin_feishu_runtime_stdout_line(
+            &pool,
+            &state,
+            None,
+            "[info]: [ '[ws]', 'ws client ready' ]",
+        );
+        handle_openclaw_plugin_feishu_runtime_stdout_line(
+            &pool,
+            &state,
+            None,
+            "        Receive events/callbacks through persistent connection(使用 长连接 接收事件/回调)",
+        );
+
+        let guard = state.0.lock().expect("runtime state lock");
+        assert_eq!(guard.status.last_error, None);
+        assert!(guard.status.recent_logs.is_empty());
+        assert_eq!(guard.status.running, true);
     }
 
     #[test]

@@ -6,11 +6,12 @@ use super::{
     resolve_ws_role_id, sanitize_ws_inbound_text, upsert_feishu_pairing_request_with_pool,
     FeishuWsEventRecord, ParsedFeishuPayload,
 };
+use super::tauri_commands::should_restart_official_feishu_runtime_after_pairing_approval;
 use super::types::FeishuInboundGateDecision;
 use crate::commands::employee_agents::AgentEmployee;
 use crate::commands::openclaw_plugins::{
     OpenClawPluginChannelAccountSnapshot, OpenClawPluginChannelSnapshot,
-    OpenClawPluginChannelSnapshotResult,
+    OpenClawPluginChannelSnapshotResult, OpenClawPluginFeishuRuntimeStatus,
 };
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
@@ -550,6 +551,38 @@ async fn approve_feishu_pairing_request_persists_allow_from_entry() {
         .await
         .expect("list allow from");
     assert_eq!(allow_from, vec!["ou_sender".to_string()]);
+}
+
+#[test]
+fn pairing_approval_requests_runtime_restart_only_for_matching_running_account() {
+    let running_default = OpenClawPluginFeishuRuntimeStatus {
+        running: true,
+        account_id: "default".to_string(),
+        ..OpenClawPluginFeishuRuntimeStatus::default()
+    };
+    let stopped_default = OpenClawPluginFeishuRuntimeStatus {
+        running: false,
+        account_id: "default".to_string(),
+        ..OpenClawPluginFeishuRuntimeStatus::default()
+    };
+    let running_workspace = OpenClawPluginFeishuRuntimeStatus {
+        running: true,
+        account_id: "workspace".to_string(),
+        ..OpenClawPluginFeishuRuntimeStatus::default()
+    };
+
+    assert!(should_restart_official_feishu_runtime_after_pairing_approval(
+        &running_default,
+        "default"
+    ));
+    assert!(!should_restart_official_feishu_runtime_after_pairing_approval(
+        &stopped_default,
+        "default"
+    ));
+    assert!(!should_restart_official_feishu_runtime_after_pairing_approval(
+        &running_workspace,
+        "default"
+    ));
 }
 
 #[tokio::test]

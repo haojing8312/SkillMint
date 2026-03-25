@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 const workspaceRuntimeDir = path.resolve(process.cwd(), "..");
 const pluginHostDir = path.resolve(workspaceRuntimeDir, "plugin-host");
 const shimPluginSdkRoot = path.join(pluginHostDir, "openclaw", "plugin-sdk");
+const shimPluginSdkCjsRoot = path.join(pluginHostDir, "openclaw", "plugin-sdk-cjs");
 
 function parseArgs(argv) {
   const args = {
@@ -357,6 +358,7 @@ function rewriteImportsInFixture(rootDir) {
       }
 
       const relativeShimRoot = path.relative(path.dirname(entryPath), shimPluginSdkRoot).replace(/\\/g, "/");
+      const relativeShimCjsRoot = path.relative(path.dirname(entryPath), shimPluginSdkCjsRoot).replace(/\\/g, "/");
       const normalizeRelativeImport = (rawSpecifier) => {
         const resolvedPath = path.resolve(path.dirname(entryPath), rawSpecifier);
         const fileCandidate = `${resolvedPath}.js`;
@@ -377,16 +379,16 @@ function rewriteImportsInFixture(rootDir) {
       const rewritten = fs
         .readFileSync(entryPath, "utf8")
         .replaceAll(
-          /(['"])openclaw\/plugin-sdk\/compat\1/g,
-          (_match, quote) => `${quote}${relativeShimRoot}/compat.js${quote}`,
+          /require\((['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1\)/g,
+          (_match, quote) => `require(${quote}${relativeShimCjsRoot}/index.cjs${quote})`,
         )
         .replaceAll(
-          /(['"])openclaw\/plugin-sdk\/feishu\1/g,
-          (_match, quote) => `${quote}${relativeShimRoot}/feishu.js${quote}`,
+          /from\s+(['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1/g,
+          (_match, quote) => `from ${quote}${relativeShimRoot}/index.js${quote}`,
         )
         .replaceAll(
-          /(['"])openclaw\/plugin-sdk\1/g,
-          (_match, quote) => `${quote}${relativeShimRoot}/index.js${quote}`,
+          /import\s+(['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1/g,
+          (_match, quote) => `import ${quote}${relativeShimRoot}/index.js${quote}`,
         )
         .replaceAll(
           /from\s+(['"])(\.\.?\/[^'"]+)\1/g,
@@ -396,7 +398,21 @@ function rewriteImportsInFixture(rootDir) {
           /import\s+(['"])(\.\.?\/[^'"]+)\1/g,
           (_match, quote, specifier) => `import ${quote}${normalizeRelativeImport(specifier)}${quote}`,
         );
-      fs.writeFileSync(entryPath, rewritten, "utf8");
+      const needsImportMetaCompat =
+        rewritten.includes("import.meta.url") &&
+        ["module.exports", "exports.", "Object.defineProperty(exports"].some((marker) =>
+          rewritten.includes(marker),
+        );
+      const normalized = needsImportMetaCompat
+        ? rewritten
+            .replaceAll(
+              /const __filename = .*?import\.meta\.url.*?;/g,
+              "const __filenameCompat = __filename;",
+            )
+            .replaceAll("dirname(__filename)", "dirname(__filenameCompat)")
+            .replaceAll(".dirname)(__filename)", ".dirname)(__filenameCompat)")
+        : rewritten;
+      fs.writeFileSync(entryPath, normalized, "utf8");
     }
   }
 }
@@ -418,6 +434,16 @@ function prepareFixture(pluginRoot, fixtureWorkspaceRoot, fixtureName) {
   }
   rewriteImportsInFixture(targetRoot);
   return targetRoot;
+}
+
+function resolvePluginExport(loadedModule) {
+  const candidates = [loadedModule, loadedModule?.default, loadedModule?.default?.default];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.register === "function") {
+      return candidate;
+    }
+  }
+  return loadedModule?.default ?? loadedModule;
 }
 
 function findNearestNodeModulesDir(startPath) {
@@ -474,7 +500,7 @@ async function main() {
   });
 
   const loadedModule = await import(pathToFileURL(entryPath).href);
-  const plugin = loadedModule.default ?? loadedModule;
+  const plugin = resolvePluginExport(loadedModule);
   if (typeof plugin.register !== "function") {
     throw new Error("plugin module must export a register(api) function");
   }

@@ -33,6 +33,12 @@ const shimPluginSdkRoot = path.join(
   "openclaw",
   "plugin-sdk",
 );
+const shimPluginSdkCjsRoot = path.join(
+  process.cwd(),
+  "plugin-host",
+  "openclaw",
+  "plugin-sdk-cjs",
+);
 
 function rewritePluginSdkImportsInFixture(rootDir: string): void {
   const stack = [rootDir];
@@ -57,21 +63,38 @@ function rewritePluginSdkImportsInFixture(rootDir: string): void {
       const relativeShimRoot = path
         .relative(path.dirname(entryPath), shimPluginSdkRoot)
         .replace(/\\/g, "/");
+      const relativeShimCjsRoot = path
+        .relative(path.dirname(entryPath), shimPluginSdkCjsRoot)
+        .replace(/\\/g, "/");
       const rewritten = fs
         .readFileSync(entryPath, "utf8")
         .replaceAll(
-          /(['"])openclaw\/plugin-sdk\/compat\1/g,
-          (_match, quote) => `${quote}${relativeShimRoot}/compat.js${quote}`,
+          /require\((['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1\)/g,
+          (_match, quote) => `require(${quote}${relativeShimCjsRoot}/index.cjs${quote})`,
         )
         .replaceAll(
-          /(['"])openclaw\/plugin-sdk\/feishu\1/g,
-          (_match, quote) => `${quote}${relativeShimRoot}/feishu.js${quote}`,
+          /from\s+(['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1/g,
+          (_match, quote) => `from ${quote}${relativeShimRoot}/index.js${quote}`,
         )
         .replaceAll(
-          /(['"])openclaw\/plugin-sdk\1/g,
-          (_match, quote) => `${quote}${relativeShimRoot}/index.js${quote}`,
+          /import\s+(['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1/g,
+          (_match, quote) => `import ${quote}${relativeShimRoot}/index.js${quote}`,
         );
-      fs.writeFileSync(entryPath, rewritten, "utf8");
+      const needsImportMetaCompat =
+        rewritten.includes("import.meta.url") &&
+        ["module.exports", "exports.", "Object.defineProperty(exports"].some((marker) =>
+          rewritten.includes(marker),
+        );
+      const normalized = needsImportMetaCompat
+        ? rewritten
+            .replaceAll(
+              /const __filename = .*?import\.meta\.url.*?;/g,
+              "const __filenameCompat = __filename;",
+            )
+            .replaceAll("dirname(__filename)", "dirname(__filenameCompat)")
+            .replaceAll(".dirname)(__filename)", ".dirname)(__filenameCompat)")
+        : rewritten;
+      fs.writeFileSync(entryPath, normalized, "utf8");
     }
   }
 }

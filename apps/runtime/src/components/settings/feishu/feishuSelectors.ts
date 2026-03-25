@@ -94,6 +94,7 @@ interface FeishuConnectionDetailSummaryInput {
   connectorStatus: FeishuConnectorStatus;
   runtimeRunning: boolean;
   authApproved: boolean;
+  pendingPairings: number | null | undefined;
   defaultRoutingEmployeeName: string | null | undefined;
   scopedRoutingCount: number | null | undefined;
 }
@@ -610,6 +611,7 @@ interface FeishuDiagnosticsClipboardInput {
   pluginVersion: string | null | undefined;
   defaultAccountId: string | null | undefined;
   authApproved: boolean;
+  pendingPairings: number | null | undefined;
   defaultRoutingEmployeeName: string | null | undefined;
   scopedRoutingCount: number | null | undefined;
   lastEventAt: string | null | undefined;
@@ -632,6 +634,7 @@ export function buildFeishuDiagnosticsClipboardText(input: FeishuDiagnosticsClip
       connectorStatus,
       runtimeRunning: input.connectorStatus.running,
       authApproved: input.authApproved,
+      pendingPairings: input.pendingPairings,
       defaultRoutingEmployeeName: input.defaultRoutingEmployeeName,
       scopedRoutingCount: input.scopedRoutingCount,
     }),
@@ -645,6 +648,9 @@ export function getFeishuConnectionDetailSummary(input: FeishuConnectionDetailSu
   }
   if (!input.authApproved) {
     return "连接已启动，但还需要在飞书里完成授权。";
+  }
+  if ((input.pendingPairings ?? 0) > 0) {
+    return "连接正常，但有新的接入请求等待批准。";
   }
   if (!input.defaultRoutingEmployeeName && (input.scopedRoutingCount ?? 0) === 0) {
     return "连接正常，但还没有设置默认接待员工或群聊范围。";

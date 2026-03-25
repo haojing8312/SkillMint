@@ -4,7 +4,8 @@ use crate::commands::employee_agents::EmployeeInboundDispatchSession;
 use crate::commands::employee_agents::AgentEmployee;
 use crate::commands::im_gateway::FeishuCallbackResult;
 use crate::commands::openclaw_plugins::{
-    OpenClawPluginFeishuRuntimeState,
+    current_feishu_runtime_status, start_openclaw_plugin_feishu_runtime_with_pool,
+    stop_openclaw_plugin_feishu_runtime_in_state, OpenClawPluginFeishuRuntimeState,
 };
 #[cfg(test)]
 use crate::commands::openclaw_plugins::OpenClawPluginChannelSnapshotResult;
@@ -176,9 +177,12 @@ pub async fn list_feishu_pairing_requests(
 pub async fn approve_feishu_pairing_request(
     request_id: String,
     resolved_by_user: Option<String>,
+    app: tauri::AppHandle,
     db: State<'_, DbState>,
+    runtime: State<'_, OpenClawPluginFeishuRuntimeState>,
 ) -> Result<FeishuPairingRequestRecord, String> {
-    tauri_commands::approve_feishu_pairing_request(request_id, resolved_by_user, db).await
+    tauri_commands::approve_feishu_pairing_request(request_id, resolved_by_user, app, db, runtime)
+        .await
 }
 
 #[tauri::command]

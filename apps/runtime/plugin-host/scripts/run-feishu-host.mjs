@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 const workspaceRuntimeDir = path.resolve(process.cwd(), "..");
 const pluginHostDir = path.resolve(workspaceRuntimeDir, "plugin-host");
 const shimPluginSdkRoot = path.join(pluginHostDir, "openclaw", "plugin-sdk");
+const shimPluginSdkCjsRoot = path.join(pluginHostDir, "openclaw", "plugin-sdk-cjs");
 
 function emit(event, payload = {}) {
   process.stdout.write(`${JSON.stringify({ event, ...payload })}\n`);
@@ -101,6 +102,30 @@ function stringifyLogArgs(args) {
     })
     .join(" ")
     .trim();
+}
+
+function installConsoleEventBridge() {
+  const levels = new Map([
+    ["debug", "debug"],
+    ["info", "info"],
+    ["log", "info"],
+    ["warn", "warn"],
+    ["error", "error"],
+  ]);
+
+  for (const [methodName, level] of levels.entries()) {
+    console[methodName] = (...args) => {
+      const message = stringifyLogArgs(args);
+      if (!message) {
+        return;
+      }
+      emit("log", {
+        level,
+        scope: "console",
+        message,
+      });
+    };
+  }
 }
 
 function parseArgs(argv) {
@@ -203,6 +228,16 @@ function resolvePluginEntry(pluginRoot, manifest) {
   }
 
   return path.resolve(pluginRoot, relativeEntry);
+}
+
+function resolvePluginExport(loadedModule) {
+  const candidates = [loadedModule, loadedModule?.default, loadedModule?.default?.default];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate.register === "function") {
+      return candidate;
+    }
+  }
+  return loadedModule?.default ?? loadedModule;
 }
 
 function createPluginRegistry() {
@@ -686,6 +721,7 @@ function rewriteImportsInFixture(rootDir) {
       }
 
       const relativeShimRoot = path.relative(path.dirname(entryPath), shimPluginSdkRoot).replace(/\\/g, "/");
+      const relativeShimCjsRoot = path.relative(path.dirname(entryPath), shimPluginSdkCjsRoot).replace(/\\/g, "/");
       const normalizeRelativeImport = (rawSpecifier) => {
         const resolvedPath = path.resolve(path.dirname(entryPath), rawSpecifier);
         const fileCandidate = `${resolvedPath}.js`;
@@ -705,12 +741,35 @@ function rewriteImportsInFixture(rootDir) {
 
       const rewritten = fs
         .readFileSync(entryPath, "utf8")
-        .replaceAll(/(['"])openclaw\/plugin-sdk\/compat\1/g, (_match, quote) => `${quote}${relativeShimRoot}/compat.js${quote}`)
-        .replaceAll(/(['"])openclaw\/plugin-sdk\/feishu\1/g, (_match, quote) => `${quote}${relativeShimRoot}/feishu.js${quote}`)
-        .replaceAll(/(['"])openclaw\/plugin-sdk\1/g, (_match, quote) => `${quote}${relativeShimRoot}/index.js${quote}`)
+        .replaceAll(
+          /require\((['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1\)/g,
+          (_match, quote) => `require(${quote}${relativeShimCjsRoot}/index.cjs${quote})`,
+        )
+        .replaceAll(
+          /from\s+(['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1/g,
+          (_match, quote) => `from ${quote}${relativeShimRoot}/index.js${quote}`,
+        )
+        .replaceAll(
+          /import\s+(['"])openclaw\/plugin-sdk(?:\/[^'"]+)?\1/g,
+          (_match, quote) => `import ${quote}${relativeShimRoot}/index.js${quote}`,
+        )
         .replaceAll(/from\s+(['"])(\.\.?\/[^'"]+)\1/g, (_match, quote, specifier) => `from ${quote}${normalizeRelativeImport(specifier)}${quote}`)
         .replaceAll(/import\s+(['"])(\.\.?\/[^'"]+)\1/g, (_match, quote, specifier) => `import ${quote}${normalizeRelativeImport(specifier)}${quote}`);
-      fs.writeFileSync(entryPath, rewritten, "utf8");
+      const needsImportMetaCompat =
+        rewritten.includes("import.meta.url") &&
+        ["module.exports", "exports.", "Object.defineProperty(exports"].some((marker) =>
+          rewritten.includes(marker),
+        );
+      const normalized = needsImportMetaCompat
+        ? rewritten
+            .replaceAll(
+              /const __filename = .*?import\.meta\.url.*?;/g,
+              "const __filenameCompat = __filename;",
+            )
+            .replaceAll("dirname(__filename)", "dirname(__filenameCompat)")
+            .replaceAll(".dirname)(__filename)", ".dirname)(__filenameCompat)")
+        : rewritten;
+      fs.writeFileSync(entryPath, normalized, "utf8");
     }
   }
 }
@@ -785,6 +844,7 @@ function resolveOutboundCommandSender(channel, config, defaultAccountId) {
 }
 
 async function main() {
+  installConsoleEventBridge();
   const args = parseArgs(process.argv.slice(2));
   const fixtureWorkspaceRoot = resolveFixtureWorkspaceRoot(args.fixtureRoot);
   const pluginRoot = path.resolve(args.pluginRoot);
@@ -804,7 +864,7 @@ async function main() {
   });
 
   const loadedModule = await import(pathToFileURL(entryPath).href);
-  const plugin = loadedModule.default ?? loadedModule;
+  const plugin = resolvePluginExport(loadedModule);
   if (typeof plugin.register !== "function") {
     throw new Error("plugin module must export a register(api) function");
   }

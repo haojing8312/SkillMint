@@ -46,6 +46,8 @@ pub(crate) fn merge_feishu_runtime_status_event(
                     } else {
                         Some(normalized.to_string())
                     };
+                } else if !patch.is_empty() {
+                    status.last_error = None;
                 }
             }
         }
@@ -406,7 +408,7 @@ pub(crate) fn current_feishu_runtime_status(
         .clone()
 }
 
-fn handle_feishu_runtime_pairing_request_event(
+pub(crate) fn handle_feishu_runtime_pairing_request_event(
     pool: &SqlitePool,
     status: &mut OpenClawPluginFeishuRuntimeStatus,
     value: &serde_json::Value,
@@ -456,6 +458,8 @@ fn handle_feishu_runtime_pairing_request_event(
                     "official runtime emitted placeholder pairing code for {} (raw={code})",
                     record.sender_id
                 ));
+            } else {
+                status.last_error = None;
             }
         }
         Err(error) => {
@@ -465,6 +469,114 @@ fn handle_feishu_runtime_pairing_request_event(
                 "[error] runtime: failed to persist feishu pairing request: {error}"
             ));
             trim_recent_runtime_logs(status);
+        }
+    }
+}
+
+pub(crate) fn handle_openclaw_plugin_feishu_runtime_stdout_line(
+    pool: &SqlitePool,
+    state: &OpenClawPluginFeishuRuntimeState,
+    app: Option<&AppHandle>,
+    trimmed: &str,
+) {
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return;
+    };
+
+    let event = value
+        .get("event")
+        .and_then(|entry| entry.as_str())
+        .unwrap_or_default();
+    if event == "send_result" {
+        let handled = handle_openclaw_plugin_feishu_runtime_send_result_event(state, &value);
+        if !handled {
+            let request_id = value
+                .get("requestId")
+                .and_then(|entry| entry.as_str())
+                .unwrap_or("unknown");
+            if let Ok(mut guard) = state.0.lock() {
+                guard.status.recent_logs.push(format!(
+                    "[warn] runtime: dropped send_result requestId={request_id}"
+                ));
+                trim_recent_runtime_logs(&mut guard.status);
+                guard.status.last_event_at = Some(now_rfc3339());
+            }
+        }
+        return;
+    }
+    if event == "command_error" {
+        let handled = handle_openclaw_plugin_feishu_runtime_command_error_event(state, &value);
+        if !handled {
+            let request_id = value
+                .get("requestId")
+                .and_then(|entry| entry.as_str())
+                .unwrap_or("unknown");
+            if let Ok(mut guard) = state.0.lock() {
+                guard.status.recent_logs.push(format!(
+                    "[warn] runtime: dropped command_error requestId={request_id}"
+                ));
+                trim_recent_runtime_logs(&mut guard.status);
+                guard.status.last_event_at = Some(now_rfc3339());
+            }
+        }
+        return;
+    }
+
+    if let Ok(mut guard) = state.0.lock() {
+        if event == "pairing_request" {
+            handle_feishu_runtime_pairing_request_event(pool, &mut guard.status, &value);
+        } else if event == "dispatch_request" {
+            match tauri::async_runtime::block_on(
+                parse_feishu_runtime_dispatch_event_with_pool(pool, &value),
+            ) {
+                Ok(inbound) => {
+                    if let Some(app_handle) = app.as_ref() {
+                        match tauri::async_runtime::block_on(
+                            dispatch_feishu_inbound_to_workclaw_with_pool_and_app(
+                                pool,
+                                app_handle,
+                                &inbound,
+                                None,
+                            ),
+                        ) {
+                            Ok(result) => {
+                                guard.status.last_error = None;
+                                guard.status.recent_logs.push(format!(
+                                    "[dispatch] feishu: accepted={} deduped={} thread={}",
+                                    result.accepted, result.deduped, inbound.thread_id
+                                ));
+                            }
+                            Err(error) => {
+                                guard.status.last_error = Some(format!(
+                                    "failed to bridge official feishu dispatch: {error}"
+                                ));
+                                guard.status.recent_logs.push(format!(
+                                    "[error] runtime: failed to bridge official feishu dispatch: {error}"
+                                ));
+                            }
+                        }
+                    } else {
+                        guard.status.recent_logs.push(
+                            "[warn] runtime: dispatch_request ignored because no app handle was available"
+                                .to_string(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    guard.status.last_error =
+                        Some(format!("invalid official feishu dispatch event: {error}"));
+                    guard.status.recent_logs.push(format!(
+                        "[error] runtime: invalid official feishu dispatch event: {error}"
+                    ));
+                }
+            }
+            trim_recent_runtime_logs(&mut guard.status);
+        } else {
+            merge_feishu_runtime_status_event(&mut guard.status, &value);
         }
     }
 }
@@ -758,121 +870,12 @@ pub(crate) async fn start_openclaw_plugin_feishu_runtime_with_pool(
                 if trimmed.is_empty() {
                     continue;
                 }
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-                    if let Ok(mut guard) = state_clone.0.lock() {
-                        guard.status.last_error = Some(format!(
-                            "invalid official feishu runtime event: {trimmed}"
-                        ));
-                        guard
-                            .status
-                            .recent_logs
-                            .push(format!("[warn] runtime: invalid event {trimmed}"));
-                        trim_recent_runtime_logs(&mut guard.status);
-                        guard.status.last_event_at = Some(now_rfc3339());
-                    }
-                    continue;
-                };
-
-                let event = value
-                    .get("event")
-                    .and_then(|entry| entry.as_str())
-                    .unwrap_or_default();
-                if event == "send_result" {
-                    let handled =
-                        handle_openclaw_plugin_feishu_runtime_send_result_event(&state_clone, &value);
-                    if !handled {
-                        let request_id = value
-                            .get("requestId")
-                            .and_then(|entry| entry.as_str())
-                            .unwrap_or("unknown");
-                        if let Ok(mut guard) = state_clone.0.lock() {
-                            guard.status.recent_logs.push(format!(
-                                "[warn] runtime: dropped send_result requestId={request_id}"
-                            ));
-                            trim_recent_runtime_logs(&mut guard.status);
-                            guard.status.last_event_at = Some(now_rfc3339());
-                        }
-                    }
-                    continue;
-                }
-                if event == "command_error" {
-                    let handled = handle_openclaw_plugin_feishu_runtime_command_error_event(
-                        &state_clone,
-                        &value,
-                    );
-                    if !handled {
-                        let request_id = value
-                            .get("requestId")
-                            .and_then(|entry| entry.as_str())
-                            .unwrap_or("unknown");
-                        if let Ok(mut guard) = state_clone.0.lock() {
-                            guard.status.recent_logs.push(format!(
-                                "[warn] runtime: dropped command_error requestId={request_id}"
-                            ));
-                            trim_recent_runtime_logs(&mut guard.status);
-                            guard.status.last_event_at = Some(now_rfc3339());
-                        }
-                    }
-                    continue;
-                }
-
-                if let Ok(mut guard) = state_clone.0.lock() {
-                    if event == "pairing_request" {
-                        handle_feishu_runtime_pairing_request_event(
-                            &pool_clone,
-                            &mut guard.status,
-                            &value,
-                        );
-                    } else if event == "dispatch_request" {
-                        match tauri::async_runtime::block_on(
-                            parse_feishu_runtime_dispatch_event_with_pool(&pool_clone, &value),
-                        ) {
-                            Ok(inbound) => {
-                                if let Some(app_handle) = app_clone.as_ref() {
-                                    match tauri::async_runtime::block_on(
-                                        dispatch_feishu_inbound_to_workclaw_with_pool_and_app(
-                                            &pool_clone,
-                                            app_handle,
-                                            &inbound,
-                                            None,
-                                        ),
-                                    ) {
-                                        Ok(result) => {
-                                            guard.status.recent_logs.push(format!(
-                                                "[dispatch] feishu: accepted={} deduped={} thread={}",
-                                                result.accepted, result.deduped, inbound.thread_id
-                                            ));
-                                        }
-                                        Err(error) => {
-                                            guard.status.last_error = Some(format!(
-                                                "failed to bridge official feishu dispatch: {error}"
-                                            ));
-                                            guard.status.recent_logs.push(format!(
-                                                "[error] runtime: failed to bridge official feishu dispatch: {error}"
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    guard.status.recent_logs.push(
-                                        "[warn] runtime: dispatch_request ignored because no app handle was available"
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                            Err(error) => {
-                                guard.status.last_error = Some(format!(
-                                    "invalid official feishu dispatch event: {error}"
-                                ));
-                                guard.status.recent_logs.push(format!(
-                                    "[error] runtime: invalid official feishu dispatch event: {error}"
-                                ));
-                            }
-                        }
-                        trim_recent_runtime_logs(&mut guard.status);
-                    } else {
-                        merge_feishu_runtime_status_event(&mut guard.status, &value);
-                    }
-                }
+                handle_openclaw_plugin_feishu_runtime_stdout_line(
+                    &pool_clone,
+                    &state_clone,
+                    app_clone.as_ref(),
+                    trimmed,
+                );
             }
         });
     }

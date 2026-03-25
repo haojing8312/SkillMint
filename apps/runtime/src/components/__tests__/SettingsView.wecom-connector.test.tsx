@@ -1280,6 +1280,75 @@ describe("SettingsView connector visibility", () => {
     });
   });
 
+  test("shows pending pairing approvals as a normal connection detail state", async () => {
+    installInvokeMock({
+      get_feishu_setup_progress: async () => ({
+        environment: {
+          node_available: true,
+          npm_available: true,
+          node_version: "v22.0.0",
+          npm_version: "10.0.0",
+          can_install_plugin: true,
+          can_start_runtime: true,
+          error: null,
+        },
+        credentials_configured: true,
+        plugin_installed: true,
+        plugin_version: "2026.3.25",
+        runtime_running: true,
+        runtime_last_error: null,
+        auth_status: "approved",
+        pending_pairings: 1,
+        default_routing_employee_name: "太子",
+        scoped_routing_count: 0,
+        summary_state: "awaiting_pairing_approval",
+      }),
+      get_openclaw_plugin_feishu_runtime_status: async () => ({
+        plugin_id: "openclaw-lark",
+        account_id: "default",
+        running: true,
+        started_at: "2026-03-24T23:00:00Z",
+        last_stop_at: null,
+        last_event_at: "2026-03-24T23:06:00Z",
+        last_error: null,
+        pid: 4321,
+        port: 3100,
+        recent_logs: [
+          "[info] runtime: feishu[default]: sender ou_4866 not paired, creating pairing request",
+          "[pairing] feishu: created request 5a776683-bb67-48ac-86bf-7029a5057823 for ou_4866 code=6X4ZN54W",
+        ],
+      }),
+      list_feishu_pairing_requests: async () => [
+        {
+          id: "pairing-pending-1",
+          channel: "feishu",
+          account_id: "default",
+          sender_id: "ou_4866",
+          chat_id: "oc_chat_1",
+          code: "6X4ZN54W",
+          status: "pending",
+          created_at: "2026-03-24T23:06:00Z",
+          updated_at: "2026-03-24T23:06:00Z",
+          resolved_at: null,
+          resolved_by_user: "",
+        },
+      ],
+    });
+
+    render(<SettingsView onClose={() => {}} initialTab="feishu" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("高级设置与控制台")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("高级设置与控制台"));
+    fireEvent.click(screen.getByText("连接详情"));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("连接正常，但有新的接入请求等待批准。").length).toBeGreaterThan(0);
+    });
+  });
+
   test("shows routing completion guidance when no default employee is configured", async () => {
     installInvokeMock({
       get_feishu_setup_progress: async () => ({

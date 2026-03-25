@@ -1,18 +1,64 @@
 use super::{
+    current_feishu_runtime_status,
     get_feishu_employee_connection_statuses_with_pool, get_feishu_event_relay_status_in_state,
     get_feishu_gateway_settings_with_state, get_feishu_long_connection_status_with_pool,
     list_feishu_chats_with_pool,
     list_feishu_pairing_requests_with_pool, push_role_summary_to_feishu_with_pool,
     resolve_feishu_pairing_request_with_pool,
     set_feishu_gateway_settings_with_state, start_feishu_event_relay_with_pool_and_app,
+    start_openclaw_plugin_feishu_runtime_with_pool,
     start_feishu_long_connection_with_pool, stop_feishu_event_relay_in_state,
+    stop_openclaw_plugin_feishu_runtime_in_state,
     stop_feishu_long_connection_with_pool, sync_feishu_ws_events_core, ApprovalManagerState,
     DbState, FeishuEmployeeConnectionStatuses, FeishuEventRelayState, FeishuEventRelayStatus,
     FeishuGatewayResult, FeishuGatewaySettings, FeishuPairingRequestRecord, FeishuWsStatus,
     OpenClawPluginFeishuRuntimeState,
 };
 use super::ingress_service::handle_feishu_event_with_pool_and_app;
-use tauri::State;
+use crate::commands::openclaw_plugins::OpenClawPluginFeishuRuntimeStatus;
+use tauri::{AppHandle, State};
+
+pub(crate) fn should_restart_official_feishu_runtime_after_pairing_approval(
+    runtime_status: &OpenClawPluginFeishuRuntimeStatus,
+    account_id: &str,
+) -> bool {
+    runtime_status.running && runtime_status.account_id.eq_ignore_ascii_case(account_id.trim())
+}
+
+async fn maybe_restart_official_feishu_runtime_after_pairing_approval(
+    app: &AppHandle,
+    db: &DbState,
+    runtime: &OpenClawPluginFeishuRuntimeState,
+    account_id: &str,
+) -> Result<(), String> {
+    let runtime_status = current_feishu_runtime_status(runtime);
+    if !should_restart_official_feishu_runtime_after_pairing_approval(&runtime_status, account_id)
+    {
+        return Ok(());
+    }
+
+    let plugin_id = if runtime_status.plugin_id.trim().is_empty() {
+        "openclaw-lark".to_string()
+    } else {
+        runtime_status.plugin_id.trim().to_string()
+    };
+    let restart_account_id = if account_id.trim().is_empty() {
+        runtime_status.account_id
+    } else {
+        account_id.trim().to_string()
+    };
+
+    stop_openclaw_plugin_feishu_runtime_in_state(runtime)?;
+    start_openclaw_plugin_feishu_runtime_with_pool(
+        &db.0,
+        runtime,
+        &plugin_id,
+        Some(&restart_account_id),
+        Some(app.clone()),
+    )
+    .await
+    .map(|_| ())
+}
 
 pub async fn list_feishu_pairing_requests(
     status: Option<String>,
@@ -24,9 +70,21 @@ pub async fn list_feishu_pairing_requests(
 pub async fn approve_feishu_pairing_request(
     request_id: String,
     resolved_by_user: Option<String>,
+    app: AppHandle,
     db: State<'_, DbState>,
+    runtime: State<'_, OpenClawPluginFeishuRuntimeState>,
 ) -> Result<FeishuPairingRequestRecord, String> {
-    resolve_feishu_pairing_request_with_pool(&db.0, &request_id, "approved", resolved_by_user).await
+    let record =
+        resolve_feishu_pairing_request_with_pool(&db.0, &request_id, "approved", resolved_by_user)
+            .await?;
+    maybe_restart_official_feishu_runtime_after_pairing_approval(
+        &app,
+        &db,
+        runtime.inner(),
+        &record.account_id,
+    )
+    .await?;
+    Ok(record)
 }
 
 pub async fn deny_feishu_pairing_request(
