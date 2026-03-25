@@ -1,4 +1,3 @@
-use crate::commands::chat_send_message_flow::build_current_turn_message;
 use serde_json::{json, Value};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -9,7 +8,82 @@ impl RuntimeTranscript {
         Self
     }
 
-    pub fn reconstruct_llm_messages(parsed: &Value, api_format: &str) -> Vec<Value> {
+    pub(crate) fn build_current_turn_message(api_format: &str, parts: &[Value]) -> Option<Value> {
+        if parts.is_empty() {
+            return None;
+        }
+        let mut combined_text_parts = Vec::new();
+        let mut content_blocks = Vec::new();
+
+        for part in parts {
+            match part.get("type").and_then(Value::as_str).unwrap_or_default() {
+                "text" => {
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
+                        if !text.trim().is_empty() {
+                            combined_text_parts.push(text.trim().to_string());
+                        }
+                    }
+                }
+                "image" => {
+                    let mime_type = part
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("image/png");
+                    let data = part.get("data").and_then(Value::as_str).unwrap_or_default();
+                    if data.is_empty() {
+                        continue;
+                    }
+                    if api_format == "anthropic" {
+                        let base64_data = data
+                            .split_once("base64,")
+                            .map(|(_, payload)| payload)
+                            .unwrap_or(data);
+                        content_blocks.push(json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime_type,
+                                "data": base64_data,
+                            }
+                        }));
+                    } else {
+                        let data_url = if data.starts_with("data:") {
+                            data.to_string()
+                        } else {
+                            format!("data:{mime_type};base64,{data}")
+                        };
+                        content_blocks.push(json!({
+                            "type": "image_url",
+                            "image_url": { "url": data_url }
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(file_context) = Self::build_attachment_context_text(parts) {
+            combined_text_parts.push(file_context);
+        }
+        let combined_text = combined_text_parts.join("\n\n").trim().to_string();
+        if !combined_text.is_empty() {
+            content_blocks.insert(
+                0,
+                json!({ "type": "text", "text": combined_text }),
+            );
+        }
+
+        if content_blocks.is_empty() {
+            None
+        } else {
+            Some(json!({
+                "role": "user",
+                "content": content_blocks,
+            }))
+        }
+    }
+
+    pub(crate) fn reconstruct_llm_messages(parsed: &Value, api_format: &str) -> Vec<Value> {
         let final_text = parsed["text"].as_str().unwrap_or("");
         let items = match parsed["items"].as_array() {
             Some(arr) => arr,
@@ -111,7 +185,7 @@ impl RuntimeTranscript {
         result
     }
 
-    pub fn reconstruct_history_messages(
+    pub(crate) fn reconstruct_history_messages(
         history: &[(String, String, Option<String>)],
         api_format: &str,
     ) -> Vec<Value> {
@@ -129,7 +203,8 @@ impl RuntimeTranscript {
                     if let Some(content_json) = content_json {
                         if let Ok(parts) = serde_json::from_str::<Value>(content_json) {
                             if let Some(parts_array) = parts.as_array() {
-                                if let Some(message) = build_current_turn_message(api_format, parts_array)
+                                if let Some(message) =
+                                    Self::build_current_turn_message(api_format, parts_array)
                                 {
                                     return vec![message];
                                 }
@@ -142,7 +217,7 @@ impl RuntimeTranscript {
             .collect()
     }
 
-    pub fn build_assistant_content_from_final_messages(
+    pub(crate) fn build_assistant_content_from_final_messages(
         final_messages: &[Value],
         reconstructed_history_len: usize,
     ) -> (String, bool, String) {
@@ -265,7 +340,7 @@ impl RuntimeTranscript {
         (final_text, has_tool_calls, content)
     }
 
-    pub fn build_assistant_content_with_stream_fallback(
+    pub(crate) fn build_assistant_content_with_stream_fallback(
         final_messages: &[Value],
         reconstructed_history_len: usize,
         streamed_text: &str,
@@ -299,6 +374,38 @@ impl RuntimeTranscript {
         }
 
         (final_text, has_tool_calls, content)
+    }
+
+    fn build_attachment_context_text(parts: &[Value]) -> Option<String> {
+        let mut file_blocks = Vec::new();
+        for part in parts {
+            if part.get("type").and_then(Value::as_str) != Some("file_text") {
+                continue;
+            }
+            let name = part
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("attachment.txt");
+            let mime_type = part
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .unwrap_or("text/plain");
+            let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
+            let truncated = part
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let ext = name.split('.').last().unwrap_or("txt");
+            let truncated_note = if truncated { "\n[内容已截断]" } else { "" };
+            file_blocks.push(format!(
+                "## {name} ({mime_type})\n```{ext}\n{text}\n```{truncated_note}"
+            ));
+        }
+        if file_blocks.is_empty() {
+            None
+        } else {
+            Some(format!("附件文本文件：\n{}", file_blocks.join("\n\n")))
+        }
     }
 
     fn extract_new_messages_after_reconstructed_history<'a>(

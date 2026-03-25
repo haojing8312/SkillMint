@@ -229,4 +229,66 @@ mod tests {
             Some("{\"summary\":\"done\"}")
         );
     }
+
+    #[test]
+    fn runtime_transcript_round_trip_preserves_tool_call_output_pairs_for_anthropic() {
+        let final_messages = vec![
+            json!({
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "先检查目录。"
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "call-1",
+                        "name": "list_dir",
+                        "input": {"path": "."}
+                    }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call-1",
+                        "content": "{\"summary\":\"ok\"}"
+                    }
+                ]
+            }),
+        ];
+
+        let (_, has_tool_calls, content) =
+            RuntimeTranscript::build_assistant_content_from_final_messages(&final_messages, 0);
+        assert!(has_tool_calls);
+
+        let parsed: Value = serde_json::from_str(&content).expect("structured transcript");
+        let reconstructed = RuntimeTranscript::reconstruct_llm_messages(&parsed, "anthropic");
+
+        assert_eq!(reconstructed.len(), 2);
+        assert_eq!(reconstructed[0]["role"].as_str(), Some("assistant"));
+        assert_eq!(
+            reconstructed[0]["content"].as_array().map(|items| items.len()),
+            Some(2)
+        );
+        assert_eq!(
+            reconstructed[0]["content"][1]["type"].as_str(),
+            Some("tool_use")
+        );
+        assert_eq!(reconstructed[1]["role"].as_str(), Some("user"));
+        assert_eq!(
+            reconstructed[1]["content"][0]["type"].as_str(),
+            Some("tool_result")
+        );
+        assert_eq!(
+            reconstructed[1]["content"][0]["tool_use_id"].as_str(),
+            Some("call-1")
+        );
+        assert_eq!(
+            reconstructed[1]["content"][0]["content"].as_str(),
+            Some("{\"summary\":\"ok\"}")
+        );
+    }
 }
