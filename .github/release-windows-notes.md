@@ -1,14 +1,14 @@
 ## WorkClaw Windows Release
 
-- Highlights in `v0.5.1`:
+- Highlights in `v0.5.2`:
   - 中文:
-    - 新增本地 SkillHub 技能库索引和技能发现页，专家能力浏览与检索体验更完整。
-    - 新增豆包模型预设，并优化模型鉴权与错误反馈，模型连接失败时更容易定位问题。
-    - 继续重构飞书接入链路，统一官方插件 runtime 的收发与审批流程，补强自动恢复、会话显示和单聊外发稳定性。
+    - 新增本地技能批量导入能力，导入多个本地 Skill 包时更省步骤。
+    - 持续收敛桌面端大模块拆分后的稳定性问题，提升设置页、员工中心和聊天相关流程的可靠性。
+    - 重点修复飞书官方插件链路中的 Windows 启动、插件宿主兼容、诊断误报，以及批准接入后仍重复要求授权的问题，飞书接入流程更稳定。
   - English:
-    - Adds a local SkillHub index and improved skill discovery flows for a more complete expert browsing experience.
-    - Adds a Doubao provider preset and improves model authentication plus error feedback so connection issues are easier to diagnose.
-    - Continues the Feishu connector rebuild by unifying more of the official-plugin runtime flow, including approvals, auto-recovery, session visibility, and more reliable direct-message outbound delivery.
+    - Adds batch local skill imports so multiple local Skill packs can be brought in with less manual setup.
+    - Continues hardening the desktop app after the recent module splits, improving reliability across settings, employee hub, and chat flows.
+    - Significantly improves the Feishu official-plugin path on Windows, including runtime startup, plugin-host compatibility, diagnostics accuracy, and pairing approval sync so approved users are no longer repeatedly asked to authorize.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.
