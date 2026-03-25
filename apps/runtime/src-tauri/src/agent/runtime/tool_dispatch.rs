@@ -52,6 +52,12 @@ enum ApprovalOutcome {
     Failed(String),
 }
 
+enum BlockingToolOutcome {
+    Completed((String, bool)),
+    Cancelled,
+    TimedOut,
+}
+
 async fn resolve_approval_outcome(
     ctx: &ToolDispatchContext<'_>,
     call: &ToolCall,
@@ -464,34 +470,44 @@ async fn run_tool(
     let tool_clone = Arc::clone(&tool);
     let input_clone = call.input.clone();
     let ctx_clone = tool_ctx.clone();
-    let handle = tokio::task::spawn_blocking(move || tool_clone.execute(input_clone, &ctx_clone));
-    let exec_future = async move {
+    let mut handle =
+        tokio::task::spawn_blocking(move || tool_clone.execute(input_clone, &ctx_clone));
+
+    let outcome = if is_skill_call {
         tokio::select! {
-            res = handle => {
-                match res {
-                    Ok(Ok(output)) => (output, false),
-                    Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
-                    Err(e) => (format!("工具执行线程异常: {}", e), true),
-                }
+            res = &mut handle => BlockingToolOutcome::Completed(classify_blocking_tool_join_result(res)),
+            _ = wait_for_cancel(&cancel_flag) => BlockingToolOutcome::Cancelled,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(route_node_timeout_secs)) => {
+                BlockingToolOutcome::TimedOut
             }
-            _ = wait_for_cancel(&cancel_flag) => {
-                ("工具执行被用户取消".to_string(), true)
-            }
+        }
+    } else {
+        tokio::select! {
+            res = &mut handle => BlockingToolOutcome::Completed(classify_blocking_tool_join_result(res)),
+            _ = wait_for_cancel(&cancel_flag) => BlockingToolOutcome::Cancelled,
         }
     };
 
-    if is_skill_call {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(route_node_timeout_secs),
-            exec_future,
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(_) => ("TIMEOUT: 子 Skill 执行超时".to_string(), true),
+    match outcome {
+        BlockingToolOutcome::Completed(result) => result,
+        BlockingToolOutcome::Cancelled => {
+            let _ = handle.await;
+            ("工具执行被用户取消".to_string(), true)
         }
-    } else {
-        exec_future.await
+        BlockingToolOutcome::TimedOut => {
+            let _ = handle.await;
+            ("TIMEOUT: 子 Skill 执行超时".to_string(), true)
+        }
+    }
+}
+
+fn classify_blocking_tool_join_result(
+    result: std::result::Result<Result<String>, tokio::task::JoinError>,
+) -> (String, bool) {
+    match result {
+        Ok(Ok(output)) => (output, false),
+        Ok(Err(e)) => (format!("工具执行错误: {}", e), true),
+        Err(e) => (format!("工具执行线程异常: {}", e), true),
     }
 }
 
@@ -506,5 +522,136 @@ async fn wait_for_cancel(cancel_flag: &Option<Arc<AtomicBool>>) {
             return;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_tool;
+    use crate::agent::types::{Tool, ToolContext};
+    use anyhow::Result;
+    use serde_json::{json, Value};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct BlockingTool {
+        started: Arc<AtomicBool>,
+        release: Arc<AtomicBool>,
+    }
+
+    impl Tool for BlockingTool {
+        fn name(&self) -> &str {
+            "blocking_tool"
+        }
+
+        fn description(&self) -> &str {
+            "blocks until released"
+        }
+
+        fn input_schema(&self) -> Value {
+            json!({})
+        }
+
+        fn execute(&self, _input: Value, _ctx: &ToolContext) -> Result<String> {
+            self.started.store(true, Ordering::SeqCst);
+            while !self.release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok("done".to_string())
+        }
+    }
+
+    async fn wait_for_started_flag(started: &AtomicBool) {
+        for _ in 0..50 {
+            if started.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("blocking tool never started");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_tool_cancellation_waits_for_blocking_task_to_finish() {
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let tool = Arc::new(BlockingTool {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        });
+        let call = crate::agent::types::ToolCall {
+            id: "call-1".to_string(),
+            name: "blocking_tool".to_string(),
+            input: json!({}),
+        };
+        let tool_ctx = ToolContext::default();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let mut run = Box::pin(run_tool(
+            tool,
+            &call,
+            &tool_ctx,
+            Some(Arc::clone(&cancel_flag)),
+            0,
+            false,
+        ));
+
+        tokio::select! {
+            _ = &mut run => panic!("run_tool completed before the blocking task could be observed"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+        wait_for_started_flag(&started).await;
+        cancel_flag.store(true, Ordering::SeqCst);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut run)
+                .await
+                .is_err(),
+            "run_tool returned before draining the blocking task"
+        );
+
+        release.store(true, Ordering::SeqCst);
+        let (output, is_error) = tokio::time::timeout(Duration::from_secs(1), &mut run)
+            .await
+            .expect("drained blocking task");
+        assert!(is_error);
+        assert_eq!(output, "工具执行被用户取消");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_tool_timeout_waits_for_blocking_task_to_finish() {
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let tool = Arc::new(BlockingTool {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        });
+        let call = crate::agent::types::ToolCall {
+            id: "call-2".to_string(),
+            name: "blocking_tool".to_string(),
+            input: json!({}),
+        };
+        let tool_ctx = ToolContext::default();
+        let mut run = Box::pin(run_tool(tool, &call, &tool_ctx, None, 0, true));
+
+        tokio::select! {
+            _ = &mut run => panic!("run_tool completed before the blocking task could be observed"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+        wait_for_started_flag(&started).await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut run)
+                .await
+                .is_err(),
+            "run_tool returned before draining the timed-out blocking task"
+        );
+
+        release.store(true, Ordering::SeqCst);
+        let (output, is_error) = tokio::time::timeout(Duration::from_secs(1), &mut run)
+            .await
+            .expect("drained blocking task");
+        assert!(is_error);
+        assert_eq!(output, "TIMEOUT: 子 Skill 执行超时");
     }
 }
