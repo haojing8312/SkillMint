@@ -1,12 +1,12 @@
 use super::chat::{StreamToken, ToolConfirmResponder};
-use super::chat_policy::{self, ModelRouteErrorKind};
 use super::chat_runtime_io as chat_io;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::runtime::{
-    CandidateAttemptOutcome, RuntimeFailover, RuntimeFailoverErrorKind, RuntimeFailoverOutcome,
-    RuntimeFailoverParams,
+    CandidateAttemptOutcome, RuntimeFailover, RuntimeFailoverOutcome,
+    RuntimeFailoverParams, runtime_failover_error_kind_from_error_text,
+    runtime_failover_error_kind_from_stop_reason_kind, runtime_failover_error_kind_key,
 };
-use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
+use crate::agent::run_guard::parse_run_stop_reason;
 use crate::agent::types::StreamDelta;
 use crate::agent::AgentExecutor;
 use serde_json::Value;
@@ -189,11 +189,9 @@ async fn execute_candidate_attempt(
             let parsed_stop_reason = parse_run_stop_reason(&err_text);
             let kind = parsed_stop_reason
                 .as_ref()
-                .map(|reason| runtime_failover_error_kind_for_stop_reason_kind(reason.kind))
-                .unwrap_or_else(|| runtime_failover_error_kind_from_command_kind(
-                    chat_policy::classify_model_route_error(&err_text),
-                ));
-            let kind_text = runtime_error_kind_key(kind);
+                .map(|reason| runtime_failover_error_kind_from_stop_reason_kind(reason.kind))
+                .unwrap_or_else(|| runtime_failover_error_kind_from_error_text(&err_text));
+            let kind_text = runtime_failover_error_kind_key(kind);
             let user_facing_error = parsed_stop_reason
                 .as_ref()
                 .map(|reason| {
@@ -245,54 +243,5 @@ async fn execute_candidate_attempt(
                 reasoning_duration_ms: None,
             }
         }
-    }
-}
-
-fn runtime_failover_error_kind_from_command_kind(
-    kind: ModelRouteErrorKind,
-) -> RuntimeFailoverErrorKind {
-    match kind {
-        ModelRouteErrorKind::Billing => RuntimeFailoverErrorKind::Billing,
-        ModelRouteErrorKind::Auth => RuntimeFailoverErrorKind::Auth,
-        ModelRouteErrorKind::RateLimit => RuntimeFailoverErrorKind::RateLimit,
-        ModelRouteErrorKind::Timeout => RuntimeFailoverErrorKind::Timeout,
-        ModelRouteErrorKind::Network => RuntimeFailoverErrorKind::Network,
-        ModelRouteErrorKind::PolicyBlocked => RuntimeFailoverErrorKind::PolicyBlocked,
-        ModelRouteErrorKind::MaxTurns => RuntimeFailoverErrorKind::MaxTurns,
-        ModelRouteErrorKind::LoopDetected => RuntimeFailoverErrorKind::LoopDetected,
-        ModelRouteErrorKind::NoProgress => RuntimeFailoverErrorKind::NoProgress,
-        ModelRouteErrorKind::Unknown => RuntimeFailoverErrorKind::Unknown,
-    }
-}
-
-fn runtime_failover_error_kind_for_stop_reason_kind(
-    kind: RunStopReasonKind,
-) -> RuntimeFailoverErrorKind {
-    match kind {
-        RunStopReasonKind::Timeout => RuntimeFailoverErrorKind::Timeout,
-        RunStopReasonKind::PolicyBlocked => RuntimeFailoverErrorKind::PolicyBlocked,
-        RunStopReasonKind::MaxTurns | RunStopReasonKind::MaxSessionTurns => {
-            RuntimeFailoverErrorKind::MaxTurns
-        }
-        RunStopReasonKind::LoopDetected | RunStopReasonKind::ToolFailureCircuitBreaker => {
-            RuntimeFailoverErrorKind::LoopDetected
-        }
-        RunStopReasonKind::NoProgress => RuntimeFailoverErrorKind::NoProgress,
-        _ => RuntimeFailoverErrorKind::Unknown,
-    }
-}
-
-fn runtime_error_kind_key(kind: RuntimeFailoverErrorKind) -> &'static str {
-    match kind {
-        RuntimeFailoverErrorKind::Billing => "billing",
-        RuntimeFailoverErrorKind::Auth => "auth",
-        RuntimeFailoverErrorKind::RateLimit => "rate_limit",
-        RuntimeFailoverErrorKind::Timeout => "timeout",
-        RuntimeFailoverErrorKind::Network => "network",
-        RuntimeFailoverErrorKind::PolicyBlocked => "policy_blocked",
-        RuntimeFailoverErrorKind::MaxTurns => "max_turns",
-        RuntimeFailoverErrorKind::LoopDetected => "loop_detected",
-        RuntimeFailoverErrorKind::NoProgress => "no_progress",
-        RuntimeFailoverErrorKind::Unknown => "unknown",
     }
 }
