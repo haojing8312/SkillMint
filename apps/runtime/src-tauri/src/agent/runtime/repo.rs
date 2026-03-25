@@ -1,16 +1,11 @@
-use super::employee_agents::list_agent_employees_with_pool;
-use super::models::{
-    get_capability_routing_policy_from_pool, get_chat_routing_policy_from_pool,
-    load_routing_settings_from_pool,
-};
-use super::runtime_preferences::resolve_default_work_dir_with_pool;
 use async_trait::async_trait;
 use runtime_chat_app::{
     ChatEmployeeDirectory, ChatEmployeeSnapshot, ChatRoutePolicySnapshot, ChatRoutingSnapshot,
     ChatSessionContextRepository, ChatSettingsRepository, ProviderConnectionSnapshot,
     RoutingSettingsSnapshot, SessionExecutionContextSnapshot, SessionModelSnapshot,
 };
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
+use std::path::PathBuf;
 
 pub struct PoolChatSettingsRepository<'a> {
     db: &'a SqlitePool,
@@ -32,25 +27,117 @@ impl<'a> PoolChatEmployeeDirectory<'a> {
     }
 }
 
+fn home_dir_from_env() -> Option<PathBuf> {
+    std::env::var("USERPROFILE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+        })
+}
+
+fn compute_default_work_dir_with_home() -> String {
+    let fallback = PathBuf::from("C:\\Users\\Default");
+    let base = home_dir_from_env().unwrap_or(fallback);
+    base.join("WorkClaw")
+        .join("workspace")
+        .to_string_lossy()
+        .to_string()
+}
+
+async fn load_runtime_setting(db: &SqlitePool, key: &str) -> Result<Option<String>, String> {
+    sqlx::query_scalar::<_, String>("SELECT value FROM app_settings WHERE key = ? LIMIT 1")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| format!("读取运行时设置失败 (key={key}): {e}"))
+}
+
+async fn load_routing_policy_snapshot(
+    db: &SqlitePool,
+    capability: &str,
+) -> Result<Option<(ChatRoutePolicySnapshot, i64)>, String> {
+    let row = sqlx::query_as::<_, (String, String, String, i64, i64, bool)>(
+        "SELECT primary_provider_id, primary_model, fallback_chain_json, timeout_ms, retry_count, CAST(enabled AS BOOLEAN)
+         FROM routing_policies
+         WHERE capability = ?
+         LIMIT 1",
+    )
+    .bind(capability)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| format!("读取路由策略失败 (capability={capability}): {e}"))?;
+
+    Ok(row.map(
+        |(
+            primary_provider_id,
+            primary_model,
+            fallback_chain_json,
+            timeout_ms,
+            retry_count,
+            enabled,
+        )| (
+            ChatRoutePolicySnapshot {
+                primary_provider_id,
+                primary_model,
+                fallback_chain_json,
+                retry_count,
+                enabled,
+            },
+            timeout_ms,
+        ),
+    ))
+}
+
 #[async_trait]
 impl ChatSettingsRepository for PoolChatSettingsRepository<'_> {
     async fn load_routing_settings(&self) -> Result<RoutingSettingsSnapshot, String> {
-        let settings = load_routing_settings_from_pool(self.db).await?;
-        Ok(RoutingSettingsSnapshot {
-            max_call_depth: settings.max_call_depth,
-            node_timeout_seconds: settings.node_timeout_seconds,
-            retry_count: settings.retry_count,
-        })
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT key, value
+             FROM app_settings
+             WHERE key IN ('route_max_call_depth', 'route_node_timeout_seconds', 'route_retry_count')",
+        )
+        .fetch_all(self.db)
+        .await
+        .map_err(|e| format!("读取路由设置失败: {e}"))?;
+
+        let mut settings = RoutingSettingsSnapshot {
+            max_call_depth: 4,
+            node_timeout_seconds: 60,
+            retry_count: 0,
+        };
+
+        for (key, value) in rows {
+            match key.as_str() {
+                "route_max_call_depth" => {
+                    settings.max_call_depth = value.parse::<usize>().unwrap_or(4).clamp(2, 8);
+                }
+                "route_node_timeout_seconds" => {
+                    settings.node_timeout_seconds =
+                        value.parse::<u64>().unwrap_or(60).clamp(5, 600);
+                }
+                "route_retry_count" => {
+                    settings.retry_count = value.parse::<usize>().unwrap_or(0).clamp(0, 2);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(settings)
     }
 
     async fn load_chat_routing(&self) -> Result<Option<ChatRoutingSnapshot>, String> {
-        Ok(get_chat_routing_policy_from_pool(self.db)
+        Ok(load_routing_policy_snapshot(self.db, "chat")
             .await?
-            .map(|policy| ChatRoutingSnapshot {
+            .map(|(policy, timeout_ms)| ChatRoutingSnapshot {
                 primary_provider_id: policy.primary_provider_id,
                 primary_model: policy.primary_model,
                 fallback_chain_json: policy.fallback_chain_json,
-                timeout_ms: policy.timeout_ms,
+                timeout_ms,
                 retry_count: policy.retry_count,
                 enabled: policy.enabled,
             }))
@@ -88,15 +175,9 @@ impl ChatSettingsRepository for PoolChatSettingsRepository<'_> {
         &self,
         capability: &str,
     ) -> Result<Option<ChatRoutePolicySnapshot>, String> {
-        Ok(get_capability_routing_policy_from_pool(self.db, capability)
+        Ok(load_routing_policy_snapshot(self.db, capability)
             .await?
-            .map(|policy| ChatRoutePolicySnapshot {
-                primary_provider_id: policy.primary_provider_id,
-                primary_model: policy.primary_model,
-                fallback_chain_json: policy.fallback_chain_json,
-                retry_count: policy.retry_count,
-                enabled: policy.enabled,
-            }))
+            .map(|(policy, _)| policy))
     }
 
     async fn get_provider_connection(
@@ -141,7 +222,19 @@ impl ChatSettingsRepository for PoolChatSettingsRepository<'_> {
     }
 
     async fn load_default_work_dir(&self) -> Result<Option<String>, String> {
-        resolve_default_work_dir_with_pool(self.db).await.map(Some)
+        let dir = load_runtime_setting(self.db, "runtime_default_work_dir")
+            .await?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(compute_default_work_dir_with_home);
+
+        if dir.trim().is_empty() {
+            return Err("default work dir is empty".to_string());
+        }
+
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("failed to create default work dir: {e}"))?;
+        Ok(Some(dir))
     }
 }
 
@@ -194,16 +287,36 @@ impl ChatSessionContextRepository for PoolChatSettingsRepository<'_> {
 #[async_trait]
 impl ChatEmployeeDirectory for PoolChatEmployeeDirectory<'_> {
     async fn list_collaboration_candidates(&self) -> Result<Vec<ChatEmployeeSnapshot>, String> {
-        let employees = list_agent_employees_with_pool(self.db).await?;
-        Ok(employees
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                id,
+                COALESCE(NULLIF(TRIM(employee_id), ''), role_id) AS employee_id,
+                name,
+                role_id,
+                COALESCE(feishu_open_id, '') AS feishu_open_id,
+                enabled
+            FROM agent_employees
+            ORDER BY is_default DESC, updated_at DESC
+            "#,
+        )
+        .fetch_all(self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows
             .into_iter()
-            .map(|employee| ChatEmployeeSnapshot {
-                id: employee.id,
-                employee_id: employee.employee_id,
-                name: employee.name,
-                role_id: employee.role_id,
-                feishu_open_id: employee.feishu_open_id,
-                enabled: employee.enabled,
+            .map(|row| ChatEmployeeSnapshot {
+                id: row.try_get("id").expect("employee row id"),
+                employee_id: row
+                    .try_get("employee_id")
+                    .expect("employee row employee_id"),
+                name: row.try_get("name").expect("employee row name"),
+                role_id: row.try_get("role_id").expect("employee row role_id"),
+                feishu_open_id: row
+                    .try_get("feishu_open_id")
+                    .expect("employee row feishu_open_id"),
+                enabled: row.try_get::<i64, _>("enabled").expect("employee row enabled") != 0,
             })
             .collect())
     }

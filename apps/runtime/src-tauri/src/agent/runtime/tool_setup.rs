@@ -1,5 +1,5 @@
-use super::chat::{AskUserState, SearchCacheState};
-use super::chat_runtime_io as chat_io;
+use super::events::{AskUserState, SearchCacheState};
+use super::runtime_io as chat_io;
 use crate::agent::tools::search_providers::create_provider;
 use crate::agent::tools::{
     browser_compat::register_browser_compat_tool, browser_tools::register_browser_tools,
@@ -14,11 +14,13 @@ use runtime_chat_app::{
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
+#[derive(Clone)]
 pub(crate) struct PreparedRuntimeTools {
     pub allowed_tools: Option<Vec<String>>,
     pub system_prompt: String,
 }
 
+#[derive(Clone)]
 pub(crate) struct ToolSetupParams<'a> {
     pub app: &'a AppHandle,
     pub db: &'a sqlx::SqlitePool,
@@ -146,17 +148,17 @@ pub(crate) async fn prepare_runtime_tools(
         params.source_type,
         params.pack_path,
     );
-    let workspace_skills_prompt = params
+    let workspace_skills_prompt = match params
         .execution_preparation_service
         .resolve_executor_work_dir(params.execution_guidance)
-        .map(std::path::PathBuf::from)
-        .map(|work_dir| async move {
-            let entries =
-                chat_io::load_workspace_skill_runtime_entries_with_pool(params.db).await?;
-            chat_io::prepare_workspace_skills_prompt(&work_dir, &entries)
-        });
-    let workspace_skills_prompt = match workspace_skills_prompt {
-        Some(fut) => Some(fut.await?),
+    {
+        Some(work_dir) => {
+            let entries = chat_io::load_workspace_skill_runtime_entries_with_pool(params.db).await?;
+            Some(chat_io::prepare_workspace_skills_prompt(
+                std::path::Path::new(&work_dir),
+                &entries,
+            )?)
+        }
         None => None,
     };
     let skill_tool = SkillInvokeTool::new(params.session_id.to_string(), skill_roots)
@@ -182,8 +184,7 @@ pub(crate) async fn prepare_runtime_tools(
         .registry()
         .register(Arc::new(ask_user_tool));
 
-    let tool_names =
-        chat_io::resolve_tool_names(&params.skill_allowed_tools, params.agent_executor);
+    let tool_names = chat_io::resolve_tool_names(&params.skill_allowed_tools, params.agent_executor);
     let memory_content = chat_io::load_memory_content(&memory_dir);
     let system_prompt = compose_system_prompt(
         params.skill_system_prompt,

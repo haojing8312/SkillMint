@@ -1,17 +1,19 @@
 pub(crate) mod approval_gate;
-pub mod attempt_runner;
+pub(crate) mod attempt_runner;
 pub mod events;
-pub mod failover;
+pub(crate) mod failover;
 pub(crate) mod progress_guard;
+pub(crate) mod repo;
+pub(crate) mod runtime_io;
+pub(crate) mod session_runs;
 pub mod session_runtime;
+pub(crate) mod tool_setup;
 pub(crate) mod tool_dispatch;
 pub mod transcript;
 
-pub use attempt_runner::AttemptRunner;
-pub(crate) use failover::{
-    CandidateAttemptOutcome, RuntimeFailover, RuntimeFailoverOutcome,
-    RuntimeFailoverParams, runtime_failover_error_kind_from_error_text,
-    runtime_failover_error_kind_from_stop_reason_kind, runtime_failover_error_kind_key,
+pub use events::{
+    AskUserState, CancelFlagState, SearchCacheState, SkillRouteEvent, StreamToken,
+    ToolConfirmResponder,
 };
 pub use session_runtime::SessionRuntime;
 pub use transcript::RuntimeTranscript;

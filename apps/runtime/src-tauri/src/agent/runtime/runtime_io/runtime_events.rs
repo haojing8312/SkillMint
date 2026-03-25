@@ -1,8 +1,10 @@
 use crate::agent::run_guard::RunStopReason;
+use crate::agent::runtime::session_runs::{
+    append_session_run_event_with_pool, attach_assistant_message_to_run_with_pool,
+};
 use crate::session_journal::{SessionJournalStore, SessionRunEvent};
 use chrono::Utc;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 pub(crate) async fn insert_session_message_with_pool(
@@ -67,7 +69,7 @@ pub(crate) async fn append_run_started_with_pool(
     run_id: &str,
     user_message_id: &str,
 ) -> Result<(), String> {
-    crate::commands::session_runs::append_session_run_event_with_pool(
+    append_session_run_event_with_pool(
         pool,
         journal,
         session_id,
@@ -87,7 +89,7 @@ pub(crate) async fn append_run_failed_with_pool(
     error_kind: &str,
     error_message: &str,
 ) {
-    let _ = crate::commands::session_runs::append_session_run_event_with_pool(
+    let _ = append_session_run_event_with_pool(
         pool,
         journal,
         session_id,
@@ -112,7 +114,7 @@ pub(crate) async fn append_run_guard_warning_with_pool(
     detail: Option<&str>,
     last_completed_step: Option<&str>,
 ) -> Result<(), String> {
-    crate::commands::session_runs::append_session_run_event_with_pool(
+    append_session_run_event_with_pool(
         pool,
         journal,
         session_id,
@@ -135,7 +137,7 @@ pub(crate) async fn append_run_stopped_with_pool(
     run_id: &str,
     stop_reason: &RunStopReason,
 ) -> Result<(), String> {
-    crate::commands::session_runs::append_session_run_event_with_pool(
+    append_session_run_event_with_pool(
         pool,
         journal,
         session_id,
@@ -154,7 +156,7 @@ pub(crate) async fn append_partial_assistant_chunk_with_pool(
     run_id: &str,
     chunk: &str,
 ) {
-    let _ = crate::commands::session_runs::append_session_run_event_with_pool(
+    let _ = append_session_run_event_with_pool(
         pool,
         journal,
         session_id,
@@ -214,7 +216,7 @@ pub(crate) async fn finalize_run_success_with_pool(
     reasoning_duration_ms: Option<u64>,
 ) -> Result<(), String> {
     if !final_text.is_empty() {
-        crate::commands::session_runs::append_session_run_event_with_pool(
+        append_session_run_event_with_pool(
             pool,
             journal,
             session_id,
@@ -242,13 +244,10 @@ pub(crate) async fn finalize_run_success_with_pool(
             None,
         )
         .await?;
-        crate::commands::session_runs::attach_assistant_message_to_run_with_pool(
-            pool, run_id, &msg_id,
-        )
-        .await?;
+        attach_assistant_message_to_run_with_pool(pool, run_id, &msg_id).await?;
     }
 
-    crate::commands::session_runs::append_session_run_event_with_pool(
+    append_session_run_event_with_pool(
         pool,
         journal,
         session_id,
@@ -259,86 +258,6 @@ pub(crate) async fn finalize_run_success_with_pool(
     .await?;
 
     Ok(())
-}
-
-pub(crate) async fn maybe_handle_team_entry_pre_execution_with_pool(
-    app: &AppHandle,
-    pool: &sqlx::SqlitePool,
-    journal: &SessionJournalStore,
-    session_id: &str,
-    user_message_id: &str,
-    user_message: &str,
-) -> Result<bool, String> {
-    let Some(group_run) =
-        crate::commands::employee_agents::maybe_handle_team_entry_session_message_with_pool(
-            pool,
-            session_id,
-            user_message,
-        )
-        .await?
-    else {
-        return Ok(false);
-    };
-
-    let run_id = Uuid::new_v4().to_string();
-    append_run_started_with_pool(pool, journal, session_id, &run_id, user_message_id).await?;
-
-    if !group_run.final_report.is_empty() {
-        crate::commands::session_runs::append_session_run_event_with_pool(
-            pool,
-            journal,
-            session_id,
-            SessionRunEvent::AssistantChunkAppended {
-                run_id: run_id.clone(),
-                chunk: group_run.final_report.clone(),
-            },
-        )
-        .await?;
-
-        let assistant_msg_id = insert_session_message_with_pool(
-            pool,
-            session_id,
-            "assistant",
-            &group_run.final_report,
-            None,
-        )
-        .await?;
-        crate::commands::session_runs::attach_assistant_message_to_run_with_pool(
-            pool,
-            &run_id,
-            &assistant_msg_id,
-        )
-        .await?;
-    }
-
-    crate::commands::session_runs::append_session_run_event_with_pool(
-        pool,
-        journal,
-        session_id,
-        SessionRunEvent::RunCompleted { run_id },
-    )
-    .await?;
-
-    let _ = app.emit(
-        "stream-token",
-        crate::commands::chat::StreamToken {
-            session_id: session_id.to_string(),
-            token: group_run.final_report.clone(),
-            done: false,
-            sub_agent: false,
-        },
-    );
-    let _ = app.emit(
-        "stream-token",
-        crate::commands::chat::StreamToken {
-            session_id: session_id.to_string(),
-            token: String::new(),
-            done: true,
-            sub_agent: false,
-        },
-    );
-
-    Ok(true)
 }
 
 #[cfg(test)]
