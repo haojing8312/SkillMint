@@ -290,6 +290,63 @@ describe("ChatView session resilience", () => {
     });
   });
 
+  test("restores buffered assistant output for a waiting approval run when reopening a session", async () => {
+    messagesResponse = [
+      {
+        id: "user-approval-1",
+        role: "user",
+        content: "继续执行需要确认的任务",
+        created_at: "2026-03-16T00:00:01Z",
+      },
+    ];
+    sessionRunsResponse = [
+      {
+        id: "run-approval-1",
+        session_id: "sess-waiting-approval",
+        user_message_id: "user-approval-1",
+        assistant_message_id: null,
+        status: "waiting_approval",
+        buffered_text: "请先确认这个工具调用，我会在确认后继续执行。",
+        error_kind: null,
+        error_message: null,
+        created_at: "2026-03-16T00:00:02Z",
+        updated_at: "2026-03-16T00:00:03Z",
+      },
+    ];
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="sess-waiting-approval"
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("请先确认这个工具调用，我会在确认后继续执行。"),
+      ).toBeInTheDocument();
+    });
+  });
+
   test("hydrates persisted runtime state immediately when reopening an active session", async () => {
     render(
       <ChatView

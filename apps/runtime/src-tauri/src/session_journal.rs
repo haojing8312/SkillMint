@@ -1,4 +1,5 @@
 use crate::agent::run_guard::RunStopReason;
+use crate::agent::runtime::RunRegistry;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,11 +11,16 @@ use tokio::io::AsyncWriteExt;
 #[derive(Debug, Clone)]
 pub struct SessionJournalStore {
     root: PathBuf,
+    run_registry: Arc<RunRegistry>,
 }
 
 impl SessionJournalStore {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self::with_registry(root, Arc::new(RunRegistry::default()))
+    }
+
+    pub fn with_registry(root: PathBuf, run_registry: Arc<RunRegistry>) -> Self {
+        Self { root, run_registry }
     }
 
     pub fn root(&self) -> &Path {
@@ -56,6 +62,10 @@ impl SessionJournalStore {
 
         let mut state = self.read_state(session_id).await?;
         apply_event(&mut state, &event);
+        self.run_registry.apply_event(session_id, &event);
+        state.current_run_id = self
+            .run_registry
+            .restore_session(session_id, state.current_run_id.as_deref());
         let state_json = serde_json::to_string_pretty(&state)
             .map_err(|e| format!("序列化 session state 失败: {e}"))?;
         fs::write(session_dir.join("state.json"), state_json)
@@ -75,6 +85,7 @@ impl SessionJournalStore {
         if !path.exists() {
             return Ok(SessionJournalState {
                 session_id: session_id.to_string(),
+                current_run_id: self.run_registry.active_run_id(session_id),
                 ..SessionJournalState::default()
             });
         }
@@ -87,6 +98,10 @@ impl SessionJournalStore {
         if state.session_id.trim().is_empty() {
             state.session_id = session_id.to_string();
         }
+        state.current_run_id = self.run_registry.restore_session(
+            session_id,
+            normalize_current_run_id(state.current_run_id.as_deref()),
+        );
         Ok(state)
     }
 
@@ -318,6 +333,13 @@ fn upsert_run_index(state: &mut SessionJournalState, run_id: &str) -> usize {
     state.runs.len() - 1
 }
 
+fn normalize_current_run_id(run_id: Option<&str>) -> Option<&str> {
+    run_id.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
+}
+
 fn format_run_stop_message(stop_reason: &RunStopReason) -> String {
     let mut lines = vec![stop_reason.message.clone()];
     if let Some(detail) = stop_reason.detail.as_deref() {
@@ -381,8 +403,13 @@ impl SessionRunStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::format_run_stop_message;
+    use super::{
+        format_run_stop_message, SessionJournalState, SessionJournalStore, SessionRunEvent,
+    };
     use crate::agent::run_guard::RunStopReason;
+    use crate::agent::runtime::RunRegistry;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn format_run_stop_message_preserves_policy_blocked_detail() {
@@ -397,5 +424,78 @@ mod tests {
         assert!(formatted
             .contains("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。"));
         assert!(formatted.contains("最后完成步骤：已读取当前工作区"));
+    }
+
+    #[tokio::test]
+    async fn read_state_recovers_active_run_id_from_legacy_snapshot() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let session_dir = journal_root.path().join("session-legacy");
+        tokio::fs::create_dir_all(&session_dir)
+            .await
+            .expect("create session dir");
+        let state = SessionJournalState {
+            session_id: "session-legacy".to_string(),
+            current_run_id: Some("run-legacy".to_string()),
+            runs: vec![],
+        };
+        let state_json = serde_json::to_string_pretty(&state).expect("serialize state");
+        tokio::fs::write(session_dir.join("state.json"), state_json)
+            .await
+            .expect("write state");
+
+        let registry = Arc::new(RunRegistry::default());
+        let journal =
+            SessionJournalStore::with_registry(journal_root.path().to_path_buf(), registry.clone());
+
+        let recovered = journal
+            .read_state("session-legacy")
+            .await
+            .expect("read state");
+
+        assert_eq!(recovered.current_run_id.as_deref(), Some("run-legacy"));
+        assert_eq!(
+            registry.active_run_id("session-legacy").as_deref(),
+            Some("run-legacy")
+        );
+    }
+
+    #[tokio::test]
+    async fn append_event_keeps_registry_aligned_with_terminal_state() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let registry = Arc::new(RunRegistry::default());
+        let journal =
+            SessionJournalStore::with_registry(journal_root.path().to_path_buf(), registry.clone());
+
+        journal
+            .append_event(
+                "session-aligned",
+                SessionRunEvent::RunStarted {
+                    run_id: "run-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                },
+            )
+            .await
+            .expect("append run started");
+        assert_eq!(
+            registry.active_run_id("session-aligned").as_deref(),
+            Some("run-1")
+        );
+
+        journal
+            .append_event(
+                "session-aligned",
+                SessionRunEvent::RunCompleted {
+                    run_id: "run-1".to_string(),
+                },
+            )
+            .await
+            .expect("append run completed");
+
+        let state = journal
+            .read_state("session-aligned")
+            .await
+            .expect("read aligned state");
+        assert_eq!(state.current_run_id, None);
+        assert_eq!(registry.active_run_id("session-aligned"), None);
     }
 }

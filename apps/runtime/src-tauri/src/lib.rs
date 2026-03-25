@@ -14,6 +14,7 @@ pub mod sidecar;
 pub mod team_templates;
 mod windows_process;
 
+use agent::runtime::{RunRegistry, RunRegistryState};
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
 use agent::{AgentExecutor, ToolRegistry};
@@ -116,7 +117,12 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("workclaw"))
         .join("sessions");
-    let journal_store = Arc::new(SessionJournalStore::new(journal_root));
+    let run_registry = Arc::new(RunRegistry::default());
+    app.manage(RunRegistryState(run_registry.clone()));
+    let journal_store = Arc::new(SessionJournalStore::with_registry(
+        journal_root,
+        run_registry,
+    ));
     app.manage(SessionJournalStateHandle(journal_store));
 
     let sidecar_manager = Arc::new(SidecarManager::with_resource_dir(
