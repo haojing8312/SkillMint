@@ -10,7 +10,7 @@ use crate::types::{
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use serde_json::Value;
 
-pub fn prepare_session_creation(request: SessionCreationRequest) -> PreparedSessionCreation {
+pub(crate) fn prepare_session_creation(request: SessionCreationRequest) -> PreparedSessionCreation {
     let permission_mode_storage =
         normalize_permission_mode_for_storage(request.permission_mode.as_deref()).to_string();
     let session_mode_storage =
@@ -89,7 +89,7 @@ pub async fn prepare_chat_execution<R: ChatSettingsRepository>(
     })
 }
 
-pub async fn prepare_execution<R>(
+pub(crate) async fn prepare_execution<R>(
     repo: &R,
     model_id: &str,
     request: &ChatExecutionPreparationRequest,
@@ -128,7 +128,7 @@ where
     })
 }
 
-pub async fn prepare_execution_with_directory<R, D>(
+pub(crate) async fn prepare_execution_with_directory<R, D>(
     repo: &R,
     directory: &D,
     model_id: &str,
@@ -144,7 +144,7 @@ where
     Ok(prepared)
 }
 
-pub async fn prepare_employee_collaboration_guidance<D: ChatEmployeeDirectory>(
+pub(crate) async fn prepare_employee_collaboration_guidance<D: ChatEmployeeDirectory>(
     directory: &D,
     execution_context: &ChatExecutionContext,
 ) -> Result<Option<String>, String> {
@@ -159,17 +159,17 @@ pub async fn prepare_employee_collaboration_guidance<D: ChatEmployeeDirectory>(
     ))
 }
 
-pub fn resolve_memory_bucket_employee_id<'a>(
+pub(crate) fn resolve_memory_bucket_employee_id<'a>(
     execution_context: &'a ChatExecutionContext,
 ) -> &'a str {
     execution_context.employee_id.as_str()
 }
 
-pub fn resolve_skill_root_work_dir<'a>(guidance: &'a ChatExecutionGuidance) -> &'a str {
+pub(crate) fn resolve_skill_root_work_dir<'a>(guidance: &'a ChatExecutionGuidance) -> &'a str {
     guidance.effective_work_dir.as_str()
 }
 
-pub fn resolve_executor_work_dir(guidance: &ChatExecutionGuidance) -> Option<String> {
+pub(crate) fn resolve_executor_work_dir(guidance: &ChatExecutionGuidance) -> Option<String> {
     let work_dir = guidance.effective_work_dir.trim();
     if work_dir.is_empty() {
         None
@@ -178,7 +178,7 @@ pub fn resolve_executor_work_dir(guidance: &ChatExecutionGuidance) -> Option<Str
     }
 }
 
-pub async fn prepare_execution_context<R: ChatSessionContextRepository>(
+pub(crate) async fn prepare_execution_context<R: ChatSessionContextRepository>(
     repo: &R,
     request: &ChatExecutionPreparationRequest,
 ) -> Result<ChatExecutionContext, String> {
@@ -188,7 +188,7 @@ pub async fn prepare_execution_context<R: ChatSessionContextRepository>(
     Ok(merge_execution_context(snapshot, request))
 }
 
-pub async fn prepare_execution_guidance<R: ChatSettingsRepository>(
+pub(crate) async fn prepare_execution_guidance<R: ChatSettingsRepository>(
     repo: &R,
     request: &ChatExecutionPreparationRequest,
 ) -> Result<ChatExecutionGuidance, String> {
@@ -323,7 +323,7 @@ pub fn infer_capability_from_message_parts(
     infer_capability_from_user_message(fallback_message)
 }
 
-pub fn merge_execution_context(
+fn merge_execution_context(
     snapshot: SessionExecutionContextSnapshot,
     request: &ChatExecutionPreparationRequest,
 ) -> ChatExecutionContext {

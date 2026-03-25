@@ -8,7 +8,7 @@ use crate::types::{
 };
 use serde_json::Value;
 
-pub async fn prepare_route_candidates<R: ChatSettingsRepository>(
+pub(crate) async fn prepare_route_candidates<R: ChatSettingsRepository>(
     repo: &R,
     model_id: &str,
     request: &ChatPreparationRequest,
@@ -16,136 +16,52 @@ pub async fn prepare_route_candidates<R: ChatSettingsRepository>(
     prepare_route_candidates_with_capability(repo, model_id, request, None).await
 }
 
-pub async fn prepare_route_candidates_with_capability<R: ChatSettingsRepository>(
+pub(crate) async fn prepare_route_candidates_with_capability<R: ChatSettingsRepository>(
     repo: &R,
     model_id: &str,
     request: &ChatPreparationRequest,
     requested_capability: Option<&str>,
 ) -> Result<PreparedRouteCandidates, String> {
-    let session_model = resolve_session_model_with_fallback(repo, model_id).await?;
-    let user_message_parts = request.user_message_parts.as_deref().unwrap_or(&[]);
+    let user_message_parts = request.user_message_parts.as_deref();
     let requested_capability = requested_capability
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| infer_capability_from_message_parts(user_message_parts, &request.user_message));
+        .unwrap_or_else(|| {
+            infer_capability_from_message_parts(user_message_parts.unwrap_or(&[]), &request.user_message)
+        });
     let requires_explicit_vision_route =
         requested_capability == "vision" && has_image_message_parts(user_message_parts);
-
-    let mut retry_count_per_candidate = 0usize;
-    let mut route_policy = repo
-        .load_route_policy(requested_capability)
-        .await?
-        .filter(|policy| policy.enabled);
-    if route_policy.is_none() && requested_capability != "chat" && !requires_explicit_vision_route {
-        route_policy = repo
-            .load_route_policy("chat")
-            .await?
-            .filter(|policy| policy.enabled);
-    }
-
-    let mut candidates = Vec::new();
-    if let Some(policy) = route_policy {
-        retry_count_per_candidate = policy.retry_count.clamp(0, 3) as usize;
-        let mut provider_targets =
-            vec![(policy.primary_provider_id, policy.primary_model.clone())];
-        provider_targets.extend(parse_fallback_chain_targets(&policy.fallback_chain_json));
-
-        for (provider_id, preferred_model) in provider_targets {
-            if let Some(provider) = repo.get_provider_connection(&provider_id).await? {
-                if is_supported_protocol(&provider.protocol_type) && !provider.api_key.trim().is_empty()
-                {
-                    candidates.push(PreparedRouteCandidate {
-                        protocol_type: provider.protocol_type,
-                        base_url: provider.base_url,
-                        model_name: if preferred_model.trim().is_empty() {
-                            session_model.model_name.clone()
-                        } else {
-                            preferred_model
-                        },
-                        api_key: provider.api_key,
-                    });
-                }
-            }
-        }
-    }
-
-    if !requires_explicit_vision_route && !session_model.api_key.trim().is_empty() {
-        candidates.push(PreparedRouteCandidate {
-            protocol_type: session_model.api_format,
-            base_url: session_model.base_url,
-            model_name: session_model.model_name,
-            api_key: session_model.api_key,
-        });
-    }
-
-    Ok(PreparedRouteCandidates {
-        candidates,
-        retry_count_per_candidate,
-    })
+    build_route_candidates(
+        repo,
+        model_id,
+        requested_capability,
+        user_message_parts,
+        true,
+        requested_capability != "chat" && !requires_explicit_vision_route,
+        !requires_explicit_vision_route,
+    )
+    .await
 }
 
-pub async fn prepare_route_decisions<R: ChatSettingsRepository>(
+pub(crate) async fn prepare_route_decisions<R: ChatSettingsRepository>(
     repo: &R,
     model_id: &str,
     request: &ChatExecutionPreparationRequest,
 ) -> Result<PreparedRouteCandidates, String> {
-    let session_model = resolve_session_model_with_fallback(repo, model_id).await?;
     let requested_capability = request
         .requested_capability
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| infer_capability_from_user_message(&request.user_message));
-
-    let mut retry_count_per_candidate = 0usize;
-    let mut route_policy = repo
-        .load_route_policy(requested_capability)
-        .await?
-        .filter(|policy| policy.enabled);
-    if route_policy.is_none() && requested_capability != "chat" {
-        route_policy = repo
-            .load_route_policy("chat")
-            .await?
-            .filter(|policy| policy.enabled);
-    }
-
-    let mut candidates = Vec::new();
-    if let Some(policy) = route_policy {
-        retry_count_per_candidate = policy.retry_count.clamp(0, 3) as usize;
-        let mut provider_targets =
-            vec![(policy.primary_provider_id, policy.primary_model.clone())];
-        provider_targets.extend(parse_fallback_chain_targets(&policy.fallback_chain_json));
-
-        for (provider_id, preferred_model) in provider_targets {
-            if let Some(provider) = repo.get_provider_connection(&provider_id).await? {
-                if is_supported_protocol(&provider.protocol_type) && !provider.api_key.trim().is_empty()
-                {
-                    candidates.push(PreparedRouteCandidate {
-                        protocol_type: provider.protocol_type,
-                        base_url: provider.base_url,
-                        model_name: if preferred_model.trim().is_empty() {
-                            session_model.model_name.clone()
-                        } else {
-                            preferred_model
-                        },
-                        api_key: provider.api_key,
-                    });
-                }
-            }
-        }
-    }
-
-    if !session_model.api_key.trim().is_empty() {
-        candidates.push(PreparedRouteCandidate {
-            protocol_type: session_model.api_format,
-            base_url: session_model.base_url,
-            model_name: session_model.model_name,
-            api_key: session_model.api_key,
-        });
-    }
-
-    Ok(PreparedRouteCandidates {
-        candidates,
-        retry_count_per_candidate,
-    })
+    build_route_candidates(
+        repo,
+        model_id,
+        requested_capability,
+        None,
+        false,
+        true,
+        true,
+    )
+    .await
 }
 
 pub fn classify_model_route_error(error_message: &str) -> ModelRouteErrorKind {
@@ -231,7 +147,87 @@ pub fn parse_fallback_chain_targets(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-pub async fn resolve_session_model_with_fallback<R: ChatSettingsRepository>(
+async fn build_route_candidates<R: ChatSettingsRepository>(
+    repo: &R,
+    model_id: &str,
+    requested_capability: &str,
+    user_message_parts: Option<&[serde_json::Value]>,
+    allow_image_gating: bool,
+    allow_chat_fallback: bool,
+    allow_session_model_fallback: bool,
+) -> Result<PreparedRouteCandidates, String> {
+    let session_model = resolve_session_model_with_fallback(repo, model_id).await?;
+    let requires_explicit_vision_route = allow_image_gating
+        && requested_capability == "vision"
+        && has_image_message_parts(user_message_parts);
+
+    let mut retry_count_per_candidate = 0usize;
+    let mut route_policy = repo
+        .load_route_policy(requested_capability)
+        .await?
+        .filter(|policy| policy.enabled);
+    if route_policy.is_none()
+        && requested_capability != "chat"
+        && (allow_chat_fallback && !requires_explicit_vision_route)
+    {
+        route_policy = repo
+            .load_route_policy("chat")
+            .await?
+            .filter(|policy| policy.enabled);
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(policy) = route_policy {
+        retry_count_per_candidate = policy.retry_count.clamp(0, 3) as usize;
+        candidates.extend(build_candidates_from_policy(repo, policy, &session_model).await?);
+    }
+
+    if allow_session_model_fallback && !session_model.api_key.trim().is_empty() {
+        candidates.push(PreparedRouteCandidate {
+            protocol_type: session_model.api_format,
+            base_url: session_model.base_url,
+            model_name: session_model.model_name,
+            api_key: session_model.api_key,
+        });
+    }
+
+    Ok(PreparedRouteCandidates {
+        candidates,
+        retry_count_per_candidate,
+    })
+}
+
+async fn build_candidates_from_policy<R: ChatSettingsRepository>(
+    repo: &R,
+    policy: crate::types::ChatRoutePolicySnapshot,
+    session_model: &SessionModelSnapshot,
+) -> Result<Vec<PreparedRouteCandidate>, String> {
+    let mut candidates = Vec::new();
+    let mut provider_targets =
+        vec![(policy.primary_provider_id, policy.primary_model.clone())];
+    provider_targets.extend(parse_fallback_chain_targets(&policy.fallback_chain_json));
+
+    for (provider_id, preferred_model) in provider_targets {
+        if let Some(provider) = repo.get_provider_connection(&provider_id).await? {
+            if is_supported_protocol(&provider.protocol_type) && !provider.api_key.trim().is_empty() {
+                candidates.push(PreparedRouteCandidate {
+                    protocol_type: provider.protocol_type,
+                    base_url: provider.base_url,
+                    model_name: if preferred_model.trim().is_empty() {
+                        session_model.model_name.clone()
+                    } else {
+                        preferred_model
+                    },
+                    api_key: provider.api_key,
+                });
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+async fn resolve_session_model_with_fallback<R: ChatSettingsRepository>(
     repo: &R,
     model_id: &str,
 ) -> Result<SessionModelSnapshot, String> {
@@ -257,8 +253,8 @@ pub async fn resolve_session_model_with_fallback<R: ChatSettingsRepository>(
     }
 }
 
-fn has_image_message_parts(parts: &[Value]) -> bool {
-    parts.iter().any(|part| {
+fn has_image_message_parts(parts: Option<&[Value]>) -> bool {
+    parts.unwrap_or(&[]).iter().any(|part| {
         part.get("type")
             .and_then(Value::as_str)
             .map(|part_type| part_type == "image")

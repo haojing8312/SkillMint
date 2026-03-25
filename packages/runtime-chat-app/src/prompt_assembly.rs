@@ -113,7 +113,7 @@ fn employee_matches_session(session_employee_id: &str, employee: &ChatEmployeeSn
         || target.eq_ignore_ascii_case(employee.id.trim())
 }
 
-pub fn build_employee_collaboration_guidance(
+pub(crate) fn build_employee_collaboration_guidance(
     session_employee_id: &str,
     employees: &[ChatEmployeeSnapshot],
 ) -> Option<String> {
