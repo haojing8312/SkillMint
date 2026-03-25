@@ -16,6 +16,7 @@ mod windows_process;
 
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
+use agent::runtime::RunRegistry;
 use agent::{AgentExecutor, ToolRegistry};
 use approval_bus::ApprovalManager;
 use commands::chat::{
@@ -95,6 +96,9 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
     app.manage(agent_executor);
     app.manage(Arc::clone(&registry));
 
+    let run_registry = Arc::new(RunRegistry::new());
+    app.manage(Arc::clone(&run_registry));
+
     let ask_user_responder = new_responder();
     app.manage(AskUserState(ask_user_responder));
     let tool_confirm_responder: ToolConfirmResponder =
@@ -116,7 +120,10 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("workclaw"))
         .join("sessions");
-    let journal_store = Arc::new(SessionJournalStore::new(journal_root));
+    let journal_store = Arc::new(SessionJournalStore::with_registry(
+        journal_root,
+        Arc::clone(&run_registry),
+    ));
     app.manage(SessionJournalStateHandle(journal_store));
 
     let sidecar_manager = Arc::new(SidecarManager::with_resource_dir(

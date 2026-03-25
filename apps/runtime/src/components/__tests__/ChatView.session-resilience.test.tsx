@@ -235,7 +235,7 @@ describe("ChatView session resilience", () => {
     expect(assistantMessage.compareDocumentPosition(failureCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  test("restores buffered assistant output for an active run when reopening a session", async () => {
+  test("restores buffered assistant output for a waiting approval run when reopening a session", async () => {
     messagesResponse = [
       {
         id: "user-1",
@@ -250,7 +250,7 @@ describe("ChatView session resilience", () => {
         session_id: "sess-recover",
         user_message_id: "user-1",
         assistant_message_id: null,
-        status: "thinking",
+        status: "waiting_approval",
         buffered_text: "这是切回会话后应恢复的中间输出",
         error_kind: null,
         error_message: null,

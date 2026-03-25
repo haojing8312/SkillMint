@@ -1,4 +1,5 @@
 use crate::agent::run_guard::RunStopReason;
+use crate::agent::runtime::RunRegistry;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,15 +11,24 @@ use tokio::io::AsyncWriteExt;
 #[derive(Debug, Clone)]
 pub struct SessionJournalStore {
     root: PathBuf,
+    run_registry: Arc<RunRegistry>,
 }
 
 impl SessionJournalStore {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self::with_registry(root, Arc::new(RunRegistry::new()))
+    }
+
+    pub fn with_registry(root: PathBuf, run_registry: Arc<RunRegistry>) -> Self {
+        Self { root, run_registry }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn run_registry(&self) -> Arc<RunRegistry> {
+        Arc::clone(&self.run_registry)
     }
 
     pub async fn append_event(
@@ -54,8 +64,12 @@ impl SessionJournalStore {
             .await
             .map_err(|e| format!("刷新 session event 失败: {e}"))?;
 
-        let mut state = self.read_state(session_id).await?;
+        let mut state = self.read_state(session_id).await?; 
         apply_event(&mut state, &event);
+        self.run_registry.sync_session_projection(
+            session_id,
+            state.current_run_id.as_deref(),
+        );
         let state_json = serde_json::to_string_pretty(&state)
             .map_err(|e| format!("序列化 session state 失败: {e}"))?;
         fs::write(session_dir.join("state.json"), state_json)
@@ -73,10 +87,12 @@ impl SessionJournalStore {
     pub async fn read_state(&self, session_id: &str) -> Result<SessionJournalState, String> {
         let path = self.session_dir(session_id).join("state.json");
         if !path.exists() {
-            return Ok(SessionJournalState {
+            let state = SessionJournalState {
                 session_id: session_id.to_string(),
                 ..SessionJournalState::default()
-            });
+            };
+            self.run_registry.hydrate_from_session_state(&state);
+            return Ok(state);
         }
 
         let raw = fs::read_to_string(&path)
@@ -87,6 +103,8 @@ impl SessionJournalStore {
         if state.session_id.trim().is_empty() {
             state.session_id = session_id.to_string();
         }
+        state.current_run_id = derive_current_run_id(&state);
+        self.run_registry.hydrate_from_session_state(&state);
         Ok(state)
     }
 
@@ -101,7 +119,9 @@ pub struct SessionJournalStateHandle(pub Arc<SessionJournalStore>);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionJournalState {
     pub session_id: String,
+    #[serde(default)]
     pub current_run_id: Option<String>,
+    #[serde(default)]
     pub runs: Vec<SessionRunSnapshot>,
 }
 
@@ -237,10 +257,9 @@ fn apply_event(state: &mut SessionJournalState, event: &SessionRunEvent) {
 
     match event {
         SessionRunEvent::RunStarted {
-            run_id,
             user_message_id,
+            ..
         } => {
-            state.current_run_id = Some(run_id.clone());
             let run = &mut state.runs[run_index];
             run.user_message_id = user_message_id.clone();
             run.status = SessionRunStatus::Thinking;
@@ -266,48 +285,35 @@ fn apply_event(state: &mut SessionJournalState, event: &SessionRunEvent) {
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::WaitingApproval;
         }
-        SessionRunEvent::RunCompleted { run_id } => {
+        SessionRunEvent::RunCompleted { .. } => {
             state.runs[run_index].status = SessionRunStatus::Completed;
-            if state.current_run_id.as_deref() == Some(run_id.as_str()) {
-                state.current_run_id = None;
-            }
         }
         SessionRunEvent::RunGuardWarning { .. } => {}
-        SessionRunEvent::RunStopped {
-            run_id,
-            stop_reason,
-        } => {
-            if state.current_run_id.as_deref() == Some(run_id.as_str()) {
-                state.current_run_id = None;
-            }
+        SessionRunEvent::RunStopped { stop_reason, .. } => {
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::Failed;
             run.last_error_kind = Some(stop_reason.kind.as_key().to_string());
             run.last_error_message = Some(format_run_stop_message(stop_reason));
         }
         SessionRunEvent::RunFailed {
-            run_id,
             error_kind,
             error_message,
+            ..
         } => {
-            if state.current_run_id.as_deref() == Some(run_id.as_str()) {
-                state.current_run_id = None;
-            }
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::Failed;
             run.last_error_kind = Some(error_kind.clone());
             run.last_error_message = Some(error_message.clone());
         }
-        SessionRunEvent::RunCancelled { run_id, reason } => {
-            if state.current_run_id.as_deref() == Some(run_id.as_str()) {
-                state.current_run_id = None;
-            }
+        SessionRunEvent::RunCancelled { reason, .. } => {
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::Cancelled;
             run.last_error_kind = Some("cancelled".to_string());
             run.last_error_message = reason.clone();
         }
     }
+
+    state.current_run_id = derive_current_run_id(state);
 }
 
 fn upsert_run_index(state: &mut SessionJournalState, run_id: &str) -> usize {
@@ -316,6 +322,22 @@ fn upsert_run_index(state: &mut SessionJournalState, run_id: &str) -> usize {
     }
     state.runs.push(SessionRunSnapshot::new(run_id));
     state.runs.len() - 1
+}
+
+fn derive_current_run_id(state: &SessionJournalState) -> Option<String> {
+    state
+        .runs
+        .iter()
+        .rev()
+        .find(|run| {
+            matches!(
+                run.status,
+                SessionRunStatus::Thinking
+                    | SessionRunStatus::ToolCalling
+                    | SessionRunStatus::WaitingApproval
+            )
+        })
+        .map(|run| run.run_id.clone())
 }
 
 fn format_run_stop_message(stop_reason: &RunStopReason) -> String {
@@ -383,6 +405,53 @@ impl SessionRunStatus {
 mod tests {
     use super::format_run_stop_message;
     use crate::agent::run_guard::RunStopReason;
+    use tempfile::tempdir;
+    use tokio::fs;
+
+    #[tokio::test]
+    async fn read_state_recovers_active_run_id_from_legacy_snapshot() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let session_id = "session-legacy-active";
+        let session_dir = journal_root.path().join(session_id);
+        fs::create_dir_all(&session_dir)
+            .await
+            .expect("create session dir");
+
+        let state_json = serde_json::json!({
+            "session_id": session_id,
+            "runs": [
+                {
+                    "run_id": "run-finished",
+                    "user_message_id": "user-1",
+                    "status": "completed",
+                    "buffered_text": "已完成",
+                    "last_error_kind": null,
+                    "last_error_message": null
+                },
+                {
+                    "run_id": "run-active",
+                    "user_message_id": "user-2",
+                    "status": "waiting_approval",
+                    "buffered_text": "等待确认",
+                    "last_error_kind": null,
+                    "last_error_message": null
+                }
+            ]
+        })
+        .to_string();
+        fs::write(session_dir.join("state.json"), state_json)
+            .await
+            .expect("write legacy state");
+
+        let store = super::SessionJournalStore::new(journal_root.path().to_path_buf());
+        let state = store.read_state(session_id).await.expect("read state");
+
+        assert_eq!(state.current_run_id.as_deref(), Some("run-active"));
+        assert_eq!(
+            store.run_registry().resolve_current_run_id(session_id).as_deref(),
+            Some("run-active")
+        );
+    }
 
     #[test]
     fn format_run_stop_message_preserves_policy_blocked_detail() {

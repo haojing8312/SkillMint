@@ -252,4 +252,58 @@ describe("ChatView run guardrails", () => {
       expect(screen.getByText("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。")).toBeInTheDocument();
     });
   });
+
+  it("restores buffered output for a waiting approval run when reopening a session", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "list_session_runs")
+        return Promise.resolve([
+          {
+            id: "run-waiting-approval",
+            session_id: "sess-waiting-approval",
+            user_message_id: "user-1",
+            assistant_message_id: null,
+            status: "waiting_approval",
+            buffered_text: "等待审批中的中间输出",
+            error_kind: null,
+            error_message: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="sess-waiting-approval"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("等待审批中的中间输出")).toBeInTheDocument();
+    });
+  });
 });
