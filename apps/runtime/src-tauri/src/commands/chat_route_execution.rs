@@ -1,8 +1,12 @@
 use super::chat::{StreamToken, ToolConfirmResponder};
-use super::chat_policy::{model_route_error_kind_for_stop_reason_kind, ModelRouteErrorKind};
+use super::chat_policy::{self, ModelRouteErrorKind};
 use super::chat_runtime_io as chat_io;
 use crate::agent::permissions::PermissionMode;
-use crate::agent::run_guard::{parse_run_stop_reason, RunStopReason};
+use crate::agent::runtime::{
+    CandidateAttemptOutcome, RuntimeFailover, RuntimeFailoverErrorKind, RuntimeFailoverOutcome,
+    RuntimeFailoverParams, RuntimeFailoverPolicy,
+};
+use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
 use crate::agent::types::StreamDelta;
 use crate::agent::AgentExecutor;
 use serde_json::Value;
@@ -10,15 +14,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
-pub(crate) struct RouteExecutionOutcome {
-    pub final_messages: Option<Vec<Value>>,
-    pub last_error: Option<String>,
-    pub last_error_kind: Option<String>,
-    pub last_stop_reason: Option<RunStopReason>,
-    pub partial_text: String,
-    pub reasoning_text: String,
-    pub reasoning_duration_ms: Option<u64>,
-}
+pub(crate) type RouteExecutionOutcome = RuntimeFailoverOutcome;
 
 pub(crate) struct RouteExecutionParams<'a> {
     pub app: &'a AppHandle,
@@ -38,246 +34,304 @@ pub(crate) struct RouteExecutionParams<'a> {
     pub cancel_flag: Arc<AtomicBool>,
     pub node_timeout_seconds: u64,
     pub route_retry_count: usize,
-    pub classify_error: fn(&str) -> ModelRouteErrorKind,
-    pub error_kind_key: fn(ModelRouteErrorKind) -> &'static str,
-    pub should_retry_same_candidate: fn(ModelRouteErrorKind) -> bool,
-    pub retry_budget_for_error: fn(ModelRouteErrorKind, usize) -> usize,
-    pub retry_backoff_ms: fn(ModelRouteErrorKind, usize) -> u64,
 }
 
 pub(crate) async fn execute_route_candidates(
     params: RouteExecutionParams<'_>,
 ) -> RouteExecutionOutcome {
-    let mut final_messages_opt: Option<Vec<Value>> = None;
-    let mut last_error: Option<String> = None;
-    let mut last_error_kind: Option<String> = None;
-    let mut last_stop_reason: Option<RunStopReason> = None;
+    let params_ref = &params;
+    RuntimeFailover::execute_candidates(RuntimeFailoverParams {
+        route_candidates: params.route_candidates,
+        per_candidate_retry_count: params.per_candidate_retry_count,
+        policy: RuntimeFailoverPolicy {
+            should_retry_same_candidate: runtime_should_retry_same_candidate,
+            retry_budget_for_error: runtime_retry_budget_for_error,
+            retry_backoff_ms: runtime_retry_backoff_ms,
+        },
+        attempt_once: Box::new(move |candidate_api_format, candidate_base_url, candidate_model_name, candidate_api_key, attempt_idx| {
+            Box::pin(execute_candidate_attempt(
+                params_ref,
+                candidate_api_format,
+                candidate_base_url,
+                candidate_model_name,
+                candidate_api_key,
+                attempt_idx,
+            ))
+        }),
+    })
+    .await
+}
+
+async fn execute_candidate_attempt(
+    params: &RouteExecutionParams<'_>,
+    candidate_api_format: &str,
+    candidate_base_url: &str,
+    candidate_model_name: &str,
+    candidate_api_key: &str,
+    attempt_idx: usize,
+) -> CandidateAttemptOutcome {
     let streamed_text = Arc::new(std::sync::Mutex::new(String::new()));
     let streamed_reasoning = Arc::new(std::sync::Mutex::new(String::new()));
+    let reasoning_started_at = Arc::new(std::sync::Mutex::new(None::<std::time::Instant>));
+    let app_clone = params.app.clone();
+    let session_id_clone = params.session_id.to_string();
+    let streamed_text_clone = Arc::clone(&streamed_text);
+    let streamed_reasoning_clone = Arc::clone(&streamed_reasoning);
+    let reasoning_started_at_clone = Arc::clone(&reasoning_started_at);
 
-    for (candidate_api_format, candidate_base_url, candidate_model_name, candidate_api_key) in
-        params.route_candidates
-    {
-        let mut attempt_idx = 0usize;
-        loop {
-            if let Ok(mut buffer) = streamed_text.lock() {
-                buffer.clear();
-            }
-            if let Ok(mut buffer) = streamed_reasoning.lock() {
-                buffer.clear();
-            }
-            let app_clone = params.app.clone();
-            let session_id_clone = params.session_id.to_string();
-            let streamed_text_clone = Arc::clone(&streamed_text);
-            let streamed_reasoning_clone = Arc::clone(&streamed_reasoning);
-            let reasoning_started_at = Arc::new(std::sync::Mutex::new(None::<std::time::Instant>));
-            let reasoning_started_at_clone = Arc::clone(&reasoning_started_at);
-            let attempt = params
-                .agent_executor
-                .execute_turn(
-                    candidate_api_format,
-                    candidate_base_url,
-                    candidate_api_key,
-                    candidate_model_name,
-                    params.system_prompt,
-                    params.messages.to_vec(),
-                    move |delta: StreamDelta| match delta {
-                        StreamDelta::Text(token) => {
-                            if let Ok(mut buffer) = streamed_text_clone.lock() {
-                                buffer.push_str(&token);
-                            }
-                            let _ = app_clone.emit(
-                                "stream-token",
-                                StreamToken {
-                                    session_id: session_id_clone.clone(),
-                                    token,
-                                    done: false,
-                                    sub_agent: false,
-                                },
-                            );
-                        }
-                        StreamDelta::Reasoning(text) => {
-                            let emit_started =
-                                if let Ok(mut started) = reasoning_started_at_clone.lock() {
-                                    if started.is_none() {
-                                        *started = Some(std::time::Instant::now());
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                } else {
-                                    false
-                                };
-                            if emit_started {
-                                let _ = app_clone.emit(
-                                    "assistant-reasoning-started",
-                                    serde_json::json!({ "session_id": session_id_clone.clone() }),
-                                );
-                            }
-                            if let Ok(mut buffer) = streamed_reasoning_clone.lock() {
-                                buffer.push_str(&text);
-                            }
-                            let _ = app_clone.emit(
-                                "assistant-reasoning-delta",
-                                serde_json::json!({
-                                    "session_id": session_id_clone.clone(),
-                                    "text": text,
-                                }),
-                            );
-                        }
-                    },
-                    Some(params.app),
-                    Some(params.session_id),
-                    params.allowed_tools,
-                    params.permission_mode,
-                    Some(params.tool_confirm_responder.clone()),
-                    params.executor_work_dir.clone(),
-                    params.max_iterations,
-                    Some(params.cancel_flag.clone()),
-                    Some(params.node_timeout_seconds),
-                    Some(params.route_retry_count),
-                )
-                .await;
-
-            match attempt {
-                Ok(messages_out) => {
-                    chat_io::record_route_attempt_log_with_pool(
-                        params.db,
-                        params.session_id,
-                        params.requested_capability,
-                        candidate_api_format,
-                        candidate_model_name,
-                        attempt_idx + 1,
-                        attempt_idx,
-                        "ok",
-                        true,
-                        "",
-                    )
-                    .await;
-                    let reasoning_duration_ms =
-                        reasoning_started_at.lock().ok().and_then(|started| {
-                            started.map(|instant| instant.elapsed().as_millis() as u64)
-                        });
-                    if let Some(duration_ms) = reasoning_duration_ms {
-                        let _ = params.app.emit(
-                            "assistant-reasoning-completed",
-                            serde_json::json!({
-                                "session_id": params.session_id,
-                                "duration_ms": duration_ms,
-                            }),
-                        );
+    let attempt = params
+        .agent_executor
+        .execute_turn(
+            candidate_api_format,
+            candidate_base_url,
+            candidate_api_key,
+            candidate_model_name,
+            params.system_prompt,
+            params.messages.to_vec(),
+            move |delta: StreamDelta| match delta {
+                StreamDelta::Text(token) => {
+                    if let Ok(mut buffer) = streamed_text_clone.lock() {
+                        buffer.push_str(&token);
                     }
-                    final_messages_opt = Some(messages_out);
-                    let reasoning_snapshot = streamed_reasoning
-                        .lock()
-                        .map(|buffer| buffer.clone())
-                        .unwrap_or_default();
-                    return RouteExecutionOutcome {
-                        final_messages: final_messages_opt,
-                        last_error,
-                        last_error_kind,
-                        last_stop_reason,
-                        partial_text: streamed_text
-                            .lock()
-                            .map(|buffer| buffer.clone())
-                            .unwrap_or_default(),
-                        reasoning_text: reasoning_snapshot,
-                        reasoning_duration_ms,
-                    };
-                }
-                Err(err) => {
-                    let err_text = err.to_string();
-                    let parsed_stop_reason = parse_run_stop_reason(&err_text);
-                    let kind = parsed_stop_reason
-                        .as_ref()
-                        .map(|reason| model_route_error_kind_for_stop_reason_kind(reason.kind))
-                        .unwrap_or_else(|| (params.classify_error)(&err_text));
-                    let kind_text = (params.error_kind_key)(kind);
-                    let user_facing_error = parsed_stop_reason
-                        .as_ref()
-                        .map(|reason| {
-                            if let Some(step) = reason.last_completed_step.as_deref() {
-                                format!("{}\n最后完成步骤：{}", reason.message, step)
-                            } else {
-                                reason.message.clone()
-                            }
-                        })
-                        .unwrap_or_else(|| err_text.clone());
-                    chat_io::record_route_attempt_log_with_pool(
-                        params.db,
-                        params.session_id,
-                        params.requested_capability,
-                        candidate_api_format,
-                        candidate_model_name,
-                        attempt_idx + 1,
-                        attempt_idx,
-                        kind_text,
-                        false,
-                        &user_facing_error,
-                    )
-                    .await;
-                    if reasoning_started_at
-                        .lock()
-                        .ok()
-                        .and_then(|started| *started)
-                        .is_some()
-                    {
-                        let _ = params.app.emit(
-                            "assistant-reasoning-interrupted",
-                            serde_json::json!({ "session_id": params.session_id }),
-                        );
-                    }
-                    last_error = Some(user_facing_error.clone());
-                    last_error_kind = Some(kind_text.to_string());
-                    last_stop_reason = parsed_stop_reason;
-                    eprintln!(
-                        "[routing] 候选模型执行失败: format={}, model={}, attempt={}, kind={:?}, err={}",
-                        candidate_api_format,
-                        candidate_model_name,
-                        attempt_idx + 1,
-                        kind,
-                        err_text
+                    let _ = app_clone.emit(
+                        "stream-token",
+                        StreamToken {
+                            session_id: session_id_clone.clone(),
+                            token,
+                            done: false,
+                            sub_agent: false,
+                        },
                     );
-
-                    let retry_budget =
-                        (params.retry_budget_for_error)(kind, params.per_candidate_retry_count);
-                    if (params.should_retry_same_candidate)(kind) && attempt_idx < retry_budget {
-                        let backoff_ms = (params.retry_backoff_ms)(kind, attempt_idx);
-                        if backoff_ms > 0 {
-                            eprintln!(
-                                "[routing] 同候选重试等待: format={}, model={}, wait_ms={}, next_attempt={}",
-                                candidate_api_format,
-                                candidate_model_name,
-                                backoff_ms,
-                                attempt_idx + 2
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                        }
-                        attempt_idx += 1;
-                        continue;
-                    }
-                    break;
                 }
+                StreamDelta::Reasoning(text) => {
+                    let emit_started = if let Ok(mut started) = reasoning_started_at_clone.lock() {
+                        if started.is_none() {
+                            *started = Some(std::time::Instant::now());
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if emit_started {
+                        let _ = app_clone.emit(
+                            "assistant-reasoning-started",
+                            serde_json::json!({ "session_id": session_id_clone.clone() }),
+                        );
+                    }
+                    if let Ok(mut buffer) = streamed_reasoning_clone.lock() {
+                        buffer.push_str(&text);
+                    }
+                    let _ = app_clone.emit(
+                        "assistant-reasoning-delta",
+                        serde_json::json!({
+                            "session_id": session_id_clone.clone(),
+                            "text": text,
+                        }),
+                    );
+                }
+            },
+            Some(params.app),
+            Some(params.session_id),
+            params.allowed_tools,
+            params.permission_mode,
+            Some(params.tool_confirm_responder.clone()),
+            params.executor_work_dir.clone(),
+            params.max_iterations,
+            Some(params.cancel_flag.clone()),
+            Some(params.node_timeout_seconds),
+            Some(params.route_retry_count),
+        )
+        .await;
+
+    match attempt {
+        Ok(messages_out) => {
+            chat_io::record_route_attempt_log_with_pool(
+                params.db,
+                params.session_id,
+                params.requested_capability,
+                candidate_api_format,
+                candidate_model_name,
+                attempt_idx + 1,
+                attempt_idx,
+                "ok",
+                true,
+                "",
+            )
+            .await;
+            let reasoning_duration_ms = reasoning_started_at.lock().ok().and_then(|started| {
+                started.map(|instant| instant.elapsed().as_millis() as u64)
+            });
+            if let Some(duration_ms) = reasoning_duration_ms {
+                let _ = params.app.emit(
+                    "assistant-reasoning-completed",
+                    serde_json::json!({
+                        "session_id": params.session_id,
+                        "duration_ms": duration_ms,
+                    }),
+                );
+            }
+            CandidateAttemptOutcome {
+                final_messages: Some(messages_out),
+                last_error: None,
+                last_error_kind: None,
+                error_kind: None,
+                last_stop_reason: None,
+                partial_text: streamed_text
+                    .lock()
+                    .map(|buffer| buffer.clone())
+                    .unwrap_or_default(),
+                reasoning_text: streamed_reasoning
+                    .lock()
+                    .map(|buffer| buffer.clone())
+                    .unwrap_or_default(),
+                reasoning_duration_ms,
+            }
+        }
+        Err(err) => {
+            let err_text = err.to_string();
+            let parsed_stop_reason = parse_run_stop_reason(&err_text);
+            let kind = parsed_stop_reason
+                .as_ref()
+                .map(|reason| runtime_failover_error_kind_for_stop_reason_kind(reason.kind))
+                .unwrap_or_else(|| runtime_failover_error_kind_from_command_kind(
+                    chat_policy::classify_model_route_error(&err_text),
+                ));
+            let kind_text = runtime_error_kind_key(kind);
+            let user_facing_error = parsed_stop_reason
+                .as_ref()
+                .map(|reason| {
+                    if let Some(step) = reason.last_completed_step.as_deref() {
+                        format!("{}\n最后完成步骤：{}", reason.message, step)
+                    } else {
+                        reason.message.clone()
+                    }
+                })
+                .unwrap_or_else(|| err_text.clone());
+            chat_io::record_route_attempt_log_with_pool(
+                params.db,
+                params.session_id,
+                params.requested_capability,
+                candidate_api_format,
+                candidate_model_name,
+                attempt_idx + 1,
+                attempt_idx,
+                kind_text,
+                false,
+                &user_facing_error,
+            )
+            .await;
+            if reasoning_started_at
+                .lock()
+                .ok()
+                .and_then(|started| *started)
+                .is_some()
+            {
+                let _ = params.app.emit(
+                    "assistant-reasoning-interrupted",
+                    serde_json::json!({ "session_id": params.session_id }),
+                );
+            }
+            CandidateAttemptOutcome {
+                final_messages: None,
+                last_error: Some(user_facing_error),
+                last_error_kind: Some(kind_text.to_string()),
+                error_kind: Some(kind),
+                last_stop_reason: parsed_stop_reason,
+                partial_text: streamed_text
+                    .lock()
+                    .map(|buffer| buffer.clone())
+                    .unwrap_or_default(),
+                reasoning_text: streamed_reasoning
+                    .lock()
+                    .map(|buffer| buffer.clone())
+                    .unwrap_or_default(),
+                reasoning_duration_ms: None,
             }
         }
     }
+}
 
-    let partial_text = streamed_text
-        .lock()
-        .map(|buffer| buffer.clone())
-        .unwrap_or_default();
-    let reasoning_text = streamed_reasoning
-        .lock()
-        .map(|buffer| buffer.clone())
-        .unwrap_or_default();
-
-    RouteExecutionOutcome {
-        final_messages: final_messages_opt,
-        last_error,
-        last_error_kind,
-        last_stop_reason,
-        partial_text,
-        reasoning_text,
-        reasoning_duration_ms: None,
+fn runtime_failover_error_kind_from_command_kind(
+    kind: ModelRouteErrorKind,
+) -> RuntimeFailoverErrorKind {
+    match kind {
+        ModelRouteErrorKind::Billing => RuntimeFailoverErrorKind::Billing,
+        ModelRouteErrorKind::Auth => RuntimeFailoverErrorKind::Auth,
+        ModelRouteErrorKind::RateLimit => RuntimeFailoverErrorKind::RateLimit,
+        ModelRouteErrorKind::Timeout => RuntimeFailoverErrorKind::Timeout,
+        ModelRouteErrorKind::Network => RuntimeFailoverErrorKind::Network,
+        ModelRouteErrorKind::PolicyBlocked => RuntimeFailoverErrorKind::PolicyBlocked,
+        ModelRouteErrorKind::MaxTurns => RuntimeFailoverErrorKind::MaxTurns,
+        ModelRouteErrorKind::LoopDetected => RuntimeFailoverErrorKind::LoopDetected,
+        ModelRouteErrorKind::NoProgress => RuntimeFailoverErrorKind::NoProgress,
+        ModelRouteErrorKind::Unknown => RuntimeFailoverErrorKind::Unknown,
     }
+}
+
+fn runtime_failover_error_kind_for_stop_reason_kind(
+    kind: RunStopReasonKind,
+) -> RuntimeFailoverErrorKind {
+    match kind {
+        RunStopReasonKind::Timeout => RuntimeFailoverErrorKind::Timeout,
+        RunStopReasonKind::PolicyBlocked => RuntimeFailoverErrorKind::PolicyBlocked,
+        RunStopReasonKind::MaxTurns | RunStopReasonKind::MaxSessionTurns => {
+            RuntimeFailoverErrorKind::MaxTurns
+        }
+        RunStopReasonKind::LoopDetected | RunStopReasonKind::ToolFailureCircuitBreaker => {
+            RuntimeFailoverErrorKind::LoopDetected
+        }
+        RunStopReasonKind::NoProgress => RuntimeFailoverErrorKind::NoProgress,
+        _ => RuntimeFailoverErrorKind::Unknown,
+    }
+}
+
+fn runtime_error_kind_key(kind: RuntimeFailoverErrorKind) -> &'static str {
+    match kind {
+        RuntimeFailoverErrorKind::Billing => "billing",
+        RuntimeFailoverErrorKind::Auth => "auth",
+        RuntimeFailoverErrorKind::RateLimit => "rate_limit",
+        RuntimeFailoverErrorKind::Timeout => "timeout",
+        RuntimeFailoverErrorKind::Network => "network",
+        RuntimeFailoverErrorKind::PolicyBlocked => "policy_blocked",
+        RuntimeFailoverErrorKind::MaxTurns => "max_turns",
+        RuntimeFailoverErrorKind::LoopDetected => "loop_detected",
+        RuntimeFailoverErrorKind::NoProgress => "no_progress",
+        RuntimeFailoverErrorKind::Unknown => "unknown",
+    }
+}
+
+fn runtime_should_retry_same_candidate(kind: RuntimeFailoverErrorKind) -> bool {
+    matches!(
+        kind,
+        RuntimeFailoverErrorKind::RateLimit
+            | RuntimeFailoverErrorKind::Timeout
+            | RuntimeFailoverErrorKind::Network
+    )
+}
+
+fn runtime_retry_budget_for_error(
+    kind: RuntimeFailoverErrorKind,
+    configured_retry_count: usize,
+) -> usize {
+    if kind == RuntimeFailoverErrorKind::Network {
+        configured_retry_count.max(1)
+    } else {
+        configured_retry_count
+    }
+}
+
+fn runtime_retry_backoff_ms(kind: RuntimeFailoverErrorKind, attempt_idx: usize) -> u64 {
+    let base_ms = match kind {
+        RuntimeFailoverErrorKind::RateLimit => 1200u64,
+        RuntimeFailoverErrorKind::Timeout => 700u64,
+        RuntimeFailoverErrorKind::Network => 400u64,
+        _ => 0u64,
+    };
+    if base_ms == 0 {
+        return 0;
+    }
+    let exp = attempt_idx.min(3) as u32;
+    base_ms.saturating_mul(1u64 << exp).min(5000)
 }

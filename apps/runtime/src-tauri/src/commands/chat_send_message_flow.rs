@@ -1,8 +1,5 @@
 use super::chat::{StreamToken, ToolConfirmResponder};
-use super::chat_policy::{
-    classify_model_route_error, model_route_error_kind_key, parse_permission_mode_for_runtime,
-    retry_backoff_ms, retry_budget_for_error, should_retry_same_candidate,
-};
+use super::chat_policy::parse_permission_mode_for_runtime;
 use super::chat_repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
 use super::chat_route_execution::{self, RouteExecutionOutcome, RouteExecutionParams};
 use super::chat_runtime_io as chat_io;
@@ -328,11 +325,6 @@ pub(crate) async fn execute_send_message_route(
         cancel_flag,
         node_timeout_seconds: prepared_context.node_timeout_seconds,
         route_retry_count: prepared_context.route_retry_count,
-        classify_error: classify_model_route_error,
-        error_kind_key: model_route_error_kind_key,
-        should_retry_same_candidate,
-        retry_budget_for_error,
-        retry_backoff_ms,
     })
     .await
 }

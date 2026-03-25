@@ -5,6 +5,9 @@ pub mod session_runtime;
 pub mod transcript;
 
 pub use attempt_runner::AttemptRunner;
-pub use failover::RuntimeFailover;
+pub(crate) use failover::{
+    CandidateAttemptOutcome, RuntimeFailover, RuntimeFailoverErrorKind, RuntimeFailoverOutcome,
+    RuntimeFailoverParams, RuntimeFailoverPolicy,
+};
 pub use session_runtime::SessionRuntime;
 pub use transcript::RuntimeTranscript;
