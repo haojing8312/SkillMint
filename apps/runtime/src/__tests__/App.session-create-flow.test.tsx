@@ -1,8 +1,52 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect, type Dispatch, type SetStateAction } from "react";
 import App from "../App";
 
 const invokeMock = vi.fn();
 const openMock = vi.fn();
+const catalogSkills = [
+  {
+    id: "builtin-general",
+    name: "General",
+    description: "desc",
+    version: "1.0.0",
+    author: "test",
+    recommended_model: "model-a",
+    tags: [],
+    created_at: new Date().toISOString(),
+  },
+];
+const catalogModels = [
+  {
+    id: "model-non-default",
+    name: "Model Non Default",
+    api_format: "openai",
+    base_url: "https://example.com/non-default",
+    model_name: "model-non-default",
+    is_default: false,
+  },
+  {
+    id: "model-a",
+    name: "Model A",
+    api_format: "openai",
+    base_url: "https://example.com",
+    model_name: "model-a",
+    is_default: true,
+  },
+];
+const catalogSearchConfigs = [
+  {
+    id: "search-config-1",
+    name: "Search Config",
+    api_format: "openai",
+    base_url: "https://search.example.com",
+    model_name: "search-model",
+    is_default: true,
+  },
+];
+const loadCatalogModelsMock = vi.fn().mockResolvedValue(undefined);
+const loadCatalogSearchConfigsMock = vi.fn().mockResolvedValue(undefined);
+const loadCatalogSkillsMock = vi.fn().mockResolvedValue(catalogSkills);
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -12,6 +56,34 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
   save: vi.fn(),
 }));
+
+vi.mock("framer-motion", async () => {
+  const React = await import("react");
+
+  const MotionDiv = ({ children, ...props }: any) => {
+    const {
+      animate,
+      exit,
+      initial,
+      layout,
+      layoutId,
+      transition,
+      variants,
+      whileHover,
+      whileTap,
+      ...rest
+    } = props;
+
+    return <div {...rest}>{children}</div>;
+  };
+
+  return {
+    AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    motion: {
+      div: MotionDiv,
+    },
+  };
+});
 
 vi.mock("../components/Sidebar", () => ({
   Sidebar: (props: any) => (
@@ -89,6 +161,29 @@ vi.mock("../components/NewSessionLanding", () => ({
   ),
 }));
 
+vi.mock("../scenes/useCatalogDataCoordinator", () => ({
+  useCatalogDataCoordinator: ({
+    setSelectedSkillId,
+  }: {
+    setSelectedSkillId: Dispatch<SetStateAction<string | null>>;
+  }) => {
+    useEffect(() => {
+      setSelectedSkillId((prev) => prev ?? catalogSkills[0]?.id ?? null);
+    }, [setSelectedSkillId]);
+
+    return {
+      hasHydratedModelConfigs: true,
+      hasHydratedSearchConfigs: true,
+      loadModels: loadCatalogModelsMock,
+      loadSearchConfigs: loadCatalogSearchConfigsMock,
+      loadSkills: loadCatalogSkillsMock,
+      models: catalogModels,
+      searchConfigs: catalogSearchConfigs,
+      skills: catalogSkills,
+    };
+  },
+}));
+
 describe("App session create flow", () => {
   afterEach(() => {
     cleanup();
@@ -99,42 +194,13 @@ describe("App session create flow", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     openMock.mockReset();
+    loadCatalogModelsMock.mockClear();
+    loadCatalogSearchConfigsMock.mockClear();
+    loadCatalogSkillsMock.mockClear();
+    window.localStorage.clear();
+    window.location.hash = "";
 
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-non-default",
-            name: "Model Non Default",
-            api_format: "openai",
-            base_url: "https://example.com/non-default",
-            model_name: "model-non-default",
-            is_default: false,
-          },
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_sessions") {
         return Promise.resolve([]);
       }
@@ -185,32 +251,6 @@ describe("App session create flow", () => {
 
   test("creates a general session with the default workdir and passes it into chat view", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_sessions") {
         return Promise.resolve([]);
       }
@@ -282,40 +322,6 @@ describe("App session create flow", () => {
 
   test("enters chat immediately and carries initial message", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-non-default",
-            name: "Model Non Default",
-            api_format: "openai",
-            base_url: "https://example.com/non-default",
-            model_name: "model-non-default",
-            is_default: false,
-          },
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_sessions") {
         return Promise.resolve([]);
       }
@@ -391,32 +397,6 @@ describe("App session create flow", () => {
 
   test("retains the newly created session and reports diagnostics when list refresh fails", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_runtime_preferences") {
         return Promise.resolve({
           operation_permission_mode: "standard",
@@ -497,32 +477,6 @@ describe("App session create flow", () => {
     let sessionListAttempts = 0;
 
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_runtime_preferences") {
         return Promise.resolve({
           operation_permission_mode: "standard",
@@ -569,32 +523,6 @@ describe("App session create flow", () => {
 
   test("prefers display_title over title in the sidebar session list", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_runtime_preferences") {
         return Promise.resolve({
           operation_permission_mode: "standard",
@@ -632,32 +560,6 @@ describe("App session create flow", () => {
 
   test("derives optimistic display title from the initial user message for general sessions", async () => {
     invokeMock.mockImplementation((command: string, payload?: any) => {
-      if (command === "list_skills") {
-        return Promise.resolve([
-          {
-            id: "builtin-general",
-            name: "General",
-            description: "desc",
-            version: "1.0.0",
-            author: "test",
-            recommended_model: "model-a",
-            tags: [],
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-      if (command === "list_model_configs") {
-        return Promise.resolve([
-          {
-            id: "model-a",
-            name: "Model A",
-            api_format: "openai",
-            base_url: "https://example.com",
-            model_name: "model-a",
-            is_default: true,
-          },
-        ]);
-      }
       if (command === "get_runtime_preferences") {
         return Promise.resolve({
           operation_permission_mode: "standard",
