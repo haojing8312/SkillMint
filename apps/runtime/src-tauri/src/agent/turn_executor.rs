@@ -69,7 +69,8 @@ impl AgentExecutor {
             None
         };
         let mut tool_failure_streak: Option<ToolFailureStreak> = None;
-        let mut progress_history: Vec<ProgressFingerprint> = Vec::new();
+        let mut tool_call_history: Vec<ProgressFingerprint> = Vec::new();
+        let mut tool_result_history: Vec<ProgressFingerprint> = Vec::new();
         let mut latest_browser_progress: Option<BrowserProgressSnapshot> = None;
 
         loop {
@@ -268,13 +269,15 @@ impl AgentExecutor {
                         route_node_timeout_secs,
                         route_retry_count,
                         iteration,
+                        run_budget_policy,
                     };
                     for (call_index, call) in tool_calls.iter().enumerate() {
                         let mut dispatch_state = super::runtime::tool_dispatch::ToolDispatchState {
                             tool_results: &mut tool_results,
                             repeated_failure_summary: &mut repeated_failure_summary,
                             tool_failure_streak: &mut tool_failure_streak,
-                            progress_history: &mut progress_history,
+                            tool_call_history: &mut tool_call_history,
+                            tool_result_history: &mut tool_result_history,
                             latest_browser_progress: &mut latest_browser_progress,
                         };
                         match super::runtime::tool_dispatch::dispatch_tool_call(
@@ -390,7 +393,7 @@ impl AgentExecutor {
 
                     let progress_evaluation = super::runtime::progress_guard::evaluate_progress_guard(
                         &run_budget_policy,
-                        &progress_history,
+                        &tool_result_history,
                         latest_browser_progress.as_ref(),
                     );
                     if let Some(warning) = progress_evaluation.warning {

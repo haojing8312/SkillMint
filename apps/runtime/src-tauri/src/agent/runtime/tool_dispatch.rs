@@ -1,9 +1,11 @@
 use crate::agent::browser_progress::BrowserProgressSnapshot;
-use crate::agent::event_bridge::{append_tool_run_event, build_skill_route_event};
+use crate::agent::event_bridge::{
+    append_run_guard_warning_event, append_tool_run_event, build_skill_route_event,
+};
 use crate::agent::permissions::PermissionMode;
 use crate::agent::progress::{json_progress_signature, text_progress_signature};
 use crate::agent::registry::ToolRegistry;
-use crate::agent::run_guard::{encode_run_stop_reason, ProgressFingerprint};
+use crate::agent::run_guard::{encode_run_stop_reason, ProgressFingerprint, RunBudgetPolicy};
 use crate::agent::runtime::approval_gate::gate_tool_approval;
 use crate::agent::safety::classify_policy_blocked_tool_error;
 use crate::agent::types::{AgentStateEvent, Tool, ToolCall, ToolCallEvent, ToolContext, ToolResult};
@@ -31,13 +33,15 @@ pub(crate) struct ToolDispatchContext<'a> {
     pub route_node_timeout_secs: u64,
     pub route_retry_count: usize,
     pub iteration: usize,
+    pub run_budget_policy: RunBudgetPolicy,
 }
 
 pub(crate) struct ToolDispatchState<'a> {
     pub tool_results: &'a mut Vec<ToolResult>,
     pub repeated_failure_summary: &'a mut Option<String>,
     pub tool_failure_streak: &'a mut Option<ToolFailureStreak>,
-    pub progress_history: &'a mut Vec<ProgressFingerprint>,
+    pub tool_call_history: &'a mut Vec<ProgressFingerprint>,
+    pub tool_result_history: &'a mut Vec<ProgressFingerprint>,
     pub latest_browser_progress: &'a mut Option<BrowserProgressSnapshot>,
 }
 
@@ -224,7 +228,7 @@ fn record_tool_progress(
     if let Some(snapshot) = browser_progress_snapshot {
         *state.latest_browser_progress = Some(snapshot);
     }
-    state.progress_history.push(ProgressFingerprint::tool_result(
+    state.tool_result_history.push(ProgressFingerprint::tool_result(
         call.name.clone(),
         input_signature,
         output_signature,
@@ -234,6 +238,39 @@ fn record_tool_progress(
         tool_use_id: call.id.clone(),
         content: result.to_string(),
     });
+}
+
+async fn guard_before_tool_call(
+    ctx: &ToolDispatchContext<'_>,
+    state: &mut ToolDispatchState<'_>,
+    call: &ToolCall,
+) -> Result<()> {
+    let (fingerprint, evaluation) = super::before_tool_call_guard::evaluate_before_tool_call(
+        &ctx.run_budget_policy,
+        state.tool_call_history,
+        state.latest_browser_progress.as_ref(),
+        &call.name,
+        &call.input,
+    );
+
+    if let Some(warning) = evaluation.warning {
+        if let (Some(app), Some(sid)) = (ctx.app_handle, ctx.session_id) {
+            let _ = append_run_guard_warning_event(app, sid, &warning).await;
+        }
+    }
+
+    if let Some(stop_reason) = evaluation.stop_reason {
+        if let (Some(app), Some(sid)) = (ctx.app_handle, ctx.session_id) {
+            let _ = app.emit(
+                "agent-state-event",
+                AgentStateEvent::stopped(sid, ctx.iteration, &stop_reason),
+            );
+        }
+        return Err(anyhow!(encode_run_stop_reason(&stop_reason)));
+    }
+
+    state.tool_call_history.push(fingerprint);
+    Ok(())
 }
 
 pub(crate) async fn dispatch_tool_call(
@@ -278,6 +315,8 @@ pub(crate) async fn dispatch_tool_call(
             return Ok(ToolDispatchOutcome::Cancelled);
         }
     }
+
+    guard_before_tool_call(ctx, state, call).await?;
 
     eprintln!("[agent] Calling tool: {}", call.name);
 
@@ -527,17 +566,25 @@ async fn wait_for_cancel(cancel_flag: &Option<Arc<AtomicBool>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::run_tool;
-    use crate::agent::types::{Tool, ToolContext};
+    use super::{dispatch_tool_call, run_tool, ToolDispatchContext, ToolDispatchOutcome, ToolDispatchState};
+    use crate::agent::permissions::PermissionMode;
+    use crate::agent::registry::ToolRegistry;
+    use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
+    use crate::agent::types::{Tool, ToolCall, ToolContext};
     use anyhow::Result;
     use serde_json::{json, Value};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
     struct BlockingTool {
         started: Arc<AtomicBool>,
         release: Arc<AtomicBool>,
+    }
+
+    struct CountingTool {
+        count: Arc<AtomicUsize>,
     }
 
     impl Tool for BlockingTool {
@@ -559,6 +606,25 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok("done".to_string())
+        }
+    }
+
+    impl Tool for CountingTool {
+        fn name(&self) -> &str {
+            "counting_tool"
+        }
+
+        fn description(&self) -> &str {
+            "counts executions"
+        }
+
+        fn input_schema(&self) -> Value {
+            json!({})
+        }
+
+        fn execute(&self, _input: Value, _ctx: &ToolContext) -> Result<String> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Ok("counted".to_string())
         }
     }
 
@@ -653,5 +719,85 @@ mod tests {
             .expect("drained blocking task");
         assert!(is_error);
         assert_eq!(output, "TIMEOUT: 子 Skill 执行超时");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_tool_call_stops_repeated_identical_calls_before_executing_sixth_attempt() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CountingTool {
+            count: Arc::clone(&count),
+        }));
+        let call = ToolCall {
+            id: "call-loop".to_string(),
+            name: "counting_tool".to_string(),
+            input: json!({ "path": "loop.txt" }),
+        };
+        let tool_ctx = ToolContext::default();
+        let mut tool_results = Vec::new();
+        let mut repeated_failure_summary = None;
+        let mut tool_failure_streak = None;
+        let mut tool_call_history = Vec::new();
+        let mut tool_result_history = Vec::new();
+        let mut latest_browser_progress = None;
+        let dispatch_context = ToolDispatchContext {
+            registry: &registry,
+            app_handle: None,
+            session_id: None,
+            persisted_run_id: None,
+            allowed_tools: None,
+            permission_mode: PermissionMode::Unrestricted,
+            tool_ctx: &tool_ctx,
+            tool_confirm_tx: None,
+            cancel_flag: None,
+            route_run_id: "route-loop",
+            route_node_timeout_secs: 5,
+            route_retry_count: 0,
+            iteration: 1,
+            run_budget_policy: crate::agent::run_guard::RunBudgetPolicy::for_scope(
+                crate::agent::run_guard::RunBudgetScope::GeneralChat,
+            ),
+        };
+
+        for call_index in 0..5 {
+            let mut dispatch_state = ToolDispatchState {
+                tool_results: &mut tool_results,
+                repeated_failure_summary: &mut repeated_failure_summary,
+                tool_failure_streak: &mut tool_failure_streak,
+                tool_call_history: &mut tool_call_history,
+                tool_result_history: &mut tool_result_history,
+                latest_browser_progress: &mut latest_browser_progress,
+            };
+            let outcome = dispatch_tool_call(
+                &dispatch_context,
+                &mut dispatch_state,
+                call_index,
+                &call,
+            )
+            .await
+            .expect("first five calls should continue");
+            assert!(matches!(outcome, ToolDispatchOutcome::Continue));
+        }
+
+        assert_eq!(count.load(Ordering::SeqCst), 5);
+
+        let mut dispatch_state = ToolDispatchState {
+            tool_results: &mut tool_results,
+            repeated_failure_summary: &mut repeated_failure_summary,
+            tool_failure_streak: &mut tool_failure_streak,
+            tool_call_history: &mut tool_call_history,
+            tool_result_history: &mut tool_result_history,
+            latest_browser_progress: &mut latest_browser_progress,
+        };
+        let err = match dispatch_tool_call(&dispatch_context, &mut dispatch_state, 5, &call).await
+        {
+            Ok(_) => panic!("sixth repeated call should stop before execution"),
+            Err(err) => err,
+        };
+        let stop_reason =
+            parse_run_stop_reason(&err.to_string()).expect("structured stop reason");
+
+        assert_eq!(stop_reason.kind, RunStopReasonKind::LoopDetected);
+        assert_eq!(count.load(Ordering::SeqCst), 5);
     }
 }
