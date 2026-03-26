@@ -897,7 +897,9 @@ describe("App model setup hint", () => {
     });
 
     expect(screen.getByTestId("quick-model-setup-dialog").className).not.toContain("sm:items-center");
-    expect(screen.getByTestId("quick-model-setup-panel")).toHaveClass("h-[calc(100vh-2rem)]");
+    expect(screen.getByTestId("app-titlebar")).toBeInTheDocument();
+    expect(screen.getByTestId("quick-model-setup-dialog")).toHaveClass("top-11");
+    expect(screen.getByTestId("quick-model-setup-panel")).toHaveClass("h-[calc(100vh-4.75rem)]");
     expect(screen.getByTestId("quick-model-setup-panel")).toHaveClass("max-h-[960px]");
     expect(screen.getByTestId("quick-model-setup-scroll-region")).toHaveClass("overflow-y-auto");
     expect(screen.getByTestId("quick-model-setup-scroll-region")).toHaveClass("flex-1");
@@ -916,6 +918,17 @@ describe("App model setup hint", () => {
       expect(screen.getByTestId("model-setup-hint")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("model-setup-gate")).not.toBeInTheDocument();
+  });
+
+  test("keeps the initial model setup gate below the desktop titlebar", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-gate")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("app-titlebar")).toBeInTheDocument();
+    expect(screen.getByTestId("model-setup-gate")).toHaveClass("top-11");
   });
 
   test("can reset first-use onboarding from dev settings tools and bring the gate back", async () => {
