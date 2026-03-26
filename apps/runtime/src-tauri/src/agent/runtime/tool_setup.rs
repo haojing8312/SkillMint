@@ -8,6 +8,7 @@ use crate::agent::tools::{
     ProcessManager, SkillInvokeTool, TaskTool, WebSearchTool,
 };
 use crate::agent::AgentExecutor;
+use crate::session_journal::SessionJournalStateHandle;
 use runtime_chat_app::{
     compose_system_prompt, ChatExecutionGuidance, ChatExecutionPreparationService,
 };
@@ -86,6 +87,11 @@ pub(crate) async fn prepare_runtime_tools(
         params.model_name.to_string(),
     )
     .with_app_handle(params.app.clone(), params.session_id.to_string());
+    let task_tool = if let Some(journal) = params.app.try_state::<SessionJournalStateHandle>() {
+        task_tool.with_runtime_state(params.db.clone(), journal.0.clone())
+    } else {
+        task_tool
+    };
     params
         .agent_executor
         .registry()

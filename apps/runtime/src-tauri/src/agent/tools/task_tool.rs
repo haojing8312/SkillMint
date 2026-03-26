@@ -1,7 +1,11 @@
+use crate::agent::runtime::child_session_runtime::{
+    run_hidden_child_session, ChildSessionRunRequest,
+};
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
 use crate::agent::types::{StreamDelta, Tool, ToolContext};
 use crate::agent::{AgentExecutor, ToolRegistry};
+use crate::session_journal::SessionJournalStore;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -22,6 +26,8 @@ pub struct TaskTool {
     model: String,
     app_handle: Option<tauri::AppHandle>,
     session_id: Option<String>,
+    db: Option<sqlx::SqlitePool>,
+    journal: Option<Arc<SessionJournalStore>>,
 }
 
 impl TaskTool {
@@ -40,6 +46,8 @@ impl TaskTool {
             model,
             app_handle: None,
             session_id: None,
+            db: None,
+            journal: None,
         }
     }
 
@@ -47,6 +55,16 @@ impl TaskTool {
     pub fn with_app_handle(mut self, app: tauri::AppHandle, session_id: String) -> Self {
         self.app_handle = Some(app);
         self.session_id = Some(session_id);
+        self
+    }
+
+    pub fn with_runtime_state(
+        mut self,
+        db: sqlx::SqlitePool,
+        journal: Arc<SessionJournalStore>,
+    ) -> Self {
+        self.db = Some(db);
+        self.journal = Some(journal);
         self
     }
 
@@ -75,6 +93,81 @@ impl TaskTool {
             "plan" => (Some(Self::get_plan_tools()), 100),
             _ => (None, 100), // general-purpose: 全部工具
         }
+    }
+
+    async fn execute_direct_subagent(
+        registry: Arc<ToolRegistry>,
+        api_format: String,
+        base_url: String,
+        api_key: String,
+        model: String,
+        prompt: String,
+        agent_type: String,
+        delegate_display_name: String,
+        delegate_role_id: String,
+        delegate_role_name: String,
+        app_handle: Option<tauri::AppHandle>,
+        session_id: Option<String>,
+        allowed_tools: Option<Vec<String>>,
+        max_iter: usize,
+        work_dir: Option<String>,
+    ) -> Result<Vec<Value>> {
+        let sub_executor = AgentExecutor::with_max_iterations(registry, max_iter);
+        let system_prompt = format!(
+            "你是一个专注的子 Agent (类型: {})，当前承接角色: {}。完成以下任务后返回结果。简洁地报告你的发现。",
+            agent_type, delegate_display_name
+        );
+        let messages = vec![json!({"role": "user", "content": prompt})];
+
+        let on_token_arc: Arc<dyn Fn(String) + Send + Sync> = match (&app_handle, &session_id) {
+            (Some(app), Some(parent_session_id)) => {
+                let app = app.clone();
+                let parent_session_id = parent_session_id.clone();
+                let role_id = delegate_role_id.clone();
+                let role_name = delegate_role_name.clone();
+                Arc::new(move |token: String| {
+                    let _ = app.emit(
+                        "stream-token",
+                        json!({
+                            "session_id": parent_session_id,
+                            "token": token,
+                            "done": false,
+                            "sub_agent": true,
+                            "role_id": role_id,
+                            "role_name": role_name,
+                        }),
+                    );
+                })
+            }
+            _ => Arc::new(|_| {}),
+        };
+        let on_token = move |delta: StreamDelta| {
+            if let StreamDelta::Text(token) = delta {
+                on_token_arc(token);
+            }
+        };
+
+        sub_executor
+            .execute_turn(
+                &api_format,
+                &base_url,
+                &api_key,
+                &model,
+                &system_prompt,
+                messages,
+                on_token,
+                app_handle.as_ref(),
+                session_id.as_deref(),
+                allowed_tools.as_deref(),
+                PermissionMode::Unrestricted,
+                None,
+                work_dir,
+                Some(max_iter),
+                None,
+                None,
+                None,
+            )
+            .await
     }
 }
 
@@ -147,96 +240,61 @@ impl Tool for TaskTool {
         // 在闭包外保留副本，用于之后的格式化输出
         let agent_type_display = agent_type.clone();
 
-        let registry = Arc::clone(&self.registry);
-        let api_format = self.api_format.clone();
-        let base_url = self.base_url.clone();
-        let api_key = self.api_key.clone();
-        let model = self.model.clone();
-        let delegated_role_id = delegate_role_id.clone();
-        let delegated_role_name = delegate_role_name.clone();
-        let delegated_display = delegate_display_name.clone();
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| anyhow!("创建运行时失败: {}", e))?;
+        let task_result = if let (Some(db), Some(journal), Some(parent_session_id)) = (
+            self.db.as_ref(),
+            self.journal.as_ref(),
+            self.session_id.as_deref(),
+        ) {
+            runtime.block_on(run_hidden_child_session(ChildSessionRunRequest {
+                parent_session_id,
+                prompt: &prompt,
+                agent_type: &agent_type,
+                delegate_display_name: &delegate_display_name,
+                registry: Arc::clone(&self.registry),
+                db,
+                journal,
+                api_format: &self.api_format,
+                base_url: &self.base_url,
+                api_key: &self.api_key,
+                model: &self.model,
+                allowed_tools: allowed_tools.clone(),
+                max_iterations: max_iter,
+                app_handle: self.app_handle.as_ref(),
+                parent_stream_session_id: self.session_id.as_deref(),
+                delegate_role_id: Some(delegate_role_id.as_str()),
+                delegate_role_name: Some(delegate_role_name.as_str()),
+                work_dir: _ctx
+                    .work_dir
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
+            }))
+            .map(|outcome| vec![json!({
+                "role": "assistant",
+                "content": outcome.final_text,
+            })])
+        } else {
+            runtime.block_on(Self::execute_direct_subagent(
+                Arc::clone(&self.registry),
+                self.api_format.clone(),
+                self.base_url.clone(),
+                self.api_key.clone(),
+                self.model.clone(),
+                prompt.clone(),
+                agent_type.clone(),
+                delegate_display_name.clone(),
+                delegate_role_id.clone(),
+                delegate_role_name.clone(),
+                self.app_handle.clone(),
+                self.session_id.clone(),
+                allowed_tools.clone(),
+                max_iter,
+                _ctx.work_dir.as_ref().map(|path| path.to_string_lossy().to_string()),
+            ))
+        };
 
-        // 在线程 spawn 前克隆，避免所有权冲突
-        let sub_app_handle = self.app_handle.clone();
-        let sub_session_id = self.session_id.clone();
-
-        // 必须在新线程中创建新的 tokio runtime，否则会死锁
-        // （Tool::execute 是同步的，但被 async 上下文调用，不能用 block_on）
-        let handle = std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| anyhow!("创建运行时失败: {}", e))?;
-
-            rt.block_on(async {
-                let sub_executor = AgentExecutor::with_max_iterations(registry, max_iter);
-
-                let system_prompt = format!(
-                    "你是一个专注的子 Agent (类型: {})，当前承接角色: {}。完成以下任务后返回结果。简洁地报告你的发现。",
-                    agent_type, delegated_display
-                );
-
-                let messages = vec![json!({"role": "user", "content": prompt})];
-
-                // 根据是否配置了 AppHandle 决定是否将 token 转发到前端。
-                // execute_turn 要求 impl Fn(String) + Send + Clone。
-                // 用 Arc<dyn Fn + Send + Sync> 包装回调，再用外层闭包按值捕获 Arc（Arc: Clone）
-                // 从而满足 Clone 约束。
-                let on_token_arc: Arc<dyn Fn(String) + Send + Sync> =
-                    match (&sub_app_handle, &sub_session_id) {
-                        (Some(app), Some(sid)) => {
-                            let app = app.clone();
-                            let sid = sid.clone();
-                            let role_id = delegated_role_id.clone();
-                            let role_name = delegated_role_name.clone();
-                            Arc::new(move |token: String| {
-                                let _ = app.emit(
-                                    "stream-token",
-                                    json!({
-                                        "session_id": sid,
-                                        "token": token,
-                                        "done": false,
-                                        "sub_agent": true,
-                                        "role_id": role_id,
-                                        "role_name": role_name,
-                                    }),
-                                );
-                            })
-                        }
-                        _ => Arc::new(|_| {}),
-                    };
-                // 将 Arc 包装成满足 Clone 的普通闭包
-                let on_token = move |delta: StreamDelta| {
-                    if let StreamDelta::Text(token) = delta {
-                        on_token_arc(token);
-                    }
-                };
-
-                sub_executor
-                    .execute_turn(
-                        &api_format,
-                        &base_url,
-                        &api_key,
-                        &model,
-                        &system_prompt,
-                        messages,
-                        on_token,
-                        sub_app_handle.as_ref(),
-                        sub_session_id.as_deref(),
-                        allowed_tools.as_deref(),
-                        PermissionMode::Unrestricted, // 子 Agent 不需要权限确认
-                        None,                         // 无确认通道
-                        None,                         // work_dir: 子 Agent 继承主 Agent 设置
-                        None,                         // 使用 sub_executor 默认迭代限制
-                        None,                         // 子 Agent 无取消标志
-                        None,                         // 子 Agent 使用默认节点超时
-                        None,                         // 子 Agent 默认不重试
-                    )
-                    .await
-            })
-        })
-        .join()
-        .map_err(|_| anyhow!("子 Agent 线程异常"))?;
-
-        match handle {
+        match task_result {
             Ok(final_messages) => {
                 // 提取最后一条 assistant 消息
                 let last_text = final_messages
