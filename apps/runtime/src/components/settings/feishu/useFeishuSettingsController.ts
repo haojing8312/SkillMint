@@ -31,12 +31,9 @@ import {
   installOpenClawLarkPlugin as installOpenClawLarkPluginFromService,
   loadFeishuAdvancedSettings as loadFeishuAdvancedSettingsFromService,
   loadFeishuGatewaySettings as loadFeishuGatewaySettingsFromService,
-  loadFeishuInstallerSessionStatus as loadFeishuInstallerSessionStatusFromService,
   loadFeishuPairingRequests as loadFeishuPairingRequestsFromService,
   loadFeishuPluginChannelHosts as loadFeishuPluginChannelHostsFromService,
   loadFeishuPluginChannelSnapshot as loadFeishuPluginChannelSnapshotFromService,
-  loadFeishuRuntimeStatus as loadFeishuRuntimeStatusFromService,
-  loadFeishuSetupProgress as loadFeishuSetupProgressFromService,
   normalizeFeishuAdvancedSettings,
   normalizeFeishuGatewaySettings,
   probeFeishuCredentials as probeFeishuCredentialsFromService,
@@ -50,29 +47,20 @@ import {
 import type {
   FeishuGatewaySettings,
   FeishuPairingRequestRecord,
-  FeishuPluginEnvironmentStatus,
-  FeishuSetupProgress,
   OpenClawLarkInstallerMode,
-  OpenClawLarkInstallerSessionStatus,
   OpenClawPluginChannelHost,
   OpenClawPluginChannelSnapshotResult,
   OpenClawPluginFeishuAdvancedSettings,
   OpenClawPluginFeishuCredentialProbeResult,
   OpenClawPluginFeishuRuntimeStatus,
 } from "../../../types";
+import { useFeishuInstallerSessionController } from "./useFeishuInstallerSessionController";
+import { DEFAULT_FEISHU_INSTALLER_SESSION } from "./useFeishuInstallerSessionController";
+import { useFeishuRuntimeStatusController } from "./useFeishuRuntimeStatusController";
+import { useFeishuSetupProgressController } from "./useFeishuSetupProgressController";
 
 const FEISHU_OFFICIAL_PLUGIN_DOC_URL =
   "https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh#M0usd9GLwoiBxtx1UyjcpeMhnRe";
-
-const DEFAULT_FEISHU_INSTALLER_SESSION: OpenClawLarkInstallerSessionStatus = {
-  running: false,
-  mode: null,
-  started_at: null,
-  last_output_at: null,
-  last_error: null,
-  prompt_hint: null,
-  recent_output: [],
-};
 
 interface UseFeishuSettingsControllerOptions {
   activeTab: SettingsTabName;
@@ -114,21 +102,28 @@ export function useFeishuSettingsController({
     dynamic_agent_creation_agent_dir_template: "",
     dynamic_agent_creation_max_agents: "",
   });
-  const [officialFeishuRuntimeStatus, setOfficialFeishuRuntimeStatus] =
-    useState<OpenClawPluginFeishuRuntimeStatus | null>(null);
   const [pluginChannelHosts, setPluginChannelHosts] = useState<OpenClawPluginChannelHost[]>([]);
   const [pluginChannelSnapshots, setPluginChannelSnapshots] =
     useState<Record<string, OpenClawPluginChannelSnapshotResult>>({});
   const [pluginChannelHostsError, setPluginChannelHostsError] = useState("");
   const [pluginChannelSnapshotsError, setPluginChannelSnapshotsError] = useState("");
-  const [feishuEnvironmentStatus, setFeishuEnvironmentStatus] = useState<FeishuPluginEnvironmentStatus | null>(null);
-  const [feishuSetupProgress, setFeishuSetupProgress] = useState<FeishuSetupProgress | null>(null);
+  const {
+    officialFeishuRuntimeStatus,
+    setOfficialFeishuRuntimeStatus,
+    loadConnectorStatuses,
+  } = useFeishuRuntimeStatusController({ activeTab });
+  const {
+    feishuEnvironmentStatus,
+    feishuSetupProgress,
+    loadFeishuSetupProgress,
+  } = useFeishuSetupProgressController({ activeTab });
   const [validatingFeishuCredentials, setValidatingFeishuCredentials] = useState(false);
   const [feishuCredentialProbe, setFeishuCredentialProbe] =
     useState<OpenClawPluginFeishuCredentialProbeResult | null>(null);
-  const [feishuInstallerSession, setFeishuInstallerSession] = useState<OpenClawLarkInstallerSessionStatus>(
-    DEFAULT_FEISHU_INSTALLER_SESSION,
-  );
+  const {
+    feishuInstallerSession,
+    setFeishuInstallerSession,
+  } = useFeishuInstallerSessionController({ activeTab });
   const [feishuInstallerInput, setFeishuInstallerInput] = useState("");
   const [feishuInstallerBusy, setFeishuInstallerBusy] = useState(false);
   const [feishuInstallerStartingMode, setFeishuInstallerStartingMode] = useState<OpenClawLarkInstallerMode | null>(null);
@@ -157,8 +152,6 @@ export function useFeishuSettingsController({
       loadConnectorSettings(),
       loadConnectorStatuses(),
       loadConnectorPlatformData(),
-      loadFeishuSetupProgress(),
-      loadFeishuInstallerSessionStatus(),
     ]);
   }, [activeTab]);
 
@@ -168,11 +161,7 @@ export function useFeishuSettingsController({
     }
 
     const timer = window.setInterval(() => {
-      void Promise.all([
-        loadConnectorStatuses(),
-        loadConnectorPlatformData(),
-        loadFeishuSetupProgress(),
-      ]);
+      void loadConnectorPlatformData();
     }, 5000);
 
     return () => window.clearInterval(timer);
@@ -185,7 +174,6 @@ export function useFeishuSettingsController({
 
     const timer = window.setInterval(() => {
       void Promise.all([
-        loadFeishuInstallerSessionStatus(),
         loadConnectorSettings(),
         loadFeishuSetupProgress(),
       ]);
@@ -257,42 +245,6 @@ export function useFeishuSettingsController({
       setFeishuAdvancedSettings(normalizeFeishuAdvancedSettings(feishuAdvanced));
     } catch (error) {
       console.warn("加载渠道连接器配置失败:", error);
-    }
-  }
-
-  async function loadFeishuSetupProgress() {
-    try {
-      const progress = await loadFeishuSetupProgressFromService();
-      if (progress) {
-        setFeishuEnvironmentStatus(progress.environment ?? null);
-        setFeishuSetupProgress(progress);
-      } else {
-        setFeishuEnvironmentStatus(null);
-        setFeishuSetupProgress(null);
-      }
-    } catch (error) {
-      console.warn("加载飞书接入进度失败:", error);
-      setFeishuEnvironmentStatus(null);
-      setFeishuSetupProgress(null);
-    }
-  }
-
-  async function loadConnectorStatuses() {
-    try {
-      const runtimeStatus = await loadFeishuRuntimeStatusFromService();
-      setOfficialFeishuRuntimeStatus(runtimeStatus);
-    } catch (error) {
-      console.warn("加载渠道连接器状态失败:", error);
-      setOfficialFeishuRuntimeStatus(null);
-    }
-  }
-
-  async function loadFeishuInstallerSessionStatus() {
-    try {
-      const status = await loadFeishuInstallerSessionStatusFromService();
-      setFeishuInstallerSession(status ?? DEFAULT_FEISHU_INSTALLER_SESSION);
-    } catch (error) {
-      console.warn("加载飞书官方安装向导状态失败:", error);
     }
   }
 

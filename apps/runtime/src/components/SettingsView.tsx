@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { SettingsShell } from "./settings/SettingsShell";
 import { ModelsSettingsSection } from "./settings/models/ModelsSettingsSection";
 import { DesktopSettingsSection } from "./settings/desktop/DesktopSettingsSection";
@@ -10,28 +9,14 @@ import { FeishuSettingsSection } from "./settings/feishu/FeishuSettingsSection";
 import { FeishuAdvancedConsoleSection } from "./settings/feishu/FeishuAdvancedConsoleSection";
 import { FeishuAdvancedSection } from "./settings/feishu/FeishuAdvancedSection";
 import { SettingsTabNav, type SettingsTabName } from "./settings/SettingsTabNav";
-import {
-  listModelConfigs,
-  listProviderConfigs,
-  syncModelConnections,
-} from "./settings/models/modelSettingsService";
 import { useFeishuSettingsController } from "./settings/feishu/useFeishuSettingsController";
+import { useSettingsController } from "../scenes/settings/useSettingsController";
 export { buildFeishuOnboardingState } from "./settings/feishu/feishuSelectors";
 export type {
   FeishuOnboardingInput,
   FeishuOnboardingState,
   FeishuOnboardingStep,
 } from "./settings/feishu/feishuSelectors";
-import {
-  CapabilityRouteTemplateInfo,
-  CapabilityRoutingPolicy,
-  ModelConfig,
-  ProviderConfig,
-  ProviderHealthInfo,
-  RouteAttemptLog,
-  RouteAttemptStat,
-} from "../types";
-
 interface Props {
   onClose: () => void;
   onOpenEmployees?: () => void;
@@ -63,45 +48,63 @@ export function SettingsView({
   onDevResetFirstUseOnboarding,
   onDevOpenQuickModelSetup,
 }: Props) {
-  const [models, setModels] = useState<ModelConfig[]>([]);
   const [activeTab, setActiveTab] = useState<SettingsTabName>(initialTab);
-
-  const [providers, setProviders] = useState<ProviderConfig[]>([]);
-
-  const [selectedCapability, setSelectedCapability] = useState("chat");
-  const [chatRoutingPolicy, setChatRoutingPolicy] = useState<CapabilityRoutingPolicy>({
-    capability: "chat",
-    primary_provider_id: "",
-    primary_model: "",
-    fallback_chain_json: "[]",
-    timeout_ms: 60000,
-    retry_count: 0,
-    enabled: true,
-  });
-  const [policySaveState, setPolicySaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [policyError, setPolicyError] = useState("");
-  const [chatPrimaryModels, setChatPrimaryModels] = useState<string[]>([]);
-  const [chatFallbackRows, setChatFallbackRows] = useState<Array<{ provider_id: string; model: string }>>([]);
-  const [routeTemplates, setRouteTemplates] = useState<CapabilityRouteTemplateInfo[]>([]);
-  const [selectedRouteTemplateId, setSelectedRouteTemplateId] = useState("china-first-p0");
-
-  const [healthResult, setHealthResult] = useState<ProviderHealthInfo | null>(null);
-  const [allHealthResults, setAllHealthResults] = useState<ProviderHealthInfo[]>([]);
-  const [healthLoading, setHealthLoading] = useState(false);
-  const [healthProviderId, setHealthProviderId] = useState("");
-  const [routeLogs, setRouteLogs] = useState<RouteAttemptLog[]>([]);
-  const [routeLogsLoading, setRouteLogsLoading] = useState(false);
-  const [routeLogsOffset, setRouteLogsOffset] = useState(0);
-  const [routeLogsHasMore, setRouteLogsHasMore] = useState(false);
-  const [routeLogsSessionId, setRouteLogsSessionId] = useState("");
-  const [routeLogsCapabilityFilter, setRouteLogsCapabilityFilter] = useState("all");
-  const [routeLogsResultFilter, setRouteLogsResultFilter] = useState("all");
-  const [routeLogsErrorKindFilter, setRouteLogsErrorKindFilter] = useState("all");
-  const [routeLogsExporting, setRouteLogsExporting] = useState(false);
-  const [routeStats, setRouteStats] = useState<RouteAttemptStat[]>([]);
-  const [routeStatsLoading, setRouteStatsLoading] = useState(false);
-  const [routeStatsCapability, setRouteStatsCapability] = useState("all");
-  const [routeStatsHours, setRouteStatsHours] = useState(24);
+  const {
+    models,
+    setModels,
+    providers,
+    setProviders,
+    selectedCapability,
+    setSelectedCapability,
+    chatRoutingPolicy,
+    setChatRoutingPolicy,
+    policySaveState,
+    policyError,
+    chatPrimaryModels,
+    chatFallbackRows,
+    routeTemplates,
+    selectedRouteTemplateId,
+    setSelectedRouteTemplateId,
+    healthResult,
+    allHealthResults,
+    healthLoading,
+    healthProviderId,
+    setHealthProviderId,
+    routeLogsLoading,
+    routeLogsOffset,
+    setRouteLogsOffset,
+    routeLogsHasMore,
+    routeLogsSessionId,
+    setRouteLogsSessionId,
+    routeLogsCapabilityFilter,
+    setRouteLogsCapabilityFilter,
+    routeLogsResultFilter,
+    setRouteLogsResultFilter,
+    routeLogsErrorKindFilter,
+    setRouteLogsErrorKindFilter,
+    routeLogsExporting,
+    routeStats,
+    routeStatsLoading,
+    routeStatsCapability,
+    setRouteStatsCapability,
+    routeStatsHours,
+    setRouteStatsHours,
+    filteredRouteLogs,
+    getCapabilityRecommendedDefaults,
+    loadChatPrimaryModels,
+    loadCapabilityRoutingPolicy,
+    loadRouteTemplates,
+    handleSaveChatPolicy,
+    handleCheckProviderHealth,
+    handleCheckAllProviderHealth,
+    loadRecentRouteLogs,
+    loadRouteStats,
+    handleExportRouteLogsCsv,
+    addFallbackRow,
+    updateFallbackRow,
+    removeFallbackRow,
+    handleApplyRouteTemplate,
+  } = useSettingsController();
   const {
     sections: {
       settingsSectionProps,
@@ -121,295 +124,6 @@ export function SettingsView({
         ? true
         : settingsSectionProps.feishuOnboardingPrimaryActionDisabled,
   };
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadInitialData() {
-      try {
-        const [loadedModels, loadedProviders] = await Promise.all([
-          listModelConfigs(),
-          listProviderConfigs(),
-        ]);
-        if (cancelled) return;
-        setModels(loadedModels);
-        setProviders(loadedProviders);
-      } catch (error) {
-        if (!cancelled) {
-          console.warn("加载设置初始数据失败:", error);
-        }
-      }
-    }
-
-    void loadInitialData();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function loadChatPrimaryModels(providerId: string, capability: string) {
-    if (!providerId) {
-      setChatPrimaryModels([]);
-      return;
-    }
-    try {
-      const models = await invoke<string[]>("list_provider_models", {
-        providerId,
-        capability,
-      });
-      setChatPrimaryModels(models);
-    } catch {
-      setChatPrimaryModels([]);
-    }
-  }
-
-  async function loadCapabilityRoutingPolicy(capability: string) {
-    try {
-      const loaded = await invoke<CapabilityRoutingPolicy | null>("get_capability_routing_policy", {
-        capability,
-      });
-      const defaults = getCapabilityRecommendedDefaults(capability);
-      const nextPolicy: CapabilityRoutingPolicy = loaded ?? {
-        capability,
-        primary_provider_id: "",
-        primary_model: "",
-        fallback_chain_json: "[]",
-        timeout_ms: defaults.timeout_ms,
-        retry_count: defaults.retry_count,
-        enabled: true,
-      };
-      setChatRoutingPolicy(nextPolicy);
-      const parsed = JSON.parse(nextPolicy.fallback_chain_json || "[]");
-      setChatFallbackRows(
-        Array.isArray(parsed)
-          ? parsed.map((item) => ({
-              provider_id: String(item?.provider_id || ""),
-              model: String(item?.model || ""),
-            }))
-          : [],
-      );
-      void loadChatPrimaryModels(nextPolicy.primary_provider_id, capability);
-    } catch {
-      const defaults = getCapabilityRecommendedDefaults(capability);
-      setChatRoutingPolicy({
-        capability,
-        primary_provider_id: "",
-        primary_model: "",
-        fallback_chain_json: "[]",
-        timeout_ms: defaults.timeout_ms,
-        retry_count: defaults.retry_count,
-        enabled: true,
-      });
-      setChatFallbackRows([]);
-      setChatPrimaryModels([]);
-    }
-  }
-
-  async function loadRouteTemplates(capability: string) {
-    try {
-      const templates = await invoke<CapabilityRouteTemplateInfo[]>("list_capability_route_templates", {
-        capability,
-      });
-      setRouteTemplates(templates);
-      setSelectedRouteTemplateId((current) => {
-        if (templates.some((item) => item.template_id === current)) {
-          return current;
-        }
-        return templates[0]?.template_id || "";
-      });
-    } catch {
-      setRouteTemplates([]);
-      setSelectedRouteTemplateId("");
-    }
-  }
-
-  async function handleSaveChatPolicy() {
-    setPolicySaveState("saving");
-    setPolicyError("");
-    try {
-      const policyToSave = {
-        ...chatRoutingPolicy,
-        capability: selectedCapability,
-        fallback_chain_json: JSON.stringify(chatFallbackRows),
-      };
-      await invoke("set_capability_routing_policy", { policy: policyToSave });
-      setPolicySaveState("saved");
-      setTimeout(() => setPolicySaveState("idle"), 1200);
-    } catch (e) {
-      setPolicySaveState("error");
-      setPolicyError("保存聊天路由策略失败: " + String(e));
-    }
-  }
-
-  async function handleCheckProviderHealth() {
-    if (!healthProviderId) return;
-    setHealthLoading(true);
-    try {
-      const result = await invoke<ProviderHealthInfo>("test_provider_health", {
-        providerId: healthProviderId,
-      });
-      setHealthResult(result);
-    } catch (e) {
-      setHealthResult({
-        provider_id: healthProviderId,
-        ok: false,
-        protocol_type: "",
-        message: String(e),
-      });
-    } finally {
-      setHealthLoading(false);
-    }
-  }
-
-  async function handleCheckAllProviderHealth() {
-    setHealthLoading(true);
-    try {
-      const results = await invoke<ProviderHealthInfo[]>("test_all_provider_health");
-      setAllHealthResults(results);
-      if (results.length > 0) {
-        setHealthResult(results[0]);
-      }
-    } catch (e) {
-      setAllHealthResults([
-        {
-          provider_id: "",
-          ok: false,
-          protocol_type: "",
-          message: String(e),
-        },
-      ]);
-    } finally {
-      setHealthLoading(false);
-    }
-  }
-
-  async function loadRecentRouteLogs(append: boolean) {
-    setRouteLogsLoading(true);
-    try {
-      const logs = await invoke<RouteAttemptLog[]>("list_recent_route_attempt_logs", {
-        sessionId: routeLogsSessionId.trim() || null,
-        limit: 50,
-        offset: append ? routeLogsOffset : 0,
-      });
-      setRouteLogs((prev) => (append ? [...prev, ...logs] : logs));
-      setRouteLogsOffset((prev) => (append ? prev + logs.length : logs.length));
-      setRouteLogsHasMore(logs.length === 50);
-    } catch {
-      if (!append) {
-        setRouteLogs([]);
-        setRouteLogsOffset(0);
-        setRouteLogsHasMore(false);
-      }
-    } finally {
-      setRouteLogsLoading(false);
-    }
-  }
-
-  async function loadRouteStats() {
-    setRouteStatsLoading(true);
-    try {
-      const stats = await invoke<RouteAttemptStat[]>("list_route_attempt_stats", {
-        hours: routeStatsHours,
-        capability: routeStatsCapability === "all" ? null : routeStatsCapability,
-      });
-      setRouteStats(stats);
-    } catch {
-      setRouteStats([]);
-    } finally {
-      setRouteStatsLoading(false);
-    }
-  }
-
-  async function handleExportRouteLogsCsv() {
-    setRouteLogsExporting(true);
-    try {
-      const csv = await invoke<string>("export_route_attempt_logs_csv", {
-        sessionId: routeLogsSessionId.trim() || null,
-        hours: routeStatsHours,
-        capability: routeLogsCapabilityFilter === "all" ? null : routeLogsCapabilityFilter,
-        resultFilter: routeLogsResultFilter === "all" ? null : routeLogsResultFilter,
-        errorKind: routeLogsErrorKindFilter === "all" ? null : routeLogsErrorKindFilter,
-      });
-      const dir = await invoke<string | null>("select_directory", { defaultPath: "" });
-      if (dir) {
-        const stamp = new Date().toISOString().replace(/:/g, "-").replace(/\..+/, "");
-        const path = `${dir}\\route-attempt-logs-${stamp}.csv`;
-        await invoke("write_export_file", { path, content: csv });
-      }
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(csv);
-      }
-    } finally {
-      setRouteLogsExporting(false);
-    }
-  }
-
-  function getCapabilityRecommendedDefaults(capability: string): { timeout_ms: number; retry_count: number } {
-    switch (capability) {
-      case "vision":
-        return { timeout_ms: 90000, retry_count: 1 };
-      case "image_gen":
-        return { timeout_ms: 120000, retry_count: 1 };
-      case "audio_stt":
-        return { timeout_ms: 90000, retry_count: 1 };
-      case "audio_tts":
-        return { timeout_ms: 60000, retry_count: 1 };
-      default:
-        return { timeout_ms: 60000, retry_count: 1 };
-    }
-  }
-
-  const filteredRouteLogs = routeLogs.filter((log) => {
-    if (routeLogsCapabilityFilter !== "all" && log.capability !== routeLogsCapabilityFilter) return false;
-    if (routeLogsResultFilter === "success" && !log.success) return false;
-    if (routeLogsResultFilter === "failed" && log.success) return false;
-    if (routeLogsErrorKindFilter !== "all" && log.error_kind !== routeLogsErrorKindFilter) return false;
-    return true;
-  });
-
-  function addFallbackRow() {
-    setChatFallbackRows((rows) => [...rows, { provider_id: "", model: "" }]);
-  }
-
-  function updateFallbackRow(index: number, patch: Partial<{ provider_id: string; model: string }>) {
-    setChatFallbackRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  }
-
-  function removeFallbackRow(index: number) {
-    setChatFallbackRows((rows) => rows.filter((_, i) => i !== index));
-  }
-
-  async function handleApplyRouteTemplate() {
-    try {
-      const policy = await invoke<CapabilityRoutingPolicy>("apply_capability_route_template", {
-        capability: selectedCapability,
-        templateId: selectedRouteTemplateId,
-      });
-      setChatRoutingPolicy(policy);
-      const parsed = JSON.parse(policy.fallback_chain_json || "[]");
-      if (Array.isArray(parsed)) {
-        setChatFallbackRows(
-          parsed.map((item) => ({
-            provider_id: String(item?.provider_id || ""),
-            model: String(item?.model || ""),
-          })),
-        );
-      } else {
-        setChatFallbackRows([]);
-      }
-    } catch (e) {
-      const raw = String(e);
-      const enabledKeys = Array.from(new Set(providers.filter((p) => p.enabled).map((p) => p.provider_key)));
-      const enabledText = enabledKeys.length > 0 ? enabledKeys.join(", ") : "无";
-      let missingText = "";
-      const match = raw.match(/需要其一）:\s*(\[[^\]]+\])/);
-      if (match?.[1]) {
-        missingText = `；缺少服务标识（任选其一）: ${match[1]}`;
-      }
-      setPolicyError(`应用路由模板失败: ${raw}${missingText}；当前已启用: ${enabledText}。请先到“模型连接”补齐并启用。`);
-    }
-  }
 
   const inputCls = "sm-input w-full text-sm py-1.5";
   const labelCls = "sm-field-label";
@@ -521,10 +235,10 @@ export function SettingsView({
             <div className="space-y-2">
               {chatFallbackRows.map((row, index) => (
                 <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                  <select
-                    className={inputCls}
-                    value={row.provider_id}
-                    onChange={(e) => updateFallbackRow(index, { provider_id: e.target.value })}
+                    <select
+                      className={inputCls}
+                      value={row.provider_id}
+                      onChange={(e) => updateFallbackRow(index, { provider_id: e.target.value })}
                   >
                     <option value="">选择连接</option>
                     {providers.map((p) => (
@@ -735,11 +449,11 @@ export function SettingsView({
             </div>
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs font-medium text-gray-500">最近路由日志</div>
-              <button
-                onClick={() => {
-                  setRouteLogsOffset(0);
-                  loadRecentRouteLogs(false);
-                }}
+                <button
+                  onClick={() => {
+                    setRouteLogsOffset(0);
+                    loadRecentRouteLogs(false);
+                  }}
                 disabled={routeLogsLoading}
                 className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
               >
