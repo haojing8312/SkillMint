@@ -2,6 +2,7 @@ pub(crate) mod admission_gate;
 pub(crate) mod approval_gate;
 pub(crate) mod attempt_runner;
 pub(crate) mod before_tool_call_guard;
+pub(crate) mod compaction_pipeline;
 pub mod events;
 pub(crate) mod failover;
 pub(crate) mod progress_guard;

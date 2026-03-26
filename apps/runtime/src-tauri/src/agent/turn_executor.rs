@@ -130,25 +130,29 @@ impl AgentExecutor {
                             .app_data_dir()
                             .unwrap_or_default()
                             .join("transcripts");
-                        if let Ok(path) =
-                            super::compactor::save_transcript(&transcript_dir, sid, &messages)
+                        match super::runtime::compaction_pipeline::maybe_auto_compact(
+                            super::runtime::compaction_pipeline::RuntimeCompactionRequest {
+                                api_format,
+                                base_url,
+                                api_key,
+                                model,
+                                session_id: sid,
+                                messages: &messages,
+                                transcript_root: &transcript_dir,
+                            },
+                        )
+                        .await
                         {
-                            let path_str = path.to_string_lossy().to_string();
-                            match super::compactor::auto_compact(
-                                api_format, base_url, api_key, model, &messages, &path_str,
-                            )
-                            .await
-                            {
-                                Ok(compacted) => {
-                                    eprintln!(
-                                        "[agent] 自动压缩完成，消息数 {} → {}",
-                                        messages.len(),
-                                        compacted.len()
-                                    );
-                                    messages = compacted;
-                                }
-                                Err(e) => eprintln!("[agent] 自动压缩失败: {}", e),
+                            Ok(Some(outcome)) => {
+                                eprintln!(
+                                    "[agent] 自动压缩完成，消息数 {} → {}",
+                                    messages.len(),
+                                    outcome.compacted_messages.len()
+                                );
+                                messages = outcome.compacted_messages;
                             }
+                            Ok(None) => {}
+                            Err(e) => eprintln!("[agent] 自动压缩失败: {}", e),
                         }
                     }
                 }
