@@ -1,6 +1,5 @@
 use super::chat_session_io;
-use crate::agent::compactor;
-use runtime_executor_core::estimate_tokens;
+use crate::agent::runtime::compaction_pipeline::{run_compaction, RuntimeCompactionRequest};
 use std::path::Path;
 
 #[derive(serde::Serialize)]
@@ -17,39 +16,29 @@ pub async fn compact_context_with_pool(
 ) -> Result<CompactionResult, String> {
     let (messages, api_format, base_url, api_key, model_name) =
         chat_session_io::load_compaction_inputs_with_pool(pool, session_id).await?;
-
-    let original_tokens = estimate_tokens(&messages);
     let transcript_dir = app_data_dir.join("transcripts");
-    std::fs::create_dir_all(&transcript_dir).map_err(|e| e.to_string())?;
-
-    let transcript_path = compactor::save_transcript(&transcript_dir, session_id, &messages)
-        .map_err(|e| e.to_string())?;
-
-    let compacted = compactor::auto_compact(
-        &api_format,
-        &base_url,
-        &api_key,
-        &model_name,
-        &messages,
-        &transcript_path.to_string_lossy(),
-    )
+    let outcome = run_compaction(RuntimeCompactionRequest {
+        api_format: &api_format,
+        base_url: &base_url,
+        api_key: &api_key,
+        model: &model_name,
+        session_id,
+        messages: &messages,
+        transcript_root: &transcript_dir,
+    })
     .await
     .map_err(|e| e.to_string())?;
 
-    chat_session_io::replace_messages_with_compacted_with_pool(pool, session_id, &compacted)
-        .await?;
-
-    let new_tokens = estimate_tokens(&compacted);
-    let summary = compacted
-        .iter()
-        .find(|m| m["role"] == "user")
-        .and_then(|m| m["content"].as_str())
-        .unwrap_or("")
-        .to_string();
+    chat_session_io::replace_messages_with_compacted_with_pool(
+        pool,
+        session_id,
+        &outcome.compacted_messages,
+    )
+    .await?;
 
     Ok(CompactionResult {
-        original_tokens,
-        new_tokens,
-        summary,
+        original_tokens: outcome.original_tokens,
+        new_tokens: outcome.new_tokens,
+        summary: outcome.summary,
     })
 }

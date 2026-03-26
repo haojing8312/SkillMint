@@ -14,9 +14,11 @@ pub mod sidecar;
 pub mod team_templates;
 mod windows_process;
 
+use agent::runtime::{
+    RunRegistry, RunRegistryState, SessionAdmissionGate, SessionAdmissionGateState,
+};
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
-use agent::runtime::RunRegistry;
 use agent::{AgentExecutor, ToolRegistry};
 use approval_bus::ApprovalManager;
 use commands::chat::{
@@ -96,9 +98,6 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
     app.manage(agent_executor);
     app.manage(Arc::clone(&registry));
 
-    let run_registry = Arc::new(RunRegistry::new());
-    app.manage(Arc::clone(&run_registry));
-
     let ask_user_responder = new_responder();
     app.manage(AskUserState(ask_user_responder));
     let tool_confirm_responder: ToolConfirmResponder =
@@ -115,14 +114,19 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
     let search_cache = Arc::new(SearchCache::new(std::time::Duration::from_secs(900), 100));
     app.manage(SearchCacheState(search_cache));
 
+    let session_admission_gate = Arc::new(SessionAdmissionGate::default());
+    app.manage(SessionAdmissionGateState(session_admission_gate));
+
     let journal_root = app
         .path()
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("workclaw"))
         .join("sessions");
+    let run_registry = Arc::new(RunRegistry::default());
+    app.manage(RunRegistryState(run_registry.clone()));
     let journal_store = Arc::new(SessionJournalStore::with_registry(
         journal_root,
-        Arc::clone(&run_registry),
+        run_registry,
     ));
     app.manage(SessionJournalStateHandle(journal_store));
 

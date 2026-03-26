@@ -1,27 +1,22 @@
-use crate::agent::runtime::RunRegistry;
-use crate::commands::session_runs::append_session_run_event_with_pool;
+use crate::agent::runtime::session_runs::append_session_run_event_with_pool;
+use crate::agent::runtime::RunRegistryState;
 use crate::commands::skills::DbState;
 use crate::session_journal::{SessionJournalStateHandle, SessionRunEvent};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 pub(super) async fn resolve_current_session_run_id(
     app: &AppHandle,
     session_id: &str,
 ) -> Option<String> {
-    if let Some(registry) = app.try_state::<Arc<RunRegistry>>() {
-        if let Some(run_id) = registry.resolve_current_run_id(session_id) {
+    if let Some(run_registry) = app.try_state::<RunRegistryState>() {
+        if let Some(run_id) = run_registry.0.active_run_id(session_id) {
             return Some(run_id);
         }
     }
 
     let journal_state = app.try_state::<SessionJournalStateHandle>()?;
-    if let Some(run_id) = journal_state.0.run_registry().resolve_current_run_id(session_id) {
-        return Some(run_id);
-    }
-
     journal_state
         .0
         .read_state(session_id)

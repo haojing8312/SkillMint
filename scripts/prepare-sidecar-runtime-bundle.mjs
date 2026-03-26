@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +15,10 @@ const bundleDir = path.join(
   "sidecar-runtime",
 );
 const bundledNodeName = process.platform === "win32" ? "node.exe" : "node";
+const mcpSdkExampleSuffixes = [
+  path.join("node_modules", "@modelcontextprotocol", "sdk", "dist", "cjs", "examples"),
+  path.join("node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "examples"),
+];
 
 function resolvePnpmRunner() {
   return {
@@ -63,6 +67,63 @@ export function isRetryableWindowsDeployError(output, platform = process.platfor
     text.includes("EPERM") ||
     text.includes("ENOENT: no such file or directory, chmod")
   );
+}
+
+function listPackageRoots(baseDir, { treatScopedPackages = false } = {}) {
+  if (!existsSync(baseDir)) {
+    return [];
+  }
+
+  const packageRoots = [];
+  for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+      continue;
+    }
+
+    const entryPath = path.join(baseDir, entry.name);
+    if (!treatScopedPackages || !entry.name.startsWith("@")) {
+      packageRoots.push(entryPath);
+      continue;
+    }
+
+    for (const scopedEntry of readdirSync(entryPath, { withFileTypes: true })) {
+      if (!scopedEntry.isDirectory() && !scopedEntry.isSymbolicLink()) {
+        continue;
+      }
+      packageRoots.push(path.join(entryPath, scopedEntry.name));
+    }
+  }
+
+  return packageRoots;
+}
+
+export function listNonRuntimeBundlePaths(targetDir) {
+  const candidatePaths = new Set();
+  const candidateRoots = [
+    targetDir,
+    ...listPackageRoots(path.join(targetDir, "node_modules", ".pnpm")),
+    ...listPackageRoots(path.join(targetDir, "node_modules", ".pnpm", "node_modules"), {
+      treatScopedPackages: true,
+    }),
+  ];
+  for (const candidateRoot of candidateRoots) {
+    for (const suffix of mcpSdkExampleSuffixes) {
+      const candidatePath = path.join(candidateRoot, suffix);
+      if (existsSync(candidatePath)) {
+        candidatePaths.add(candidatePath);
+      }
+    }
+  }
+
+  return [...candidatePaths].sort();
+}
+
+export function pruneNonRuntimeBundlePaths(targetDir) {
+  const prunedPaths = listNonRuntimeBundlePaths(targetDir);
+  for (const prunedPath of prunedPaths) {
+    rmSync(prunedPath, { recursive: true, force: true });
+  }
+  return prunedPaths;
 }
 
 function readPnpmMajorVersion(runner) {
@@ -149,6 +210,10 @@ function main() {
     throw new Error(
       `Bundled sidecar runtime is missing ${distEntry}. Run the sidecar build before staging resources.`,
     );
+  }
+
+  for (const prunedPath of pruneNonRuntimeBundlePaths(bundleDir)) {
+    console.log(`Pruned non-runtime sidecar bundle path: ${path.relative(projectRoot, prunedPath)}`);
   }
 
   copyFileSync(process.execPath, path.join(bundleDir, bundledNodeName));

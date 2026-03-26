@@ -1,27 +1,23 @@
 use super::chat_compaction;
 use super::chat_runtime_io as chat_io;
-use super::chat_send_message_flow::{self, PrepareSendMessageParams};
 use super::chat_session_io;
 use super::skills::DbState;
-use crate::agent::tools::search_providers::cache::SearchCache;
-use crate::agent::tools::AskUserResponder;
 use crate::agent::AgentExecutor;
+use crate::agent::runtime::{SessionAdmissionGateState, SessionRuntime};
 use crate::approval_bus::ApprovalManager;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::session_journal::SessionJournalStateHandle;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
-use uuid::Uuid;
 
 /// 全局 AskUser 响应通道（用于 answer_user_question command）
-pub struct AskUserState(pub AskUserResponder);
+pub use crate::agent::runtime::AskUserState;
 
 /// 工具确认通道（用于 confirm_tool_execution command）
-pub type ToolConfirmResponder =
-    std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<bool>>>>;
+pub use crate::agent::runtime::ToolConfirmResponder;
 pub struct ToolConfirmState(pub ToolConfirmResponder);
 
 /// 通用审批管理器（高风险审批总线）
@@ -31,10 +27,12 @@ pub struct ApprovalManagerState(pub Arc<ApprovalManager>);
 pub struct PendingApprovalBridgeState(pub Arc<std::sync::Mutex<Option<String>>>);
 
 /// 全局搜索缓存（跨会话共享，在 lib.rs 中创建）
-pub struct SearchCacheState(pub Arc<SearchCache>);
+pub use crate::agent::runtime::SearchCacheState;
 
 /// Agent 取消标志（用于 cancel_agent command 停止正在执行的 Agent）
-pub struct CancelFlagState(pub Arc<AtomicBool>);
+pub use crate::agent::runtime::CancelFlagState;
+
+pub use crate::agent::runtime::{SkillRouteEvent, StreamToken};
 
 #[cfg(test)]
 pub(crate) fn build_group_orchestrator_report_preview(
@@ -42,29 +40,6 @@ pub(crate) fn build_group_orchestrator_report_preview(
 ) -> String {
     let outcome = crate::agent::group_orchestrator::simulate_group_run(request);
     outcome.final_report
-}
-
-#[derive(serde::Serialize, Clone)]
-pub(crate) struct StreamToken {
-    pub(crate) session_id: String,
-    pub(crate) token: String,
-    pub(crate) done: bool,
-    #[serde(default)]
-    pub(crate) sub_agent: bool,
-}
-
-#[derive(serde::Serialize, Clone, Debug)]
-pub struct SkillRouteEvent {
-    pub session_id: String,
-    pub route_run_id: String,
-    pub node_id: String,
-    pub parent_node_id: Option<String>,
-    pub skill_name: String,
-    pub depth: usize,
-    pub status: String,
-    pub duration_ms: Option<u64>,
-    pub error_code: Option<String>,
-    pub error_message: Option<String>,
 }
 
 pub fn emit_skill_route_event(app: &AppHandle, event: SkillRouteEvent) {
@@ -236,6 +211,15 @@ pub async fn send_message(
     let session_id = request.session_id.clone();
     let user_message = request.summary_text();
     let user_message_parts = request.parts_as_json()?;
+
+    let admission_gate = app
+        .try_state::<SessionAdmissionGateState>()
+        .ok_or_else(|| "SessionAdmissionGateState unavailable".to_string())?;
+    let _admission_lease = admission_gate
+        .0
+        .try_acquire(&session_id)
+        .map_err(|conflict| conflict.to_string())?;
+
     if let Some(diagnostics_state) = app.try_state::<ManagedDiagnosticsState>() {
         let _ = diagnostics::write_log_record(
             &diagnostics_state.0.paths,
@@ -331,68 +315,44 @@ pub async fn send_message(
         return Ok(());
     }
 
-    let prepared_context =
-        chat_send_message_flow::prepare_send_message_context(PrepareSendMessageParams {
-            app: &app,
-            db: &db.0,
-            agent_executor: agent_executor.inner(),
-            session_id: &session_id,
-            user_message: &user_message,
-            user_message_parts: &user_message_parts,
-            max_iterations_override: request.max_iterations,
-        })
-        .await?;
-
     // 使用全局工具确认通道（在 lib.rs 中创建）
     let tool_confirm_responder = app.state::<ToolConfirmState>().0.clone();
-    let run_id = Uuid::new_v4().to_string();
-    chat_io::append_run_started_with_pool(&db.0, journal.0.as_ref(), &session_id, &run_id, &msg_id)
-        .await?;
-
-    let route_execution = chat_send_message_flow::execute_send_message_route(
+    SessionRuntime::run_send_message(
         &app,
-        agent_executor.as_ref(),
-        &db.0,
-        &session_id,
-        &prepared_context,
-        cancel_flag_clone.clone(),
-        tool_confirm_responder,
-    )
-    .await;
-
-    let finalize_result = chat_send_message_flow::finalize_send_message_execution(
-        &app,
+        agent_executor.inner(),
         &db.0,
         journal.0.as_ref(),
         &session_id,
-        &run_id,
-        route_execution,
-        prepared_context.messages.len(),
+        &msg_id,
+        &user_message,
+        &user_message_parts,
+        request.max_iterations,
+        cancel_flag_clone.clone(),
+        tool_confirm_responder,
     )
-    .await;
-
-    if let Err(error) = &finalize_result {
+    .await
+    .map_err(|error| {
         if let Some(diagnostics_state) = app.try_state::<ManagedDiagnosticsState>() {
             let _ = diagnostics::write_log_record(
                 &diagnostics_state.0.paths,
                 diagnostics::LogLevel::Error,
                 "chat",
                 "send_message_finalize_failed",
-                error,
+                &error,
                 Some(serde_json::json!({
                     "session_id": session_id,
-                    "run_id": run_id,
+                    "message_id": msg_id,
                 })),
             );
         }
-    }
-
-    finalize_result
+        error
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::build_group_orchestrator_report_preview;
+    use crate::agent::runtime::SessionAdmissionConflict;
     use crate::commands::chat_runtime_io;
     use std::collections::HashMap;
     use std::path::Path;
@@ -460,6 +420,14 @@ mod tests {
         assert!(report.contains("计划"));
         assert!(report.contains("执行"));
         assert!(report.contains("汇报"));
+    }
+
+    #[test]
+    fn session_run_conflict_error_is_stable() {
+        let error = SessionAdmissionConflict::new("session-1").to_string();
+
+        assert!(error.starts_with("SESSION_RUN_CONFLICT:"));
+        assert!(error.contains("当前会话仍在执行中"));
     }
 }
 

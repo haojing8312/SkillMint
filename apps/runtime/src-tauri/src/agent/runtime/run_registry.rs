@@ -1,6 +1,6 @@
-use crate::session_journal::{SessionJournalState, SessionRunStatus};
+use crate::session_journal::SessionRunEvent;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Debug, Default)]
 pub struct RunRegistry {
@@ -8,25 +8,18 @@ pub struct RunRegistry {
 }
 
 impl RunRegistry {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn active_run_id(&self, session_id: &str) -> Option<String> {
+        self.read_active_runs().get(session_id).cloned()
     }
 
-    pub fn register_active_run<S, R>(&self, session_id: S, run_id: R)
-    where
-        S: Into<String>,
-        R: Into<String>,
-    {
-        let session_id = normalize_key(session_id.into());
-        let run_id = normalize_key(run_id.into());
+    pub fn register_active_run(&self, session_id: &str, run_id: &str) {
+        let session_id = session_id.trim();
+        let run_id = run_id.trim();
         if session_id.is_empty() || run_id.is_empty() {
             return;
         }
-
-        self.active_runs
-            .write()
-            .expect("run registry lock")
-            .insert(session_id, run_id);
+        self.write_active_runs()
+            .insert(session_id.to_string(), run_id.to_string());
     }
 
     pub fn complete_run(&self, session_id: &str, run_id: &str) {
@@ -37,78 +30,111 @@ impl RunRegistry {
         self.clear_if_matches(session_id, run_id);
     }
 
-    pub fn resolve_current_run_id(&self, session_id: &str) -> Option<String> {
-        let session_id = normalize_key(session_id.to_string());
-        if session_id.is_empty() {
+    pub fn restore_session(
+        &self,
+        session_id: &str,
+        current_run_id: Option<&str>,
+    ) -> Option<String> {
+        if let Some(run_id) = self.active_run_id(session_id) {
+            return Some(run_id);
+        }
+
+        let Some(run_id) = normalize_run_id(current_run_id) else {
             return None;
-        }
-
-        self.active_runs
-            .read()
-            .expect("run registry lock")
-            .get(&session_id)
-            .cloned()
+        };
+        self.register_active_run(session_id, run_id);
+        Some(run_id.to_string())
     }
 
-    pub fn sync_session_projection(&self, session_id: &str, current_run_id: Option<&str>) {
-        match current_run_id.map(normalize_key).filter(|run_id| !run_id.is_empty()) {
-            Some(run_id) => self.register_active_run(session_id, run_id),
-            None => self.clear_session(session_id),
+    pub fn apply_event(&self, session_id: &str, event: &SessionRunEvent) {
+        match event {
+            SessionRunEvent::RunStarted { run_id, .. } => {
+                self.register_active_run(session_id, run_id);
+            }
+            SessionRunEvent::RunCompleted { run_id }
+            | SessionRunEvent::RunStopped { run_id, .. }
+            | SessionRunEvent::RunFailed { run_id, .. } => {
+                self.complete_run(session_id, run_id);
+            }
+            SessionRunEvent::RunCancelled { run_id, .. } => {
+                self.cancel_run(session_id, run_id);
+            }
+            SessionRunEvent::AssistantChunkAppended { .. }
+            | SessionRunEvent::ToolStarted { .. }
+            | SessionRunEvent::ToolCompleted { .. }
+            | SessionRunEvent::ApprovalRequested { .. }
+            | SessionRunEvent::RunGuardWarning { .. } => {}
         }
-    }
-
-    pub fn hydrate_from_session_state(&self, state: &SessionJournalState) {
-        if let Some(run_id) = current_active_run_id(state) {
-            self.register_active_run(&state.session_id, run_id);
-        } else {
-            self.clear_session(&state.session_id);
-        }
-    }
-
-    pub fn clear_session(&self, session_id: &str) {
-        let session_id = normalize_key(session_id.to_string());
-        if session_id.is_empty() {
-            return;
-        }
-
-        self.active_runs
-            .write()
-            .expect("run registry lock")
-            .remove(&session_id);
     }
 
     fn clear_if_matches(&self, session_id: &str, run_id: &str) {
-        let session_id = normalize_key(session_id.to_string());
-        let run_id = normalize_key(run_id.to_string());
+        let session_id = session_id.trim();
+        let run_id = run_id.trim();
         if session_id.is_empty() || run_id.is_empty() {
             return;
         }
 
-        let mut guard = self.active_runs.write().expect("run registry lock");
-        if guard.get(&session_id).map(|current| current == &run_id).unwrap_or(false) {
-            guard.remove(&session_id);
+        let mut active_runs = self.write_active_runs();
+        if active_runs
+            .get(session_id)
+            .is_some_and(|current| current == run_id)
+        {
+            active_runs.remove(session_id);
         }
     }
-}
 
-fn normalize_key(value: impl AsRef<str>) -> String {
-    value.as_ref().trim().to_string()
-}
-
-fn current_active_run_id(state: &SessionJournalState) -> Option<String> {
-    if let Some(run_id) = state
-        .current_run_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|run_id| !run_id.is_empty())
-    {
-        return Some(run_id.to_string());
+    fn read_active_runs(&self) -> RwLockReadGuard<'_, HashMap<String, String>> {
+        self.active_runs
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    state
-        .runs
-        .iter()
-        .rev()
-        .find(|run| matches!(run.status, SessionRunStatus::Thinking | SessionRunStatus::ToolCalling | SessionRunStatus::WaitingApproval))
-        .map(|run| run.run_id.clone())
+    fn write_active_runs(&self) -> RwLockWriteGuard<'_, HashMap<String, String>> {
+        self.active_runs
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+fn normalize_run_id(run_id: Option<&str>) -> Option<&str> {
+    run_id.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct RunRegistryState(pub Arc<RunRegistry>);
+
+#[cfg(test)]
+mod tests {
+    use super::RunRegistry;
+
+    #[test]
+    fn restore_session_hydrates_registry_from_snapshot() {
+        let registry = RunRegistry::default();
+
+        let restored = registry.restore_session("session-1", Some("run-1"));
+
+        assert_eq!(restored.as_deref(), Some("run-1"));
+        assert_eq!(
+            registry.active_run_id("session-1").as_deref(),
+            Some("run-1")
+        );
+    }
+
+    #[test]
+    fn complete_run_only_clears_matching_active_run() {
+        let registry = RunRegistry::default();
+        registry.register_active_run("session-1", "run-1");
+
+        registry.complete_run("session-1", "run-2");
+        assert_eq!(
+            registry.active_run_id("session-1").as_deref(),
+            Some("run-1")
+        );
+
+        registry.complete_run("session-1", "run-1");
+        assert_eq!(registry.active_run_id("session-1"), None);
+    }
 }

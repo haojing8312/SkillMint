@@ -1,13 +1,11 @@
+use crate::preparation;
+use crate::routing;
 use crate::traits::{ChatEmployeeDirectory, ChatSessionContextRepository, ChatSettingsRepository};
 use crate::types::{
-    ChatEmployeeSnapshot, ChatExecutionContext, ChatExecutionGuidance,
-    ChatExecutionPreparationRequest, ChatPermissionMode, ChatPreparationRequest,
-    ModelRouteErrorKind, PreparedChatExecution, PreparedChatExecutionAssembly,
-    PreparedSessionCreation, SessionCreationRequest, SessionExecutionContextSnapshot,
-    SessionModelSnapshot,
+    ChatExecutionContext, ChatExecutionGuidance, ChatExecutionPreparationRequest,
+    ChatPreparationRequest, PreparedChatExecution, PreparedChatExecutionAssembly,
+    PreparedSessionCreation, SessionCreationRequest,
 };
-use chrono::{Datelike, Duration, Local, NaiveDate};
-use serde_json::Value;
 
 pub struct ChatPreparationService;
 pub struct ChatExecutionPreparationService;
@@ -21,29 +19,7 @@ impl ChatPreparationService {
         &self,
         request: SessionCreationRequest,
     ) -> PreparedSessionCreation {
-        let permission_mode_storage =
-            normalize_permission_mode_for_storage(request.permission_mode.as_deref()).to_string();
-        let session_mode_storage =
-            normalize_session_mode_for_storage(request.session_mode.as_deref()).to_string();
-        let normalized_team_id =
-            normalize_team_id_for_storage(&session_mode_storage, request.team_id.as_deref());
-        let normalized_title = {
-            let title = request.title.unwrap_or_default().trim().to_string();
-            if title.is_empty() {
-                "New Chat".to_string()
-            } else {
-                title
-            }
-        };
-
-        PreparedSessionCreation {
-            permission_mode_storage,
-            session_mode_storage,
-            normalized_team_id,
-            normalized_title,
-            normalized_work_dir: request.work_dir.unwrap_or_default().trim().to_string(),
-            normalized_employee_id: request.employee_id.unwrap_or_default().trim().to_string(),
-        }
+        preparation::prepare_session_creation(request)
     }
 
     pub async fn prepare_chat_execution<R: ChatSettingsRepository>(
@@ -51,53 +27,7 @@ impl ChatPreparationService {
         repo: &R,
         request: ChatPreparationRequest,
     ) -> Result<PreparedChatExecution, String> {
-        let routing = repo.load_routing_settings().await?;
-        let chat_route = repo.load_chat_routing().await?;
-        let capability = infer_capability_from_message_parts(
-            request.user_message_parts.as_deref().unwrap_or(&[]),
-            &request.user_message,
-        )
-        .to_string();
-        let permission_mode_storage =
-            normalize_permission_mode_for_storage(request.permission_mode.as_deref()).to_string();
-        let session_mode_storage =
-            normalize_session_mode_for_storage(request.session_mode.as_deref()).to_string();
-        let normalized_team_id =
-            normalize_team_id_for_storage(&session_mode_storage, request.team_id.as_deref());
-        let permission_label = permission_mode_label(&permission_mode_storage).to_string();
-
-        let (primary_provider_id, primary_model, fallback_targets) = match chat_route {
-            Some(route) if route.enabled => (
-                Some(route.primary_provider_id),
-                Some(route.primary_model),
-                parse_fallback_chain_targets(&route.fallback_chain_json),
-            ),
-            _ => (None, None, Vec::new()),
-        };
-
-        Ok(PreparedChatExecution {
-            capability,
-            permission_mode_storage,
-            session_mode_storage,
-            normalized_team_id,
-            permission_label,
-            max_call_depth: routing.max_call_depth,
-            node_timeout_seconds: routing.node_timeout_seconds,
-            retry_count: routing.retry_count,
-            primary_provider_id,
-            primary_model,
-            fallback_targets,
-            default_model_id: repo.resolve_default_model_id().await?,
-            default_usable_model_id: repo.resolve_default_usable_model_id().await?,
-            execution_context: ChatExecutionContext {
-                session_id: String::new(),
-                session_mode_storage: "general".to_string(),
-                normalized_team_id: String::new(),
-                employee_id: String::new(),
-                work_dir: String::new(),
-                imported_mcp_server_ids: Vec::new(),
-            },
-        })
+        preparation::prepare_chat_execution(repo, request).await
     }
 
     pub async fn prepare_route_candidates<R: ChatSettingsRepository>(
@@ -106,68 +36,7 @@ impl ChatPreparationService {
         model_id: &str,
         request: &ChatPreparationRequest,
     ) -> Result<crate::types::PreparedRouteCandidates, String> {
-        let session_model = resolve_session_model_with_fallback(repo, model_id).await?;
-        let user_message_parts = request.user_message_parts.as_deref().unwrap_or(&[]);
-        let requested_capability =
-            infer_capability_from_message_parts(user_message_parts, &request.user_message);
-        let requires_explicit_vision_route =
-            requested_capability == "vision" && has_image_message_parts(user_message_parts);
-
-        let mut retry_count_per_candidate = 0usize;
-        let mut route_policy = repo
-            .load_route_policy(requested_capability)
-            .await?
-            .filter(|policy| policy.enabled);
-        if route_policy.is_none()
-            && requested_capability != "chat"
-            && !requires_explicit_vision_route
-        {
-            route_policy = repo
-                .load_route_policy("chat")
-                .await?
-                .filter(|policy| policy.enabled);
-        }
-
-        let mut candidates = Vec::new();
-        if let Some(policy) = route_policy {
-            retry_count_per_candidate = policy.retry_count.clamp(0, 3) as usize;
-            let mut provider_targets =
-                vec![(policy.primary_provider_id, policy.primary_model.clone())];
-            provider_targets.extend(parse_fallback_chain_targets(&policy.fallback_chain_json));
-
-            for (provider_id, preferred_model) in provider_targets {
-                if let Some(provider) = repo.get_provider_connection(&provider_id).await? {
-                    if is_supported_protocol(&provider.protocol_type)
-                        && !provider.api_key.trim().is_empty()
-                    {
-                        candidates.push(crate::types::PreparedRouteCandidate {
-                            protocol_type: provider.protocol_type,
-                            base_url: provider.base_url,
-                            model_name: if preferred_model.trim().is_empty() {
-                                session_model.model_name.clone()
-                            } else {
-                                preferred_model
-                            },
-                            api_key: provider.api_key,
-                        });
-                    }
-                }
-            }
-        }
-
-        if !requires_explicit_vision_route && !session_model.api_key.trim().is_empty() {
-            candidates.push(crate::types::PreparedRouteCandidate {
-                protocol_type: session_model.api_format,
-                base_url: session_model.base_url,
-                model_name: session_model.model_name,
-                api_key: session_model.api_key,
-            });
-        }
-
-        Ok(crate::types::PreparedRouteCandidates {
-            candidates,
-            retry_count_per_candidate,
-        })
+        routing::prepare_route_candidates(repo, model_id, request).await
     }
 }
 
@@ -185,41 +54,7 @@ impl ChatExecutionPreparationService {
     where
         R: ChatSettingsRepository + ChatSessionContextRepository,
     {
-        let chat_preparation = ChatPreparationService::new()
-            .prepare_chat_execution(repo, request.clone().into())
-            .await?;
-        let execution_context = self.prepare_execution_context(repo, request).await?;
-        let mut guidance_request = request.clone();
-        if guidance_request
-            .work_dir
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .is_empty()
-            && !execution_context.work_dir.trim().is_empty()
-        {
-            guidance_request.work_dir = Some(execution_context.work_dir.clone());
-        }
-        if guidance_request.imported_mcp_server_ids.is_empty()
-            && !execution_context.imported_mcp_server_ids.is_empty()
-        {
-            guidance_request.imported_mcp_server_ids =
-                execution_context.imported_mcp_server_ids.clone();
-        }
-        let execution_guidance = self
-            .prepare_execution_guidance(repo, &guidance_request)
-            .await?;
-        let route_decisions = self
-            .prepare_route_decisions(repo, model_id, request)
-            .await?;
-
-        Ok(PreparedChatExecutionAssembly {
-            chat_preparation,
-            execution_context,
-            execution_guidance,
-            route_decisions,
-            employee_collaboration_guidance: None,
-        })
+        preparation::prepare_execution(repo, model_id, request).await
     }
 
     pub async fn prepare_execution_with_directory<R, D>(
@@ -233,11 +68,7 @@ impl ChatExecutionPreparationService {
         R: ChatSettingsRepository + ChatSessionContextRepository,
         D: ChatEmployeeDirectory,
     {
-        let mut prepared = self.prepare_execution(repo, model_id, request).await?;
-        prepared.employee_collaboration_guidance = self
-            .prepare_employee_collaboration_guidance(directory, &prepared.execution_context)
-            .await?;
-        Ok(prepared)
+        preparation::prepare_execution_with_directory(repo, directory, model_id, request).await
     }
 
     pub async fn prepare_employee_collaboration_guidance<D: ChatEmployeeDirectory>(
@@ -245,35 +76,22 @@ impl ChatExecutionPreparationService {
         directory: &D,
         execution_context: &ChatExecutionContext,
     ) -> Result<Option<String>, String> {
-        if execution_context.employee_id.trim().is_empty() {
-            return Ok(None);
-        }
-
-        let employees = directory.list_collaboration_candidates().await?;
-        Ok(build_employee_collaboration_guidance(
-            &execution_context.employee_id,
-            &employees,
-        ))
+        preparation::prepare_employee_collaboration_guidance(directory, execution_context).await
     }
 
     pub fn resolve_memory_bucket_employee_id<'a>(
         &self,
         execution_context: &'a ChatExecutionContext,
     ) -> &'a str {
-        execution_context.employee_id.as_str()
+        preparation::resolve_memory_bucket_employee_id(execution_context)
     }
 
     pub fn resolve_skill_root_work_dir<'a>(&self, guidance: &'a ChatExecutionGuidance) -> &'a str {
-        guidance.effective_work_dir.as_str()
+        preparation::resolve_skill_root_work_dir(guidance)
     }
 
     pub fn resolve_executor_work_dir(&self, guidance: &ChatExecutionGuidance) -> Option<String> {
-        let work_dir = guidance.effective_work_dir.trim();
-        if work_dir.is_empty() {
-            None
-        } else {
-            Some(work_dir.to_string())
-        }
+        preparation::resolve_executor_work_dir(guidance)
     }
 
     pub async fn prepare_execution_context<R: ChatSessionContextRepository>(
@@ -281,10 +99,7 @@ impl ChatExecutionPreparationService {
         repo: &R,
         request: &ChatExecutionPreparationRequest,
     ) -> Result<ChatExecutionContext, String> {
-        let snapshot = repo
-            .load_session_execution_context(request.session_id.as_deref())
-            .await?;
-        Ok(merge_execution_context(snapshot, request))
+        preparation::prepare_execution_context(repo, request).await
     }
 
     pub async fn prepare_execution_guidance<R: ChatSettingsRepository>(
@@ -292,40 +107,7 @@ impl ChatExecutionPreparationService {
         repo: &R,
         request: &ChatExecutionPreparationRequest,
     ) -> Result<ChatExecutionGuidance, String> {
-        let effective_work_dir = if request.work_dir.as_deref().unwrap_or("").trim().is_empty() {
-            repo.load_default_work_dir()
-                .await?
-                .unwrap_or_default()
-                .trim()
-                .to_string()
-        } else {
-            request.work_dir.as_deref().unwrap_or("").trim().to_string()
-        };
-
-        let now = Local::now();
-        let today = now.date_naive();
-        let tomorrow = today + Duration::days(1);
-        let month_start = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
-            .ok_or_else(|| "failed to resolve month start".to_string())?;
-        let next_month_start = if today.month() == 12 {
-            NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
-        } else {
-            NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
-        }
-        .ok_or_else(|| "failed to resolve next month start".to_string())?;
-        let month_end = next_month_start - Duration::days(1);
-
-        Ok(ChatExecutionGuidance {
-            effective_work_dir,
-            local_timezone: format!("UTC{}", now.format("%:z")),
-            local_date: today.format("%Y-%m-%d").to_string(),
-            local_tomorrow: tomorrow.format("%Y-%m-%d").to_string(),
-            local_month_range: format!(
-                "{} ~ {}",
-                month_start.format("%Y-%m-%d"),
-                month_end.format("%Y-%m-%d")
-            ),
-        })
+        preparation::prepare_execution_guidance(repo, request).await
     }
 
     pub async fn prepare_route_decisions<R: ChatSettingsRepository>(
@@ -334,535 +116,6 @@ impl ChatExecutionPreparationService {
         model_id: &str,
         request: &ChatExecutionPreparationRequest,
     ) -> Result<crate::types::PreparedRouteCandidates, String> {
-        let session_model = resolve_session_model_with_fallback(repo, model_id).await?;
-        let requested_capability = request
-            .requested_capability
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| infer_capability_from_user_message(&request.user_message));
-
-        let mut retry_count_per_candidate = 0usize;
-        let mut route_policy = repo
-            .load_route_policy(requested_capability)
-            .await?
-            .filter(|policy| policy.enabled);
-        if route_policy.is_none() && requested_capability != "chat" {
-            route_policy = repo
-                .load_route_policy("chat")
-                .await?
-                .filter(|policy| policy.enabled);
-        }
-
-        let mut candidates = Vec::new();
-        if let Some(policy) = route_policy {
-            retry_count_per_candidate = policy.retry_count.clamp(0, 3) as usize;
-            let mut provider_targets =
-                vec![(policy.primary_provider_id, policy.primary_model.clone())];
-            provider_targets.extend(parse_fallback_chain_targets(&policy.fallback_chain_json));
-
-            for (provider_id, preferred_model) in provider_targets {
-                if let Some(provider) = repo.get_provider_connection(&provider_id).await? {
-                    if is_supported_protocol(&provider.protocol_type)
-                        && !provider.api_key.trim().is_empty()
-                    {
-                        candidates.push(crate::types::PreparedRouteCandidate {
-                            protocol_type: provider.protocol_type,
-                            base_url: provider.base_url,
-                            model_name: if preferred_model.trim().is_empty() {
-                                session_model.model_name.clone()
-                            } else {
-                                preferred_model
-                            },
-                            api_key: provider.api_key,
-                        });
-                    }
-                }
-            }
-        }
-
-        if !session_model.api_key.trim().is_empty() {
-            candidates.push(crate::types::PreparedRouteCandidate {
-                protocol_type: session_model.api_format,
-                base_url: session_model.base_url,
-                model_name: session_model.model_name,
-                api_key: session_model.api_key,
-            });
-        }
-
-        Ok(crate::types::PreparedRouteCandidates {
-            candidates,
-            retry_count_per_candidate,
-        })
-    }
-}
-
-async fn resolve_session_model_with_fallback<R: ChatSettingsRepository>(
-    repo: &R,
-    model_id: &str,
-) -> Result<SessionModelSnapshot, String> {
-    match repo.load_session_model(model_id).await {
-        Ok(model) => Ok(model),
-        Err(primary_err) => {
-            let normalized_error = primary_err.to_ascii_lowercase();
-            let is_missing_model = primary_err.contains("模型配置不存在")
-                || normalized_error.contains("no rows returned")
-                || normalized_error.contains("rownotfound");
-            if !is_missing_model {
-                return Err(primary_err);
-            }
-            let fallback_model_id = repo
-                .resolve_default_usable_model_id()
-                .await?
-                .filter(|fallback_id| fallback_id != model_id)
-                .ok_or_else(|| primary_err.clone())?;
-            repo.load_session_model(&fallback_model_id)
-                .await
-                .map_err(|_| primary_err)
-        }
-    }
-}
-
-impl From<ChatExecutionPreparationRequest> for ChatPreparationRequest {
-    fn from(value: ChatExecutionPreparationRequest) -> Self {
-        Self {
-            user_message: value.user_message,
-            user_message_parts: value.user_message_parts,
-            permission_mode: value.permission_mode,
-            session_mode: value.session_mode,
-            team_id: value.team_id,
-        }
-    }
-}
-
-impl From<ChatExecutionPreparationRequest> for ChatExecutionContext {
-    fn from(value: ChatExecutionPreparationRequest) -> Self {
-        let session_mode_storage =
-            normalize_session_mode_for_storage(value.session_mode.as_deref()).to_string();
-        Self {
-            session_id: value.session_id.unwrap_or_default().trim().to_string(),
-            session_mode_storage: session_mode_storage.clone(),
-            normalized_team_id: normalize_team_id_for_storage(
-                &session_mode_storage,
-                value.team_id.as_deref(),
-            ),
-            employee_id: value.employee_id.unwrap_or_default().trim().to_string(),
-            work_dir: value.work_dir.unwrap_or_default().trim().to_string(),
-            imported_mcp_server_ids: value.imported_mcp_server_ids,
-        }
-    }
-}
-
-pub fn normalize_permission_mode_for_storage(permission_mode: Option<&str>) -> &'static str {
-    match permission_mode.unwrap_or("").trim() {
-        "standard" | "default" | "accept_edits" => "standard",
-        "full_access" | "unrestricted" => "full_access",
-        _ => "standard",
-    }
-}
-
-pub fn normalize_session_mode_for_storage(session_mode: Option<&str>) -> &'static str {
-    match session_mode.unwrap_or("").trim() {
-        "employee_direct" => "employee_direct",
-        "team_entry" => "team_entry",
-        "general" => "general",
-        _ => "general",
-    }
-}
-
-pub fn normalize_team_id_for_storage(session_mode: &str, team_id: Option<&str>) -> String {
-    if session_mode == "team_entry" {
-        team_id.unwrap_or("").trim().to_string()
-    } else {
-        String::new()
-    }
-}
-
-pub fn parse_permission_mode_for_runtime(permission_mode: &str) -> ChatPermissionMode {
-    match permission_mode {
-        "standard" | "default" | "accept_edits" => ChatPermissionMode::AcceptEdits,
-        "full_access" | "unrestricted" => ChatPermissionMode::Unrestricted,
-        _ => ChatPermissionMode::AcceptEdits,
-    }
-}
-
-pub fn permission_mode_label(permission_mode: &str) -> &'static str {
-    match permission_mode {
-        "standard" => "标准模式",
-        "full_access" => "全自动模式",
-        "default" => "标准模式",
-        "unrestricted" => "全自动模式",
-        _ => "标准模式",
-    }
-}
-
-pub fn infer_capability_from_user_message(message: &str) -> &'static str {
-    let m = message.to_ascii_lowercase();
-    if m.contains("识图")
-        || m.contains("看图")
-        || m.contains("图片理解")
-        || m.contains("vision")
-        || m.contains("analyze image")
-    {
-        return "vision";
-    }
-    if m.contains("生图")
-        || m.contains("画图")
-        || m.contains("生成图片")
-        || m.contains("image generation")
-        || m.contains("generate image")
-    {
-        return "image_gen";
-    }
-    if m.contains("语音转文字")
-        || m.contains("语音识别")
-        || m.contains("stt")
-        || m.contains("transcribe")
-        || m.contains("speech to text")
-    {
-        return "audio_stt";
-    }
-    if m.contains("文字转语音")
-        || m.contains("tts")
-        || m.contains("text to speech")
-        || m.contains("语音合成")
-    {
-        return "audio_tts";
-    }
-    "chat"
-}
-
-pub fn infer_capability_from_message_parts(
-    parts: &[Value],
-    fallback_message: &str,
-) -> &'static str {
-    let has_image_part = parts.iter().any(|part| {
-        part.get("type")
-            .and_then(Value::as_str)
-            .map(|part_type| part_type == "image")
-            .unwrap_or(false)
-    });
-    if has_image_part {
-        return "vision";
-    }
-    infer_capability_from_user_message(fallback_message)
-}
-
-fn has_image_message_parts(parts: &[Value]) -> bool {
-    parts.iter().any(|part| {
-        part.get("type")
-            .and_then(Value::as_str)
-            .map(|part_type| part_type == "image")
-            .unwrap_or(false)
-    })
-}
-
-pub fn classify_model_route_error(error_message: &str) -> ModelRouteErrorKind {
-    let lower = error_message.to_ascii_lowercase();
-    if lower.contains("api key")
-        || lower.contains("unauthorized")
-        || lower.contains("invalid_api_key")
-        || lower.contains("authentication")
-        || lower.contains("permission denied")
-        || lower.contains("forbidden")
-    {
-        return ModelRouteErrorKind::Auth;
-    }
-    if lower.contains("rate limit")
-        || lower.contains("too many requests")
-        || lower.contains("429")
-        || lower.contains("quota")
-    {
-        return ModelRouteErrorKind::RateLimit;
-    }
-    if lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline") {
-        return ModelRouteErrorKind::Timeout;
-    }
-    if lower.contains("connection")
-        || lower.contains("network")
-        || lower.contains("dns")
-        || lower.contains("connect")
-        || lower.contains("socket")
-        || lower.contains("error sending request for url")
-        || lower.contains("sending request for url")
-    {
-        return ModelRouteErrorKind::Network;
-    }
-    ModelRouteErrorKind::Unknown
-}
-
-pub fn should_retry_same_candidate(kind: ModelRouteErrorKind) -> bool {
-    matches!(
-        kind,
-        ModelRouteErrorKind::RateLimit
-            | ModelRouteErrorKind::Timeout
-            | ModelRouteErrorKind::Network
-    )
-}
-
-pub fn retry_budget_for_error(kind: ModelRouteErrorKind, configured_retry_count: usize) -> usize {
-    if kind == ModelRouteErrorKind::Network {
-        configured_retry_count.max(1)
-    } else {
-        configured_retry_count
-    }
-}
-
-pub fn retry_backoff_ms(kind: ModelRouteErrorKind, attempt_idx: usize) -> u64 {
-    let base_ms = match kind {
-        ModelRouteErrorKind::RateLimit => 1200u64,
-        ModelRouteErrorKind::Timeout => 700u64,
-        ModelRouteErrorKind::Network => 400u64,
-        _ => 0u64,
-    };
-    if base_ms == 0 {
-        return 0;
-    }
-    let exp = attempt_idx.min(3) as u32;
-    base_ms.saturating_mul(1u64 << exp).min(5000)
-}
-
-pub fn parse_fallback_chain_targets(raw: &str) -> Vec<(String, String)> {
-    serde_json::from_str::<Value>(raw)
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|item| {
-            let provider_id = item.get("provider_id")?.as_str()?.to_string();
-            let model = item
-                .get("model")
-                .and_then(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
-            Some((provider_id, model))
-        })
-        .collect()
-}
-
-fn is_supported_protocol(protocol: &str) -> bool {
-    matches!(protocol, "openai" | "anthropic")
-}
-
-pub fn compose_system_prompt(
-    base_prompt: &str,
-    tool_names: &str,
-    model_name: &str,
-    max_iter: usize,
-    guidance: &ChatExecutionGuidance,
-    workspace_skills_prompt: Option<&str>,
-    employee_collaboration_guidance: Option<&str>,
-    memory_content: Option<&str>,
-) -> String {
-    let browser_runtime_note = if tool_names.contains("browser") {
-        Some(
-            "WorkClaw 浏览器运行时说明:\n- WorkClaw 内置本地 browser sidecar，地址固定为 http://localhost:8765\n- 对 OpenClaw / Xiaohongshu 一类 skill，直接使用 WorkClaw 已提供的 `browser` 兼容工具和现有工具别名\n- 不要要求用户手动启动 OpenClaw 浏览器服务\n- 不要检查 openclaw-desktop.exe\n- 不要要求固定安装目录，例如 D:\\AI；不要要求用户额外安装 OpenClaw 桌面版\n- 如果浏览器自动化失败，应归因于 WorkClaw 内置 sidecar 或浏览器启动失败，而不是外部 OpenClaw 服务未启动".to_string(),
-        )
-    } else {
-        None
-    };
-    let file_tool_note = if tool_names.contains("list_dir")
-        || tool_names.contains("file_move")
-        || tool_names.contains("file_copy")
-        || tool_names.contains("file_delete")
-    {
-        Some(
-            "文件工具使用说明:\n- `list_dir` 会在可读列表后追加结构化 entries JSON\n- 后续 `file_move` / `file_copy` / `file_delete` 等文件工具处理目录枚举结果时，优先直接复用 entries 中的原始 `path`\n- 不要手写或改写文件名，尤其不要自行增删空格、中文标点或扩展名".to_string(),
-        )
-    } else {
-        None
-    };
-    let structured_tool_result_note = if tool_names.contains("read_file")
-        || tool_names.contains("write_file")
-        || tool_names.contains("edit")
-        || tool_names.contains("glob")
-        || tool_names.contains("grep")
-        || tool_names.contains("bash")
-        || tool_names.contains("bash_output")
-        || tool_names.contains("bash_kill")
-        || tool_names.contains("list_dir")
-        || tool_names.contains("file_copy")
-        || tool_names.contains("file_delete")
-        || tool_names.contains("file_move")
-        || tool_names.contains("file_stat")
-    {
-        Some(
-            "结构化工具结果说明:\n- 对支持结构化结果的工具，优先使用工具结果中的 `summary` 和 `details` 字段进行后续推理\n- 不要从展示文本中二次猜测路径、匹配位置或命令状态\n- 文件类结果优先复用 `details` 中的精确路径或元信息\n- 命令执行结果优先读取 `exit_code`、`timed_out`、`stdout`、`stderr`".to_string(),
-        )
-    } else {
-        None
-    };
-
-    let mut system_prompt = if guidance.effective_work_dir.trim().is_empty() {
-        format!(
-            "{}\n\n---\n运行环境:\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}",
-            base_prompt, tool_names, model_name, max_iter,
-        )
-    } else {
-        format!(
-            "{}\n\n---\n运行环境:\n- 工作目录: {}\n- 可用工具: {}\n- 模型: {}\n- 最大迭代次数: {}\n\n注意: 所有文件操作必须限制在工作目录范围内。",
-            base_prompt, guidance.effective_work_dir, tool_names, model_name, max_iter,
-        )
-    };
-
-    if let Some(skills_prompt) = workspace_skills_prompt.filter(|value| !value.trim().is_empty()) {
-        system_prompt = format!(
-            "{}\n\n---\nSkills (mandatory):\nBefore replying, inspect the available skill descriptions below. If exactly one skill clearly applies, read its SKILL.md from the listed location and follow it. When calling the `skill` tool, use its <invoke_name> or <location> as skill_name. Do not pass the display <name> as skill_name.\n{}\n",
-            system_prompt, skills_prompt
-        );
-    }
-
-    if let Some(collaboration) =
-        employee_collaboration_guidance.filter(|value| !value.trim().is_empty())
-    {
-        system_prompt = format!("{}\n\n---\n{}", system_prompt, collaboration);
-    }
-    if let Some(memory_content) = memory_content.filter(|value| !value.trim().is_empty()) {
-        system_prompt = format!("{}\n\n---\n持久内存:\n{}", system_prompt, memory_content);
-    }
-    if !guidance.local_date.trim().is_empty() {
-        system_prompt = format!(
-            "{}\n\n---\n时间上下文:\n- 本地时区: {}\n- 今天: {}\n- 明天: {}\n- 本月范围: {}\n- 遇到“今天”“明天”“昨天”“本周”“这个月”等相对时间表达时，先换算为上面的绝对日期或日期范围，再进行推理、搜索和回答。\n- 对新闻、政策、价格、日程等时效性内容，优先在回答中写出绝对日期，避免只写相对时间。",
-            system_prompt,
-            guidance.local_timezone,
-            guidance.local_date,
-            guidance.local_tomorrow,
-            guidance.local_month_range
-        );
-    }
-    if let Some(browser_runtime_note) =
-        browser_runtime_note.filter(|value| !value.trim().is_empty())
-    {
-        system_prompt = format!("{}\n\n---\n{}", system_prompt, browser_runtime_note);
-    }
-    if let Some(file_tool_note) = file_tool_note.filter(|value| !value.trim().is_empty()) {
-        system_prompt = format!("{}\n\n---\n{}", system_prompt, file_tool_note);
-    }
-    if let Some(structured_tool_result_note) =
-        structured_tool_result_note.filter(|value| !value.trim().is_empty())
-    {
-        system_prompt = format!("{}\n\n---\n{}", system_prompt, structured_tool_result_note);
-    }
-
-    system_prompt
-}
-
-fn employee_matches_session(session_employee_id: &str, employee: &ChatEmployeeSnapshot) -> bool {
-    let target = session_employee_id.trim();
-    if target.is_empty() {
-        return false;
-    }
-    target.eq_ignore_ascii_case(employee.employee_id.trim())
-        || target.eq_ignore_ascii_case(employee.role_id.trim())
-        || target.eq_ignore_ascii_case(employee.id.trim())
-}
-
-fn build_employee_collaboration_guidance(
-    session_employee_id: &str,
-    employees: &[ChatEmployeeSnapshot],
-) -> Option<String> {
-    let current = employees
-        .iter()
-        .find(|employee| employee_matches_session(session_employee_id, employee))?;
-    let collaborators = employees
-        .iter()
-        .filter(|employee| employee.enabled && employee.id != current.id)
-        .collect::<Vec<_>>();
-    if collaborators.is_empty() {
-        return None;
-    }
-
-    let mut lines = vec![
-        "员工协作协议:".to_string(),
-        format!(
-            "- 当前员工: {} (employee_id={})",
-            current.name, current.employee_id
-        ),
-        "- 可委托员工清单:".to_string(),
-    ];
-    for employee in collaborators {
-        lines.push(format!(
-            "  - {} (employee_id={}, role_id={}, feishu_open_id={})",
-            employee.name,
-            employee.employee_id,
-            employee.role_id,
-            if employee.feishu_open_id.trim().is_empty() {
-                "-"
-            } else {
-                employee.feishu_open_id.trim()
-            }
-        ));
-    }
-    lines.push(
-        "- 当任务需要专项能力时，优先调用 task 工具委托，并在参数中填入 delegate_role_id / delegate_role_name。".to_string(),
-    );
-    lines.push(
-        "- task.prompt 必须写清目标、输入上下文、输出格式、验收标准。收到子任务结果后再统一汇总回复用户。".to_string(),
-    );
-    lines.push(
-        "- 如果在 IM/飞书场景需要转交某员工，先在回复中明确“已转交给谁”，再执行委托，不得只给笼统答复。".to_string(),
-    );
-
-    Some(lines.join("\n"))
-}
-
-fn merge_execution_context(
-    snapshot: SessionExecutionContextSnapshot,
-    request: &ChatExecutionPreparationRequest,
-) -> ChatExecutionContext {
-    let session_mode_storage = normalize_session_mode_for_storage(
-        request
-            .session_mode
-            .as_deref()
-            .or(Some(snapshot.session_mode.as_str())),
-    )
-    .to_string();
-
-    let normalized_team_id = if request.team_id.as_deref().unwrap_or("").trim().is_empty() {
-        normalize_team_id_for_storage(&session_mode_storage, Some(snapshot.team_id.as_str()))
-    } else {
-        normalize_team_id_for_storage(&session_mode_storage, request.team_id.as_deref())
-    };
-
-    let employee_id = if request
-        .employee_id
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        snapshot.employee_id.trim().to_string()
-    } else {
-        request
-            .employee_id
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .to_string()
-    };
-
-    let work_dir = if request.work_dir.as_deref().unwrap_or("").trim().is_empty() {
-        snapshot.work_dir.trim().to_string()
-    } else {
-        request.work_dir.as_deref().unwrap_or("").trim().to_string()
-    };
-
-    let imported_mcp_server_ids = if request.imported_mcp_server_ids.is_empty() {
-        snapshot.imported_mcp_server_ids
-    } else {
-        request.imported_mcp_server_ids.clone()
-    };
-
-    ChatExecutionContext {
-        session_id: request
-            .session_id
-            .as_deref()
-            .unwrap_or(snapshot.session_id.as_str())
-            .trim()
-            .to_string(),
-        session_mode_storage,
-        normalized_team_id,
-        employee_id,
-        work_dir,
-        imported_mcp_server_ids,
+        routing::prepare_route_decisions(repo, model_id, request).await
     }
 }
