@@ -587,6 +587,7 @@ export function useFeishuSettingsController({
           authApproved: feishuSetupProgress?.auth_status === "approved",
           defaultRoutingEmployeeName: feishuSetupProgress?.default_routing_employee_name || "未设置",
           scopedRoutingCount: feishuSetupProgress?.scoped_routing_count ?? 0,
+          pendingPairings: pendingFeishuPairingCount,
           lastEventAt: officialFeishuRuntimeStatus?.last_event_at,
           runtimeStatus: officialFeishuRuntimeStatus,
           pluginChannelHosts: pluginChannelHosts.length,
@@ -713,6 +714,7 @@ export function useFeishuSettingsController({
     authApproved: feishuSetupProgress?.auth_status === "approved",
     defaultRoutingEmployeeName: feishuSetupProgress?.default_routing_employee_name,
     scopedRoutingCount: feishuSetupProgress?.scoped_routing_count,
+    pendingPairings: pendingFeishuPairingCount,
   });
 
   const settingsSectionProps = {
