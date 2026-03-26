@@ -143,10 +143,9 @@ async fn import_local_skills_imports_multiple_skills_from_root_directory() {
     write_skill(&skills_root.join("writer"), "Writer", "content");
     write_skill(&skills_root.join("planner"), "Planner", "content");
 
-    let result =
-        import_local_skills_to_pool(skills_root.to_string_lossy().to_string(), &pool, &[])
-            .await
-            .expect("root directory import should succeed");
+    let result = import_local_skills_to_pool(skills_root.to_string_lossy().to_string(), &pool, &[])
+        .await
+        .expect("root directory import should succeed");
 
     assert_eq!(result.installed.len(), 2);
     assert!(result.failed.is_empty());
@@ -163,13 +162,20 @@ async fn import_local_skills_discovers_nested_skills_one_level_deep() {
     let (pool, _tmp) = helpers::setup_test_db().await;
     let dir = tempfile::tempdir().expect("create temp dir");
     let skills_root = dir.path().join("skills");
-    write_skill(&skills_root.join("group-a").join("writer"), "Writer", "content");
-    write_skill(&skills_root.join("group-b").join("planner"), "Planner", "content");
+    write_skill(
+        &skills_root.join("group-a").join("writer"),
+        "Writer",
+        "content",
+    );
+    write_skill(
+        &skills_root.join("group-b").join("planner"),
+        "Planner",
+        "content",
+    );
 
-    let result =
-        import_local_skills_to_pool(skills_root.to_string_lossy().to_string(), &pool, &[])
-            .await
-            .expect("nested root directory import should succeed");
+    let result = import_local_skills_to_pool(skills_root.to_string_lossy().to_string(), &pool, &[])
+        .await
+        .expect("nested root directory import should succeed");
 
     assert_eq!(result.installed.len(), 2);
     assert!(result.failed.is_empty());
@@ -204,15 +210,16 @@ async fn import_local_skills_reports_partial_success_without_blocking_other_skil
     write_skill(&skills_root.join("writer-a"), "Writer", "content");
     write_skill(&skills_root.join("writer-b"), "Writer", "content");
 
-    let result =
-        import_local_skills_to_pool(skills_root.to_string_lossy().to_string(), &pool, &[])
-            .await
-            .expect("partial success import should still return success");
+    let result = import_local_skills_to_pool(skills_root.to_string_lossy().to_string(), &pool, &[])
+        .await
+        .expect("partial success import should still return success");
 
     assert_eq!(result.installed.len(), 1);
     assert_eq!(result.failed.len(), 1);
     assert!(
-        result.failed[0].error.contains("DUPLICATE_SKILL_NAME:Writer"),
+        result.failed[0]
+            .error
+            .contains("DUPLICATE_SKILL_NAME:Writer"),
         "unexpected failure reason: {}",
         result.failed[0].error
     );

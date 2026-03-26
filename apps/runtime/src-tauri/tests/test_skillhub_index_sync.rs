@@ -67,7 +67,11 @@ async fn sync_skillhub_catalog_persists_full_index_and_metadata() {
             .await
             .expect("list from synced index");
 
-    let ordered: Vec<&str> = response.items.iter().map(|item| item.slug.as_str()).collect();
+    let ordered: Vec<&str> = response
+        .items
+        .iter()
+        .map(|item| item.slug.as_str())
+        .collect();
     assert_eq!(ordered, vec!["prompt-crafter", "video-maker"]);
     assert_eq!(response.last_synced_at, sync.last_synced_at);
 

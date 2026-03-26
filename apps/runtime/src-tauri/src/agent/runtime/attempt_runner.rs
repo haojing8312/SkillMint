@@ -1,8 +1,8 @@
 use super::events::{StreamToken, ToolConfirmResponder};
 use super::failover::{
-    runtime_failover_error_kind_from_error_text,
-    runtime_failover_error_kind_from_stop_reason_kind, runtime_failover_error_kind_key,
-    CandidateAttemptOutcome, RuntimeFailover, RuntimeFailoverOutcome, RuntimeFailoverParams,
+    runtime_failover_error_kind_from_error_text, runtime_failover_error_kind_from_stop_reason_kind,
+    runtime_failover_error_kind_key, CandidateAttemptOutcome, RuntimeFailover,
+    RuntimeFailoverOutcome, RuntimeFailoverParams,
 };
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::parse_run_stop_reason;
@@ -38,7 +38,9 @@ pub(crate) struct RouteExecutionParams<'a> {
     pub route_retry_count: usize,
 }
 
-pub(crate) async fn execute_route_candidates(params: RouteExecutionParams<'_>) -> RouteExecutionOutcome {
+pub(crate) async fn execute_route_candidates(
+    params: RouteExecutionParams<'_>,
+) -> RouteExecutionOutcome {
     let params_ref = &params;
     RuntimeFailover::execute_candidates(RuntimeFailoverParams {
         route_candidates: params.route_candidates,
@@ -193,9 +195,10 @@ async fn execute_candidate_attempt(
                 "",
             )
             .await;
-            let reasoning_duration_ms = reasoning_started_at.lock().ok().and_then(|started| {
-                started.map(|instant| instant.elapsed().as_millis() as u64)
-            });
+            let reasoning_duration_ms = reasoning_started_at
+                .lock()
+                .ok()
+                .and_then(|started| started.map(|instant| instant.elapsed().as_millis() as u64));
             if let Some(duration_ms) = reasoning_duration_ms {
                 let _ = params.app.emit(
                     "assistant-reasoning-completed",

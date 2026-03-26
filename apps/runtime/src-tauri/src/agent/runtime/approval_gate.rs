@@ -28,24 +28,23 @@ pub(crate) async fn gate_tool_approval(
             .unwrap_or(true);
 
         if approval_bus_enabled {
-            match find_matching_approval_rule_with_pool(&runtime.pool, &call.name, &call.input).await
+            match find_matching_approval_rule_with_pool(&runtime.pool, &call.name, &call.input)
+                .await
             {
                 Ok(Some(_)) => Ok(Some(ApprovalDecision::AllowAlways)),
-                Ok(None) | Err(_) => {
-                    request_tool_approval_and_wait(
-                        &runtime,
-                        Some(app),
-                        sid,
-                        persisted_run_id,
-                        &call.name,
-                        &call.id,
-                        &call.input,
-                        work_dir,
-                        cancel_flag,
-                    )
-                    .await
-                    .map(Some)
-                }
+                Ok(None) | Err(_) => request_tool_approval_and_wait(
+                    &runtime,
+                    Some(app),
+                    sid,
+                    persisted_run_id,
+                    &call.name,
+                    &call.id,
+                    &call.input,
+                    work_dir,
+                    cancel_flag,
+                )
+                .await
+                .map(Some),
             }
         } else {
             Ok(resolve_manual_confirmation(tool_confirm_tx)?)
@@ -67,8 +66,10 @@ fn resolve_manual_confirmation(
         *guard = Some(tx);
     }
 
-    let confirmation =
-        wait_for_tool_confirmation(&rx, std::time::Duration::from_secs(TOOL_CONFIRM_TIMEOUT_SECS));
+    let confirmation = wait_for_tool_confirmation(
+        &rx,
+        std::time::Duration::from_secs(TOOL_CONFIRM_TIMEOUT_SECS),
+    );
 
     if let Ok(mut guard) = confirm_state.lock() {
         *guard = None;

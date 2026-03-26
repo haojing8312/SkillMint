@@ -18,7 +18,11 @@ pub(crate) fn sanitize_reconstructed_messages(
                     sanitize_openai_assistant_message(message)
                 };
                 if let Some(next_message) = next {
-                    remember_assistant_tool_call_ids(&next_message, api_format, &mut seen_tool_call_ids);
+                    remember_assistant_tool_call_ids(
+                        &next_message,
+                        api_format,
+                        &mut seen_tool_call_ids,
+                    );
                     sanitized.push(next_message);
                 }
             }
@@ -44,7 +48,11 @@ pub(crate) fn sanitize_reconstructed_messages(
 
 fn sanitize_openai_assistant_message(message: Value) -> Option<Value> {
     let mut content = message.get("content").cloned().unwrap_or(Value::Null);
-    let trimmed_text = content.as_str().map(str::trim).unwrap_or_default().to_string();
+    let trimmed_text = content
+        .as_str()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
     let mut sanitized_tool_calls = Vec::new();
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
@@ -58,10 +66,11 @@ fn sanitize_openai_assistant_message(message: Value) -> Option<Value> {
                 continue;
             }
 
-            let arguments = match normalize_openai_tool_arguments(&tool_call["function"]["arguments"]) {
-                Some(arguments) => arguments,
-                None => continue,
-            };
+            let arguments =
+                match normalize_openai_tool_arguments(&tool_call["function"]["arguments"]) {
+                    Some(arguments) => arguments,
+                    None => continue,
+                };
 
             sanitized_tool_calls.push(json!({
                 "id": id,

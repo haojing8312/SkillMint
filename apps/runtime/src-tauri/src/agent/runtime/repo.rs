@@ -80,16 +80,18 @@ async fn load_routing_policy_snapshot(
             timeout_ms,
             retry_count,
             enabled,
-        )| (
-            ChatRoutePolicySnapshot {
-                primary_provider_id,
-                primary_model,
-                fallback_chain_json,
-                retry_count,
-                enabled,
-            },
-            timeout_ms,
-        ),
+        )| {
+            (
+                ChatRoutePolicySnapshot {
+                    primary_provider_id,
+                    primary_model,
+                    fallback_chain_json,
+                    retry_count,
+                    enabled,
+                },
+                timeout_ms,
+            )
+        },
     ))
 }
 
@@ -316,7 +318,10 @@ impl ChatEmployeeDirectory for PoolChatEmployeeDirectory<'_> {
                 feishu_open_id: row
                     .try_get("feishu_open_id")
                     .expect("employee row feishu_open_id"),
-                enabled: row.try_get::<i64, _>("enabled").expect("employee row enabled") != 0,
+                enabled: row
+                    .try_get::<i64, _>("enabled")
+                    .expect("employee row enabled")
+                    != 0,
             })
             .collect())
     }

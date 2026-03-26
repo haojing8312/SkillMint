@@ -8,7 +8,9 @@ use crate::agent::registry::ToolRegistry;
 use crate::agent::run_guard::{encode_run_stop_reason, ProgressFingerprint, RunBudgetPolicy};
 use crate::agent::runtime::approval_gate::gate_tool_approval;
 use crate::agent::safety::classify_policy_blocked_tool_error;
-use crate::agent::types::{AgentStateEvent, Tool, ToolCall, ToolCallEvent, ToolContext, ToolResult};
+use crate::agent::types::{
+    AgentStateEvent, Tool, ToolCall, ToolCallEvent, ToolContext, ToolResult,
+};
 use crate::session_journal::SessionRunEvent;
 use anyhow::{anyhow, Result};
 use runtime_executor_core::{
@@ -197,12 +199,9 @@ fn record_tool_progress(
     is_error: bool,
 ) {
     if is_error {
-        if let Some(summary) = update_tool_failure_streak(
-            state.tool_failure_streak,
-            &call.name,
-            &call.input,
-            result,
-        ) {
+        if let Some(summary) =
+            update_tool_failure_streak(state.tool_failure_streak, &call.name, &call.input, result)
+        {
             *state.repeated_failure_summary = Some(summary);
         }
     } else {
@@ -228,11 +227,13 @@ fn record_tool_progress(
     if let Some(snapshot) = browser_progress_snapshot {
         *state.latest_browser_progress = Some(snapshot);
     }
-    state.tool_result_history.push(ProgressFingerprint::tool_result(
-        call.name.clone(),
-        input_signature,
-        output_signature,
-    ));
+    state
+        .tool_result_history
+        .push(ProgressFingerprint::tool_result(
+            call.name.clone(),
+            input_signature,
+            output_signature,
+        ));
 
     state.tool_results.push(ToolResult {
         tool_use_id: call.id.clone(),
@@ -366,10 +367,11 @@ pub(crate) async fn dispatch_tool_call(
         }
     }
 
-    if ctx
-        .permission_mode
-        .needs_confirmation(&call.name, &call.input, ctx.tool_ctx.work_dir.as_deref())
-    {
+    if ctx.permission_mode.needs_confirmation(
+        &call.name,
+        &call.input,
+        ctx.tool_ctx.work_dir.as_deref(),
+    ) {
         match resolve_approval_outcome(ctx, call).await? {
             ApprovalOutcome::TimedOut => {
                 state.tool_results.push(ToolResult {
@@ -399,21 +401,32 @@ pub(crate) async fn dispatch_tool_call(
     let mut attempt = 0usize;
     let (result, is_error) = loop {
         attempt += 1;
-        let (result, is_error) = if let Some(parse_error) = extract_tool_call_parse_error(&call.input)
-        {
-            (
-                format!(
-                    "工具参数错误: {}。请提供完整且合法的 JSON 参数后再重试。",
-                    parse_error
-                ),
-                true,
-            )
-        } else {
-            match ctx.registry.get(&call.name) {
-                Some(tool) => {
-                    if let Some(whitelist) = ctx.allowed_tools {
-                        if !whitelist.iter().any(|w| w == &call.name) {
-                            (format!("此 Skill 不允许使用工具: {}", call.name), true)
+        let (result, is_error) =
+            if let Some(parse_error) = extract_tool_call_parse_error(&call.input) {
+                (
+                    format!(
+                        "工具参数错误: {}。请提供完整且合法的 JSON 参数后再重试。",
+                        parse_error
+                    ),
+                    true,
+                )
+            } else {
+                match ctx.registry.get(&call.name) {
+                    Some(tool) => {
+                        if let Some(whitelist) = ctx.allowed_tools {
+                            if !whitelist.iter().any(|w| w == &call.name) {
+                                (format!("此 Skill 不允许使用工具: {}", call.name), true)
+                            } else {
+                                run_tool(
+                                    tool,
+                                    call,
+                                    ctx.tool_ctx,
+                                    ctx.cancel_flag.clone(),
+                                    ctx.route_node_timeout_secs,
+                                    is_skill_call,
+                                )
+                                .await
+                            }
                         } else {
                             run_tool(
                                 tool,
@@ -425,36 +438,25 @@ pub(crate) async fn dispatch_tool_call(
                             )
                             .await
                         }
-                    } else {
-                        run_tool(
-                            tool,
-                            call,
-                            ctx.tool_ctx,
-                            ctx.cancel_flag.clone(),
-                            ctx.route_node_timeout_secs,
-                            is_skill_call,
+                    }
+                    None => {
+                        let available: Vec<String> = ctx
+                            .registry
+                            .get_tool_definitions()
+                            .iter()
+                            .filter_map(|t| t["name"].as_str().map(String::from))
+                            .collect();
+                        (
+                            format!(
+                                "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
+                                call.name,
+                                available.join(", ")
+                            ),
+                            true,
                         )
-                        .await
                     }
                 }
-                None => {
-                    let available: Vec<String> = ctx
-                        .registry
-                        .get_tool_definitions()
-                        .iter()
-                        .filter_map(|t| t["name"].as_str().map(String::from))
-                        .collect();
-                    (
-                        format!(
-                            "错误: 工具 '{}' 不存在。请勿再次调用此工具。可用工具: {}",
-                            call.name,
-                            available.join(", ")
-                        ),
-                        true,
-                    )
-                }
-            }
-        };
+            };
         if !is_error || attempt >= max_attempts {
             break (result, is_error);
         }
@@ -566,16 +568,18 @@ async fn wait_for_cancel(cancel_flag: &Option<Arc<AtomicBool>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch_tool_call, run_tool, ToolDispatchContext, ToolDispatchOutcome, ToolDispatchState};
+    use super::{
+        dispatch_tool_call, run_tool, ToolDispatchContext, ToolDispatchOutcome, ToolDispatchState,
+    };
     use crate::agent::permissions::PermissionMode;
     use crate::agent::registry::ToolRegistry;
     use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
     use crate::agent::types::{Tool, ToolCall, ToolContext};
     use anyhow::Result;
     use serde_json::{json, Value};
+    use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
     struct BlockingTool {
@@ -768,14 +772,10 @@ mod tests {
                 tool_result_history: &mut tool_result_history,
                 latest_browser_progress: &mut latest_browser_progress,
             };
-            let outcome = dispatch_tool_call(
-                &dispatch_context,
-                &mut dispatch_state,
-                call_index,
-                &call,
-            )
-            .await
-            .expect("first five calls should continue");
+            let outcome =
+                dispatch_tool_call(&dispatch_context, &mut dispatch_state, call_index, &call)
+                    .await
+                    .expect("first five calls should continue");
             assert!(matches!(outcome, ToolDispatchOutcome::Continue));
         }
 
@@ -789,13 +789,11 @@ mod tests {
             tool_result_history: &mut tool_result_history,
             latest_browser_progress: &mut latest_browser_progress,
         };
-        let err = match dispatch_tool_call(&dispatch_context, &mut dispatch_state, 5, &call).await
-        {
+        let err = match dispatch_tool_call(&dispatch_context, &mut dispatch_state, 5, &call).await {
             Ok(_) => panic!("sixth repeated call should stop before execution"),
             Err(err) => err,
         };
-        let stop_reason =
-            parse_run_stop_reason(&err.to_string()).expect("structured stop reason");
+        let stop_reason = parse_run_stop_reason(&err.to_string()).expect("structured stop reason");
 
         assert_eq!(stop_reason.kind, RunStopReasonKind::LoopDetected);
         assert_eq!(count.load(Ordering::SeqCst), 5);

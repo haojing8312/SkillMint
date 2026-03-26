@@ -22,9 +22,10 @@ pub(crate) fn evaluate_before_tool_call(
     let fingerprint = build_tool_call_fingerprint(tool_name, tool_input);
     let mut prospective_history = history.to_vec();
     prospective_history.push(fingerprint.clone());
-    let evaluation = ProgressGuard::evaluate(policy, &prospective_history).with_last_completed_step(
-        latest_browser_progress.and_then(BrowserProgressSnapshot::last_completed_step),
-    );
+    let evaluation = ProgressGuard::evaluate(policy, &prospective_history)
+        .with_last_completed_step(
+            latest_browser_progress.and_then(BrowserProgressSnapshot::last_completed_step),
+        );
     (fingerprint, evaluation)
 }
 
@@ -32,9 +33,7 @@ pub(crate) fn evaluate_before_tool_call(
 mod tests {
     use super::{build_tool_call_fingerprint, evaluate_before_tool_call};
     use crate::agent::browser_progress::{BrowserProgressSnapshot, BrowserStageHints};
-    use crate::agent::run_guard::{
-        RunBudgetPolicy, RunBudgetScope, RunStopReasonKind,
-    };
+    use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope, RunStopReasonKind};
     use serde_json::json;
 
     #[test]
@@ -48,13 +47,8 @@ mod tests {
             build_tool_call_fingerprint("browser_click", &tool_input),
         ];
 
-        let (_, evaluation) = evaluate_before_tool_call(
-            &policy,
-            &history,
-            None,
-            "browser_click",
-            &tool_input,
-        );
+        let (_, evaluation) =
+            evaluate_before_tool_call(&policy, &history, None, "browser_click", &tool_input);
 
         assert!(evaluation.stop_reason.is_none());
         assert_eq!(
@@ -75,13 +69,8 @@ mod tests {
             build_tool_call_fingerprint("browser_click", &tool_input),
         ];
 
-        let (_, evaluation) = evaluate_before_tool_call(
-            &policy,
-            &history,
-            None,
-            "browser_click",
-            &tool_input,
-        );
+        let (_, evaluation) =
+            evaluate_before_tool_call(&policy, &history, None, "browser_click", &tool_input);
 
         assert!(evaluation.warning.is_none());
         assert_eq!(

@@ -102,8 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn build_assistant_content_from_final_messages_does_not_duplicate_text_when_tool_calls_exist()
-    {
+    fn build_assistant_content_from_final_messages_does_not_duplicate_text_when_tool_calls_exist() {
         let final_messages = vec![json!({
             "role": "assistant",
             "content": "让我先检查正确的目录路径。",
@@ -145,33 +144,31 @@ mod tests {
 
     #[test]
     fn reconstruct_history_messages_restores_user_multimodal_parts() {
-        let history = vec![
-            (
-                "user".to_string(),
-                "[图片 1 张] [文本文件 1 个]".to_string(),
-                Some(
-                    serde_json::to_string(&vec![
-                        json!({
-                            "type": "text",
-                            "text": "请分析这些附件"
-                        }),
-                        json!({
-                            "type": "image",
-                            "name": "screen.png",
-                            "mimeType": "image/png",
-                            "data": "data:image/png;base64,aGVsbG8="
-                        }),
-                        json!({
-                            "type": "file_text",
-                            "name": "debug.ts",
-                            "mimeType": "text/plain",
-                            "text": "console.log('hi')"
-                        }),
-                    ])
-                    .expect("serialize parts"),
-                ),
+        let history = vec![(
+            "user".to_string(),
+            "[图片 1 张] [文本文件 1 个]".to_string(),
+            Some(
+                serde_json::to_string(&vec![
+                    json!({
+                        "type": "text",
+                        "text": "请分析这些附件"
+                    }),
+                    json!({
+                        "type": "image",
+                        "name": "screen.png",
+                        "mimeType": "image/png",
+                        "data": "data:image/png;base64,aGVsbG8="
+                    }),
+                    json!({
+                        "type": "file_text",
+                        "name": "debug.ts",
+                        "mimeType": "text/plain",
+                        "text": "console.log('hi')"
+                    }),
+                ])
+                .expect("serialize parts"),
             ),
-        ];
+        )];
 
         let messages = reconstruct_history_messages(&history, "openai");
 
@@ -270,7 +267,9 @@ mod tests {
         assert_eq!(reconstructed.len(), 2);
         assert_eq!(reconstructed[0]["role"].as_str(), Some("assistant"));
         assert_eq!(
-            reconstructed[0]["content"].as_array().map(|items| items.len()),
+            reconstructed[0]["content"]
+                .as_array()
+                .map(|items| items.len()),
             Some(2)
         );
         assert_eq!(

@@ -6,18 +6,18 @@ use runtime_lib::commands::feishu_gateway::{
     maybe_handle_feishu_approval_command_with_pool, notify_feishu_approval_requested_with_pool,
     parse_feishu_payload, plan_role_dispatch_requests_for_feishu, plan_role_events_for_feishu,
     remember_feishu_runtime_state_for_outbound, resolve_feishu_app_credentials,
-    resolve_feishu_sidecar_base_url, send_feishu_text_message_with_pool,
-    set_app_setting, set_feishu_official_runtime_outbound_send_hook_for_tests,
-    validate_feishu_auth_with_pool, validate_feishu_signature_with_pool, ParsedFeishuPayload,
+    resolve_feishu_sidecar_base_url, send_feishu_text_message_with_pool, set_app_setting,
+    set_feishu_official_runtime_outbound_send_hook_for_tests, validate_feishu_auth_with_pool,
+    validate_feishu_signature_with_pool, ParsedFeishuPayload,
 };
+use runtime_lib::commands::im_config::bind_thread_roles_with_pool;
 use runtime_lib::commands::openclaw_plugins::{
     OpenClawPluginFeishuOutboundDeliveryResult, OpenClawPluginFeishuOutboundSendRequest,
     OpenClawPluginFeishuOutboundSendResult, OpenClawPluginFeishuRuntimeState,
 };
-use runtime_lib::commands::im_config::bind_thread_roles_with_pool;
 use runtime_lib::im::types::{ImEvent, ImEventType};
-use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
 fn feishu_runtime_test_lock() -> &'static TokioMutex<()> {

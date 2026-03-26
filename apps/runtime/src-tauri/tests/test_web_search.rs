@@ -150,10 +150,7 @@ fn test_web_search_normalizes_today_queries() {
         .expect("query lock")
         .clone()
         .expect("query should be recorded");
-    let freshness = last_freshness
-        .lock()
-        .expect("freshness lock")
-        .clone();
+    let freshness = last_freshness.lock().expect("freshness lock").clone();
     assert!(query.contains("AI 新闻"));
     assert!(!query.contains("今天"));
     assert!(query.contains("20"));
@@ -183,10 +180,7 @@ fn test_web_search_normalizes_this_month_queries() {
         .expect("query lock")
         .clone()
         .expect("query should be recorded");
-    let freshness = last_freshness
-        .lock()
-        .expect("freshness lock")
-        .clone();
+    let freshness = last_freshness.lock().expect("freshness lock").clone();
     assert!(query.contains("AI 融资新闻"));
     assert!(!query.contains("这个月"));
     assert!(query.contains("年"));

@@ -116,7 +116,11 @@ async fn list_reads_local_skillhub_index_in_popularity_order() {
             .await
             .expect("list from local index");
 
-    let ordered: Vec<&str> = response.items.iter().map(|item| item.slug.as_str()).collect();
+    let ordered: Vec<&str> = response
+        .items
+        .iter()
+        .map(|item| item.slug.as_str())
+        .collect();
     assert_eq!(ordered, vec!["top-download", "tie-break", "mid-download"]);
     assert_eq!(response.last_synced_at.as_deref(), Some(synced_at.as_str()));
 }

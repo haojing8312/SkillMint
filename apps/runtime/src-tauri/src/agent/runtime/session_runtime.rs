@@ -1,7 +1,6 @@
 use super::events::{StreamToken, ToolConfirmResponder};
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
-use crate::agent::AgentExecutor;
 use crate::agent::runtime::attempt_runner::{
     execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
 };
@@ -10,10 +9,9 @@ use crate::agent::runtime::tool_setup::{
     prepare_runtime_tools, PreparedRuntimeTools, ToolSetupParams,
 };
 use crate::agent::runtime::RuntimeTranscript;
+use crate::agent::AgentExecutor;
 use crate::session_journal::SessionJournalStore;
-use runtime_chat_app::{
-    ChatExecutionPreparationRequest, ChatExecutionPreparationService,
-};
+use runtime_chat_app::{ChatExecutionPreparationRequest, ChatExecutionPreparationService};
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -101,7 +99,10 @@ impl SessionRuntime {
             per_candidate_retry_count: prepared_context.per_candidate_retry_count,
             system_prompt: &prepared_context.prepared_runtime_tools.system_prompt,
             messages: &prepared_context.messages,
-            allowed_tools: prepared_context.prepared_runtime_tools.allowed_tools.as_deref(),
+            allowed_tools: prepared_context
+                .prepared_runtime_tools
+                .allowed_tools
+                .as_deref(),
             permission_mode: prepared_context.permission_mode,
             tool_confirm_responder,
             executor_work_dir: prepared_context.executor_work_dir.clone(),
@@ -337,10 +338,11 @@ impl SessionRuntime {
             }
         };
 
-        let (final_text, has_tool_calls, content) = crate::agent::runtime::RuntimeTranscript::build_assistant_content_from_final_messages(
-            &final_messages,
-            reconstructed_history_len,
-        );
+        let (final_text, has_tool_calls, content) =
+            crate::agent::runtime::RuntimeTranscript::build_assistant_content_from_final_messages(
+                &final_messages,
+                reconstructed_history_len,
+            );
 
         let finalize_result = chat_io::finalize_run_success_with_pool(
             db,
@@ -356,8 +358,15 @@ impl SessionRuntime {
         .await;
 
         if let Err(err) = finalize_result {
-            chat_io::append_run_failed_with_pool(db, journal, session_id, run_id, "persistence", &err)
-                .await;
+            chat_io::append_run_failed_with_pool(
+                db,
+                journal,
+                session_id,
+                run_id,
+                "persistence",
+                &err,
+            )
+            .await;
             let _ = app.emit(
                 "stream-token",
                 StreamToken {
@@ -382,5 +391,4 @@ impl SessionRuntime {
 
         Ok(())
     }
-
 }

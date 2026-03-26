@@ -337,13 +337,16 @@ pub(crate) async fn prepare_runtime_tools(
         }
     } else if let Some(fallback) = resolve_mcp_search_fallback(params.agent_executor.registry()) {
         if let Some(inner) = params.agent_executor.registry().get(&fallback.tool_name) {
-            params.agent_executor.registry().register(Arc::new(McpSearchFallbackTool {
-                inner,
-                source_label: fallback.source_label.clone(),
-                query_key: fallback.query_key,
-                limit_key: fallback.limit_key,
-                freshness_key: fallback.freshness_key,
-            }));
+            params
+                .agent_executor
+                .registry()
+                .register(Arc::new(McpSearchFallbackTool {
+                    inner,
+                    source_label: fallback.source_label.clone(),
+                    query_key: fallback.query_key,
+                    limit_key: fallback.limit_key,
+                    freshness_key: fallback.freshness_key,
+                }));
             runtime_search_note = Some(format!(
                 "当前未配置搜索引擎。若需要联网检索，`web_search` 会改用 MCP 工具 `{}`，回答时要说明本次使用了 MCP fallback。",
                 fallback.source_label
@@ -384,7 +387,8 @@ pub(crate) async fn prepare_runtime_tools(
         .resolve_executor_work_dir(params.execution_guidance)
     {
         Some(work_dir) => {
-            let entries = chat_io::load_workspace_skill_runtime_entries_with_pool(params.db).await?;
+            let entries =
+                chat_io::load_workspace_skill_runtime_entries_with_pool(params.db).await?;
             Some(chat_io::prepare_workspace_skills_prompt(
                 std::path::Path::new(&work_dir),
                 &entries,
@@ -415,7 +419,8 @@ pub(crate) async fn prepare_runtime_tools(
         .registry()
         .register(Arc::new(ask_user_tool));
 
-    let tool_names = chat_io::resolve_tool_names(&params.skill_allowed_tools, params.agent_executor);
+    let tool_names =
+        chat_io::resolve_tool_names(&params.skill_allowed_tools, params.agent_executor);
     let memory_content = chat_io::load_memory_content(&memory_dir);
     let system_prompt = compose_system_prompt(
         params.skill_system_prompt,
@@ -529,7 +534,10 @@ mod tests {
         };
 
         let result = tool
-            .execute(json!({"query": "latest ai news", "count": 3}), &ToolContext::default())
+            .execute(
+                json!({"query": "latest ai news", "count": 3}),
+                &ToolContext::default(),
+            )
             .expect("fallback execute");
 
         assert!(result.contains("未配置搜索引擎，本次改用 MCP：brave-search_web_search"));
