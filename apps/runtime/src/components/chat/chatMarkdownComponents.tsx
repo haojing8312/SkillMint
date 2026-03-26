@@ -1,6 +1,10 @@
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim());
+}
+
 function extractNodeText(node: unknown): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map((item) => extractNodeText(item)).join("");
@@ -10,7 +14,7 @@ function extractNodeText(node: unknown): string {
   return "";
 }
 
-export function createChatMarkdownComponents() {
+export function createChatMarkdownComponents(onOpenExternalUrl?: (url: string) => Promise<void> | void) {
   return {
     code({ className, children, ...props }: any) {
       const match = /language-(\w+)/.exec(className || "");
@@ -61,16 +65,27 @@ export function createChatMarkdownComponents() {
     ul: ({ children }: any) => <ul className="mb-4 list-disc space-y-1.5 pl-5 text-[15px] text-slate-700">{children}</ul>,
     ol: ({ children }: any) => <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-[15px] text-slate-700">{children}</ol>,
     li: ({ children }: any) => <li className="leading-7 text-slate-700">{children}</li>,
-    a: ({ href, children }: any) => (
-      <a
-        href={href}
-        className="text-blue-500 hover:text-blue-600 underline underline-offset-2 text-sm"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {children}
-      </a>
-    ),
+    a: ({ href, children }: any) => {
+      const resolvedHref = typeof href === "string" ? href.trim() : "";
+      const shouldHandleExternally = resolvedHref && isHttpUrl(resolvedHref) && typeof onOpenExternalUrl === "function";
+      return (
+        <a
+          href={resolvedHref || undefined}
+          className="cursor-pointer text-sm text-blue-500 underline underline-offset-2 hover:text-blue-600"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(event) => {
+            if (!shouldHandleExternally) {
+              return;
+            }
+            event.preventDefault();
+            void onOpenExternalUrl(resolvedHref);
+          }}
+        >
+          {children}
+        </a>
+      );
+    },
     blockquote: ({ children }: any) => (
       <blockquote className="my-4 rounded-r-lg border-l-[3px] border-slate-300 bg-slate-50/70 py-1 pl-4">
         <div className="text-[15px] italic text-slate-600">{children}</div>

@@ -543,4 +543,179 @@ describe("ChatView semantic theme", () => {
     expect(copyButton).toHaveAttribute("aria-label", "复制回答");
     expect(copyButton).toHaveAttribute("title", "已复制");
   });
+
+  test("opens chat markdown http links via the desktop external-url command", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            id: "assistant-link",
+            role: "assistant",
+            content: "来源：[新浪财经](https://finance.sina.com.cn/stock/jdts/2026-03-09/detail-inhqkxfk6921924.d.html)",
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-link"
+      />,
+    );
+
+    const link = await screen.findByRole("link", { name: "新浪财经" });
+    fireEvent.click(link);
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("open_external_url", {
+        url: "https://finance.sina.com.cn/stock/jdts/2026-03-09/detail-inhqkxfk6921924.d.html",
+      });
+    });
+
+    expect(await screen.findByTestId("chat-link-toast")).toHaveTextContent("已在浏览器打开");
+  });
+
+  test("shows a retry action when opening a chat markdown link fails", async () => {
+    let openAttempts = 0;
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            id: "assistant-link-error",
+            role: "assistant",
+            content: "来源：[网易新闻](https://m.163.com/dy/article/KOCKINIG0519CIKK.html)",
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "open_external_url") {
+        openAttempts += 1;
+        if (openAttempts === 1) {
+          return Promise.reject(new Error("blocked"));
+        }
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-link-error"
+      />,
+    );
+
+    const link = await screen.findByRole("link", { name: "网易新闻" });
+    fireEvent.click(link);
+
+    expect(await screen.findByTestId("chat-link-toast")).toHaveTextContent("链接打开失败");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => {
+      expect(openAttempts).toBe(2);
+      expect(screen.getByTestId("chat-link-toast")).toHaveTextContent("已在浏览器打开");
+    });
+  });
+
+  test("shows a copy-link action when opening a chat markdown link fails", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            id: "assistant-link-copy",
+            role: "assistant",
+            content: "来源：[网易新闻](https://m.163.com/dy/article/KOCKINIG0519CIKK.html)",
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "open_external_url") {
+        return Promise.reject(new Error("blocked"));
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-link-copy"
+      />,
+    );
+
+    const link = await screen.findByRole("link", { name: "网易新闻" });
+    fireEvent.click(link);
+
+    expect(await screen.findByTestId("chat-link-toast")).toHaveTextContent("链接打开失败");
+
+    fireEvent.click(screen.getByRole("button", { name: "复制链接" }));
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledWith("https://m.163.com/dy/article/KOCKINIG0519CIKK.html");
+      expect(screen.getByTestId("chat-link-toast")).toHaveTextContent("链接已复制");
+    });
+  });
 });

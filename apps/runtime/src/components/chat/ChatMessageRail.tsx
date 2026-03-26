@@ -62,6 +62,7 @@ type ChatMessageRailProps = {
   askUserAnswer: string;
   onAskUserAnswerChange: (value: string) => void;
   onAnswerUser: (answer: string) => void;
+  onOpenExternalLink?: (url: string) => Promise<void> | void;
 };
 
 export function ChatMessageRail({
@@ -98,8 +99,9 @@ export function ChatMessageRail({
   askUserAnswer,
   onAskUserAnswerChange,
   onAnswerUser,
+  onOpenExternalLink,
 }: ChatMessageRailProps) {
-  const markdownComponents = useMemo(() => createChatMarkdownComponents(), []);
+  const markdownComponents = useMemo(() => createChatMarkdownComponents(onOpenExternalLink), [onOpenExternalLink]);
   const streamText = useMemo(() => extractPlainTextFromStreamItems(streamItems), [streamItems]);
   return (
     <>
