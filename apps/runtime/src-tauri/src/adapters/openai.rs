@@ -52,6 +52,18 @@ fn is_mock_write_file_from_user_path_base_url(base_url: &str) -> bool {
         .eq_ignore_ascii_case("http://mock-write-file-from-user-path")
 }
 
+fn is_mock_responses_read_file_from_user_path_base_url(base_url: &str) -> bool {
+    base_url
+        .trim()
+        .eq_ignore_ascii_case("http://mock-responses-read-file-from-user-path")
+}
+
+fn is_mock_responses_malformed_tool_call_start_task_base_url(base_url: &str) -> bool {
+    base_url
+        .trim()
+        .eq_ignore_ascii_case("http://mock-responses-malformed-tool-call-start-task")
+}
+
 fn is_mock_repeat_read_file_loop_base_url(base_url: &str) -> bool {
     base_url
         .trim()
@@ -69,6 +81,134 @@ fn count_tool_messages(messages: &[Value]) -> usize {
         .iter()
         .filter(|message| message["role"].as_str() == Some("tool"))
         .count()
+}
+
+fn normalize_message_text(content: &Value) -> Option<String> {
+    match content {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        Value::Array(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| match part.get("type").and_then(Value::as_str) {
+                    Some("text") | Some("input_text") | Some("output_text") => {
+                        part.get("text").and_then(Value::as_str)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn content_to_responses_parts(content: &Value) -> Vec<Value> {
+    match content {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                Vec::new()
+            } else {
+                vec![json!({ "type": "input_text", "text": trimmed })]
+            }
+        }
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| match part.get("type").and_then(Value::as_str) {
+                Some("text") | Some("input_text") | Some("output_text") => {
+                    let text = part.get("text").and_then(Value::as_str)?.trim();
+                    (!text.is_empty()).then(|| json!({ "type": "input_text", "text": text }))
+                }
+                Some("image_url") => {
+                    let image_url = part
+                        .get("image_url")
+                        .and_then(|value| value.get("url"))
+                        .and_then(Value::as_str)?;
+                    Some(json!({
+                        "type": "input_image",
+                        "image_url": image_url,
+                    }))
+                }
+                Some("input_image") => Some(part.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn convert_messages_to_responses_input(messages: &[Value]) -> Vec<Value> {
+    let mut items = Vec::new();
+
+    for message in messages {
+        match message["role"].as_str().unwrap_or_default() {
+            "user" => {
+                let parts = content_to_responses_parts(&message["content"]);
+                if parts.is_empty() {
+                    continue;
+                }
+                items.push(json!({
+                    "type": "message",
+                    "role": "user",
+                    "content": parts,
+                }));
+            }
+            "assistant" => {
+                if let Some(text) = normalize_message_text(&message["content"]) {
+                    items.push(json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": text,
+                    }));
+                }
+
+                for tool_call in message["tool_calls"].as_array().into_iter().flatten() {
+                    let call_id = tool_call["id"].as_str().unwrap_or_default().trim();
+                    let name = tool_call["function"]["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .trim();
+                    let arguments = tool_call["function"]["arguments"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .trim();
+                    if call_id.is_empty() || name.is_empty() || arguments.is_empty() {
+                        continue;
+                    }
+                    items.push(json!({
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }));
+                }
+            }
+            "tool" => {
+                let call_id = message["tool_call_id"].as_str().unwrap_or_default().trim();
+                if call_id.is_empty() {
+                    continue;
+                }
+                let output = match &message["content"] {
+                    Value::String(text) => text.clone(),
+                    Value::Null => String::new(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                };
+                items.push(json!({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    items
 }
 
 fn parse_last_user_tool_input(messages: &[Value]) -> Result<Value> {
@@ -118,6 +258,10 @@ fn validate_test_connection_response(body: &str) -> Result<bool> {
         return Ok(true);
     }
 
+    if parsed.get("output").and_then(Value::as_array).is_some() {
+        return Ok(true);
+    }
+
     if let Some(error_message) = parsed
         .get("error")
         .and_then(|error| error.get("message").or(Some(error)))
@@ -127,8 +271,31 @@ fn validate_test_connection_response(body: &str) -> Result<bool> {
     }
 
     Err(anyhow!(
-        "OpenAI 连接测试返回了非标准响应，缺少 choices 字段"
+        "OpenAI 连接测试返回了非标准响应，缺少 choices/output 字段"
     ))
+}
+
+fn last_tool_message_content(messages: &[Value]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message["role"].as_str() == Some("tool"))
+        .and_then(|message| message["content"].as_str())
+        .map(str::to_string)
+}
+
+fn parse_mock_response_chunks(
+    chunks: &[&str],
+    on_token: &mut impl FnMut(StreamDelta),
+) -> Result<LLMResponse> {
+    let mut state = OpenAiStreamState::default();
+    for chunk in chunks {
+        process_openai_sse_text(chunk, &mut state, on_token)?;
+        if state.stop_stream {
+            break;
+        }
+    }
+    Ok(finish_openai_stream(state))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,12 +419,21 @@ fn filter_thinking(
 #[derive(Default)]
 struct OpenAiStreamState {
     text_content: String,
+    fallback_text_content: String,
+    saw_text_delta: bool,
     hidden_tag: Option<HiddenTag>,
     pending_think_tag: String,
-    tool_calls_map: HashMap<u64, (String, String, String)>,
-    finish_reason: Option<String>,
+    tool_calls_map: HashMap<u64, OpenAiResponseToolCall>,
     stop_stream: bool,
     pending_line: String,
+}
+
+#[derive(Default)]
+struct OpenAiResponseToolCall {
+    item_id: String,
+    call_id: String,
+    name: String,
+    arguments: String,
 }
 
 fn process_openai_sse_text(
@@ -275,6 +451,9 @@ fn process_openai_sse_text(
     }
 
     for line in lines {
+        if line.starts_with("event: ") {
+            continue;
+        }
         if let Some(data) = line.strip_prefix("data: ") {
             if data.trim() == "[DONE]" {
                 state.stop_stream = true;
@@ -282,54 +461,145 @@ fn process_openai_sse_text(
             }
 
             if let Ok(v) = serde_json::from_str::<Value>(data) {
-                let choice = &v["choices"][0];
-                let delta = &choice["delta"];
-
-                if let Some(fr) = choice["finish_reason"].as_str() {
-                    state.finish_reason = Some(fr.to_string());
-                }
-
-                if delta["reasoning_content"]
-                    .as_str()
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false)
-                {
-                    on_token(StreamDelta::Reasoning(
-                        delta["reasoning_content"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                    ));
-                    continue;
-                }
-
-                if let Some(token) = delta["content"].as_str() {
-                    let filtered =
-                        filter_thinking(token, &mut state.hidden_tag, &mut state.pending_think_tag);
-                    if !filtered.is_empty() {
-                        state.text_content.push_str(&filtered);
-                        on_token(StreamDelta::Text(filtered));
+                match v["type"].as_str().unwrap_or_default() {
+                    "response.output_text.delta" => {
+                        if let Some(delta) = v["delta"].as_str() {
+                            let filtered = filter_thinking(
+                                delta,
+                                &mut state.hidden_tag,
+                                &mut state.pending_think_tag,
+                            );
+                            if !filtered.is_empty() {
+                                state.saw_text_delta = true;
+                                state.text_content.push_str(&filtered);
+                                on_token(StreamDelta::Text(filtered));
+                            }
+                        }
                     }
-                }
-
-                if let Some(tc_array) = delta["tool_calls"].as_array() {
-                    for tc_delta in tc_array {
-                        let index = tc_delta["index"].as_u64().unwrap_or(0);
-
-                        let entry = state
-                            .tool_calls_map
-                            .entry(index)
-                            .or_insert_with(|| (String::new(), String::new(), String::new()));
-
-                        if let Some(id) = tc_delta["id"].as_str() {
-                            entry.0 = id.to_string();
+                    "response.output_item.added" => {
+                        if v["item"]["type"].as_str() == Some("function_call") {
+                            let index = v["output_index"].as_u64().unwrap_or(0);
+                            let entry = state.tool_calls_map.entry(index).or_default();
+                            if let Some(item_id) = v["item"]["id"].as_str() {
+                                entry.item_id = item_id.to_string();
+                            }
+                            if let Some(call_id) = v["item"]["call_id"].as_str() {
+                                entry.call_id = call_id.to_string();
+                            }
+                            if let Some(name) = v["item"]["name"].as_str() {
+                                entry.name = name.to_string();
+                            }
+                            if let Some(arguments) = v["item"]["arguments"].as_str() {
+                                entry.arguments = arguments.to_string();
+                            }
                         }
-                        if let Some(name) = tc_delta["function"]["name"].as_str() {
-                            entry.1 = name.to_string();
+                    }
+                    "response.function_call_arguments.delta" => {
+                        let index = v["output_index"].as_u64().unwrap_or(0);
+                        let entry = state.tool_calls_map.entry(index).or_default();
+                        if let Some(item_id) = v["item_id"].as_str() {
+                            entry.item_id = item_id.to_string();
                         }
+                        if let Some(delta) = v["delta"].as_str() {
+                            entry.arguments.push_str(delta);
+                        }
+                    }
+                    "response.function_call_arguments.done" | "response.output_item.done" => {
+                        let item = &v["item"];
+                        match item["type"].as_str().unwrap_or_default() {
+                            "function_call" => {
+                                let index = v["output_index"].as_u64().unwrap_or(0);
+                                let entry = state.tool_calls_map.entry(index).or_default();
+                                if let Some(item_id) = item["id"].as_str() {
+                                    entry.item_id = item_id.to_string();
+                                }
+                                if let Some(call_id) = item["call_id"].as_str() {
+                                    entry.call_id = call_id.to_string();
+                                }
+                                if let Some(name) = item["name"].as_str() {
+                                    entry.name = name.to_string();
+                                }
+                                if let Some(arguments) = item["arguments"].as_str() {
+                                    entry.arguments = arguments.to_string();
+                                }
+                            }
+                            "message" => {
+                                if !state.saw_text_delta {
+                                    let text = item["content"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter_map(|part| {
+                                            (part["type"].as_str() == Some("output_text"))
+                                                .then(|| part["text"].as_str())
+                                                .flatten()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("");
+                                    if !text.is_empty() {
+                                        let filtered = filter_thinking(
+                                            &text,
+                                            &mut state.hidden_tag,
+                                            &mut state.pending_think_tag,
+                                        );
+                                        if !filtered.is_empty() {
+                                            state.fallback_text_content.push_str(&filtered);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {
+                        if let Some(choice) = v["choices"].get(0) {
+                            let delta = &choice["delta"];
 
-                        if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                            entry.2.push_str(args);
+                            if delta["reasoning_content"]
+                                .as_str()
+                                .map(|s| !s.is_empty())
+                                .unwrap_or(false)
+                            {
+                                on_token(StreamDelta::Reasoning(
+                                    delta["reasoning_content"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                ));
+                                continue;
+                            }
+
+                            if let Some(token) = delta["content"].as_str() {
+                                let filtered = filter_thinking(
+                                    token,
+                                    &mut state.hidden_tag,
+                                    &mut state.pending_think_tag,
+                                );
+                                if !filtered.is_empty() {
+                                    state.saw_text_delta = true;
+                                    state.text_content.push_str(&filtered);
+                                    on_token(StreamDelta::Text(filtered));
+                                }
+                            }
+
+                            if let Some(tc_array) = delta["tool_calls"].as_array() {
+                                for tc_delta in tc_array {
+                                    let index = tc_delta["index"].as_u64().unwrap_or(0);
+
+                                    let entry = state.tool_calls_map.entry(index).or_default();
+
+                                    if let Some(id) = tc_delta["id"].as_str() {
+                                        entry.call_id = id.to_string();
+                                    }
+                                    if let Some(name) = tc_delta["function"]["name"].as_str() {
+                                        entry.name = name.to_string();
+                                    }
+
+                                    if let Some(args) = tc_delta["function"]["arguments"].as_str() {
+                                        entry.arguments.push_str(args);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -345,14 +615,24 @@ fn finish_openai_stream(mut state: OpenAiStreamState) -> LLMResponse {
         state.text_content.push_str(&state.pending_think_tag);
     }
 
-    if state.finish_reason.as_deref() == Some("tool_calls") || !state.tool_calls_map.is_empty() {
+    if state.text_content.is_empty() && !state.fallback_text_content.is_empty() {
+        state.text_content = state.fallback_text_content;
+    }
+
+    if !state.tool_calls_map.is_empty() {
         let mut indices: Vec<u64> = state.tool_calls_map.keys().cloned().collect();
         indices.sort();
 
         let tool_calls: Vec<ToolCall> = indices
             .into_iter()
-            .map(|idx| {
-                let (id, name, args_str) = state.tool_calls_map.remove(&idx).unwrap();
+            .filter_map(|idx| {
+                let entry = state.tool_calls_map.remove(&idx).unwrap();
+                let trimmed_id = entry.call_id.trim().to_string();
+                let trimmed_name = entry.name.trim().to_string();
+                if trimmed_id.is_empty() || trimmed_name.is_empty() {
+                    return None;
+                }
+                let args_str = entry.arguments;
                 let input = match parse_tool_call_arguments(&args_str) {
                     Ok(value) => value,
                     Err(err) => json!({
@@ -360,9 +640,17 @@ fn finish_openai_stream(mut state: OpenAiStreamState) -> LLMResponse {
                         "__raw_arguments": args_str,
                     }),
                 };
-                ToolCall { id, name, input }
+                Some(ToolCall {
+                    id: trimmed_id,
+                    name: trimmed_name,
+                    input,
+                })
             })
             .collect();
+
+        if tool_calls.is_empty() {
+            return LLMResponse::Text(state.text_content);
+        }
 
         if !state.text_content.is_empty() {
             LLMResponse::TextWithToolCalls(state.text_content, tool_calls)
@@ -421,6 +709,59 @@ pub async fn chat_stream_with_tools(
             input: parse_last_user_tool_input(&messages)?,
         }]));
     }
+    if is_mock_responses_read_file_from_user_path_base_url(base_url) {
+        if let Some(tool_output) = last_tool_message_content(&messages) {
+            return parse_mock_response_chunks(
+                &[
+                    "event: response.output_item.added\n",
+                    "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n",
+                    "event: response.output_text.delta\n",
+                    &format!(
+                        "data: {{\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":{}}}\n",
+                        serde_json::to_string(&format!("已读取文件内容：{}", tool_output)).unwrap_or_else(|_| "\"已读取文件内容\"".to_string())
+                    ),
+                    "data: [DONE]\n",
+                ],
+                &mut on_token,
+            );
+        }
+
+        let input = parse_last_user_tool_input(&messages)?;
+        let args = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+        let done_event = format!(
+            "data: {{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call-read-1\",\"name\":\"read_file\",\"arguments\":{}}}}}\n",
+            serde_json::to_string(&args).unwrap_or_else(|_| "\"{}\"".to_string())
+        );
+        return parse_mock_response_chunks(
+            &[
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call-read-1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n",
+                "event: response.function_call_arguments.delta\n",
+                &format!(
+                    "data: {{\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"item_id\":\"fc_1\",\"delta\":{}}}\n",
+                    serde_json::to_string(&args).unwrap_or_else(|_| "\"{}\"".to_string())
+                ),
+                "event: response.output_item.done\n",
+                &done_event,
+                "data: [DONE]\n",
+            ],
+            &mut on_token,
+        );
+    }
+    if is_mock_responses_malformed_tool_call_start_task_base_url(base_url) {
+        return parse_mock_response_chunks(
+            &[
+                "event: response.output_item.added\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_bad_1\",\"type\":\"function_call\",\"call_id\":\"call-bad-1\",\"arguments\":\"\"}}\n",
+                "event: response.function_call_arguments.delta\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"item_id\":\"fc_bad_1\",\"delta\":\"{\\\"path\\\":\\\"README.md\\\"}\"}\n",
+                "event: response.output_text.delta\n",
+                "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"我先忽略这个损坏的工具调用，继续处理请求。\"}\n",
+                "data: [DONE]\n",
+            ],
+            &mut on_token,
+        );
+    }
     if is_mock_repeat_read_file_loop_base_url(base_url) {
         return Ok(LLMResponse::ToolCalls(vec![ToolCall {
             id: "mock-repeat-read-file-loop".to_string(),
@@ -456,33 +797,29 @@ pub async fn chat_stream_with_tools(
 
     let client = build_http_client()?;
 
-    // 构建消息数组，前置 system 消息
-    let mut all_messages = vec![json!({"role": "system", "content": system_prompt})];
-    all_messages.extend(messages);
+    let responses_input = convert_messages_to_responses_input(&messages);
 
-    // 将 Anthropic 格式工具定义转换为 OpenAI function calling 格式
     let openai_tools: Vec<Value> = tools
         .iter()
         .map(|t| {
             json!({
                 "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"],
-                }
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"],
             })
         })
         .collect();
 
     let body = json!({
         "model": model,
-        "messages": all_messages,
+        "instructions": system_prompt,
+        "input": responses_input,
         "tools": openai_tools,
         "stream": true,
     });
 
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let url = format!("{}/responses", base_url.trim_end_matches('/'));
     let resp = client
         .post(&url)
         .bearer_auth(api_key)
@@ -522,11 +859,11 @@ pub async fn test_connection(base_url: &str, api_key: &str, model: &str) -> Resu
         return Ok(true);
     }
     let client = build_http_client()?;
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let url = format!("{}/responses", base_url.trim_end_matches('/'));
     let body = json!({
         "model": model,
-        "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 10
+        "input": "hi",
+        "max_output_tokens": 10
     });
     let resp = client
         .post(&url)
@@ -621,6 +958,42 @@ mod tests {
         .expect("valid openai response");
 
         assert!(result);
+    }
+
+    #[test]
+    fn test_connection_accepts_openai_responses_json() {
+        let result = validate_test_connection_response(
+            r#"{"id":"resp_1","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}"#,
+        )
+        .expect("valid openai responses payload");
+
+        assert!(result);
+    }
+
+    #[test]
+    fn convert_messages_to_responses_input_replays_tool_calls_and_outputs() {
+        let messages = vec![
+            json!({"role":"user","content":"rename this file"}),
+            json!({
+                "role":"assistant",
+                "content": Value::Null,
+                "tool_calls": [{
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}
+                }]
+            }),
+            json!({"role":"tool","tool_call_id":"call_1","content":"contents"}),
+        ];
+
+        let input = convert_messages_to_responses_input(&messages);
+
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["type"].as_str(), Some("message"));
+        assert_eq!(input[1]["type"].as_str(), Some("function_call"));
+        assert_eq!(input[1]["call_id"].as_str(), Some("call_1"));
+        assert_eq!(input[2]["type"].as_str(), Some("function_call_output"));
+        assert_eq!(input[2]["call_id"].as_str(), Some("call_1"));
     }
 
     #[test]
@@ -750,6 +1123,49 @@ mod tests {
         match finish_openai_stream(state) {
             LLMResponse::Text(text) => assert_eq!(text, "最终答案"),
             other => panic!("expected text response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn openai_stream_parser_drops_tool_call_without_name() {
+        let response = parse_openai_chunks_for_test(&[
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call-1\",\"arguments\":\"\"}}\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\\\"README.md\\\"}\"}\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"继续处理\"}\n",
+            "data: [DONE]\n",
+        ])
+        .expect("parse chunks");
+
+        match response {
+            LLMResponse::Text(text) => assert_eq!(text, "继续处理"),
+            other => panic!("expected text response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn responses_stream_parser_returns_tool_calls() {
+        let response = parse_openai_chunks_for_test(&[
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\\\"README.md\\\"}\"}\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}\n",
+            "data: [DONE]\n",
+        ])
+        .expect("parse chunks");
+
+        match response {
+            LLMResponse::ToolCalls(tool_calls) => {
+                assert_eq!(tool_calls.len(), 1);
+                assert_eq!(tool_calls[0].id, "call-1");
+                assert_eq!(tool_calls[0].name, "read_file");
+                assert_eq!(tool_calls[0].input["path"].as_str(), Some("README.md"));
+            }
+            other => panic!("expected tool calls response, got {other:?}"),
         }
     }
 }

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::transcript_hygiene;
+use super::transcript_policy;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RuntimeTranscript;
@@ -223,7 +223,7 @@ impl RuntimeTranscript {
         messages: Vec<Value>,
         api_format: &str,
     ) -> Vec<Value> {
-        transcript_hygiene::sanitize_reconstructed_messages(messages, api_format)
+        transcript_policy::sanitize_outbound_messages(messages, api_format)
     }
 
     pub(crate) fn build_assistant_content_from_final_messages(

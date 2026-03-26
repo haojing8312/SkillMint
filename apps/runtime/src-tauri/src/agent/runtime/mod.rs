@@ -14,10 +14,14 @@ pub(crate) mod session_runs;
 pub mod session_runtime;
 pub(crate) mod tool_dispatch;
 pub(crate) mod tool_setup;
-pub(crate) mod transcript_hygiene;
 pub mod transcript;
+pub(crate) mod transcript_hygiene;
+pub(crate) mod transcript_policy;
+pub(crate) mod transcript_repair;
 
-pub use admission_gate::{SessionAdmissionConflict, SessionAdmissionGate, SessionAdmissionGateState};
+pub use admission_gate::{
+    SessionAdmissionConflict, SessionAdmissionGate, SessionAdmissionGateState,
+};
 pub use events::{
     AskUserState, CancelFlagState, SearchCacheState, SkillRouteEvent, StreamToken,
     ToolConfirmResponder,
