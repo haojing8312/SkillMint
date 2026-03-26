@@ -1,16 +1,20 @@
 ## WorkClaw Windows Release
 
-- Highlights in `v0.5.3`:
+- Highlights in `v0.5.4`:
   - 中文:
-    - 强化了智能体运行时稳定性，补上会话内运行串行保护、工具循环拦截、转录清洗和上下文压缩治理，长任务与工具链路更稳。
-    - 改善了多步任务执行可靠性，子任务现在由运行时托管并持久化，复杂任务更不容易出现状态漂移或中断。
-    - 完成聊天页、员工中心和设置页的一轮场景层重构与主干收口，提升维护性，也修复了合并过程中暴露出的细节回归。
-    - 继续加固 Windows 桌面打包链路，`MSI` 与 `NSIS` 安装包构建通过，飞书设置与桌面端整体稳定性进一步提升。
+    - 新增会话 PDF 附件支持，现在可以直接上传 PDF 到聊天中并提取正文供智能体分析。
+    - 升级 OpenAI 工具调用链路到 Responses API，提升兼容性并改善工具调用稳定性。
+    - 优化快速设置流程，支持跳过部分配置并在搜索能力上使用 MCP 回退路径，降低首次上手门槛。
+    - 加强网络重试、会话恢复和运行时保护机制，复杂任务与长任务执行更稳定。
+    - 修复聊天中 Markdown 链接的打开方式，外部链接现在会在系统浏览器中打开。
+    - 改进窗口与界面细节，包括快速设置阶段标题栏保留等桌面体验优化。
   - English:
-    - Strengthens agent runtime stability with per-session run serialization, pre-tool loop interception, transcript hygiene, and context compaction governance for more reliable long-running and tool-heavy tasks.
-    - Improves multi-step task reliability by moving subtask execution into runtime-owned persistent child sessions, reducing state drift and interrupted execution.
-    - Completes a scene-layer refactor and mainline integration pass for Chat, Employee Hub, and Settings, improving maintainability and fixing merge-time regressions found during integration.
-    - Further hardens the Windows desktop packaging path, with both `MSI` and `NSIS` installers building successfully and overall Feishu settings plus desktop flow stability improved.
+    - Added PDF attachments in chat, allowing PDFs to be uploaded directly into a conversation and their text extracted for agent analysis.
+    - Upgraded OpenAI tool calling to the Responses API for better compatibility and more reliable tool execution.
+    - Improved the quick setup flow with optional setup skipping and MCP fallback for search capabilities, reducing first-run friction.
+    - Strengthened network retry, session recovery, and runtime guardrails to make complex and long-running tasks more stable.
+    - Fixed Markdown link handling in chat so external links now open in the system browser.
+    - Polished desktop window behavior and UI details, including preserving the title bar during quick setup.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.
