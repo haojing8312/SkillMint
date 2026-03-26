@@ -14,6 +14,7 @@ import {
 import type { ModelConfig, ModelConnectionTestResult } from "../types";
 
 const QUICK_FEISHU_SETUP_SKIPPED_KEY = "workclaw:quick-feishu-setup-skipped";
+const QUICK_SEARCH_SETUP_SKIPPED_KEY = "workclaw:quick-search-setup-skipped";
 
 export type QuickModelFormState = ReturnType<typeof buildModelFormFromCatalogItem> & {
   api_key: string;
@@ -126,6 +127,17 @@ export function useQuickSetupCoordinator(options: {
         return false;
       }
     });
+  const [hasSkippedQuickSearchSetup, setHasSkippedQuickSearchSetup] =
+    useState(() => {
+      if (typeof window === "undefined") {
+        return false;
+      }
+      try {
+        return window.localStorage.getItem(QUICK_SEARCH_SETUP_SKIPPED_KEY) === "1";
+      } catch {
+        return false;
+      }
+    });
   const quickModelApiKeyInputRef = useRef<HTMLInputElement | null>(null);
 
   const isBlockingInitialModelSetup =
@@ -158,6 +170,7 @@ export function useQuickSetupCoordinator(options: {
     !showSettings &&
     (models.length === 0 || searchConfigs.length === 0) &&
     hasCompletedInitialModelSetup &&
+    !hasSkippedQuickSearchSetup &&
     !dismissedModelSetupHint;
 
   const resetQuickSetupUiState = () => {
@@ -199,12 +212,14 @@ export function useQuickSetupCoordinator(options: {
     }
     setHasCompletedInitialModelSetup(true);
     setDismissedModelSetupHint(false);
+    setHasSkippedQuickSearchSetup(false);
     if (typeof window === "undefined") {
       return;
     }
     try {
       window.localStorage.setItem(initialModelSetupCompletedKey, "1");
       window.localStorage.removeItem(modelSetupHintDismissedKey);
+      window.localStorage.removeItem(QUICK_SEARCH_SETUP_SKIPPED_KEY);
     } catch {
       // ignore
     }
@@ -262,6 +277,7 @@ export function useQuickSetupCoordinator(options: {
       resetFirstUseOnboardingForDevelopment() {
         setHasCompletedInitialModelSetup(false);
         setDismissedModelSetupHint(false);
+        setHasSkippedQuickSearchSetup(false);
         setShowQuickModelSetup(false);
         setQuickModelPresetKey(defaultProvider.id);
         setQuickModelForm({
@@ -276,6 +292,7 @@ export function useQuickSetupCoordinator(options: {
           window.localStorage.removeItem(initialModelSetupCompletedKey);
           window.localStorage.removeItem(modelSetupHintDismissedKey);
           window.localStorage.removeItem(QUICK_FEISHU_SETUP_SKIPPED_KEY);
+          window.localStorage.removeItem(QUICK_SEARCH_SETUP_SKIPPED_KEY);
         } catch {
           // ignore
         }
@@ -372,6 +389,14 @@ export function useQuickSetupCoordinator(options: {
             await invoke("set_default_model", { modelId: savedModelId });
           }
           await loadModels();
+          setHasSkippedQuickSearchSetup(false);
+          if (typeof window !== "undefined") {
+            try {
+              window.localStorage.removeItem(QUICK_SEARCH_SETUP_SKIPPED_KEY);
+            } catch {
+              // ignore
+            }
+          }
           setQuickModelForm((prev) => ({ ...prev, api_key: "" }));
           setQuickModelTestResult(null);
           setQuickModelApiKeyVisible(false);
@@ -441,6 +466,14 @@ export function useQuickSetupCoordinator(options: {
             apiKey: quickSearchForm.api_key.trim(),
           });
           await loadSearchConfigs();
+          setHasSkippedQuickSearchSetup(false);
+          if (typeof window !== "undefined") {
+            try {
+              window.localStorage.removeItem(QUICK_SEARCH_SETUP_SKIPPED_KEY);
+            } catch {
+              // ignore
+            }
+          }
           if (isBlockingInitialModelSetup && !hasSkippedQuickFeishuSetup) {
             setQuickSetupStep("feishu");
             return;
@@ -460,10 +493,31 @@ export function useQuickSetupCoordinator(options: {
         }
       },
       skipQuickSearchSetup() {
-        if (isBlockingInitialModelSetup || quickSearchSaving || quickSearchTesting) {
+        if (quickSearchSaving || quickSearchTesting) {
+          return;
+        }
+        setHasSkippedQuickSearchSetup(true);
+        setHasCompletedInitialModelSetup(true);
+        setDismissedModelSetupHint(true);
+        if (typeof window !== "undefined") {
+          try {
+            window.localStorage.setItem(QUICK_SEARCH_SETUP_SKIPPED_KEY, "1");
+            window.localStorage.setItem(initialModelSetupCompletedKey, "1");
+            window.localStorage.setItem(modelSetupHintDismissedKey, "1");
+          } catch {
+            // ignore
+          }
+        }
+        if (isBlockingInitialModelSetup && !hasSkippedQuickFeishuSetup) {
+          setQuickSetupStep("feishu");
+          setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
+          setQuickSearchError("");
+          setQuickSearchTestResult(null);
+          setQuickSearchApiKeyVisible(false);
           return;
         }
         setShowQuickModelSetup(false);
+        setForceShowModelSetupGate(false);
         setQuickSetupStep("model");
         setQuickSearchForm(EMPTY_SEARCH_CONFIG_FORM);
         setQuickSearchError("");
@@ -501,6 +555,7 @@ export function useQuickSetupCoordinator(options: {
       defaultProvider,
       hasSkippedQuickFeishuSetup,
       initialModelSetupCompletedKey,
+      hasSkippedQuickSearchSetup,
       isBlockingInitialModelSetup,
       isQuickSetupBusy,
       loadModels,

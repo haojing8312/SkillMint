@@ -170,7 +170,7 @@ impl Tool for WebSearchTool {
 
 /// 将搜索结果列表格式化为可读文本
 fn format_results(items: &[SearchItem], provider_name: &str) -> String {
-    let mut output = format!("[搜索结果 - 来自 {}]\n\n", provider_name);
+    let mut output = format!("已使用搜索引擎：{}\n[搜索结果 - 来自 {}]\n\n", provider_name, provider_name);
     for (i, item) in items.iter().enumerate() {
         if item.snippet.is_empty() {
             output.push_str(&format!("{}. {}\n   {}\n\n", i + 1, item.title, item.url));

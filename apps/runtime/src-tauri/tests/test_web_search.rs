@@ -106,6 +106,7 @@ fn test_web_search_with_mock_provider() {
     let result = tool.execute(json!({"query": "test search"}), &ctx);
     assert!(result.is_ok(), "搜索失败: {:?}", result);
     let output = result.unwrap();
+    assert!(output.contains("已使用搜索引擎：Mock Search"));
     assert!(output.contains("Mock Result"));
     assert!(output.contains("example.com"));
 }

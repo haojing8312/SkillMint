@@ -193,9 +193,9 @@ export function QuickModelSetupDialog({
                 </div>
                 <div className="mt-2 text-sm leading-6 text-[var(--sm-text-muted)]">
                   {quickSetupStep === "model"
-                    ? "先完成模型接入，保存后自动进入搜索引擎配置。"
+                    ? "先完成模型接入，保存后可继续配置搜索，也可以先开始使用。"
                     : quickSetupStep === "search"
-                      ? "补齐搜索配置后，智能体即可在首次使用时直接联网检索。"
+                      ? "搜索不是阻塞项。你可以现在配置，也可以先进入 WorkClaw，后续需要联网检索时再补上。"
                       : "飞书不是阻塞项。你可以现在继续配置，也可以先进入 WorkClaw，后面再从设置里补上。"}
                 </div>
               </div>
@@ -236,8 +236,8 @@ export function QuickModelSetupDialog({
                     panelClassName="space-y-3"
                     actionClassName="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3"
                     saveLabel="完成配置"
-                    onSecondaryAction={!isBlockingInitialModelSetup ? onSkipQuickSearchSetup : undefined}
-                    secondaryActionLabel={!isBlockingInitialModelSetup ? "跳过搜索，稍后再配" : undefined}
+                    onSecondaryAction={onSkipQuickSearchSetup}
+                    secondaryActionLabel="跳过搜索，稍后再配"
                   />
                 </div>
               )}
@@ -463,7 +463,7 @@ export function QuickModelSetupDialog({
             <div className="mt-6 border-t border-[var(--sm-border)] pt-4">
               <div className="text-xs leading-5 text-[var(--sm-text-muted)]">
                 {isBlockingInitialModelSetup
-                  ? "首次使用至少完成模型与搜索配置后，才能关闭这个引导。"
+                  ? "首次使用至少完成模型配置后，才能关闭这个引导。搜索与飞书都可以稍后再配。"
                   : "按 Esc 或点击遮罩可直接关闭引导。"}
               </div>
               <div data-testid="quick-model-setup-actions" className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">

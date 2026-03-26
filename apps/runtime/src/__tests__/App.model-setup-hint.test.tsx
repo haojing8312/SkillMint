@@ -863,6 +863,36 @@ describe("App model setup hint", () => {
     });
   });
 
+  test("allows skipping the search step on first launch and continues to the optional feishu step", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("model-setup-gate")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("model-setup-gate-open-quick-setup"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-model-setup-dialog")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("quick-model-setup-api-key"), {
+      target: { value: "sk-test-first-launch-skip-search" },
+    });
+    fireEvent.click(screen.getByTestId("quick-model-setup-save"));
+
+    await waitFor(() => {
+      expect(screen.getByText("快速选择搜索引擎")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("跳过搜索，稍后再配"));
+
+    await waitFor(() => {
+      expect(screen.getByText("飞书接入（可选）")).toBeInTheDocument();
+      expect(screen.getByTestId("quick-feishu-setup-skip")).toBeInTheDocument();
+    });
+  });
+
   test("keeps quick setup open on first launch when Escape is pressed", async () => {
     render(<App />);
 

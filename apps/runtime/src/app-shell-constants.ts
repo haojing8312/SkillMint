@@ -8,8 +8,8 @@ export const MODEL_SETUP_STEPS: Array<{ title: string; description: string }> = 
     description: "首次接入只需要这一步，其他字段后续都能在设置里细调。",
   },
   {
-    title: "补齐搜索引擎",
-    description: "模型保存成功后继续配置搜索，让智能体开箱即可联网检索。",
+    title: "配置或跳过搜索",
+    description: "搜索不是阻塞项。现在可直接补齐，也可以先开始使用，后续需要联网检索时再配置。",
   },
 ];
 
