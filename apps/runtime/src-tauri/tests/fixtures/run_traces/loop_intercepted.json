@@ -1,0 +1,131 @@
+{
+  "session_id": "session-loop",
+  "run_id": "run-loop",
+  "events": [
+    {
+      "event_type": "run_started",
+      "created_at": "2026-03-27T02:00:00Z",
+      "payload": {
+        "type": "run_started",
+        "run_id": "run-loop",
+        "user_message_id": "user-1"
+      }
+    },
+    {
+      "event_type": "run_guard_warning",
+      "created_at": "2026-03-27T02:00:01Z",
+      "payload": {
+        "type": "run_guard_warning",
+        "run_id": "run-loop",
+        "warning_kind": "loop_detected",
+        "title": "任务可能即将卡住",
+        "message": "系统检测到连续重复步骤。",
+        "detail": "browser_snapshot 连续 5 次返回相同结果。",
+        "last_completed_step": "已填写封面标题"
+      }
+    },
+    {
+      "event_type": "run_stopped",
+      "created_at": "2026-03-27T02:00:02Z",
+      "payload": {
+        "type": "run_stopped",
+        "run_id": "run-loop",
+        "stop_reason": {
+          "kind": "loop_detected",
+          "title": "任务疑似卡住，已自动停止",
+          "message": "系统检测到连续重复步骤，已自动停止本轮任务。",
+          "detail": "browser_snapshot 连续 6 次返回相同结果。",
+          "last_completed_step": "已填写封面标题"
+        }
+      }
+    }
+  ],
+  "expected": {
+    "session_id": "session-loop",
+    "run_id": "run-loop",
+    "final_status": "stopped",
+    "event_count": 3,
+    "first_event_at": "<timestamp>",
+    "last_event_at": "<timestamp>",
+    "lifecycle": {
+      "started": true,
+      "completed": false,
+      "failed": true,
+      "cancelled": false,
+      "stopped": true,
+      "waiting_approval": false
+    },
+    "stop_reason_kind": "loop_detected",
+    "tools": [],
+    "approvals": [],
+    "guard_warnings": [
+      {
+        "warning_kind": "loop_detected",
+        "title": "任务可能即将卡住",
+        "detail": "browser_snapshot 连续 5 次返回相同结果。",
+        "last_completed_step": "已填写封面标题"
+      }
+    ],
+    "parse_warnings": [],
+    "child_session_link": null,
+    "events": [
+      {
+        "session_id": "session-loop",
+        "run_id": "run-loop",
+        "event_type": "run_started",
+        "created_at": "<timestamp>",
+        "status": "thinking",
+        "tool_name": null,
+        "call_id": null,
+        "approval_id": null,
+        "warning_kind": null,
+        "error_kind": null,
+        "message": "user_message_id=user-1",
+        "detail": null,
+        "irreversible": null,
+        "last_completed_step": null,
+        "child_session_id": null,
+        "is_error": null,
+        "parse_warning": null
+      },
+      {
+        "session_id": "session-loop",
+        "run_id": "run-loop",
+        "event_type": "run_guard_warning",
+        "created_at": "<timestamp>",
+        "status": null,
+        "tool_name": null,
+        "call_id": null,
+        "approval_id": null,
+        "warning_kind": "loop_detected",
+        "error_kind": null,
+        "message": "任务可能即将卡住",
+        "detail": "browser_snapshot 连续 5 次返回相同结果。",
+        "irreversible": null,
+        "last_completed_step": "已填写封面标题",
+        "child_session_id": null,
+        "is_error": false,
+        "parse_warning": null
+      },
+      {
+        "session_id": "session-loop",
+        "run_id": "run-loop",
+        "event_type": "run_stopped",
+        "created_at": "<timestamp>",
+        "status": "stopped",
+        "tool_name": null,
+        "call_id": null,
+        "approval_id": null,
+        "warning_kind": null,
+        "error_kind": "loop_detected",
+        "message": "任务疑似卡住，已自动停止",
+        "detail": "系统检测到连续重复步骤，已自动停止本轮任务。",
+        "irreversible": null,
+        "last_completed_step": "已填写封面标题",
+        "child_session_id": null,
+        "is_error": true,
+        "parse_warning": null
+      }
+    ]
+  }
+}

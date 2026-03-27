@@ -184,6 +184,7 @@ mod tests {
             route_attempt_logs_json: "[]".to_string(),
             session_runs_json: "[]".to_string(),
             session_run_events_json: "[]".to_string(),
+            session_run_traces_json: "[]".to_string(),
             latest_crash_json: Some("{\"message\":\"panic occurred\"}".to_string()),
             runtime_log_files: Vec::new(),
             audit_log_files: Vec::new(),
@@ -194,6 +195,11 @@ mod tests {
 
         assert!(zip_path.exists());
         assert_eq!(zip_path.extension().and_then(|v| v.to_str()), Some("zip"));
+        let file = std::fs::File::open(&zip_path).expect("open zip");
+        let mut archive = zip::ZipArchive::new(file).expect("read zip");
+        let _ = archive
+            .by_name("session-run-traces.json")
+            .expect("session run traces entry in zip");
     }
 
     #[test]
@@ -209,6 +215,7 @@ mod tests {
             route_attempt_logs_json: "[]".to_string(),
             session_runs_json: "[]".to_string(),
             session_run_events_json: "[]".to_string(),
+            session_run_traces_json: "[]".to_string(),
             latest_crash_json: None,
             runtime_log_files: Vec::new(),
             audit_log_files: vec![audit_log],

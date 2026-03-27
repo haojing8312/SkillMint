@@ -1,0 +1,30 @@
+{
+  "session_id": "session-admission",
+  "run_id": "run-admission-conflict",
+  "events": [],
+  "expected": {
+    "session_id": "session-admission",
+    "run_id": "run-admission-conflict",
+    "final_status": "missing",
+    "event_count": 0,
+    "first_event_at": null,
+    "last_event_at": null,
+    "lifecycle": {
+      "started": false,
+      "completed": false,
+      "failed": false,
+      "cancelled": false,
+      "stopped": false,
+      "waiting_approval": false
+    },
+    "stop_reason_kind": null,
+    "tools": [],
+    "approvals": [],
+    "guard_warnings": [],
+    "parse_warnings": [
+      "no persisted session_run_events found for run"
+    ],
+    "child_session_link": null,
+    "events": []
+  }
+}

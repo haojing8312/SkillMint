@@ -1,0 +1,89 @@
+{
+  "session_id": "subagent--parent_session--child-2",
+  "run_id": "run-child-failure",
+  "events": [
+    {
+      "event_type": "run_started",
+      "created_at": "2026-03-27T05:00:00Z",
+      "payload": {
+        "type": "run_started",
+        "run_id": "run-child-failure",
+        "user_message_id": "user-1"
+      }
+    },
+    {
+      "event_type": "run_failed",
+      "created_at": "2026-03-27T05:00:01Z",
+      "payload": {
+        "type": "run_failed",
+        "run_id": "run-child-failure",
+        "error_kind": "child_session",
+        "error_message": "delegate execution failed"
+      }
+    }
+  ],
+  "expected": {
+    "session_id": "subagent--parent_session--<uuid>",
+    "run_id": "run-child-failure",
+    "final_status": "failed",
+    "event_count": 2,
+    "first_event_at": "<timestamp>",
+    "last_event_at": "<timestamp>",
+    "lifecycle": {
+      "started": true,
+      "completed": false,
+      "failed": true,
+      "cancelled": false,
+      "stopped": false,
+      "waiting_approval": false
+    },
+    "stop_reason_kind": "child_session",
+    "tools": [],
+    "approvals": [],
+    "guard_warnings": [],
+    "parse_warnings": [],
+    "child_session_link": {
+      "parent_session_key": "parent_session"
+    },
+    "events": [
+      {
+        "session_id": "subagent--parent_session--<uuid>",
+        "run_id": "run-child-failure",
+        "event_type": "run_started",
+        "created_at": "<timestamp>",
+        "status": "thinking",
+        "tool_name": null,
+        "call_id": null,
+        "approval_id": null,
+        "warning_kind": null,
+        "error_kind": null,
+        "message": "user_message_id=user-1",
+        "detail": null,
+        "irreversible": null,
+        "last_completed_step": null,
+        "child_session_id": null,
+        "is_error": null,
+        "parse_warning": null
+      },
+      {
+        "session_id": "subagent--parent_session--<uuid>",
+        "run_id": "run-child-failure",
+        "event_type": "run_failed",
+        "created_at": "<timestamp>",
+        "status": "failed",
+        "tool_name": null,
+        "call_id": null,
+        "approval_id": null,
+        "warning_kind": null,
+        "error_kind": "child_session",
+        "message": "delegate execution failed",
+        "detail": null,
+        "irreversible": null,
+        "last_completed_step": null,
+        "child_session_id": null,
+        "is_error": true,
+        "parse_warning": null
+      }
+    ]
+  }
+}

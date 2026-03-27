@@ -526,6 +526,8 @@ pub fn run() {
             commands::chat_session_commands::export_session,
             commands::chat_session_commands::write_export_file,
             commands::session_runs::list_session_runs,
+            commands::session_runs::list_session_run_events,
+            commands::session_runs::export_session_run_trace,
             commands::approvals::list_pending_approvals,
             commands::approvals::resolve_approval,
             commands::chat_control::answer_user_question,

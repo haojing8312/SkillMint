@@ -2,6 +2,7 @@ use super::types::{
     CrashSummaryInfo, DesktopDiagnosticsExportPayload, DesktopDiagnosticsStatus,
     FrontendDiagnosticPayload,
 };
+use crate::commands::session_runs::export_session_run_trace_with_pool;
 use crate::diagnostics::{self};
 use sqlx::SqlitePool;
 use std::fs;
@@ -144,6 +145,7 @@ pub(crate) fn export_diagnostics_bundle(
     add_text("route-attempt-logs.json", &payload.route_attempt_logs_json)?;
     add_text("session-runs.json", &payload.session_runs_json)?;
     add_text("session-run-events.json", &payload.session_run_events_json)?;
+    add_text("session-run-traces.json", &payload.session_run_traces_json)?;
     if let Some(crash_json) = &payload.latest_crash_json {
         add_text("latest-crash.json", crash_json)?;
     }
@@ -196,8 +198,8 @@ pub(crate) async fn export_desktop_diagnostics_bundle(
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
-    let session_runs = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT session_id, status, error_kind, error_message, created_at, updated_at
+    let session_runs = sqlx::query_as::<_, (String, String, String, String, String, String, String)>(
+        "SELECT id, session_id, status, error_kind, error_message, created_at, updated_at
          FROM session_runs ORDER BY updated_at DESC LIMIT 100",
     )
     .fetch_all(pool)
@@ -236,12 +238,13 @@ pub(crate) async fn export_desktop_diagnostics_bundle(
             .into_iter()
             .map(|row| {
                 serde_json::json!({
-                    "session_id": row.0,
-                    "status": row.1,
-                    "error_kind": row.2,
-                    "error_message": row.3,
-                    "created_at": row.4,
-                    "updated_at": row.5,
+                    "run_id": row.0,
+                    "session_id": row.1,
+                    "status": row.2,
+                    "error_kind": row.3,
+                    "error_message": row.4,
+                    "created_at": row.5,
+                    "updated_at": row.6,
                 })
             })
             .collect::<Vec<_>>(),
@@ -262,6 +265,28 @@ pub(crate) async fn export_desktop_diagnostics_bundle(
             .collect::<Vec<_>>(),
     )
     .map_err(|e| e.to_string())?;
+    let trace_runs = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, session_id
+         FROM session_runs
+         ORDER BY updated_at DESC
+         LIMIT 25",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut trace_exports = Vec::new();
+    for (run_id, session_id) in trace_runs {
+        match export_session_run_trace_with_pool(pool, &session_id, &run_id).await {
+            Ok(trace) => trace_exports.push(serde_json::to_value(trace).map_err(|e| e.to_string())?),
+            Err(error) => trace_exports.push(serde_json::json!({
+                "session_id": session_id,
+                "run_id": run_id,
+                "error": error,
+            })),
+        }
+    }
+    let session_run_traces_json =
+        serde_json::to_string_pretty(&trace_exports).map_err(|e| e.to_string())?;
     let latest_crash_json = diagnostics::read_latest_crash_summary(&diagnostics_state.paths)?
         .map(|summary| serde_json::to_string_pretty(&summary))
         .transpose()
@@ -277,6 +302,7 @@ pub(crate) async fn export_desktop_diagnostics_bundle(
             route_attempt_logs_json,
             session_runs_json,
             session_run_events_json,
+            session_run_traces_json,
             latest_crash_json,
             runtime_log_files,
             audit_log_files,

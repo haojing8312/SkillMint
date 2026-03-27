@@ -1,4 +1,8 @@
 use super::skills::DbState;
+use crate::agent::runtime::trace_builder::{
+    build_session_run_trace, summarize_stored_event, SessionRunEventSummary, SessionRunTrace,
+    StoredSessionRunEvent,
+};
 use crate::session_journal::{SessionJournalStore, SessionRunEvent};
 use chrono::Utc;
 use serde::Serialize;
@@ -47,6 +51,94 @@ pub async fn list_session_runs(
     db: State<'_, DbState>,
 ) -> Result<Vec<SessionRunProjection>, String> {
     list_session_runs_with_pool(&db.0, &session_id).await
+}
+
+pub async fn list_session_run_events_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+    run_id: Option<&str>,
+    limit: Option<u32>,
+) -> Result<Vec<SessionRunEventSummary>, String> {
+    Ok(load_session_run_event_rows_with_pool(pool, session_id, run_id, limit)
+        .await?
+        .into_iter()
+        .map(|record| summarize_stored_event(&record))
+        .collect())
+}
+
+async fn load_session_run_event_rows_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+    run_id: Option<&str>,
+    limit: Option<u32>,
+) -> Result<Vec<StoredSessionRunEvent>, String> {
+    let mut sql = String::from(
+        "SELECT session_id, run_id, event_type, payload_json, created_at
+         FROM session_run_events
+         WHERE session_id = ?",
+    );
+    if run_id.is_some() {
+        sql.push_str(" AND run_id = ?");
+    }
+    sql.push_str(" ORDER BY created_at ASC, id ASC");
+    if limit.is_some() {
+        sql.push_str(" LIMIT ?");
+    }
+
+    let mut query = sqlx::query_as::<_, (String, String, String, String, String)>(&sql)
+        .bind(session_id.trim());
+    if let Some(run_id) = run_id {
+        query = query.bind(run_id.trim());
+    }
+    if let Some(limit) = limit {
+        query = query.bind(i64::from(limit));
+    }
+
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("读取会话运行事件失败: {e}"))?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(session_id, run_id, event_type, payload_json, created_at)| StoredSessionRunEvent {
+                session_id,
+                run_id,
+                event_type,
+                payload_json,
+                created_at,
+            },
+        )
+        .collect())
+}
+
+#[tauri::command]
+pub async fn list_session_run_events(
+    session_id: String,
+    run_id: Option<String>,
+    limit: Option<u32>,
+    db: State<'_, DbState>,
+) -> Result<Vec<SessionRunEventSummary>, String> {
+    list_session_run_events_with_pool(&db.0, &session_id, run_id.as_deref(), limit).await
+}
+
+pub async fn export_session_run_trace_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+    run_id: &str,
+) -> Result<SessionRunTrace, String> {
+    let events = load_session_run_event_rows_with_pool(pool, session_id, Some(run_id), None).await?;
+    Ok(build_session_run_trace(session_id.trim(), run_id.trim(), &events))
+}
+
+#[tauri::command]
+pub async fn export_session_run_trace(
+    session_id: String,
+    run_id: String,
+    db: State<'_, DbState>,
+) -> Result<SessionRunTrace, String> {
+    export_session_run_trace_with_pool(&db.0, &session_id, &run_id).await
 }
 
 pub async fn append_session_run_event_with_pool(
@@ -349,8 +441,108 @@ fn format_run_stop_message(stop_reason: &crate::agent::run_guard::RunStopReason)
 
 #[cfg(test)]
 mod tests {
-    use super::format_run_stop_message;
+    use super::{
+        export_session_run_trace_with_pool, format_run_stop_message,
+        list_session_run_events_with_pool,
+    };
     use crate::agent::run_guard::RunStopReason;
+    use crate::session_journal::SessionRunEvent;
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_session_run_event_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE session_runs (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                user_message_id TEXT NOT NULL DEFAULT '',
+                assistant_message_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'queued',
+                buffered_text TEXT NOT NULL DEFAULT '',
+                error_kind TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create session_runs table");
+
+        sqlx::query(
+            "CREATE TABLE session_run_events (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create session_run_events table");
+
+        sqlx::query(
+            "CREATE TABLE approvals (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                call_id TEXT NOT NULL DEFAULT '',
+                tool_name TEXT NOT NULL,
+                input_json TEXT NOT NULL DEFAULT '{}',
+                summary TEXT NOT NULL DEFAULT '',
+                impact TEXT NOT NULL DEFAULT '',
+                irreversible INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                decision TEXT NOT NULL DEFAULT '',
+                notify_targets_json TEXT NOT NULL DEFAULT '[]',
+                resume_payload_json TEXT NOT NULL DEFAULT '{}',
+                resolved_by_surface TEXT NOT NULL DEFAULT '',
+                resolved_by_user TEXT NOT NULL DEFAULT '',
+                resolved_at TEXT,
+                resumed_at TEXT,
+                expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create approvals table");
+
+        pool
+    }
+
+    async fn insert_raw_session_run_event(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        session_id: &str,
+        run_id: &str,
+        event_type: &str,
+        payload_json: &str,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO session_run_events (id, run_id, session_id, event_type, payload_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(run_id)
+        .bind(session_id)
+        .bind(event_type)
+        .bind(payload_json)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .expect("insert session_run_event");
+    }
 
     #[test]
     fn format_run_stop_message_includes_detail_and_step() {
@@ -365,5 +557,285 @@ mod tests {
         assert!(formatted
             .contains("目标路径不在当前工作目录范围内。你可以先切换当前会话的工作目录后重试。"));
         assert!(formatted.contains("最后完成步骤：已读取当前工作区"));
+    }
+
+    #[tokio::test]
+    async fn list_session_run_events_returns_chronological_session_events() {
+        let pool = setup_session_run_event_pool().await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-1",
+            "session-1",
+            "run-a",
+            "run_started",
+            &serde_json::to_string(&SessionRunEvent::RunStarted {
+                run_id: "run-a".to_string(),
+                user_message_id: "user-1".to_string(),
+            })
+            .expect("serialize run_started"),
+            "2026-03-27T00:00:00Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-2",
+            "session-1",
+            "run-b",
+            "run_started",
+            &serde_json::to_string(&SessionRunEvent::RunStarted {
+                run_id: "run-b".to_string(),
+                user_message_id: "user-2".to_string(),
+            })
+            .expect("serialize run_started"),
+            "2026-03-27T00:00:01Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-3",
+            "session-1",
+            "run-a",
+            "tool_started",
+            &serde_json::to_string(&SessionRunEvent::ToolStarted {
+                run_id: "run-a".to_string(),
+                tool_name: "shell_command".to_string(),
+                call_id: "call-1".to_string(),
+                input: json!({ "command": "pwd" }),
+            })
+            .expect("serialize tool_started"),
+            "2026-03-27T00:00:02Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-4",
+            "session-2",
+            "run-x",
+            "run_started",
+            &serde_json::to_string(&SessionRunEvent::RunStarted {
+                run_id: "run-x".to_string(),
+                user_message_id: "user-x".to_string(),
+            })
+            .expect("serialize foreign run_started"),
+            "2026-03-27T00:00:03Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-5",
+            "session-1",
+            "run-a",
+            "run_completed",
+            &serde_json::to_string(&SessionRunEvent::RunCompleted {
+                run_id: "run-a".to_string(),
+            })
+            .expect("serialize run_completed"),
+            "2026-03-27T00:00:04Z",
+        )
+        .await;
+
+        let events = list_session_run_events_with_pool(&pool, "session-1", None, None)
+            .await
+            .expect("list session run events");
+
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run_started", "run_started", "tool_started", "run_completed"]
+        );
+        assert_eq!(events[0].run_id, "run-a");
+        assert_eq!(events[1].run_id, "run-b");
+        assert_eq!(events[2].tool_name.as_deref(), Some("shell_command"));
+    }
+
+    #[tokio::test]
+    async fn list_session_run_events_filters_by_run_id_and_limit() {
+        let pool = setup_session_run_event_pool().await;
+        for (id, created_at, payload_json, event_type) in [
+            (
+                "evt-1",
+                "2026-03-27T00:10:00Z",
+                serde_json::to_string(&SessionRunEvent::RunStarted {
+                    run_id: "run-a".to_string(),
+                    user_message_id: "user-1".to_string(),
+                })
+                .expect("serialize run-a started"),
+                "run_started".to_string(),
+            ),
+            (
+                "evt-2",
+                "2026-03-27T00:10:01Z",
+                serde_json::to_string(&SessionRunEvent::ToolStarted {
+                    run_id: "run-a".to_string(),
+                    tool_name: "read_file".to_string(),
+                    call_id: "call-1".to_string(),
+                    input: json!({ "path": "README.md" }),
+                })
+                .expect("serialize run-a tool"),
+                "tool_started".to_string(),
+            ),
+            (
+                "evt-3",
+                "2026-03-27T00:10:02Z",
+                serde_json::to_string(&SessionRunEvent::RunCompleted {
+                    run_id: "run-a".to_string(),
+                })
+                .expect("serialize run-a completed"),
+                "run_completed".to_string(),
+            ),
+            (
+                "evt-4",
+                "2026-03-27T00:10:03Z",
+                serde_json::to_string(&SessionRunEvent::RunStarted {
+                    run_id: "run-b".to_string(),
+                    user_message_id: "user-2".to_string(),
+                })
+                .expect("serialize run-b started"),
+                "run_started".to_string(),
+            ),
+        ] {
+            insert_raw_session_run_event(
+                &pool,
+                id,
+                "session-1",
+                if id == "evt-4" { "run-b" } else { "run-a" },
+                &event_type,
+                &payload_json,
+                created_at,
+            )
+            .await;
+        }
+
+        let events = list_session_run_events_with_pool(&pool, "session-1", Some("run-a"), Some(2))
+            .await
+            .expect("list filtered session run events");
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run_started", "tool_started"]
+        );
+        assert!(events.iter().all(|event| event.run_id == "run-a"));
+    }
+
+    #[tokio::test]
+    async fn export_session_run_trace_builds_structured_trace_for_run() {
+        let pool = setup_session_run_event_pool().await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-1",
+            "session-1",
+            "run-a",
+            "run_started",
+            &serde_json::to_string(&SessionRunEvent::RunStarted {
+                run_id: "run-a".to_string(),
+                user_message_id: "user-1".to_string(),
+            })
+            .expect("serialize run_started"),
+            "2026-03-27T01:00:00Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-2",
+            "session-1",
+            "run-a",
+            "tool_started",
+            &serde_json::to_string(&SessionRunEvent::ToolStarted {
+                run_id: "run-a".to_string(),
+                tool_name: "read_file".to_string(),
+                call_id: "call-1".to_string(),
+                input: json!({ "path": "README.md" }),
+            })
+            .expect("serialize tool_started"),
+            "2026-03-27T01:00:01Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-3",
+            "session-1",
+            "run-a",
+            "tool_completed",
+            &serde_json::to_string(&SessionRunEvent::ToolCompleted {
+                run_id: "run-a".to_string(),
+                tool_name: "read_file".to_string(),
+                call_id: "call-1".to_string(),
+                input: json!({ "path": "README.md" }),
+                output: "README loaded".to_string(),
+                is_error: false,
+            })
+            .expect("serialize tool_completed"),
+            "2026-03-27T01:00:02Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-4",
+            "session-1",
+            "run-a",
+            "run_completed",
+            &serde_json::to_string(&SessionRunEvent::RunCompleted {
+                run_id: "run-a".to_string(),
+            })
+            .expect("serialize run_completed"),
+            "2026-03-27T01:00:03Z",
+        )
+        .await;
+
+        let trace = export_session_run_trace_with_pool(&pool, "session-1", "run-a")
+            .await
+            .expect("export session run trace");
+
+        assert_eq!(trace.session_id, "session-1");
+        assert_eq!(trace.run_id, "run-a");
+        assert_eq!(trace.final_status, "completed");
+        assert_eq!(trace.event_count, 4);
+        assert_eq!(trace.tools.len(), 1);
+        assert_eq!(trace.tools[0].status, "completed");
+    }
+
+    #[tokio::test]
+    async fn export_session_run_trace_keeps_parse_warnings_for_bad_payload_rows() {
+        let pool = setup_session_run_event_pool().await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-1",
+            "session-1",
+            "run-b",
+            "run_started",
+            &serde_json::to_string(&SessionRunEvent::RunStarted {
+                run_id: "run-b".to_string(),
+                user_message_id: "user-2".to_string(),
+            })
+            .expect("serialize run_started"),
+            "2026-03-27T02:00:00Z",
+        )
+        .await;
+        insert_raw_session_run_event(
+            &pool,
+            "evt-2",
+            "session-1",
+            "run-b",
+            "tool_started",
+            "{\"type\":\"tool_started\",\"run_id\":",
+            "2026-03-27T02:00:01Z",
+        )
+        .await;
+
+        let trace = export_session_run_trace_with_pool(&pool, "session-1", "run-b")
+            .await
+            .expect("export trace with malformed payload");
+
+        assert_eq!(trace.run_id, "run-b");
+        assert_eq!(trace.event_count, 2);
+        assert_eq!(trace.parse_warnings.len(), 1);
+        assert!(trace.parse_warnings[0].contains("failed to parse payload_json"));
     }
 }
