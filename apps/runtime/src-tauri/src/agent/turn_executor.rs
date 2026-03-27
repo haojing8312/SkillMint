@@ -17,6 +17,7 @@ use super::run_guard::{
 };
 use super::types::{AgentStateEvent, LLMResponse, StreamDelta};
 use crate::adapters;
+use crate::agent::runtime::RuntimeObservabilityState;
 use anyhow::{anyhow, Result};
 use runtime_executor_core::{
     estimate_tokens, micro_compact, trim_messages, ToolFailureStreak, DEFAULT_TOKEN_BUDGET,
@@ -130,6 +131,9 @@ impl AgentExecutor {
                             .app_data_dir()
                             .unwrap_or_default()
                             .join("transcripts");
+                        let runtime_observability = app
+                            .try_state::<RuntimeObservabilityState>()
+                            .map(|state| state.0.clone());
                         match super::runtime::compaction_pipeline::maybe_auto_compact(
                             super::runtime::compaction_pipeline::RuntimeCompactionRequest {
                                 api_format,
@@ -139,6 +143,7 @@ impl AgentExecutor {
                                 session_id: sid,
                                 messages: &messages,
                                 transcript_root: &transcript_dir,
+                                observability: runtime_observability.as_deref(),
                             },
                         )
                         .await

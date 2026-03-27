@@ -62,6 +62,7 @@ pub(crate) async fn prepare_hidden_child_session_run(
     append_run_started_with_pool(db, journal, &child_session_id, &run_id, &user_message_id)
         .await
         .map_err(anyhow::Error::msg)?;
+    journal.observability().record_child_session_link();
 
     Ok(PreparedChildSessionRun {
         child_session_id,
@@ -289,6 +290,7 @@ mod tests {
     use super::{
         finalize_hidden_child_session_success_with_messages, prepare_hidden_child_session_run,
     };
+    use crate::agent::runtime::{RunRegistry, RuntimeObservability};
     use crate::session_journal::SessionJournalStore;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
@@ -412,6 +414,30 @@ mod tests {
         let journal_dir = journal_root.path().join(&prepared.child_session_id);
         assert!(journal_dir.join("events.jsonl").exists());
         assert!(journal_dir.join("state.json").exists());
+    }
+
+
+    #[tokio::test]
+    async fn prepare_hidden_child_session_run_updates_observability_child_session_total() {
+        let pool = setup_hidden_child_session_pool().await;
+        let journal_root = tempdir().expect("journal tempdir");
+        let observability = std::sync::Arc::new(RuntimeObservability::new(8));
+        let journal = SessionJournalStore::with_registry_and_observability(
+            journal_root.path().to_path_buf(),
+            std::sync::Arc::new(RunRegistry::default()),
+            observability.clone(),
+        );
+
+        let _prepared = prepare_hidden_child_session_run(
+            &pool,
+            &journal,
+            "parent-session",
+            "summarize workspace",
+        )
+        .await
+        .expect("prepare hidden child session");
+
+        assert_eq!(observability.snapshot().child_sessions.linked_total, 1);
     }
 
     #[tokio::test]

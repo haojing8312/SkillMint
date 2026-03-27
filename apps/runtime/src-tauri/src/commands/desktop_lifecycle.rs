@@ -185,6 +185,8 @@ mod tests {
             session_runs_json: "[]".to_string(),
             session_run_events_json: "[]".to_string(),
             session_run_traces_json: "[]".to_string(),
+            runtime_observability_snapshot_json: "{}".to_string(),
+            runtime_recent_events_json: "[]".to_string(),
             latest_crash_json: Some("{\"message\":\"panic occurred\"}".to_string()),
             runtime_log_files: Vec::new(),
             audit_log_files: Vec::new(),
@@ -200,6 +202,12 @@ mod tests {
         let _ = archive
             .by_name("session-run-traces.json")
             .expect("session run traces entry in zip");
+        let _ = archive
+            .by_name("runtime-observability-snapshot.json")
+            .expect("observability snapshot entry in zip");
+        let _ = archive
+            .by_name("runtime-recent-events.json")
+            .expect("runtime recent events entry in zip");
     }
 
     #[test]
@@ -216,6 +224,8 @@ mod tests {
             session_runs_json: "[]".to_string(),
             session_run_events_json: "[]".to_string(),
             session_run_traces_json: "[]".to_string(),
+            runtime_observability_snapshot_json: "{}".to_string(),
+            runtime_recent_events_json: "[]".to_string(),
             latest_crash_json: None,
             runtime_log_files: Vec::new(),
             audit_log_files: vec![audit_log],

@@ -1,5 +1,7 @@
 use crate::agent::run_guard::RunStopReason;
-use crate::agent::runtime::RunRegistry;
+use crate::agent::runtime::{
+    RunRegistry, RuntimeObservability, RuntimeObservedEvent, RuntimeObservedRunEvent,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,15 +14,40 @@ use tokio::io::AsyncWriteExt;
 pub struct SessionJournalStore {
     root: PathBuf,
     run_registry: Arc<RunRegistry>,
+    observability: Arc<RuntimeObservability>,
 }
 
 impl SessionJournalStore {
     pub fn new(root: PathBuf) -> Self {
-        Self::with_registry(root, Arc::new(RunRegistry::default()))
+        Self::with_registry_and_observability(
+            root,
+            Arc::new(RunRegistry::default()),
+            Arc::new(RuntimeObservability::default()),
+        )
     }
 
     pub fn with_registry(root: PathBuf, run_registry: Arc<RunRegistry>) -> Self {
-        Self { root, run_registry }
+        Self::with_registry_and_observability(
+            root,
+            run_registry,
+            Arc::new(RuntimeObservability::default()),
+        )
+    }
+
+    pub fn with_registry_and_observability(
+        root: PathBuf,
+        run_registry: Arc<RunRegistry>,
+        observability: Arc<RuntimeObservability>,
+    ) -> Self {
+        Self {
+            root,
+            run_registry,
+            observability,
+        }
+    }
+
+    pub fn observability(&self) -> Arc<RuntimeObservability> {
+        Arc::clone(&self.observability)
     }
 
     pub fn root(&self) -> &Path {
@@ -63,6 +90,11 @@ impl SessionJournalStore {
         let mut state = self.read_state(session_id).await?;
         apply_event(&mut state, &event);
         self.run_registry.apply_event(session_id, &event);
+        self.observability.record_recent_event(build_observed_session_run_event(
+            session_id,
+            &record.recorded_at,
+            &event,
+        ));
         state.current_run_id = self
             .run_registry
             .restore_session(session_id, state.current_run_id.as_deref());
@@ -355,6 +387,203 @@ fn format_run_stop_message(stop_reason: &RunStopReason) -> String {
     lines.join("\n")
 }
 
+fn build_observed_session_run_event(
+    session_id: &str,
+    recorded_at: &str,
+    event: &SessionRunEvent,
+) -> RuntimeObservedEvent {
+    let observed = match event {
+        SessionRunEvent::RunStarted {
+            run_id,
+            user_message_id,
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "run_started".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("thinking".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            child_session_id: None,
+            message: Some(format!("user_message_id={user_message_id}")),
+        },
+        SessionRunEvent::AssistantChunkAppended { run_id, chunk } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "assistant_chunk_appended".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("thinking".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            child_session_id: None,
+            message: Some(truncate_observed_message(chunk)),
+        },
+        SessionRunEvent::ToolStarted {
+            run_id,
+            tool_name,
+            input,
+            ..
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "tool_started".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("tool_calling".to_string()),
+            tool_name: Some(tool_name.clone()),
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            child_session_id: observed_child_session_id(input),
+            message: Some(truncate_observed_message(&input.to_string())),
+        },
+        SessionRunEvent::ToolCompleted {
+            run_id,
+            tool_name,
+            input,
+            output,
+            is_error,
+            ..
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "tool_completed".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some(if *is_error {
+                "tool_error".to_string()
+            } else {
+                "thinking".to_string()
+            }),
+            tool_name: Some(tool_name.clone()),
+            approval_id: None,
+            warning_kind: None,
+            error_kind: (*is_error).then_some("tool_error".to_string()),
+            child_session_id: observed_child_session_id(input),
+            message: Some(truncate_observed_message(output)),
+        },
+        SessionRunEvent::ApprovalRequested {
+            run_id,
+            approval_id,
+            tool_name,
+            input,
+            summary,
+            ..
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "approval_requested".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("waiting_approval".to_string()),
+            tool_name: Some(tool_name.clone()),
+            approval_id: Some(approval_id.clone()),
+            warning_kind: None,
+            error_kind: None,
+            child_session_id: observed_child_session_id(input),
+            message: Some(truncate_observed_message(summary)),
+        },
+        SessionRunEvent::RunCompleted { run_id } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "run_completed".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("completed".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            child_session_id: None,
+            message: Some("run completed".to_string()),
+        },
+        SessionRunEvent::RunGuardWarning {
+            run_id,
+            warning_kind,
+            title,
+            detail,
+            ..
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "run_guard_warning".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("warning".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: Some(warning_kind.clone()),
+            error_kind: None,
+            child_session_id: None,
+            message: Some(detail.clone().unwrap_or_else(|| title.clone())),
+        },
+        SessionRunEvent::RunStopped {
+            run_id,
+            stop_reason,
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "run_stopped".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("failed".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: Some(stop_reason.kind.as_key().to_string()),
+            child_session_id: None,
+            message: Some(truncate_observed_message(&stop_reason.message)),
+        },
+        SessionRunEvent::RunFailed {
+            run_id,
+            error_kind,
+            error_message,
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "run_failed".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("failed".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: Some(error_kind.clone()),
+            child_session_id: None,
+            message: Some(truncate_observed_message(error_message)),
+        },
+        SessionRunEvent::RunCancelled { run_id, reason } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "run_cancelled".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some("cancelled".to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: Some("cancelled".to_string()),
+            child_session_id: None,
+            message: reason.clone(),
+        },
+    };
+
+    RuntimeObservedEvent::SessionRun(observed)
+}
+
+fn observed_child_session_id(input: &Value) -> Option<String> {
+    input
+        .get("child_session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn truncate_observed_message(value: &str) -> String {
+    let mut truncated = value.chars().take(160).collect::<String>();
+    if value.chars().count() > 160 {
+        truncated.push_str("...");
+    }
+    truncated
+}
+
 fn render_transcript_markdown(state: &SessionJournalState) -> String {
     let mut lines = vec![format!("# Session {}", state.session_id), String::new()];
 
@@ -407,7 +636,7 @@ mod tests {
         format_run_stop_message, SessionJournalState, SessionJournalStore, SessionRunEvent,
     };
     use crate::agent::run_guard::RunStopReason;
-    use crate::agent::runtime::RunRegistry;
+    use crate::agent::runtime::{RunRegistry, RuntimeObservability};
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -497,5 +726,57 @@ mod tests {
             .expect("read aligned state");
         assert_eq!(state.current_run_id, None);
         assert_eq!(registry.active_run_id("session-aligned"), None);
+    }
+
+    #[tokio::test]
+    async fn append_event_updates_observability_snapshot() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let registry = Arc::new(RunRegistry::default());
+        let observability = Arc::new(RuntimeObservability::new(8));
+        let journal = SessionJournalStore::with_registry_and_observability(
+            journal_root.path().to_path_buf(),
+            registry,
+            observability.clone(),
+        );
+
+        journal
+            .append_event(
+                "session-observability",
+                SessionRunEvent::RunStarted {
+                    run_id: "run-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                },
+            )
+            .await
+            .expect("append run started");
+        journal
+            .append_event(
+                "session-observability",
+                SessionRunEvent::RunGuardWarning {
+                    run_id: "run-1".to_string(),
+                    warning_kind: "loop_detected".to_string(),
+                    title: "loop".to_string(),
+                    message: "loop warning".to_string(),
+                    detail: None,
+                    last_completed_step: None,
+                },
+            )
+            .await
+            .expect("append run guard warning");
+        journal
+            .append_event(
+                "session-observability",
+                SessionRunEvent::RunCompleted {
+                    run_id: "run-1".to_string(),
+                },
+            )
+            .await
+            .expect("append run completed");
+
+        let snapshot = observability.snapshot();
+        assert_eq!(snapshot.turns.active, 0);
+        assert_eq!(snapshot.turns.completed, 1);
+        assert_eq!(snapshot.guard.warnings_by_kind.get("loop_detected"), Some(&1));
+        assert_eq!(snapshot.recent_events.buffered, 3);
     }
 }

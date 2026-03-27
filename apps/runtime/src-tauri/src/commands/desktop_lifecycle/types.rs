@@ -43,6 +43,8 @@ pub struct DesktopDiagnosticsExportPayload {
     pub session_runs_json: String,
     pub session_run_events_json: String,
     pub session_run_traces_json: String,
+    pub runtime_observability_snapshot_json: String,
+    pub runtime_recent_events_json: String,
     pub latest_crash_json: Option<String>,
     pub runtime_log_files: Vec<PathBuf>,
     pub audit_log_files: Vec<PathBuf>,

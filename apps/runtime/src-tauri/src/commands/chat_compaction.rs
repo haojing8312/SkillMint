@@ -25,6 +25,7 @@ pub async fn compact_context_with_pool(
         session_id,
         messages: &messages,
         transcript_root: &transcript_dir,
+        observability: None,
     })
     .await
     .map_err(|e| e.to_string())?;

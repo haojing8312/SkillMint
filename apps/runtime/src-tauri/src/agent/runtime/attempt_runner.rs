@@ -1,4 +1,5 @@
 use super::events::{StreamToken, ToolConfirmResponder};
+use super::observability::RuntimeObservabilityState;
 use super::failover::{
     runtime_failover_error_kind_from_error_text, runtime_failover_error_kind_from_stop_reason_kind,
     runtime_failover_error_kind_key, CandidateAttemptOutcome, RuntimeFailover,
@@ -11,7 +12,7 @@ use crate::agent::AgentExecutor;
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::runtime_io as chat_io;
 
@@ -42,6 +43,10 @@ pub(crate) async fn execute_route_candidates(
     params: RouteExecutionParams<'_>,
 ) -> RouteExecutionOutcome {
     let params_ref = &params;
+    let runtime_observability = params
+        .app
+        .try_state::<RuntimeObservabilityState>()
+        .map(|state| state.0.clone());
     RuntimeFailover::execute_candidates(RuntimeFailoverParams {
         route_candidates: params.route_candidates,
         per_candidate_retry_count: params.per_candidate_retry_count,
@@ -60,6 +65,11 @@ pub(crate) async fn execute_route_candidates(
                 );
             }
         })),
+        on_error_kind: runtime_observability.map(|observability| {
+            Box::new(move |kind| {
+                observability.record_failover_error_kind(runtime_failover_error_kind_key(kind));
+            }) as Box<dyn FnMut(super::failover::RuntimeFailoverErrorKind) + Send>
+        }),
         attempt_once: Box::new(
             move |candidate_api_format,
                   candidate_base_url,

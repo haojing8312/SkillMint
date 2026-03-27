@@ -2,13 +2,14 @@ use super::types::{
     CrashSummaryInfo, DesktopDiagnosticsExportPayload, DesktopDiagnosticsStatus,
     FrontendDiagnosticPayload,
 };
+use crate::agent::runtime::RuntimeObservabilityState;
 use crate::commands::session_runs::export_session_run_trace_with_pool;
 use crate::diagnostics::{self};
 use sqlx::SqlitePool;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use zip::write::FileOptions;
 
 fn read_last_clean_exit_at(paths: &diagnostics::DiagnosticsPaths) -> Option<String> {
@@ -146,6 +147,11 @@ pub(crate) fn export_diagnostics_bundle(
     add_text("session-runs.json", &payload.session_runs_json)?;
     add_text("session-run-events.json", &payload.session_run_events_json)?;
     add_text("session-run-traces.json", &payload.session_run_traces_json)?;
+    add_text(
+        "runtime-observability-snapshot.json",
+        &payload.runtime_observability_snapshot_json,
+    )?;
+    add_text("runtime-recent-events.json", &payload.runtime_recent_events_json)?;
     if let Some(crash_json) = &payload.latest_crash_json {
         add_text("latest-crash.json", crash_json)?;
     }
@@ -287,6 +293,17 @@ pub(crate) async fn export_desktop_diagnostics_bundle(
     }
     let session_run_traces_json =
         serde_json::to_string_pretty(&trace_exports).map_err(|e| e.to_string())?;
+    let (runtime_observability_snapshot_json, runtime_recent_events_json) =
+        if let Some(observability) = app.try_state::<RuntimeObservabilityState>() {
+            (
+                serde_json::to_string_pretty(&observability.0.snapshot())
+                    .map_err(|e| e.to_string())?,
+                serde_json::to_string_pretty(&observability.0.recent_events())
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            ("{}".to_string(), "[]".to_string())
+        };
     let latest_crash_json = diagnostics::read_latest_crash_summary(&diagnostics_state.paths)?
         .map(|summary| serde_json::to_string_pretty(&summary))
         .transpose()
@@ -303,6 +320,8 @@ pub(crate) async fn export_desktop_diagnostics_bundle(
             session_runs_json,
             session_run_events_json,
             session_run_traces_json,
+            runtime_observability_snapshot_json,
+            runtime_recent_events_json,
             latest_crash_json,
             runtime_log_files,
             audit_log_files,

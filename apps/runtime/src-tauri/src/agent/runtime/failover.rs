@@ -46,6 +46,7 @@ pub(crate) struct RuntimeFailoverParams<'a> {
     pub per_candidate_retry_count: usize,
     pub on_same_candidate_retry:
         Option<Box<dyn FnMut(RuntimeFailoverErrorKind, usize, usize) + Send + 'a>>,
+    pub on_error_kind: Option<Box<dyn FnMut(RuntimeFailoverErrorKind) + Send + 'a>>,
     pub attempt_once: Box<
         dyn FnMut(
                 &'a str,
@@ -123,6 +124,9 @@ impl RuntimeFailover {
                             })
                     })
                     .unwrap_or(RuntimeFailoverErrorKind::Unknown);
+                if let Some(on_error_kind) = params.on_error_kind.as_mut() {
+                    on_error_kind(current_kind);
+                }
                 let retry_budget =
                     runtime_retry_budget_for_error(current_kind, params.per_candidate_retry_count);
                 if runtime_should_retry_same_candidate(current_kind) && attempt_idx < retry_budget {
@@ -335,6 +339,7 @@ mod tests {
             route_candidates: &route_candidates,
             per_candidate_retry_count: 1,
             on_same_candidate_retry: None,
+            on_error_kind: None,
             attempt_once: Box::new(
                 move |api_format, _base_url, model_name, _api_key, attempt_idx| {
                     let attempts = Arc::clone(&attempts_clone);
@@ -362,9 +367,9 @@ mod tests {
 
                         CandidateAttemptOutcome {
                             final_messages: None,
-                            last_error: Some("network connection reset".to_string()),
-                            last_error_kind: Some("network".to_string()),
-                            error_kind: Some(RuntimeFailoverErrorKind::Network),
+                            last_error: Some("request timeout".to_string()),
+                            last_error_kind: Some("timeout".to_string()),
+                            error_kind: Some(RuntimeFailoverErrorKind::Timeout),
                             last_stop_reason: None,
                             partial_text: "partial".to_string(),
                             reasoning_text: "thinking".to_string(),
@@ -405,6 +410,7 @@ mod tests {
             route_candidates: &route_candidates,
             per_candidate_retry_count: 0,
             on_same_candidate_retry: None,
+            on_error_kind: None,
             attempt_once: Box::new(
                 move |api_format, _base_url, model_name, _api_key, attempt_idx| {
                     let attempts = Arc::clone(&attempts_clone);
@@ -444,6 +450,50 @@ mod tests {
         );
     }
 
+
+    #[tokio::test]
+    async fn execute_candidates_reports_error_kinds_to_observer() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_clone = Arc::clone(&observed);
+        let route_candidates = vec![(
+            "openai".to_string(),
+            "https://a.example".to_string(),
+            "model-a".to_string(),
+            "key-a".to_string(),
+        )];
+
+        let _ = RuntimeFailover::execute_candidates(RuntimeFailoverParams {
+            route_candidates: &route_candidates,
+            per_candidate_retry_count: 0,
+            on_same_candidate_retry: None,
+            on_error_kind: Some(Box::new(move |kind| {
+                observed_clone.lock().expect("observed lock").push(kind);
+            })),
+            attempt_once: Box::new(
+                move |_api_format, _base_url, _model_name, _api_key, _attempt_idx| {
+                    Box::pin(async move {
+                        CandidateAttemptOutcome {
+                            final_messages: None,
+                            last_error: Some("insufficient balance".to_string()),
+                            last_error_kind: Some("billing".to_string()),
+                            error_kind: Some(RuntimeFailoverErrorKind::Billing),
+                            last_stop_reason: None,
+                            partial_text: String::new(),
+                            reasoning_text: String::new(),
+                            reasoning_duration_ms: None,
+                        }
+                    })
+                },
+            ),
+        })
+        .await;
+
+        assert_eq!(
+            observed.lock().expect("observed lock").as_slice(),
+            &[RuntimeFailoverErrorKind::Billing]
+        );
+    }
+
     #[tokio::test]
     async fn execute_candidates_reports_network_retry_progress() {
         let retry_progress = Arc::new(Mutex::new(Vec::new()));
@@ -464,6 +514,7 @@ mod tests {
                     .expect("retry progress lock")
                     .push((kind, retry_attempt, total_retries));
             })),
+            on_error_kind: None,
             attempt_once: Box::new(
                 move |_api_format, _base_url, _model_name, _api_key, _attempt_idx| {
                     Box::pin(async move {

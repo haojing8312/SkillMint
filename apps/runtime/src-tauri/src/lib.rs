@@ -15,7 +15,8 @@ pub mod team_templates;
 mod windows_process;
 
 use agent::runtime::{
-    RunRegistry, RunRegistryState, SessionAdmissionGate, SessionAdmissionGateState,
+    RunRegistry, RunRegistryState, RuntimeObservability, RuntimeObservabilityState,
+    SessionAdmissionGate, SessionAdmissionGateState,
 };
 use agent::tools::new_responder;
 use agent::tools::search_providers::cache::SearchCache;
@@ -114,7 +115,10 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
     let search_cache = Arc::new(SearchCache::new(std::time::Duration::from_secs(900), 100));
     app.manage(SearchCacheState(search_cache));
 
-    let session_admission_gate = Arc::new(SessionAdmissionGate::default());
+    let runtime_observability = Arc::new(RuntimeObservability::default());
+    let session_admission_gate = Arc::new(SessionAdmissionGate::with_observability(
+        runtime_observability.clone(),
+    ));
     app.manage(SessionAdmissionGateState(session_admission_gate));
 
     let journal_root = app
@@ -124,9 +128,11 @@ fn initialize_runtime_state(app: &mut tauri::App, pool: sqlx::SqlitePool) -> Man
         .join("sessions");
     let run_registry = Arc::new(RunRegistry::default());
     app.manage(RunRegistryState(run_registry.clone()));
-    let journal_store = Arc::new(SessionJournalStore::with_registry(
+    app.manage(RuntimeObservabilityState(runtime_observability.clone()));
+    let journal_store = Arc::new(SessionJournalStore::with_registry_and_observability(
         journal_root,
         run_registry,
+        runtime_observability,
     ));
     app.manage(SessionJournalStateHandle(journal_store));
 

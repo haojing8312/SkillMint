@@ -6,6 +6,7 @@ pub(crate) mod child_session_runtime;
 pub(crate) mod compaction_pipeline;
 pub mod events;
 pub(crate) mod failover;
+pub(crate) mod observability;
 pub(crate) mod progress_guard;
 pub(crate) mod repo;
 pub(crate) mod run_registry;
@@ -27,10 +28,14 @@ pub use events::{
     AskUserState, CancelFlagState, SearchCacheState, SkillRouteEvent, StreamToken,
     ToolConfirmResponder,
 };
+pub use observability::{
+    RuntimeObservedEvent, RuntimeObservedRunEvent, RuntimeObservability, RuntimeObservabilityState,
+};
 pub use run_registry::{RunRegistry, RunRegistryState};
 pub use runtime_io::{
     build_workspace_skill_command_specs, load_workspace_skill_runtime_entries_with_pool,
     WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
 };
+pub use trace_builder::{normalize_trace_for_fixture, SessionRunTrace};
 pub use session_runtime::SessionRuntime;
 pub use transcript::RuntimeTranscript;

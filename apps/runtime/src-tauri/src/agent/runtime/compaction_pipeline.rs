@@ -1,3 +1,4 @@
+use super::observability::RuntimeObservability;
 use crate::agent::compactor;
 use anyhow::Result;
 use runtime_executor_core::estimate_tokens;
@@ -12,6 +13,7 @@ pub(crate) struct RuntimeCompactionRequest<'a> {
     pub session_id: &'a str,
     pub messages: &'a [Value],
     pub transcript_root: &'a Path,
+    pub observability: Option<&'a RuntimeObservability>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +55,9 @@ pub(crate) async fn run_compaction(
     .await?;
     let new_tokens = estimate_tokens(&compacted_messages);
     let summary = extract_compaction_summary(&compacted_messages);
+    if let Some(observability) = request.observability {
+        observability.record_compaction_run();
+    }
 
     Ok(RuntimeCompactionOutcome {
         compacted_messages,
@@ -75,6 +80,7 @@ fn extract_compaction_summary(compacted_messages: &[Value]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{maybe_auto_compact, run_compaction, RuntimeCompactionRequest};
+    use crate::agent::runtime::RuntimeObservability;
     use serde_json::json;
 
     #[tokio::test]
@@ -89,11 +95,38 @@ mod tests {
             session_id: "session-short",
             messages: &messages,
             transcript_root: temp_dir.path(),
+            observability: None,
         })
         .await
         .expect("maybe compact");
 
         assert!(outcome.is_none());
+    }
+
+
+    #[tokio::test]
+    async fn run_compaction_updates_observability_snapshot() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let messages = vec![
+            json!({"role": "user", "content": "summarize progress"}),
+            json!({"role": "assistant", "content": "half complete"}),
+        ];
+        let observability = RuntimeObservability::new(8);
+
+        let _outcome = run_compaction(RuntimeCompactionRequest {
+            api_format: "openai",
+            base_url: "http://mock",
+            api_key: "mock-key",
+            model: "mock-model",
+            session_id: "session-compact",
+            messages: &messages,
+            transcript_root: temp_dir.path(),
+            observability: Some(&observability),
+        })
+        .await
+        .expect("run compaction");
+
+        assert_eq!(observability.snapshot().compaction.runs, 1);
     }
 
     #[tokio::test]
@@ -111,6 +144,7 @@ mod tests {
             session_id: "session-compact",
             messages: &messages,
             transcript_root: temp_dir.path(),
+            observability: None,
         })
         .await
         .expect("run compaction");

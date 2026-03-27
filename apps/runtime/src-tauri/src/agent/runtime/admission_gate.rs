@@ -1,13 +1,34 @@
+use super::observability::RuntimeObservability;
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SessionAdmissionGate {
     active_sessions: Mutex<HashSet<String>>,
+    observability: Option<Arc<RuntimeObservability>>,
+}
+
+impl Default for SessionAdmissionGate {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SessionAdmissionGate {
+    pub fn new() -> Self {
+        Self {
+            active_sessions: Mutex::new(HashSet::new()),
+            observability: None,
+        }
+    }
+
+    pub fn with_observability(observability: Arc<RuntimeObservability>) -> Self {
+        Self {
+            active_sessions: Mutex::new(HashSet::new()),
+            observability: Some(observability),
+        }
+    }
     pub fn is_reserved(&self, session_id: &str) -> bool {
         let session_id = normalize_session_id(session_id);
         if session_id.is_empty() {
@@ -34,6 +55,10 @@ impl SessionAdmissionGate {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if !active_sessions.insert(session_id.to_string()) {
+            drop(active_sessions);
+            if let Some(observability) = self.observability.as_ref() {
+                observability.record_admission_conflict(session_id);
+            }
             return Err(SessionAdmissionConflict::new(session_id));
         }
 
@@ -129,6 +154,7 @@ fn normalize_session_id(session_id: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::SessionAdmissionGate;
+    use crate::agent::runtime::{RuntimeObservability, RuntimeObservedEvent};
     use std::sync::Arc;
 
     #[test]
@@ -142,6 +168,23 @@ mod tests {
 
         assert_eq!(conflict.code(), "SESSION_RUN_CONFLICT");
         assert_eq!(conflict.session_id(), "session-1");
+    }
+
+
+    #[test]
+    fn admission_gate_records_conflicts_in_observability() {
+        let observability = Arc::new(RuntimeObservability::new(8));
+        let gate = Arc::new(SessionAdmissionGate::with_observability(Arc::clone(&observability)));
+        let _lease = gate.try_acquire("session-1").expect("first lease");
+
+        gate.try_acquire("session-1")
+            .expect_err("same session should conflict");
+
+        let snapshot = observability.snapshot();
+        assert_eq!(snapshot.admissions.conflicts, 1);
+        let recent = observability.recent_events();
+        assert_eq!(recent.len(), 1);
+        assert!(matches!(recent[0], RuntimeObservedEvent::AdmissionConflict(_)));
     }
 
     #[test]
