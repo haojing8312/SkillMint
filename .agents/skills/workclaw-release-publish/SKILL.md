@@ -29,19 +29,21 @@ If the version or release notes are not yet confirmed, stop and use `workclaw-re
 
 ## Execution Order
 1. Verify the requested tag format and confirm the version files match the intended release
-2. Update the release notes template with the approved bilingual content
-3. Run release checks:
+2. Re-read the approved release notes and sanity-check that they still cover the major user-visible outcomes discovered during release prep
+3. Update the release notes template with the approved bilingual content
+4. If an important user-facing outcome is missing, stop and ask for note confirmation again instead of publishing a partial summary
+5. Run release checks:
    - `pnpm release:check-version <tag>`
    - `pnpm test:release`
    - `pnpm test:installer`
    - `pnpm test:release-docs`
-4. Run user-flow or packaging verification when release surface changed:
+6. Run user-flow or packaging verification when release surface changed:
    - `pnpm test:e2e:runtime`
    - `pnpm build:runtime`
-5. Commit the release changes
-6. Push `main`
-7. Create and push the tag
-8. Report local installer paths and note that the remote tag triggers `.github/workflows/release-windows.yml`
+7. Commit the release changes
+8. Push `main`
+9. Create and push the tag
+10. Report local installer paths and note that the remote tag triggers `.github/workflows/release-windows.yml`
 
 ## Required Output
 Use this shape:
@@ -72,6 +74,7 @@ Use this shape:
 - Never create a release tag before release checks pass
 - Never claim GitHub release completion unless the tag push succeeded
 - If packaging fails, report the failure and do not describe the release as complete
+- Never silently publish if the approved notes are missing a major provider/model compatibility fix or other concrete user-facing outcome discovered during prep
 
 ## Common Mistakes
 - Publishing from an unconfirmed draft

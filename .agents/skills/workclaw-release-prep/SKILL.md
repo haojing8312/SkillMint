@@ -19,12 +19,22 @@ Do not use this skill to push commits, create tags, or publish releases. Use `wo
 ## Inspect First
 - `git tag --sort=-creatordate`
 - `git log <last-tag>..HEAD --oneline`
+- `git log <last-tag>..HEAD --format=%H%n%s%n%b%n==END==`
 - `git diff --name-only <last-tag>..HEAD`
+- For high-signal commits, inspect `git show --stat --summary <sha>`
 - `apps/runtime/package.json`
 - `apps/runtime/src-tauri/Cargo.toml`
 - `apps/runtime/src-tauri/tauri.conf.json`
 - `.github/release-windows-notes.md`
 - Any release-impacting docs or plans the user wants included
+
+Before drafting release notes, build a short `candidate user-visible changes` list from:
+- commit titles and commit bodies
+- test names that describe user-facing behavior
+- provider or model names mentioned explicitly, such as `Qwen`, `DeepSeek`, `OpenAI`, `Claude`
+- compatibility, routing, transport, recovery, installer, branding, and skill/runtime keywords
+
+Default rule: if a commit message or test name names a concrete model, provider, or desktop behavior, treat it as a release-note candidate unless there is strong evidence it is purely internal.
 
 ## Version Recommendation Rules
 - Recommend `patch` for bug fixes, stability hardening, recovery improvements, small UX polish, or non-breaking desktop flow fixes
@@ -48,6 +58,11 @@ Use this shape:
 - Release scope:
 - Files or areas reviewed:
 
+## Candidate Highlights
+- Included in notes:
+- Intentionally omitted:
+- Follow-up checks:
+
 ## Release Notes Draft
 ### 中文
 - ...
@@ -67,9 +82,14 @@ Use this shape:
 - Mention desktop installer guidance only if relevant
 - Avoid speculative claims not backed by repo changes
 - Chinese and English sections should say the same thing, not different things
+- Start from the candidate highlight list, then compress; do not draft directly from file paths alone
+- When a change improves compatibility for a named provider or model, prefer stating that user-facing outcome plainly
+- If a candidate highlight is omitted from the final notes, explain why in `Intentionally omitted`
 
 ## Common Mistakes
 - Recommending `minor` for pure bugfix bundles without a new capability
 - Recommending `patch` when a clearly new workflow shipped
 - Mixing internal implementation detail into user-facing release notes
+- Reading only changed file paths and missing user-visible gains described in commit bodies or tests
+- Treating provider/model compatibility fixes as internal-only by default when they change whether users can actually run that provider
 - Proceeding to publish without explicit human confirmation
