@@ -2,14 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ModelConfig, SkillManifest } from "../types";
-
-function getDefaultSkillId(skillList: SkillManifest[]): string | null {
-  const builtin = skillList.find((item) => item.id === "builtin-general");
-  if (builtin) {
-    return builtin.id;
-  }
-  return skillList[0]?.id ?? null;
-}
+import { getDefaultSkillId } from "../app-shell-utils";
 
 export function useCatalogDataCoordinator(options: {
   setSelectedSkillId: Dispatch<SetStateAction<string | null>>;

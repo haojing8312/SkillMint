@@ -177,7 +177,7 @@ export function useEmployeeSessionLaunchCoordinator(options: {
           nextSkills = await loadSkills();
         } catch (error) {
           console.error(
-            `加载${EMPLOYEE_ASSISTANT_DISPLAY_NAME}内置技能失败:`,
+            `加载${EMPLOYEE_ASSISTANT_DISPLAY_NAME}预装技能失败:`,
             error,
           );
         }

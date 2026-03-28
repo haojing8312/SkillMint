@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { AgentEmployee, SkillManifest } from "../types";
+import { getDefaultSkillId } from "../app-shell-utils";
 
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SettingsTab =
@@ -14,17 +15,8 @@ type SettingsTab =
   | "routing"
   | "feishu";
 
-const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 const SHOULD_BLOCK_DESKTOP_RELOAD_SHORTCUTS =
   import.meta.env.PROD || import.meta.env.MODE === "test";
-
-function getDefaultSkillId(skillList: SkillManifest[]): string | null {
-  const builtin = skillList.find((item) => item.id === BUILTIN_GENERAL_SKILL_ID);
-  if (builtin) {
-    return builtin.id;
-  }
-  return skillList[0]?.id ?? null;
-}
 
 export function useAppShellCoordinator(options: {
   defaultWorkDir: string;

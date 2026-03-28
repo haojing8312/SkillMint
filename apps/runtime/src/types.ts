@@ -8,6 +8,7 @@ export interface SkillManifest {
   tags: string[];
   created_at: string;
   username_hint?: string;
+  source_type?: string;
 }
 
 export interface ClawhubSkillSummary {

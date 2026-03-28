@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 import { ClawhubInstallRequest, SkillManifest } from "../../types";
+import {
+  resolveSkillSourceBucket,
+  resolveSkillSourceLabel,
+} from "../../app-shell-utils";
 import { SkillLibraryView } from "./SkillLibraryView";
 import { RiskConfirmDialog } from "../RiskConfirmDialog";
 
@@ -52,10 +56,14 @@ export function ExpertsView({
   const [pendingRiskAction, setPendingRiskAction] = useState<PendingExpertsRiskAction | null>(null);
   const visibleSkills = skills.filter((skill) => skill.id !== "builtin-general");
   const totalSkills = visibleSkills.length;
-  const builtinSkills = visibleSkills.filter((skill) => skill.id.startsWith("builtin-")).length;
-  const localSkills = visibleSkills.filter((skill) => skill.id.startsWith("local-")).length;
+  const preinstalledSkills = visibleSkills.filter(
+    (skill) => resolveSkillSourceBucket(skill) === "preinstalled"
+  ).length;
+  const localSkills = visibleSkills.filter(
+    (skill) => resolveSkillSourceBucket(skill) === "local-created"
+  ).length;
   const installedSkills = visibleSkills.filter(
-    (skill) => !skill.id.startsWith("local-") && !skill.id.startsWith("builtin-")
+    (skill) => resolveSkillSourceBucket(skill) === "external"
   ).length;
   const installedSkillIds = useMemo(
     () => new Set(visibleSkills.map((skill) => skill.id)),
@@ -140,7 +148,7 @@ export function ExpertsView({
                 本地创建 {localSkills}
               </span>
               <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
-                产品内置 {builtinSkills}
+                预装技能 {preinstalledSkills}
               </span>
               <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-xs border border-amber-100">
                 外部安装 {installedSkills}
@@ -201,10 +209,12 @@ export function ExpertsView({
         ) : activeTab === "mine" ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {visibleSkills.map((skill) => {
-              const isBuiltin = skill.id.startsWith("builtin-");
-              const isLocal = skill.id.startsWith("local-");
+              const sourceBucket = resolveSkillSourceBucket(skill);
+              const isPreinstalled = sourceBucket === "preinstalled";
+              const isLocal = sourceBucket === "local-created";
               const isClawhub = skill.id.startsWith("clawhub-");
-              const source = isBuiltin ? "内置" : isLocal ? "本地" : "已安装";
+              const isRefreshable = isLocal || isPreinstalled;
+              const source = resolveSkillSourceLabel(skill);
               const updateState = clawhubUpdateStatus?.[skill.id];
               return (
                 <div key={skill.id} className="rounded-xl border border-[var(--sm-border)] bg-[var(--sm-surface)] p-4 shadow-[var(--sm-shadow-sm)]">
@@ -221,8 +231,8 @@ export function ExpertsView({
                       {updateState.message}
                     </div>
                   )}
-                  {isBuiltin && (
-                    <div className="text-[11px] text-gray-400 mt-1">系统预置，不支持移除</div>
+                  {isPreinstalled && (
+                    <div className="text-[11px] text-gray-400 mt-1">预装技能，不支持移除</div>
                   )}
                   <div className="mt-3 flex items-center gap-2 flex-wrap">
                     <button
@@ -231,7 +241,7 @@ export function ExpertsView({
                     >
                       开始任务
                     </button>
-                    {isLocal && (
+                    {isRefreshable && (
                       <button
                         onClick={() => onRefreshLocalSkill(skill.id)}
                         disabled={busySkillId === skill.id && busyAction === "refresh"}
@@ -258,7 +268,7 @@ export function ExpertsView({
                         {busySkillId === skill.id && busyAction === "update" ? "更新中..." : "更新"}
                       </button>
                     )}
-                    {!isBuiltin && (
+                    {!isPreinstalled && (
                       <button
                         onClick={() => requestDeleteSkill(skill.id, skill.name)}
                         disabled={busySkillId === skill.id && busyAction === "delete"}

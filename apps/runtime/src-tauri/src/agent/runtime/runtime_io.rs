@@ -8,7 +8,6 @@ mod session_titles;
 mod types;
 mod workspace_skills;
 
-#[cfg(test)]
 pub(crate) use message_reconstruction::{
     build_assistant_content_from_final_messages, build_assistant_content_with_stream_fallback,
     reconstruct_history_messages,
@@ -40,5 +39,6 @@ pub(crate) use workspace_skills::{
     build_workspace_skill_prompt_entry, build_workspace_skills_prompt,
     extract_assistant_text_content, extract_skill_prompt_from_decrypted_files, load_skill_prompt,
     normalize_workspace_skill_dir_name, prepare_workspace_skills_prompt,
+    resolve_directory_backed_skill_root,
     resolve_workspace_skill_runtime_entry, sync_workspace_skills_to_directory,
 };

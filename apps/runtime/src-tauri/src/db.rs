@@ -13,7 +13,7 @@ use seed::seed_runtime_defaults;
 #[cfg(test)]
 use migrations::ensure_im_thread_sessions_channel_column;
 #[cfg(test)]
-use seed::{build_builtin_manifest_json, sync_builtin_skills};
+use seed::{build_builtin_manifest_json, sync_builtin_skills_with_root};
 
 pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
     let app_dir = app.path().app_data_dir()?;
@@ -49,6 +49,7 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     async fn setup_memory_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -78,6 +79,7 @@ mod tests {
     #[tokio::test]
     async fn sync_builtin_skills_upserts_manifest_and_source_type() {
         let pool = setup_memory_pool().await;
+        let vendor_root = tempdir().expect("create vendor root");
         let stale_manifest = serde_json::json!({
             "id": "builtin-general",
             "name": "旧名称",
@@ -95,7 +97,7 @@ mod tests {
         .await
         .expect("seed stale builtin row");
 
-        sync_builtin_skills(&pool)
+        sync_builtin_skills_with_root(&pool, vendor_root.path())
             .await
             .expect("sync builtin skills");
 
@@ -116,22 +118,28 @@ mod tests {
 
         assert_eq!(manifest["name"], expected["name"]);
         assert_eq!(manifest["description"], expected["description"]);
-        assert_eq!(source_type, "builtin");
+        assert_eq!(source_type, "vendored");
         assert_eq!(username, "");
-        assert_eq!(pack_path, "");
+        assert!(pack_path.contains("builtin-general"));
+        assert!(std::path::Path::new(&pack_path).join("SKILL.md").exists());
     }
 
     #[tokio::test]
     async fn sync_builtin_skills_is_idempotent() {
         let pool = setup_memory_pool().await;
-        sync_builtin_skills(&pool).await.expect("first sync");
-        sync_builtin_skills(&pool).await.expect("second sync");
+        let vendor_root = tempdir().expect("create vendor root");
+        sync_builtin_skills_with_root(&pool, vendor_root.path())
+            .await
+            .expect("first sync");
+        sync_builtin_skills_with_root(&pool, vendor_root.path())
+            .await
+            .expect("second sync");
 
         let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM installed_skills WHERE source_type = 'builtin'")
+            sqlx::query_as("SELECT COUNT(*) FROM installed_skills WHERE source_type = 'vendored'")
                 .fetch_one(&pool)
                 .await
-                .expect("count builtin skills");
+                .expect("count vendored skills");
 
         assert_eq!(
             count,

@@ -111,6 +111,7 @@ fn employee_manage_lists_skills() {
     let payload: Value = serde_json::from_str(&output).expect("parse json");
     assert_eq!(payload["action"], "list_skills");
     assert_eq!(payload["items"][0]["id"], "builtin-general");
+    assert_eq!(payload["items"][0]["source_type"], "vendored");
 }
 
 #[test]

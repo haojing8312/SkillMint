@@ -14,6 +14,7 @@ function buildSkill(partial: Partial<SkillManifest>): SkillManifest {
     recommended_model: partial.recommended_model ?? "",
     tags: partial.tags ?? [],
     created_at: partial.created_at ?? now,
+    source_type: partial.source_type,
   };
 }
 
@@ -29,8 +30,8 @@ describe("ExpertsView", () => {
     render(
       <ExpertsView
         skills={[
-          buildSkill({ id: "builtin-general", name: "通用助手" }),
-          buildSkill({ id: "builtin-skill-creator", name: "创建技能" }),
+          buildSkill({ id: "builtin-general", name: "通用助手", source_type: "vendored" }),
+          buildSkill({ id: "builtin-skill-creator", name: "创建技能", source_type: "vendored" }),
           buildSkill({ id: "local-file-organizer", name: "文件整理器" }),
           buildSkill({ id: "encrypted-abc", name: "外部技能" }),
         ]}
@@ -55,12 +56,12 @@ describe("ExpertsView", () => {
     const refreshButtons = screen.getAllByRole("button", { name: "刷新" });
     const deleteButtons = screen.getAllByRole("button", { name: "移除" });
     expect(startTaskButtons.length).toBe(3);
-    expect(refreshButtons.length).toBe(1);
+    expect(refreshButtons.length).toBe(2);
     expect(deleteButtons.length).toBe(2);
-    expect(screen.getByText("内置")).toBeInTheDocument();
+    expect(screen.getByText("预装")).toBeInTheDocument();
     expect(screen.getByText("本地")).toBeInTheDocument();
     expect(screen.getByText("已安装")).toBeInTheDocument();
-    expect(screen.getByText("系统预置，不支持移除")).toBeInTheDocument();
+    expect(screen.getByText("预装技能，不支持移除")).toBeInTheDocument();
   });
 
   test("triggers start-task/refresh/delete callbacks", () => {

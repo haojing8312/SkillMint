@@ -198,6 +198,50 @@ pub(crate) fn read_local_skill_prompt(pack_path: &str) -> Option<String> {
     None
 }
 
+pub(crate) fn resolve_directory_backed_skill_root(
+    source_type: &str,
+    pack_path: &str,
+) -> Option<std::path::PathBuf> {
+    match source_type {
+        "local" | "vendored" => {
+            let path = std::path::PathBuf::from(pack_path);
+            if path.exists() {
+                Some(path)
+            } else {
+                None
+            }
+        }
+        "builtin" => {
+            let path = std::path::PathBuf::from(pack_path);
+            if pack_path.trim().is_empty() || !path.exists() {
+                None
+            } else {
+                Some(path)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn load_legacy_builtin_embedded_files(
+    skill_id: &str,
+) -> (std::collections::HashMap<String, Vec<u8>>, String) {
+    let markdown = crate::builtin_skills::builtin_skill_markdown(skill_id)
+        .unwrap_or(crate::builtin_skills::builtin_general_skill_markdown());
+    let files = crate::builtin_skills::builtin_skill_files(skill_id).unwrap_or_else(|| {
+        let mut fallback = std::collections::HashMap::new();
+        fallback.insert("SKILL.md".to_string(), markdown.as_bytes().to_vec());
+        fallback
+    });
+    (files, markdown.to_string())
+}
+
+fn load_legacy_builtin_embedded_markdown(skill_id: &str) -> String {
+    crate::builtin_skills::builtin_skill_markdown(skill_id)
+        .unwrap_or(crate::builtin_skills::builtin_general_skill_markdown())
+        .to_string()
+}
+
 pub fn resolve_workspace_skill_runtime_entry(
     skill_id: &str,
     manifest_json: &str,
@@ -208,28 +252,21 @@ pub fn resolve_workspace_skill_runtime_entry(
     let manifest: skillpack_rs::SkillManifest =
         serde_json::from_str(manifest_json).map_err(|e| e.to_string())?;
     let projected_dir_name = normalize_workspace_skill_dir_name(skill_id);
-    let (content, raw_skill_markdown) = match source_type {
-        "local" => (
-            WorkspaceSkillContent::LocalDir(std::path::PathBuf::from(pack_path)),
-            read_local_skill_prompt(pack_path),
-        ),
-        "builtin" => {
-            let markdown = crate::builtin_skills::builtin_skill_markdown(skill_id)
-                .unwrap_or(crate::builtin_skills::builtin_general_skill_markdown());
-            let mut files = std::collections::HashMap::new();
-            files.insert("SKILL.md".to_string(), markdown.as_bytes().to_vec());
+    let (content, raw_skill_markdown) =
+        if let Some(skill_root) = resolve_directory_backed_skill_root(source_type, pack_path) {
             (
-                WorkspaceSkillContent::FileTree(files),
-                Some(markdown.to_string()),
+                WorkspaceSkillContent::LocalDir(skill_root),
+                read_local_skill_prompt(pack_path),
             )
-        }
-        _ => {
+        } else if source_type == "builtin" {
+            let (files, markdown) = load_legacy_builtin_embedded_files(skill_id);
+            (WorkspaceSkillContent::FileTree(files), Some(markdown))
+        } else {
             let unpacked = skillpack_rs::verify_and_unpack(pack_path, username)
                 .map_err(|e| format!("解包 Skill 失败: {}", e))?;
             let markdown = extract_skill_prompt_from_decrypted_files(&unpacked.files);
             (WorkspaceSkillContent::FileTree(unpacked.files), markdown)
-        }
-    };
+        };
     let config = raw_skill_markdown
         .as_deref()
         .map(SkillConfig::parse)
@@ -415,16 +452,14 @@ pub fn load_skill_prompt(
     pack_path: &str,
     source_type: &str,
 ) -> Result<String, String> {
-    let raw_prompt = if source_type == "builtin" {
-        crate::builtin_skills::builtin_skill_markdown(skill_id)
-            .unwrap_or(crate::builtin_skills::builtin_general_skill_markdown())
-            .to_string()
-    } else if source_type == "local" {
+    let raw_prompt = if let Some(_) = resolve_directory_backed_skill_root(source_type, pack_path) {
         read_local_skill_prompt(pack_path).unwrap_or_else(|| {
             serde_json::from_str::<skillpack_rs::SkillManifest>(manifest_json)
                 .map(|m| m.description)
                 .unwrap_or_default()
         })
+    } else if source_type == "builtin" {
+        load_legacy_builtin_embedded_markdown(skill_id)
     } else {
         match skillpack_rs::verify_and_unpack(pack_path, username) {
             Ok(unpacked) => extract_skill_prompt_from_decrypted_files(&unpacked.files)
@@ -461,8 +496,7 @@ pub fn build_skill_roots(
     if let Ok(cwd) = std::env::current_dir() {
         skill_roots.push(cwd.join(".claude").join("skills"));
     }
-    if source_type == "local" {
-        let skill_path = std::path::Path::new(pack_path);
+    if let Some(skill_path) = resolve_directory_backed_skill_root(source_type, pack_path) {
         if let Some(parent) = skill_path.parent() {
             skill_roots.push(parent.to_path_buf());
         }
@@ -633,6 +667,136 @@ mod workspace_skill_projection_tests {
                 assert!(text.contains("通用助手") || text.contains("通用任务智能体"));
             }
             WorkspaceSkillContent::LocalDir(_) => panic!("expected builtin file tree content"),
+        }
+    }
+
+    #[test]
+    fn resolve_workspace_skill_runtime_entry_for_builtin_docx_includes_vendored_assets() {
+        let manifest = SkillManifest {
+            id: "builtin-docx".to_string(),
+            name: "DOCX 文档助手".to_string(),
+            description: "Professional docx workflow".to_string(),
+            version: "builtin".to_string(),
+            author: "WorkClaw".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        let entry = resolve_workspace_skill_runtime_entry(
+            "builtin-docx",
+            &serde_json::to_string(&manifest).unwrap(),
+            "",
+            "",
+            "builtin",
+        )
+        .unwrap();
+
+        match entry.content {
+            WorkspaceSkillContent::FileTree(files) => {
+                assert!(files.contains_key("SKILL.md"));
+                assert!(files.contains_key("scripts/setup.ps1"));
+                assert!(files.contains_key("assets/xsd/business-rules.xsd"));
+            }
+            WorkspaceSkillContent::LocalDir(_) => panic!("expected builtin file tree content"),
+        }
+    }
+
+    #[test]
+    fn resolve_workspace_skill_runtime_entry_for_vendored_skill_uses_local_dir() {
+        let tmp = tempdir().unwrap();
+        let skill_dir = tmp.path().join("vendored-docx");
+        std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: vendored-docx
+description: Vendored office skill
+---
+Use vendored assets.
+"#,
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("scripts").join("setup.ps1"), "Write-Host 'ok'").unwrap();
+
+        let manifest = SkillManifest {
+            id: "builtin-docx".to_string(),
+            name: "manifest-name".to_string(),
+            description: "manifest-description".to_string(),
+            version: "vendored".to_string(),
+            author: "WorkClaw".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        let entry = resolve_workspace_skill_runtime_entry(
+            "builtin-docx",
+            &serde_json::to_string(&manifest).unwrap(),
+            "",
+            &skill_dir.to_string_lossy(),
+            "vendored",
+        )
+        .unwrap();
+
+        assert_eq!(entry.name, "vendored-docx");
+        assert_eq!(entry.description, "Vendored office skill");
+        match entry.content {
+            WorkspaceSkillContent::LocalDir(path) => assert_eq!(path, skill_dir),
+            WorkspaceSkillContent::FileTree(_) => panic!("expected vendored local dir content"),
+        }
+    }
+
+    #[test]
+    fn resolve_workspace_skill_runtime_entry_for_legacy_builtin_with_pack_path_prefers_local_dir() {
+        let tmp = tempdir().unwrap();
+        let skill_dir = tmp.path().join("legacy-builtin-docx");
+        std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: migrated-builtin-docx
+description: Directory-backed legacy builtin
+---
+Prefer directory content.
+"#,
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("scripts").join("setup.ps1"), "Write-Host 'legacy'").unwrap();
+
+        let manifest = SkillManifest {
+            id: "builtin-docx".to_string(),
+            name: "manifest-name".to_string(),
+            description: "manifest-description".to_string(),
+            version: "builtin".to_string(),
+            author: "WorkClaw".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        let entry = resolve_workspace_skill_runtime_entry(
+            "builtin-docx",
+            &serde_json::to_string(&manifest).unwrap(),
+            "",
+            &skill_dir.to_string_lossy(),
+            "builtin",
+        )
+        .unwrap();
+
+        assert_eq!(entry.name, "migrated-builtin-docx");
+        assert_eq!(entry.description, "Directory-backed legacy builtin");
+        match entry.content {
+            WorkspaceSkillContent::LocalDir(path) => assert_eq!(path, skill_dir),
+            WorkspaceSkillContent::FileTree(_) => {
+                panic!("expected legacy builtin with pack_path to prefer local dir")
+            }
         }
     }
 
@@ -849,6 +1013,38 @@ Run exec directly.
             .join("builtin-general")
             .join("assets")
             .join("template.txt")
+            .exists());
+    }
+
+    #[test]
+    fn sync_workspace_skills_to_directory_projects_builtin_docx_assets() {
+        let tmp = tempdir().unwrap();
+        let work_dir = tmp.path().join("workspace");
+        let files = runtime_skill_core::builtin_skill_files("builtin-docx")
+            .expect("builtin docx assets should be embedded");
+
+        let entry = WorkspaceSkillRuntimeEntry {
+            skill_id: "builtin-docx".to_string(),
+            name: "DOCX 文档助手".to_string(),
+            description: "Professional docx workflow".to_string(),
+            source_type: "builtin".to_string(),
+            projected_dir_name: "builtin-docx".to_string(),
+            config: SkillConfig::default(),
+            invocation: runtime_skill_core::SkillInvocationPolicy::default(),
+            metadata: None,
+            command_dispatch: None,
+            content: WorkspaceSkillContent::FileTree(files),
+        };
+
+        sync_workspace_skills_to_directory(&work_dir, &[entry]).unwrap();
+
+        let projected = work_dir.join("skills").join("builtin-docx");
+        assert!(projected.join("SKILL.md").exists());
+        assert!(projected.join("scripts").join("setup.ps1").exists());
+        assert!(projected
+            .join("assets")
+            .join("xsd")
+            .join("business-rules.xsd")
             .exists());
     }
 
@@ -1099,7 +1295,7 @@ Run exec directly.
     }
 
     #[tokio::test]
-    async fn load_workspace_skill_runtime_entries_with_pool_reads_local_and_builtin_skills() {
+    async fn load_workspace_skill_runtime_entries_with_pool_reads_local_and_vendored_skills() {
         let tmp = tempdir().unwrap();
         let db_path = tmp.path().join("skills.db");
         let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
@@ -1145,11 +1341,11 @@ Run exec directly.
             username_hint: None,
             encrypted_verify: String::new(),
         };
-        let builtin_manifest = SkillManifest {
+        let vendored_manifest = SkillManifest {
             id: "builtin-general".to_string(),
             name: "通用助手".to_string(),
             description: "Generic assistant".to_string(),
-            version: "builtin".to_string(),
+            version: "vendored".to_string(),
             author: "WorkClaw".to_string(),
             recommended_model: "gpt-4o".to_string(),
             tags: vec![],
@@ -1177,11 +1373,11 @@ Run exec directly.
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind("builtin-general")
-        .bind(serde_json::to_string(&builtin_manifest).unwrap())
+        .bind(serde_json::to_string(&vendored_manifest).unwrap())
         .bind(Utc::now().to_rfc3339())
         .bind("")
-        .bind("")
-        .bind("builtin")
+        .bind(local_skill_dir.to_string_lossy().to_string())
+        .bind("vendored")
         .execute(&pool)
         .await
         .unwrap();
@@ -1195,6 +1391,70 @@ Run exec directly.
             entry.skill_id == "local-auto-redbook"
                 && matches!(entry.content, WorkspaceSkillContent::LocalDir(_))
         }));
+        assert!(entries.iter().any(|entry| {
+            entry.skill_id == "builtin-general"
+                && matches!(entry.content, WorkspaceSkillContent::LocalDir(_))
+        }));
+    }
+
+    #[tokio::test]
+    async fn load_workspace_skill_runtime_entries_with_pool_keeps_legacy_builtin_fallback() {
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("skills.db");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&db_url)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE installed_skills (
+                id TEXT PRIMARY KEY,
+                manifest TEXT NOT NULL,
+                installed_at TEXT NOT NULL,
+                last_used_at TEXT,
+                username TEXT NOT NULL,
+                pack_path TEXT NOT NULL DEFAULT '',
+                source_type TEXT NOT NULL DEFAULT 'encrypted'
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let builtin_manifest = SkillManifest {
+            id: "builtin-general".to_string(),
+            name: "通用助手".to_string(),
+            description: "Generic assistant".to_string(),
+            version: "builtin".to_string(),
+            author: "WorkClaw".to_string(),
+            recommended_model: "gpt-4o".to_string(),
+            tags: vec![],
+            created_at: Utc::now(),
+            username_hint: None,
+            encrypted_verify: String::new(),
+        };
+
+        sqlx::query(
+            "INSERT INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("builtin-general")
+        .bind(serde_json::to_string(&builtin_manifest).unwrap())
+        .bind(Utc::now().to_rfc3339())
+        .bind("")
+        .bind("")
+        .bind("builtin")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let entries = super::load_workspace_skill_runtime_entries_with_pool(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(entries.len(), 1);
         assert!(entries.iter().any(|entry| {
             entry.skill_id == "builtin-general"
                 && matches!(entry.content, WorkspaceSkillContent::FileTree(_))

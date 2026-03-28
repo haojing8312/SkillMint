@@ -85,9 +85,25 @@ fn runtime_registry_still_embeds_the_builtin_skill_creator_assets() {
         "runtime registry should re-export builtin skill assets from runtime-skill-core"
     );
     assert!(
-        core.contains("builtin-skills/skill-creator/SKILL.md")
-            && core
-                .contains("builtin-skills/skill-creator-guide/templates/LOCAL_SKILL_TEMPLATE.md"),
+        core.contains("builtin-skills/skill-creator")
+            && core.contains("builtin-skills/skill-creator-guide/templates"),
         "runtime-skill-core should embed the builtin skill markdown and local template assets"
     );
+}
+
+#[test]
+fn builtin_office_skill_directories_include_real_runtime_assets() {
+    let docx_root = repo_root().join("apps/runtime/src-tauri/builtin-skills/docx");
+    let xlsx_root = repo_root().join("apps/runtime/src-tauri/builtin-skills/xlsx");
+    let pdf_root = repo_root().join("apps/runtime/src-tauri/builtin-skills/pdf");
+    let pptx_root = repo_root().join("apps/runtime/src-tauri/builtin-skills/pptx");
+
+    assert!(docx_root.join("scripts").join("setup.ps1").exists());
+    assert!(docx_root.join("assets").join("xsd").join("business-rules.xsd").exists());
+    assert!(xlsx_root.join("scripts").join("xlsx_unpack.py").exists());
+    assert!(xlsx_root.join("templates").join("minimal_xlsx").exists());
+    assert!(pdf_root.join("scripts").join("render_cover.js").exists());
+    assert!(pdf_root.join("design").join("design.md").exists());
+    assert!(pptx_root.join("skills").join("ppt-editing-skill").join("SKILL.md").exists());
+    assert!(pptx_root.join("agents").join("content-page-generator.md").exists());
 }

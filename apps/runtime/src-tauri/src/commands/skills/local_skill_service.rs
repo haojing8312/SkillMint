@@ -8,9 +8,9 @@ use super::types::{
 };
 use chrono::Utc;
 use skillpack_rs::{verify_and_unpack, SkillManifest};
+use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use sqlx::SqlitePool;
 
 pub async fn ensure_skill_display_name_available(
     pool: &SqlitePool,
@@ -340,16 +340,16 @@ pub async fn refresh_local_skill(
     skill_id: String,
     pool: &SqlitePool,
 ) -> Result<SkillManifest, String> {
-    let (pack_path, source_type): (String, String) = sqlx::query_as(
-        "SELECT pack_path, COALESCE(source_type, 'encrypted') FROM installed_skills WHERE id = ?",
+    let (manifest_json, pack_path, source_type): (String, String, String) = sqlx::query_as(
+        "SELECT manifest, pack_path, COALESCE(source_type, 'encrypted') FROM installed_skills WHERE id = ?",
     )
     .bind(&skill_id)
     .fetch_one(pool)
     .await
     .map_err(|e| format!("Skill 不存在 (skill_id={}): {}", skill_id, e))?;
 
-    if source_type != "local" {
-        return Err(format!("Skill {} 不是本地 Skill，无法刷新", skill_id));
+    if !matches!(source_type.as_str(), "local" | "vendored") {
+        return Err(format!("Skill {} 不是目录型 Skill，无法刷新", skill_id));
     }
 
     let content = read_skill_markdown_with_fallback(&pack_path)?;
@@ -364,17 +364,20 @@ pub async fn refresh_local_skill(
             .unwrap_or_else(|| "unnamed-skill".to_string())
     });
 
+    let existing_manifest =
+        serde_json::from_str::<SkillManifest>(&manifest_json).map_err(|e| e.to_string())?;
+
     let manifest = SkillManifest {
         id: skill_id.clone(),
         name,
         description: config.description.unwrap_or_default(),
-        version: "local".to_string(),
-        author: String::new(),
+        version: existing_manifest.version,
+        author: existing_manifest.author,
         recommended_model: config.model.unwrap_or_default(),
         tags: parsed_tags,
-        created_at: Utc::now(),
-        username_hint: None,
-        encrypted_verify: String::new(),
+        created_at: existing_manifest.created_at,
+        username_hint: existing_manifest.username_hint,
+        encrypted_verify: existing_manifest.encrypted_verify,
     };
 
     let manifest_json = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;

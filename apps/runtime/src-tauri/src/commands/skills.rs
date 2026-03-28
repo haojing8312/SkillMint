@@ -13,16 +13,21 @@ mod local_skill_service;
 #[path = "skills/industry_bundle_service.rs"]
 mod industry_bundle_service;
 
-pub use types::{
-    DbState, ImportResult, IndustryBundleUpdateCheck, IndustryInstallResult,
-    InstalledSkillSummary, LocalImportBatchResult, LocalImportFailedItem,
-    LocalImportInstalledItem, LocalSkillPreview,
+#[path = "skills/runtime_status_service.rs"]
+mod runtime_status_service;
+
+pub use industry_bundle_service::{
+    check_industry_bundle_update_from_pool, install_industry_bundle_to_pool,
 };
 pub use local_skill_service::{
     ensure_skill_display_name_available, import_local_skill_to_pool, import_local_skills_to_pool,
 };
-pub use industry_bundle_service::{
-    check_industry_bundle_update_from_pool, install_industry_bundle_to_pool,
+pub use runtime_status_service::get_skill_runtime_environment_status_with_pool;
+pub use types::{
+    DbState, ImportResult, IndustryBundleUpdateCheck, IndustryInstallResult,
+    InstalledSkillListItem, InstalledSkillSummary, LocalImportBatchResult,
+    LocalImportFailedItem, LocalImportInstalledItem, LocalSkillPreview,
+    SkillRuntimeDependencyCheck, SkillRuntimeEnvironmentStatus,
 };
 
 #[tauri::command]
@@ -32,7 +37,8 @@ pub async fn render_local_skill_preview(
     when_to_use: String,
     target_dir: Option<String>,
 ) -> Result<LocalSkillPreview, String> {
-    local_skill_service::render_local_skill_preview(name, description, when_to_use, target_dir).await
+    local_skill_service::render_local_skill_preview(name, description, when_to_use, target_dir)
+        .await
 }
 
 #[tauri::command]
@@ -88,17 +94,32 @@ pub async fn check_industry_bundle_update(
 }
 
 #[tauri::command]
-pub async fn list_skills(db: State<'_, DbState>) -> Result<Vec<SkillManifest>, String> {
-    let rows = sqlx::query_as::<_, (String,)>(
-        "SELECT manifest FROM installed_skills ORDER BY installed_at DESC",
+pub async fn list_skills(db: State<'_, DbState>) -> Result<Vec<InstalledSkillListItem>, String> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT manifest, COALESCE(source_type, 'encrypted') FROM installed_skills ORDER BY installed_at DESC",
     )
     .fetch_all(&db.0)
     .await
     .map_err(|e| e.to_string())?;
 
     rows.iter()
-        .map(|(json,)| serde_json::from_str::<SkillManifest>(json).map_err(|e| e.to_string()))
+        .map(|(json, source_type)| {
+            serde_json::from_str::<SkillManifest>(json)
+                .map(|manifest| InstalledSkillListItem {
+                    manifest,
+                    source_type: source_type.clone(),
+                })
+                .map_err(|e| e.to_string())
+        })
         .collect()
+}
+
+#[tauri::command]
+pub async fn get_skill_runtime_environment_status(
+    skill_id: String,
+    db: State<'_, DbState>,
+) -> Result<SkillRuntimeEnvironmentStatus, String> {
+    runtime_status_service::get_skill_runtime_environment_status_with_pool(&db.0, &skill_id).await
 }
 
 #[tauri::command]

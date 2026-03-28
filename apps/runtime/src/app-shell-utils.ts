@@ -2,6 +2,8 @@ import type { SessionInfo, SkillManifest } from "./types";
 
 const BUILTIN_GENERAL_SKILL_ID = "builtin-general";
 
+export type SkillSourceBucket = "preinstalled" | "local-created" | "external";
+
 export function extractErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === "string") {
     return error;
@@ -26,6 +28,27 @@ export function getDefaultSkillId(skillList: SkillManifest[]): string | null {
     return builtin.id;
   }
   return skillList[0]?.id ?? null;
+}
+
+export function resolveSkillSourceBucket(skill: SkillManifest): SkillSourceBucket {
+  if (skill.source_type === "vendored" || skill.source_type === "builtin") {
+    return "preinstalled";
+  }
+  if (skill.id.startsWith("local-")) {
+    return "local-created";
+  }
+  return "external";
+}
+
+export function resolveSkillSourceLabel(skill: SkillManifest): string {
+  switch (resolveSkillSourceBucket(skill)) {
+    case "preinstalled":
+      return "预装";
+    case "local-created":
+      return "本地";
+    default:
+      return "已安装";
+  }
 }
 
 export function getAdjacentSessionId(

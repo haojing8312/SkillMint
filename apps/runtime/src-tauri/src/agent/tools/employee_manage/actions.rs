@@ -11,6 +11,13 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
+fn normalize_installed_skill_source_type(source_type: &str) -> &str {
+    match source_type {
+        "builtin" => "vendored",
+        other => other,
+    }
+}
+
 pub(crate) async fn list_skills(pool: SqlitePool) -> std::result::Result<Value, String> {
     let rows = sqlx::query_as::<_, (String, String, String)>(
         "SELECT id, manifest, COALESCE(source_type, 'encrypted') FROM installed_skills ORDER BY installed_at DESC",
@@ -29,7 +36,7 @@ pub(crate) async fn list_skills(pool: SqlitePool) -> std::result::Result<Value, 
             "id": id,
             "name": manifest.name,
             "description": manifest.description,
-            "source_type": source_type,
+            "source_type": normalize_installed_skill_source_type(&source_type),
             "tags": manifest.tags,
         }));
     }

@@ -23,25 +23,54 @@ pub(super) fn build_builtin_manifest_json(skill_id: &str, skill_markdown: &str) 
 }
 
 pub(super) async fn sync_builtin_skills(pool: &SqlitePool) -> Result<()> {
+    let vendor_root = std::env::temp_dir().join("workclaw-missing-vendor-root");
+    sync_builtin_skills_with_root(pool, &vendor_root).await
+}
+
+pub(super) async fn sync_builtin_skills_with_root(
+    pool: &SqlitePool,
+    vendor_root: &Path,
+) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
+    std::fs::create_dir_all(vendor_root)?;
     for entry in crate::builtin_skills::builtin_skill_entries() {
+        let skill_dir = vendor_root.join(entry.id);
+        sync_builtin_skill_directory(entry.id, &skill_dir)?;
         let builtin_json = build_builtin_manifest_json(entry.id, entry.markdown);
         sqlx::query(
             "INSERT INTO installed_skills (id, manifest, installed_at, username, pack_path, source_type)
-             VALUES (?, ?, ?, '', '', 'builtin')
+             VALUES (?, ?, ?, '', ?, 'vendored')
              ON CONFLICT(id) DO UPDATE SET
                manifest = excluded.manifest,
                username = '',
-               pack_path = '',
-               source_type = 'builtin'",
+               pack_path = excluded.pack_path,
+               source_type = 'vendored'",
         )
         .bind(entry.id)
         .bind(&builtin_json)
         .bind(&now)
+        .bind(skill_dir.to_string_lossy().to_string())
         .execute(pool)
         .await?;
     }
 
+    Ok(())
+}
+
+fn sync_builtin_skill_directory(skill_id: &str, skill_dir: &Path) -> Result<()> {
+    let files = crate::builtin_skills::builtin_skill_files(skill_id)
+        .ok_or_else(|| anyhow::anyhow!("missing embedded builtin skill assets for {}", skill_id))?;
+    if skill_dir.exists() {
+        std::fs::remove_dir_all(skill_dir)?;
+    }
+    std::fs::create_dir_all(skill_dir)?;
+    for (relative_path, bytes) in files {
+        let target = skill_dir.join(relative_path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(target, bytes)?;
+    }
     Ok(())
 }
 
@@ -97,7 +126,8 @@ pub(super) async fn seed_runtime_defaults(pool: &SqlitePool, app_dir: &Path) -> 
     .execute(pool)
     .await;
 
-    let _ = sync_builtin_skills(pool).await;
+    let vendor_root = app_dir.join("skills").join("vendor");
+    let _ = sync_builtin_skills_with_root(pool, &vendor_root).await;
     crate::team_templates::seed_builtin_team_templates_with_root(pool, app_dir).await?;
 
     Ok(())
