@@ -21,18 +21,8 @@
       }
     },
     {
-      "event_type": "run_failed",
-      "created_at": "2026-03-27T06:00:02Z",
-      "payload": {
-        "type": "run_failed",
-        "run_id": "run-failover-recovery",
-        "error_kind": "network",
-        "error_message": "首个候选模型请求超时，已触发 failover 重试。"
-      }
-    },
-    {
       "event_type": "assistant_chunk_appended",
-      "created_at": "2026-03-27T06:00:03Z",
+      "created_at": "2026-03-27T06:00:02Z",
       "payload": {
         "type": "assistant_chunk_appended",
         "run_id": "run-failover-recovery",
@@ -41,7 +31,7 @@
     },
     {
       "event_type": "run_completed",
-      "created_at": "2026-03-27T06:00:04Z",
+      "created_at": "2026-03-27T06:00:03Z",
       "payload": {
         "type": "run_completed",
         "run_id": "run-failover-recovery"
@@ -52,18 +42,18 @@
     "session_id": "session-failover",
     "run_id": "run-failover-recovery",
     "final_status": "completed",
-    "event_count": 5,
+    "event_count": 4,
     "first_event_at": "<timestamp>",
     "last_event_at": "<timestamp>",
     "lifecycle": {
       "started": true,
       "completed": true,
-      "failed": true,
+      "failed": false,
       "cancelled": false,
       "stopped": false,
       "waiting_approval": false
     },
-    "stop_reason_kind": "network",
+    "stop_reason_kind": null,
     "tools": [],
     "approvals": [],
     "guard_warnings": [],
@@ -106,25 +96,6 @@
         "last_completed_step": null,
         "child_session_id": null,
         "is_error": null,
-        "parse_warning": null
-      },
-      {
-        "session_id": "session-failover",
-        "run_id": "run-failover-recovery",
-        "event_type": "run_failed",
-        "created_at": "<timestamp>",
-        "status": "failed",
-        "tool_name": null,
-        "call_id": null,
-        "approval_id": null,
-        "warning_kind": null,
-        "error_kind": "network",
-        "message": "首个候选模型请求超时，已触发 failover 重试。",
-        "detail": null,
-        "irreversible": null,
-        "last_completed_step": null,
-        "child_session_id": null,
-        "is_error": true,
         "parse_warning": null
       },
       {
