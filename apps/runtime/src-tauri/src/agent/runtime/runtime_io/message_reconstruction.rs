@@ -1,6 +1,7 @@
 use crate::agent::runtime::RuntimeTranscript;
 use serde_json::Value;
 
+#[cfg(test)]
 pub(crate) fn reconstruct_history_messages(
     history: &[(String, String, Option<String>)],
     api_format: &str,
@@ -8,6 +9,7 @@ pub(crate) fn reconstruct_history_messages(
     RuntimeTranscript::reconstruct_history_messages(history, api_format)
 }
 
+#[cfg(test)]
 pub(crate) fn build_assistant_content_from_final_messages(
     final_messages: &[Value],
     reconstructed_history_len: usize,
@@ -18,6 +20,7 @@ pub(crate) fn build_assistant_content_from_final_messages(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn build_assistant_content_with_stream_fallback(
     final_messages: &[Value],
     reconstructed_history_len: usize,

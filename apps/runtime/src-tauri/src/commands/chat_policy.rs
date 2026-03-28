@@ -1,5 +1,8 @@
+#[cfg(test)]
 use crate::agent::permissions::PermissionMode;
+#[cfg(test)]
 use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
+#[cfg(test)]
 use crate::model_errors::normalize_model_error;
 #[cfg(test)]
 use serde_json::Value;
@@ -32,6 +35,7 @@ pub(crate) fn normalize_team_id_for_storage(session_mode: &str, team_id: Option<
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_permission_mode_for_runtime(permission_mode: &str) -> PermissionMode {
     match permission_mode {
         "standard" | "default" | "accept_edits" => PermissionMode::AcceptEdits,
@@ -92,6 +96,7 @@ pub(crate) fn infer_capability_from_user_message(message: &str) -> &'static str 
     "chat"
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelRouteErrorKind {
     Billing,
@@ -106,6 +111,7 @@ pub(crate) enum ModelRouteErrorKind {
     Unknown,
 }
 
+#[cfg(test)]
 pub(crate) fn model_route_error_kind_for_stop_reason_kind(
     kind: RunStopReasonKind,
 ) -> ModelRouteErrorKind {
@@ -123,6 +129,7 @@ pub(crate) fn model_route_error_kind_for_stop_reason_kind(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn classify_model_route_error(error_message: &str) -> ModelRouteErrorKind {
     if let Some(reason) = parse_run_stop_reason(error_message) {
         return model_route_error_kind_for_stop_reason_kind(reason.kind);
@@ -192,6 +199,7 @@ pub(crate) fn classify_model_route_error(error_message: &str) -> ModelRouteError
     }
 }
 
+#[cfg(test)]
 pub(crate) fn should_retry_same_candidate(kind: ModelRouteErrorKind) -> bool {
     matches!(
         kind,
@@ -201,6 +209,7 @@ pub(crate) fn should_retry_same_candidate(kind: ModelRouteErrorKind) -> bool {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn retry_budget_for_error(
     kind: ModelRouteErrorKind,
     configured_retry_count: usize,
@@ -212,6 +221,7 @@ pub(crate) fn retry_budget_for_error(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn retry_backoff_ms(kind: ModelRouteErrorKind, attempt_idx: usize) -> u64 {
     let base_ms = match kind {
         ModelRouteErrorKind::RateLimit => 1200u64,
@@ -226,6 +236,7 @@ pub(crate) fn retry_backoff_ms(kind: ModelRouteErrorKind, attempt_idx: usize) ->
     base_ms.saturating_mul(1u64 << exp).min(5000)
 }
 
+#[cfg(test)]
 pub(crate) fn model_route_error_kind_key(kind: ModelRouteErrorKind) -> &'static str {
     match kind {
         ModelRouteErrorKind::Billing => "billing",

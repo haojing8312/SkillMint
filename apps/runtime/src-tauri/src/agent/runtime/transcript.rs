@@ -348,6 +348,7 @@ impl RuntimeTranscript {
         (final_text, has_tool_calls, content)
     }
 
+    #[cfg(test)]
     pub(crate) fn build_assistant_content_with_stream_fallback(
         final_messages: &[Value],
         reconstructed_history_len: usize,

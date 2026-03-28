@@ -1,13 +1,8 @@
-import type { ComponentProps } from "react";
+import { Suspense, lazy, type ComponentProps } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChatView } from "./ChatView";
 import { NewSessionLanding } from "./NewSessionLanding";
-import { PackagingView } from "./packaging/PackagingView";
-import { SettingsView } from "./SettingsView";
 import { TaskTabStrip, type TaskTabStripItem } from "./TaskTabStrip";
-import { EmployeeHubScene } from "../scenes/employees/EmployeeHubScene";
-import { ExpertCreateView } from "./experts/ExpertCreateView";
-import { ExpertsView } from "./experts/ExpertsView";
 import { SHOW_DEV_MODEL_SETUP_TOOLS } from "../app-shell-constants";
 import type {
   AgentEmployee,
@@ -19,6 +14,30 @@ import type {
 } from "../types";
 import type { EmployeeHubOpenRequest } from "../scenes/employees/EmployeeHubScene";
 import type { EmployeeAssistantSessionContext } from "../scenes/employees/employeeAssistantService";
+
+const SettingsView = lazy(() =>
+  import("./SettingsView").then((module) => ({ default: module.SettingsView })),
+);
+const PackagingView = lazy(() =>
+  import("./packaging/PackagingView").then((module) => ({ default: module.PackagingView })),
+);
+const EmployeeHubScene = lazy(() =>
+  import("../scenes/employees/EmployeeHubScene").then((module) => ({
+    default: module.EmployeeHubScene,
+  })),
+);
+const ExpertCreateView = lazy(() =>
+  import("./experts/ExpertCreateView").then((module) => ({
+    default: module.ExpertCreateView,
+  })),
+);
+const ExpertsView = lazy(() =>
+  import("./experts/ExpertsView").then((module) => ({ default: module.ExpertsView })),
+);
+
+function SceneLoadingFallback() {
+  return <div className="h-full w-full bg-white" />;
+}
 
 type ChatViewProps = ComponentProps<typeof ChatView>;
 type NewSessionLandingProps = ComponentProps<typeof NewSessionLanding>;
@@ -223,14 +242,16 @@ export function AppMainContent(props: AppMainContentProps) {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              <SettingsView
-                initialTab={settingsInitialTab}
-                onClose={onCloseSettings}
-                onOpenEmployees={onOpenEmployeesFromSettings}
-                showDevModelSetupTools={SHOW_DEV_MODEL_SETUP_TOOLS}
-                onDevResetFirstUseOnboarding={onDevResetFirstUseOnboarding}
-                onDevOpenQuickModelSetup={onDevOpenQuickModelSetup}
-              />
+              <Suspense fallback={<SceneLoadingFallback />}>
+                <SettingsView
+                  initialTab={settingsInitialTab}
+                  onClose={onCloseSettings}
+                  onOpenEmployees={onOpenEmployeesFromSettings}
+                  showDevModelSetupTools={SHOW_DEV_MODEL_SETUP_TOOLS}
+                  onDevResetFirstUseOnboarding={onDevResetFirstUseOnboarding}
+                  onDevOpenQuickModelSetup={onDevOpenQuickModelSetup}
+                />
+              </Suspense>
             </motion.div>
           ) : activeMainView === "packaging" ? (
             <motion.div
@@ -241,7 +262,9 @@ export function AppMainContent(props: AppMainContentProps) {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              <PackagingView />
+              <Suspense fallback={<SceneLoadingFallback />}>
+                <PackagingView />
+              </Suspense>
             </motion.div>
           ) : activeMainView === "experts-new" ? (
             <motion.div
@@ -252,19 +275,21 @@ export function AppMainContent(props: AppMainContentProps) {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              <ExpertCreateView
-                saving={creatingExpertSkill}
-                error={expertCreateError}
-                savedPath={expertSavedPath}
-                canRetryImport={Boolean(pendingImportDir)}
-                retryingImport={retryingExpertImport}
-                onBack={onBackToExperts}
-                onOpenPackaging={onOpenPackagingView}
-                onPickDirectory={onPickSkillDirectory}
-                onSave={onCreateExpertSkill}
-                onRetryImport={onRetryExpertImport}
-                onRenderPreview={onRenderExpertPreview}
-              />
+              <Suspense fallback={<SceneLoadingFallback />}>
+                <ExpertCreateView
+                  saving={creatingExpertSkill}
+                  error={expertCreateError}
+                  savedPath={expertSavedPath}
+                  canRetryImport={Boolean(pendingImportDir)}
+                  retryingImport={retryingExpertImport}
+                  onBack={onBackToExperts}
+                  onOpenPackaging={onOpenPackagingView}
+                  onPickDirectory={onPickSkillDirectory}
+                  onSave={onCreateExpertSkill}
+                  onRetryImport={onRetryExpertImport}
+                  onRenderPreview={onRenderExpertPreview}
+                />
+              </Suspense>
             </motion.div>
           ) : activeMainView === "experts" ? (
             <motion.div
@@ -275,22 +300,24 @@ export function AppMainContent(props: AppMainContentProps) {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              <ExpertsView
-                skills={skills}
-                launchError={createSessionError}
-                onInstallSkill={onOpenInstallDialog}
-                onCreate={onOpenCreateExpertView}
-                onOpenPackaging={onOpenPackagingView}
-                onInstallFromLibrary={onInstallFromLibrary}
-                onStartTaskWithSkill={onStartTaskWithSkill}
-                onRefreshLocalSkill={onRefreshLocalSkill}
-                onCheckClawhubUpdate={onCheckClawhubUpdate}
-                onUpdateClawhubSkill={onUpdateClawhubSkill}
-                onDeleteSkill={onDeleteSkill}
-                clawhubUpdateStatus={clawhubUpdateStatus}
-                busySkillId={busySkillId}
-                busyAction={busyAction}
-              />
+              <Suspense fallback={<SceneLoadingFallback />}>
+                <ExpertsView
+                  skills={skills}
+                  launchError={createSessionError}
+                  onInstallSkill={onOpenInstallDialog}
+                  onCreate={onOpenCreateExpertView}
+                  onOpenPackaging={onOpenPackagingView}
+                  onInstallFromLibrary={onInstallFromLibrary}
+                  onStartTaskWithSkill={onStartTaskWithSkill}
+                  onRefreshLocalSkill={onRefreshLocalSkill}
+                  onCheckClawhubUpdate={onCheckClawhubUpdate}
+                  onUpdateClawhubSkill={onUpdateClawhubSkill}
+                  onDeleteSkill={onDeleteSkill}
+                  clawhubUpdateStatus={clawhubUpdateStatus}
+                  busySkillId={busySkillId}
+                  busyAction={busyAction}
+                />
+              </Suspense>
             </motion.div>
           ) : activeMainView === "employees" ? (
             <motion.div
@@ -301,18 +328,20 @@ export function AppMainContent(props: AppMainContentProps) {
               transition={{ duration: 0.2 }}
               className="h-full"
             >
-              <EmployeeHubScene
-                employees={employees}
-                skills={skills}
-                openRequest={employeeHubOpenRequest}
-                onRefreshEmployees={onRefreshEmployees}
-                onRefreshEmployeeGroups={onRefreshEmployeeGroups}
-                onEnterStartTask={onEnterStartTask}
-                onStartTaskWithEmployee={onStartTaskWithEmployee}
-                onOpenGroupRunSession={onOpenGroupRunSession}
-                onLaunchEmployeeCreatorSkill={onLaunchEmployeeCreatorSkill}
-                onOpenFeishuSettingsPanel={onOpenEmployeeHubFeishuSettings}
-              />
+              <Suspense fallback={<SceneLoadingFallback />}>
+                <EmployeeHubScene
+                  employees={employees}
+                  skills={skills}
+                  openRequest={employeeHubOpenRequest}
+                  onRefreshEmployees={onRefreshEmployees}
+                  onRefreshEmployeeGroups={onRefreshEmployeeGroups}
+                  onEnterStartTask={onEnterStartTask}
+                  onStartTaskWithEmployee={onStartTaskWithEmployee}
+                  onOpenGroupRunSession={onOpenGroupRunSession}
+                  onLaunchEmployeeCreatorSkill={onLaunchEmployeeCreatorSkill}
+                  onOpenFeishuSettingsPanel={onOpenEmployeeHubFeishuSettings}
+                />
+              </Suspense>
             </motion.div>
           ) : selectedSkill && models.length > 0 && selectedSessionId ? (
             <motion.div
