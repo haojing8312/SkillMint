@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { cursorPosition, getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
-import workclawLogo from "../assets/branding/workclaw-logo.png";
 import { reportFrontendDiagnostic } from "../diagnostics";
+import { BRANDING, brandLogoSrc } from "../lib/branding";
 
 function getDesktopWindow() {
   if (typeof window === "undefined") {
@@ -216,9 +216,9 @@ export function DesktopTitleBar() {
         }}
       >
         <div className="flex h-7 w-7 items-center justify-center rounded-[10px] border border-[var(--sm-border)] bg-[var(--sm-surface)] shadow-[var(--sm-shadow-sm)]">
-          <img src={workclawLogo} alt="" className="h-5 w-5 object-contain" />
+          <img src={brandLogoSrc} alt="" className="h-5 w-5 object-contain" />
         </div>
-        <span className="text-[13px] font-medium tracking-[0.01em] text-[var(--sm-text-muted)]">WorkClaw</span>
+        <span className="text-[13px] font-medium tracking-[0.01em] text-[var(--sm-text-muted)]">{BRANDING.productName}</span>
         <div className="min-w-0 flex-1 self-stretch" />
       </div>
       <div className="flex items-center gap-1">

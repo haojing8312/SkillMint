@@ -17,7 +17,7 @@ import {
   Users,
 } from "lucide-react";
 import { SessionInfo } from "../types";
-import workclawLogo from "../assets/branding/workclaw-logo.png";
+import { BRANDING, brandLogoSrc } from "../lib/branding";
 
 interface Props {
   activeMainView: "start-task" | "experts" | "experts-new" | "packaging" | "employees";
@@ -186,8 +186,8 @@ export function Sidebar({
     <div className="sm-surface-muted sm-divider w-[260px] flex flex-col h-full border-r flex-shrink-0">
       <div className="sm-surface-muted sm-divider px-4 py-3 text-xs font-medium sm-text-muted border-b flex items-center justify-between">
         <img
-          src={workclawLogo}
-          alt="WorkClaw Logo"
+          src={brandLogoSrc}
+          alt={`${BRANDING.productName} Logo`}
           className="h-8 w-8 flex-shrink-0 object-contain"
         />
         <button

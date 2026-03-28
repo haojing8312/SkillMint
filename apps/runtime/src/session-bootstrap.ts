@@ -1,8 +1,9 @@
 import type { SessionInfo } from "./types";
+import { storageKey } from "./lib/branding";
 
 const DEFAULT_SESSION_TITLE = "New Chat";
-const LAST_SELECTED_SESSION_ID_KEY = "workclaw:last-selected-session-id";
-const LAST_SELECTED_SESSION_SNAPSHOT_KEY = "workclaw:last-selected-session-snapshot";
+const LAST_SELECTED_SESSION_ID_KEY = storageKey("last-selected-session-id");
+const LAST_SELECTED_SESSION_SNAPSHOT_KEY = storageKey("last-selected-session-snapshot");
 
 export type WorkTab =
   | {

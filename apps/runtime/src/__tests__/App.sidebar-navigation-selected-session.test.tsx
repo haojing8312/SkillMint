@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "../App";
+import { storageKey } from "../lib/branding";
 
 const invokeMock = vi.fn();
 
@@ -64,7 +65,7 @@ describe("App sidebar navigation with selected session", () => {
 
   beforeEach(() => {
     invokeMock.mockReset();
-    window.localStorage.setItem("workclaw:initial-model-setup-completed", "1");
+    window.localStorage.setItem(storageKey("initial-model-setup-completed"), "1");
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_skills") {
         return Promise.resolve([

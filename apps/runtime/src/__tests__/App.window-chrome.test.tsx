@@ -1,5 +1,6 @@
 import App from "../App";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { BRANDING, storageKey } from "../lib/branding";
 
 const invokeMock = vi.fn();
 const minimizeMock = vi.fn().mockResolvedValue(undefined);
@@ -108,7 +109,7 @@ describe("App desktop titlebar", () => {
         resizeHandler = null;
       });
     });
-    window.localStorage.setItem("workclaw:initial-model-setup-completed", "1");
+    window.localStorage.setItem(storageKey("initial-model-setup-completed"), "1");
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_skills") {
         return Promise.resolve([
@@ -174,9 +175,9 @@ describe("App desktop titlebar", () => {
       expect(screen.getByTestId("app-titlebar")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("WorkClaw")).toBeInTheDocument();
+    expect(screen.getByText(BRANDING.productName)).toBeInTheDocument();
     expect(screen.getByTestId("app-titlebar").querySelector(".h-1\\.5")).toBeNull();
-    expect(screen.getByText("WorkClaw").closest('[data-testid="app-titlebar-drag-region"]')).toBeTruthy();
+    expect(screen.getByText(BRANDING.productName).closest('[data-testid="app-titlebar-drag-region"]')).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "最小化窗口" }));
     fireEvent.click(screen.getByRole("button", { name: "最大化窗口" }));

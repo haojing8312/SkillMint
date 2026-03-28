@@ -1,0 +1,11 @@
+{
+  "brandKey": "workclaw",
+  "productName": "WorkClaw",
+  "desktopTitle": "WorkClaw",
+  "bundleIdentifier": "dev.workclaw.runtime",
+  "publisher": "WorkClaw",
+  "exeName": "WorkClaw",
+  "localStoragePrefix": "workclaw",
+  "protocolScheme": "workclaw",
+  "assetsDir": "./assets"
+}

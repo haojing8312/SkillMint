@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { Sidebar } from "../Sidebar";
+import { BRANDING } from "../../lib/branding";
 
 describe("Sidebar semantic theme", () => {
   test("renders semantic classes for shell, nav button, and form controls", () => {
@@ -22,12 +23,12 @@ describe("Sidebar semantic theme", () => {
       />
     );
 
-    const logo = screen.getByAltText("WorkClaw Logo");
-    expect(logo).toHaveAttribute("src", expect.stringContaining("workclaw-logo"));
+    const logo = screen.getByAltText(`${BRANDING.productName} Logo`);
+    expect(logo).toHaveAttribute("src", expect.stringContaining("branding/current/app-logo.png"));
     expect(logo).toHaveClass("h-8");
     expect(logo).toHaveClass("w-8");
     expect(screen.queryByText("导航")).not.toBeInTheDocument();
-    expect(screen.queryByText("WorkClaw")).not.toBeInTheDocument();
+    expect(screen.queryByText(BRANDING.productName)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "折叠侧边栏" }).closest("div")).toHaveClass("sm-surface-muted");
     expect(screen.getByRole("button", { name: "开始任务" })).toHaveClass("bg-[var(--sm-primary-soft)]");
     expect(screen.getByRole("button", { name: "开始任务" })).not.toHaveClass("sm-btn-primary");

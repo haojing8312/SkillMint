@@ -1,8 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "../App";
+import { storageKey } from "../lib/branding";
 
 const invokeMock = vi.fn();
-const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
+const INITIAL_MODEL_SETUP_COMPLETED_KEY = storageKey("initial-model-setup-completed");
 let importShouldFailOnce = false;
 let importCallCount = 0;
 let createShouldConflict = false;

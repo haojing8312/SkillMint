@@ -67,10 +67,15 @@ describe("SkillLibraryView library behavior", () => {
       expect(screen.getByText("Beta")).toBeInTheDocument();
     });
 
-    act(() => {
+    await waitFor(() => {
+      expect(MockIntersectionObserver.instances.length).toBeGreaterThan(0);
+    });
+
+    await act(async () => {
       for (const observer of MockIntersectionObserver.instances) {
         observer.triggerIntersect();
       }
+      await Promise.resolve();
     });
 
     await waitFor(() => {

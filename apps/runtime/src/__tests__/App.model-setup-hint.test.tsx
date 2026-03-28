@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "../App";
 import { MODEL_PROVIDER_CATALOG } from "../model-provider-catalog";
+import { storageKey } from "../lib/branding";
 
 const invokeMock = vi.fn();
-const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
-const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
-const QUICK_FEISHU_SETUP_SKIPPED_KEY = "workclaw:quick-feishu-setup-skipped";
+const MODEL_SETUP_HINT_DISMISSED_KEY = storageKey("model-setup-hint-dismissed");
+const INITIAL_MODEL_SETUP_COMPLETED_KEY = storageKey("initial-model-setup-completed");
+const QUICK_FEISHU_SETUP_SKIPPED_KEY = storageKey("quick-feishu-setup-skipped");
 let mockModels: Array<{
   id: string;
   name: string;

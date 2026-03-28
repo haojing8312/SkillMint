@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { PersistedChatRuntimeState, SessionInfo, SkillManifest } from "../types";
+import { storageKey } from "../lib/branding";
 
 type WorkTab =
   | {
@@ -19,10 +20,10 @@ function persistLastSelectedSessionId(sessionId: string | null) {
   }
   try {
     if (sessionId && sessionId.trim()) {
-      window.localStorage.setItem("workclaw:last-selected-session-id", sessionId.trim());
+      window.localStorage.setItem(storageKey("last-selected-session-id"), sessionId.trim());
       return;
     }
-    window.localStorage.removeItem("workclaw:last-selected-session-id");
+    window.localStorage.removeItem(storageKey("last-selected-session-id"));
   } catch {
     // ignore localStorage failures
   }
@@ -35,12 +36,12 @@ function persistLastSelectedSessionSnapshot(session: SessionInfo | null) {
   try {
     if (session?.id?.trim()) {
       window.localStorage.setItem(
-        "workclaw:last-selected-session-snapshot",
+        storageKey("last-selected-session-snapshot"),
         JSON.stringify(session),
       );
       return;
     }
-    window.localStorage.removeItem("workclaw:last-selected-session-snapshot");
+    window.localStorage.removeItem(storageKey("last-selected-session-snapshot"));
   } catch {
     // ignore localStorage failures
   }
