@@ -1,9 +1,10 @@
 import type { PersistedChatRuntimeState } from "../../types";
+import { storageKey } from "../../lib/branding";
 
-const SESSION_DRAFT_STORAGE_PREFIX = "workclaw:session-draft:";
+const SESSION_DRAFT_STORAGE_PREFIX = storageKey("session-draft");
 
 export function getSessionDraftStorageKey(sessionId: string): string {
-  return `${SESSION_DRAFT_STORAGE_PREFIX}${sessionId}`;
+  return `${SESSION_DRAFT_STORAGE_PREFIX}:${sessionId}`;
 }
 
 export function readSessionDraft(sessionId: string): string {

@@ -1,0 +1,11 @@
+{
+  "brandKey": "xxclaw",
+  "productName": "XXClaw",
+  "desktopTitle": "XXClaw",
+  "bundleIdentifier": "dev.xxclaw.runtime",
+  "publisher": "XXClaw",
+  "exeName": "XXClaw",
+  "localStoragePrefix": "xxclaw",
+  "protocolScheme": "xxclaw",
+  "assetsDir": "./assets"
+}

@@ -150,7 +150,6 @@ export function useFeishuSettingsController({
 
     void Promise.all([
       loadConnectorSettings(),
-      loadConnectorStatuses(),
       loadConnectorPlatformData(),
     ]);
   }, [activeTab]);

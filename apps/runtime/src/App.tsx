@@ -48,11 +48,12 @@ import {
   SessionInfo,
 } from "./types";
 import { extractErrorMessage, getAdjacentSessionId, getDefaultSkillId } from "./app-shell-utils";
+import { storageKey } from "./lib/branding";
 
 type MainView = "start-task" | "experts" | "experts-new" | "packaging" | "employees";
 type SkillAction = "refresh" | "delete" | "check-update" | "update";
-const MODEL_SETUP_HINT_DISMISSED_KEY = "workclaw:model-setup-hint-dismissed";
-const INITIAL_MODEL_SETUP_COMPLETED_KEY = "workclaw:initial-model-setup-completed";
+const MODEL_SETUP_HINT_DISMISSED_KEY = storageKey("model-setup-hint-dismissed");
+const INITIAL_MODEL_SETUP_COMPLETED_KEY = storageKey("initial-model-setup-completed");
 
 const DEFAULT_SESSION_TITLE = "New Chat";
 

@@ -11,10 +11,11 @@ import {
   validateSearchConfigForm,
   type SearchConfigFormState,
 } from "../lib/search-config";
+import { storageKey } from "../lib/branding";
 import type { ModelConfig, ModelConnectionTestResult } from "../types";
 
-const QUICK_FEISHU_SETUP_SKIPPED_KEY = "workclaw:quick-feishu-setup-skipped";
-const QUICK_SEARCH_SETUP_SKIPPED_KEY = "workclaw:quick-search-setup-skipped";
+const QUICK_FEISHU_SETUP_SKIPPED_KEY = storageKey("quick-feishu-setup-skipped");
+const QUICK_SEARCH_SETUP_SKIPPED_KEY = storageKey("quick-search-setup-skipped");
 
 export type QuickModelFormState = ReturnType<typeof buildModelFormFromCatalogItem> & {
   api_key: string;

@@ -1,10 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "../App";
+import { storageKey } from "../lib/branding";
 
 const invokeMock = vi.fn();
 const chatViewPropsSpy = vi.fn();
-const LAST_SELECTED_SESSION_ID_KEY = "workclaw:last-selected-session-id";
-const LAST_SELECTED_SESSION_SNAPSHOT_KEY = "workclaw:last-selected-session-snapshot";
+const LAST_SELECTED_SESSION_ID_KEY = storageKey("last-selected-session-id");
+const LAST_SELECTED_SESSION_SNAPSHOT_KEY = storageKey("last-selected-session-snapshot");
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),

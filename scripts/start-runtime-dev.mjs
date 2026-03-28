@@ -140,6 +140,24 @@ function ensureBinary(name, args, env) {
   }
 }
 
+export function ensureDefaultBranding({
+  projectRoot = process.cwd(),
+  env = process.env,
+} = {}) {
+  const result = runCommand(
+    process.execPath,
+    [path.join(projectRoot, "scripts", "apply-brand.mjs")],
+    env,
+  );
+
+  if (!result.ok) {
+    const details = result.stderr.trim() || result.stdout.trim();
+    throw new Error(`Unable to apply default branding${details ? `: ${details}` : ""}`);
+  }
+
+  return result;
+}
+
 function main() {
   const env = buildRuntimeDevEnv({
     env: process.env,
@@ -149,6 +167,10 @@ function main() {
   const runner = resolvePnpmRunner({ env, platform: process.platform });
   ensureBinary(runner.command, [...runner.args, "--version"], env);
   ensureBinary(binaryName("cargo", process.platform), ["--version"], env);
+  ensureDefaultBranding({
+    projectRoot: process.cwd(),
+    env,
+  });
 
   const { command, args } = getRuntimeDevCommand(process.platform, env);
   const child = spawn(command, args, {

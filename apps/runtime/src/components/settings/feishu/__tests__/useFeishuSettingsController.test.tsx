@@ -173,6 +173,11 @@ describe("useFeishuSettingsController", () => {
     expect(invokeMock).toHaveBeenCalledWith("get_openclaw_plugin_feishu_advanced_settings");
     expect(invokeMock).toHaveBeenCalledWith("list_openclaw_plugin_channel_hosts");
     expect(invokeMock).toHaveBeenCalledWith("list_feishu_pairing_requests", { status: null });
+    expect(
+      invokeMock.mock.calls.filter(
+        ([command]) => command === "get_openclaw_plugin_feishu_runtime_status",
+      ).length,
+    ).toBe(1);
   });
 
   test("keeps refreshing runtime status and platform data while staying on the Feishu tab", async () => {
