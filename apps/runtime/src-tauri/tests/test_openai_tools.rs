@@ -131,11 +131,17 @@ async fn test_openai_responses_mock_runs_full_tool_loop() {
         )
         .await;
 
-    assert!(result.is_ok(), "responses mock tool loop should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "responses mock tool loop should succeed: {:?}",
+        result
+    );
 
     let messages = result.unwrap();
     assert!(
-        messages.iter().any(|message| message["role"].as_str() == Some("tool")),
+        messages
+            .iter()
+            .any(|message| message["role"].as_str() == Some("tool")),
         "expected at least one tool message in final transcript: {:?}",
         messages
     );
@@ -191,7 +197,9 @@ async fn test_openai_responses_malformed_tool_call_does_not_fail_task_start() {
 
     let messages = result.unwrap();
     assert!(
-        messages.iter().all(|message| message["role"].as_str() != Some("tool")),
+        messages
+            .iter()
+            .all(|message| message["role"].as_str() != Some("tool")),
         "malformed tool call should not execute tools: {:?}",
         messages
     );

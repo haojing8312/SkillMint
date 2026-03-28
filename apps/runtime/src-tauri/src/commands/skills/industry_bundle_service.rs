@@ -43,7 +43,7 @@ pub async fn install_industry_bundle_to_pool(
             extra_tags.extend(meta.tags.clone());
         }
 
-        let import = import_local_skill_to_pool(skill_dir.clone(), pool, &extra_tags).await?; 
+        let import = import_local_skill_to_pool(skill_dir.clone(), pool, &extra_tags).await?;
         installed_skills.push(InstalledSkillSummary {
             id: import.manifest.id,
             name: import.manifest.name,

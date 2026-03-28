@@ -1,10 +1,14 @@
 use crate::commands::chat::ApprovalManagerState;
 use crate::commands::employee_agents::EmployeeInboundDispatchSession;
+#[cfg(test)]
+use crate::commands::employee_agents::AgentEmployee;
 use crate::commands::im_gateway::FeishuCallbackResult;
 use crate::commands::openclaw_plugins::{
     current_feishu_runtime_status, start_openclaw_plugin_feishu_runtime_with_pool,
     stop_openclaw_plugin_feishu_runtime_in_state, OpenClawPluginFeishuRuntimeState,
 };
+#[cfg(test)]
+use crate::commands::openclaw_plugins::OpenClawPluginChannelSnapshotResult;
 use crate::commands::skills::DbState;
 use crate::im::runtime_bridge::{
     build_im_role_dispatch_request_for_channel, build_im_role_event_payload_for_channel,

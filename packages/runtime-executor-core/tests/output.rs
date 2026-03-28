@@ -82,8 +82,12 @@ fn repeated_failure_streak_normalizes_structured_errors() {
     })
     .to_string();
 
-    assert!(update_tool_failure_streak(&mut streak, "write_file", &input, &structured_error).is_none());
-    assert!(update_tool_failure_streak(&mut streak, "write_file", &input, &structured_error).is_none());
+    assert!(
+        update_tool_failure_streak(&mut streak, "write_file", &input, &structured_error).is_none()
+    );
+    assert!(
+        update_tool_failure_streak(&mut streak, "write_file", &input, &structured_error).is_none()
+    );
     let summary = update_tool_failure_streak(&mut streak, "write_file", &input, &structured_error);
     assert!(summary.is_some());
     assert!(summary.unwrap().contains("缺少 path 参数"));

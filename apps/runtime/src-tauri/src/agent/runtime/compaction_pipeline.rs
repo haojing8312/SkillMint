@@ -19,7 +19,6 @@ pub(crate) struct RuntimeCompactionRequest<'a> {
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeCompactionOutcome {
     pub compacted_messages: Vec<Value>,
-    #[allow(dead_code)]
     pub transcript_path: PathBuf,
     pub original_tokens: usize,
     pub new_tokens: usize,

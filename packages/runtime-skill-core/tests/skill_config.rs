@@ -70,13 +70,25 @@ Run the standard command.
     let config = SkillConfig::parse(content);
     assert!(config.user_invocable);
     assert!(config.disable_model_invocation);
-    assert_eq!(config.command_dispatch.as_ref().map(|spec| spec.tool_name.as_str()), Some("exec"));
     assert_eq!(
-        config.metadata.as_ref().and_then(|metadata| metadata.primary_env.as_deref()),
+        config
+            .command_dispatch
+            .as_ref()
+            .map(|spec| spec.tool_name.as_str()),
+        Some("exec")
+    );
+    assert_eq!(
+        config
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.primary_env.as_deref()),
         Some("OPENAI_API_KEY")
     );
     assert_eq!(
-        config.metadata.as_ref().and_then(|metadata| metadata.skill_key.as_deref()),
+        config
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.skill_key.as_deref()),
         Some("pm-summary")
     );
     assert_eq!(

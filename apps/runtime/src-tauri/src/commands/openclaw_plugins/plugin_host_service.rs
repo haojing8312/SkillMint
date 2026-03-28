@@ -611,6 +611,13 @@ async fn inspect_openclaw_plugin_with_pool_and_app(
         .map_err(|e| format!("failed to parse plugin host inspect json: {e}"))
 }
 
+pub async fn inspect_openclaw_plugin_with_pool(
+    pool: &SqlitePool,
+    plugin_id: &str,
+) -> Result<OpenClawPluginInspectionResult, String> {
+    inspect_openclaw_plugin_with_pool_and_app(pool, plugin_id, None).await
+}
+
 pub(crate) async fn inspect_openclaw_plugin_with_pool_and_app_public(
     pool: &SqlitePool,
     plugin_id: &str,
@@ -715,6 +722,12 @@ async fn list_openclaw_plugin_channel_hosts_with_pool_and_app(
     }
 
     Ok(hosts)
+}
+
+pub async fn list_openclaw_plugin_channel_hosts_with_pool(
+    pool: &SqlitePool,
+) -> Result<Vec<OpenClawPluginChannelHost>, String> {
+    list_openclaw_plugin_channel_hosts_with_pool_and_app(pool, None).await
 }
 
 pub(crate) async fn list_openclaw_plugin_channel_hosts_with_pool_and_app_public(

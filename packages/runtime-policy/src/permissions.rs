@@ -101,7 +101,11 @@ pub fn approval_rule_fingerprint(tool_name: &str, input: &Value) -> Option<Strin
     }
 }
 
-pub fn matches_approval_rule_fingerprint(tool_name: &str, input: &Value, fingerprint: &str) -> bool {
+pub fn matches_approval_rule_fingerprint(
+    tool_name: &str,
+    input: &Value,
+    fingerprint: &str,
+) -> bool {
     approval_rule_fingerprint(tool_name, input)
         .as_deref()
         .map(|value| value == fingerprint)

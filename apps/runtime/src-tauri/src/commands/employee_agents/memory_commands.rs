@@ -1,7 +1,7 @@
 use super::{
     clear_employee_memory_from_root, collect_employee_memory_stats_from_root,
     employee_memory_skills_root, export_employee_memory_from_root, normalize_employee_id,
-    EmployeeMemoryExport, EmployeeMemoryStats,
+    EmployeeMemoryExport, EmployeeMemoryStats, UpsertAgentEmployeeInput,
 };
 use tauri::Manager;
 
@@ -51,9 +51,8 @@ pub async fn clear_employee_memory(
 mod tests {
     use super::{
         clear_employee_memory_from_root, collect_employee_memory_stats_from_root,
-        export_employee_memory_from_root,
+        export_employee_memory_from_root, UpsertAgentEmployeeInput,
     };
-    use crate::commands::employee_agents::UpsertAgentEmployeeInput;
     use std::fs;
     use tempfile::TempDir;
 

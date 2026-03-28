@@ -307,7 +307,6 @@ Run the standard PM summary workflow.
     assert!(manifest.created_at <= Utc::now());
 }
 
-
 #[tokio::test]
 async fn imported_prompt_following_openclaw_skill_still_produces_user_command_spec() {
     let (pool, _tmp) = helpers::setup_test_db().await;
@@ -414,7 +413,9 @@ This skill should not be exposed as a dead slash command.
             && entry.command_dispatch.is_none()
     }));
     assert!(
-        specs.iter().all(|spec| spec.skill_name != "Hidden Prompt Skill"),
+        specs
+            .iter()
+            .all(|spec| spec.skill_name != "Hidden Prompt Skill"),
         "non-dispatch hidden skills should not produce dead slash commands"
     );
 }

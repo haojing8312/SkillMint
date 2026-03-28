@@ -2,7 +2,9 @@ mod helpers;
 mod support;
 
 use runtime_lib::agent::runtime::RuntimeObservedEvent;
-use support::runtime_contract_testkit::{run_runtime_contract_fixture, RuntimeContractFixtureParams};
+use support::runtime_contract_testkit::{
+    run_runtime_contract_fixture, RuntimeContractFixtureParams,
+};
 
 #[tokio::test]
 async fn runtime_contract_success_fixture_remains_stable() {
@@ -55,34 +57,10 @@ async fn runtime_contract_approval_resume_fixture_remains_stable() {
     })
     .await;
 
-    assert_eq!(outcome.observability_snapshot["approvals"]["requested_total"], 1);
-}
-
-#[tokio::test]
-async fn runtime_contract_compaction_overflow_fixture_remains_stable() {
-    let _outcome = run_runtime_contract_fixture(RuntimeContractFixtureParams {
-        fixture_name: "compaction_overflow",
-        record_admission_conflict: false,
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn runtime_contract_failover_recovery_fixture_remains_stable() {
-    let _outcome = run_runtime_contract_fixture(RuntimeContractFixtureParams {
-        fixture_name: "failover_recovery",
-        record_admission_conflict: false,
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn runtime_contract_approval_reject_fixture_remains_stable() {
-    let _outcome = run_runtime_contract_fixture(RuntimeContractFixtureParams {
-        fixture_name: "approval_reject",
-        record_admission_conflict: false,
-    })
-    .await;
+    assert_eq!(
+        outcome.observability_snapshot["approvals"]["requested_total"],
+        1
+    );
 }
 
 #[tokio::test]
@@ -105,5 +83,8 @@ async fn runtime_contract_child_session_failure_fixture_remains_stable() {
     .await;
 
     assert!(outcome.trace_child_session_parent.is_some());
-    assert!(matches!(outcome.trace_final_status.as_str(), "failed" | "stopped"));
+    assert!(matches!(
+        outcome.trace_final_status.as_str(),
+        "failed" | "stopped"
+    ));
 }

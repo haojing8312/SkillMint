@@ -103,9 +103,7 @@ pub async fn run_runtime_contract_fixture(
         session_runs,
         normalized_trace,
         trace_final_status: trace.final_status,
-        trace_child_session_parent: trace
-            .child_session_link
-            .map(|link| link.parent_session_key),
+        trace_child_session_parent: trace.child_session_link.map(|link| link.parent_session_key),
         observability_snapshot,
         recent_events,
     }
@@ -117,7 +115,11 @@ fn load_fixture_case(name: &str) -> TraceFixtureCase {
         panic!("read contract fixture {} failed: {}", path.display(), error)
     });
     serde_json::from_str(&raw).unwrap_or_else(|error| {
-        panic!("parse contract fixture {} failed: {}", path.display(), error)
+        panic!(
+            "parse contract fixture {} failed: {}",
+            path.display(),
+            error
+        )
     })
 }
 

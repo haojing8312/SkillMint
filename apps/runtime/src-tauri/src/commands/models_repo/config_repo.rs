@@ -1,6 +1,8 @@
 use super::{NullModelsRepository, PoolModelsRepository};
+use crate::commands::models::{
+    CapabilityRoutingPolicy, ModelConfig, ProviderConfig, RoutingSettings,
+};
 use async_trait::async_trait;
-use crate::commands::models::{CapabilityRoutingPolicy, ModelConfig, ProviderConfig, RoutingSettings};
 use runtime_models_app::ModelsConfigRepository;
 use uuid::Uuid;
 

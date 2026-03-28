@@ -205,10 +205,7 @@ impl SkillConfig {
             user_invocable: fm.user_invocable,
             disable_model_invocation: fm.disable_model_invocation,
         };
-        let metadata = fm
-            .metadata
-            .as_ref()
-            .and_then(parse_openclaw_metadata_block);
+        let metadata = fm.metadata.as_ref().and_then(parse_openclaw_metadata_block);
         let command_dispatch = parse_command_dispatch(
             fm.command_dispatch.as_deref(),
             fm.command_tool.as_deref(),

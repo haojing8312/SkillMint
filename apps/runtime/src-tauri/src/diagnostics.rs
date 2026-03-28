@@ -43,6 +43,7 @@ impl DiagnosticsPaths {
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Info,
+    Warn,
     Error,
 }
 

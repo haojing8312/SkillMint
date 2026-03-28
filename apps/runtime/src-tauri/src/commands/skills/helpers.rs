@@ -79,7 +79,11 @@ pub(crate) fn normalize_skill_description(description: &str, when_to_use: &str) 
     }
 }
 
-pub(crate) fn render_local_skill_markdown(name: &str, description: &str, when_to_use: &str) -> String {
+pub(crate) fn render_local_skill_markdown(
+    name: &str,
+    description: &str,
+    when_to_use: &str,
+) -> String {
     let normalized_description = normalize_skill_description(description, when_to_use);
     let overview = if description.trim().is_empty() {
         "该技能用于稳定处理特定任务流程。"
