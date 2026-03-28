@@ -1,20 +1,18 @@
 ## WorkClaw Windows Release
 
-- Highlights in `v0.5.4`:
+- Highlights in `v0.5.5`:
   - 中文:
-    - 新增会话 PDF 附件支持，现在可以直接上传 PDF 到聊天中并提取正文供智能体分析。
-    - 升级 OpenAI 工具调用链路到 Responses API，提升兼容性并改善工具调用稳定性。
-    - 优化快速设置流程，支持跳过部分配置并在搜索能力上使用 MCP 回退路径，降低首次上手门槛。
-    - 加强网络重试、会话恢复和运行时保护机制，复杂任务与长任务执行更稳定。
-    - 修复聊天中 Markdown 链接的打开方式，外部链接现在会在系统浏览器中打开。
-    - 改进窗口与界面细节，包括快速设置阶段标题栏保留等桌面体验优化。
+    - 升级预装 Office Skills，Word、Excel、PDF 和 PPT 技能现在会以完整可运行的 skill 目录随应用分发，不再只是轻量提示模板。
+    - 统一了预装技能与外置技能的安装和运行模型，技能来源、刷新与运行时投影链路更一致，后续升级第三方技能更轻。
+    - 增强了技能运行前环境检查，能够更明确提示缺失的 `.NET`、Python、Node、Playwright 等依赖，减少运行时踩坑。
+    - 新增 OEM 品牌化构建链路，支持按品牌资源生成桌面图标、安装器视觉和应用标识，为后续定制发行做准备。
+    - 改进了运行时轨迹、诊断与契约相关能力，并清理了一批过渡脚手架和测试夹具，让运行时行为更清晰、维护成本更低。
   - English:
-    - Added PDF attachments in chat, allowing PDFs to be uploaded directly into a conversation and their text extracted for agent analysis.
-    - Upgraded OpenAI tool calling to the Responses API for better compatibility and more reliable tool execution.
-    - Improved the quick setup flow with optional setup skipping and MCP fallback for search capabilities, reducing first-run friction.
-    - Strengthened network retry, session recovery, and runtime guardrails to make complex and long-running tasks more stable.
-    - Fixed Markdown link handling in chat so external links now open in the system browser.
-    - Polished desktop window behavior and UI details, including preserving the title bar during quick setup.
+    - Upgraded the preinstalled Office Skills. The Word, Excel, PDF, and PPT skill set now ships as full runnable skill directories instead of lightweight prompt-only built-ins.
+    - Unified the installation and runtime model for preinstalled and external skills, making skill sources, refresh behavior, and workspace projection more consistent and easier to upgrade over time.
+    - Improved runtime readiness checks for skills, with clearer diagnostics for missing dependencies such as `.NET`, Python, Node, and Playwright before execution.
+    - Added an OEM branding build pipeline that can apply brand assets to desktop icons, installer visuals, and app identity, laying the groundwork for branded distributions.
+    - Improved runtime traces, diagnostics, and contract-related behavior while removing transitional scaffolding and fixtures to keep the runtime easier to maintain.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.

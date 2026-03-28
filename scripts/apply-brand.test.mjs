@@ -40,7 +40,7 @@ test("apply-brand generates the default WorkClaw frontend and Tauri outputs", ()
   assert.match(brandingOutput, /"localStoragePrefix": "workclaw"/);
   assert.equal(tauriConfig.productName, "WorkClaw");
   assert.equal(tauriConfig.identifier, "dev.workclaw.runtime");
-  assert.equal(tauriConfig.version, "0.5.4");
+  assert.equal(tauriConfig.version, "0.5.5");
   assert.equal(tauriConfig.app.windows[0].title, "WorkClaw");
   assert.equal(tauriConfig.bundle.windows.nsis.headerImage, "icons/installer/nsis-header.bmp");
 });
@@ -59,7 +59,7 @@ test("apply-brand generates the sample XXClaw frontend and Tauri outputs", () =>
   assert.match(brandingOutput, /"localStoragePrefix": "xxclaw"/);
   assert.equal(tauriConfig.productName, "XXClaw");
   assert.equal(tauriConfig.identifier, "dev.xxclaw.runtime");
-  assert.equal(tauriConfig.version, "0.5.4");
+  assert.equal(tauriConfig.version, "0.5.5");
   assert.equal(tauriConfig.app.windows[0].title, "XXClaw");
   assert.equal(tauriConfig.bundle.windows.nsis.headerImage, "icons/installer/nsis-header.bmp");
 });
