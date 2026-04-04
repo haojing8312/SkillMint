@@ -12,6 +12,7 @@ const ROUTE_SCORE_RATIO_NUMERATOR: u32 = 3;
 const ROUTE_SCORE_RATIO_DENOMINATOR: u32 = 2;
 
 pub fn adjudicate_route(candidates: &[SkillRecallCandidate]) -> RouteDecision {
+    // Recall is expected to hand us a descending, deterministic shortlist.
     if candidates.is_empty() {
         return RouteDecision::OpenTask {
             confidence: RouteConfidence::new(0.0).expect("zero confidence is valid"),
@@ -98,11 +99,14 @@ fn routed_confidence(top_score: u32, runner_up_score: u32) -> RouteConfidence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::runtime::skill_routing::recall::SkillRecallCandidate;
+    use crate::agent::runtime::runtime_io::{WorkspaceSkillContent, WorkspaceSkillRuntimeEntry};
+    use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
+    use crate::agent::runtime::skill_routing::recall::recall_skill_candidates;
     use runtime_skill_core::{
-        SkillCommandArgMode, SkillCommandDispatchKind, SkillCommandDispatchSpec,
-        SkillInvocationPolicy,
+        OpenClawSkillMetadata, SkillCommandArgMode, SkillCommandDispatchKind,
+        SkillCommandDispatchSpec, SkillConfig, SkillInvocationPolicy,
     };
+    use crate::agent::runtime::skill_routing::recall::SkillRecallCandidate;
 
     fn build_projection(
         skill_id: &str,
@@ -128,6 +132,63 @@ mod tests {
         }
     }
 
+    fn build_entry(
+        skill_id: &str,
+        name: &str,
+        description: &str,
+        system_prompt: &str,
+        context: Option<&str>,
+        allowed_tools: Option<Vec<&str>>,
+        max_iterations: Option<usize>,
+        invocation: SkillInvocationPolicy,
+        metadata_skill_key: Option<&str>,
+        command_dispatch: Option<SkillCommandDispatchSpec>,
+    ) -> WorkspaceSkillRuntimeEntry {
+        let allowed_tools_for_config = allowed_tools
+            .clone()
+            .map(|values| values.into_iter().map(|value| value.to_string()).collect());
+        let command_dispatch_for_config = command_dispatch.clone();
+
+        WorkspaceSkillRuntimeEntry {
+            skill_id: skill_id.to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            source_type: "local".to_string(),
+            projected_dir_name: skill_id.to_string(),
+            config: SkillConfig {
+                name: Some(name.to_string()),
+                description: Some(description.to_string()),
+                allowed_tools: allowed_tools_for_config,
+                model: None,
+                max_iterations,
+                argument_hint: None,
+                disable_model_invocation: invocation.disable_model_invocation,
+                user_invocable: invocation.user_invocable,
+                invocation: invocation.clone(),
+                metadata: metadata_skill_key.map(|skill_key| OpenClawSkillMetadata {
+                    skill_key: Some(skill_key.to_string()),
+                    ..Default::default()
+                }),
+                command_dispatch: command_dispatch_for_config,
+                context: context.map(|value| value.to_string()),
+                agent: None,
+                mcp_servers: vec![],
+                system_prompt: system_prompt.to_string(),
+            },
+            invocation,
+            metadata: metadata_skill_key.map(|skill_key| OpenClawSkillMetadata {
+                skill_key: Some(skill_key.to_string()),
+                ..Default::default()
+            }),
+            command_dispatch,
+            content: WorkspaceSkillContent::FileTree(std::collections::HashMap::new()),
+        }
+    }
+
+    fn build_index(entries: Vec<WorkspaceSkillRuntimeEntry>) -> SkillRouteIndex {
+        SkillRouteIndex::build(&entries)
+    }
+
     fn build_candidate(
         skill_id: &str,
         score: u32,
@@ -138,6 +199,154 @@ mod tests {
             projection: build_projection(skill_id, execution_mode, command_dispatch),
             score,
         }
+    }
+
+    #[test]
+    fn realistic_alias_query_routes_to_dispatch_skill() {
+        let index = build_index(vec![
+            build_entry(
+                "feishu-pm-task-dispatch",
+                "PM Task Dispatch",
+                "Create or dispatch PM follow-up tasks",
+                "## When to Use\n- Dispatch a correction task for a leader.\n",
+                Some("fork"),
+                Some(vec!["exec", "read_file"]),
+                Some(11),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: true,
+                },
+                Some("task-dispatch"),
+                Some(SkillCommandDispatchSpec {
+                    kind: SkillCommandDispatchKind::Tool,
+                    tool_name: "exec".to_string(),
+                    arg_mode: SkillCommandArgMode::Raw,
+                }),
+            ),
+            build_entry(
+                "feishu-pm-weekly-work-summary",
+                "PM Weekly Summary",
+                "项管日报汇总",
+                "## When to Use\n- 汇总项管日报并整理任务。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(3),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("weekly-summary"),
+                None,
+            ),
+        ]);
+
+        let candidates = recall_skill_candidates(&index, "task-dispatch");
+        let decision = adjudicate_route(&candidates);
+
+        assert_eq!(decision.skill_id(), Some("feishu-pm-task-dispatch"));
+        assert_eq!(
+            decision.intent(),
+            crate::agent::runtime::skill_routing::intent::InvocationIntent::DirectDispatchSkill {
+                skill_id: "feishu-pm-task-dispatch".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn realistic_generic_query_falls_back_to_ambiguous_open_task() {
+        let index = build_index(vec![
+            build_entry(
+                "feishu-pm-daily-sync",
+                "PM Daily Sync",
+                "同步项管日报到看板",
+                "## When to Use\n- 同步项管日报到看板并更新状态。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(4),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("daily-sync"),
+                None,
+            ),
+            build_entry(
+                "feishu-pm-weekly-work-summary",
+                "PM Weekly Summary",
+                "项管日报汇总",
+                "## When to Use\n- 汇总项管日报并整理任务。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(3),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("weekly-summary"),
+                None,
+            ),
+        ]);
+
+        let candidates = recall_skill_candidates(&index, "帮我处理项管日报");
+        let decision = adjudicate_route(&candidates);
+
+        assert!(!candidates.is_empty());
+        assert_eq!(decision.skill_id(), None);
+        assert_eq!(
+            decision.fallback_reason(),
+            Some(RouteFallbackReason::AmbiguousCandidates)
+        );
+        assert_eq!(
+            decision.intent(),
+            crate::agent::runtime::skill_routing::intent::InvocationIntent::OpenTask {
+                fallback_reason: Some(RouteFallbackReason::AmbiguousCandidates),
+            }
+        );
+    }
+
+    #[test]
+    fn realistic_unrelated_query_has_no_candidates() {
+        let index = build_index(vec![
+            build_entry(
+                "feishu-pm-daily-sync",
+                "PM Daily Sync",
+                "同步项管日报到看板",
+                "## When to Use\n- 同步项管日报到看板并更新状态。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(4),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("daily-sync"),
+                None,
+            ),
+            build_entry(
+                "feishu-pm-weekly-work-summary",
+                "PM Weekly Summary",
+                "项管日报汇总",
+                "## When to Use\n- 汇总项管日报并整理任务。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(3),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("weekly-summary"),
+                None,
+            ),
+        ]);
+
+        let candidates = recall_skill_candidates(&index, "完全无关的查询");
+        let decision = adjudicate_route(&candidates);
+
+        assert!(candidates.is_empty());
+        assert_eq!(
+            decision.fallback_reason(),
+            Some(RouteFallbackReason::NoCandidates)
+        );
     }
 
     #[test]
