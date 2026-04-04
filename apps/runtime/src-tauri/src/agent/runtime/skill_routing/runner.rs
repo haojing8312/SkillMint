@@ -4,9 +4,11 @@ use super::intent::RouteFallbackReason;
 use super::recall::recall_skill_candidates;
 use crate::agent::context::build_tool_context;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
-use crate::agent::runtime::attempt_runner::{execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams};
+use crate::agent::runtime::attempt_runner::{
+    execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
+};
 use crate::agent::runtime::runtime_io::{
-    WorkspaceSkillCommandSpec, WorkspaceSkillRuntimeEntry,
+    WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
 };
 use crate::agent::runtime::tool_dispatch::{dispatch_skill_command, ToolDispatchContext};
 use crate::agent::runtime::tool_setup::{prepare_runtime_tools, ToolSetupParams};
@@ -22,6 +24,8 @@ pub(crate) struct RoutedSkillToolSetup {
     pub skill_system_prompt: String,
     pub skill_allowed_tools: Option<Vec<String>>,
     pub max_iterations: Option<usize>,
+    pub source_type: String,
+    pub pack_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,15 +53,25 @@ pub(crate) enum RouteRunPlan {
 pub(crate) enum RouteRunOutcome {
     OpenTask,
     DirectDispatch(String),
-    Prompt(RouteExecutionOutcome),
+    Prompt {
+        route_execution: RouteExecutionOutcome,
+        reconstructed_history_len: usize,
+    },
 }
 
-pub(crate) fn build_routed_skill_tool_setup(entry: &WorkspaceSkillRuntimeEntry) -> RoutedSkillToolSetup {
+pub(crate) fn build_routed_skill_tool_setup(
+    entry: &WorkspaceSkillRuntimeEntry,
+) -> RoutedSkillToolSetup {
     RoutedSkillToolSetup {
         skill_id: entry.skill_id.clone(),
         skill_system_prompt: entry.config.system_prompt.clone(),
         skill_allowed_tools: entry.config.allowed_tools.clone(),
         max_iterations: entry.config.max_iterations,
+        source_type: entry.source_type.clone(),
+        pack_path: match &entry.content {
+            WorkspaceSkillContent::LocalDir(path) => path.to_string_lossy().to_string(),
+            WorkspaceSkillContent::FileTree(_) => String::new(),
+        },
     }
 }
 
@@ -73,9 +87,8 @@ pub(crate) fn resolve_direct_dispatch_raw_args(
 
     let candidate = direct_dispatch_prefixes(command_spec, entry)
         .into_iter()
-        .find_map(|prefix| strip_command_prefix(trimmed, &prefix))
-        .unwrap_or(trimmed)
-        .trim();
+        .find_map(|prefix| strip_command_prefix(trimmed, &prefix))?;
+    let candidate = candidate.trim();
 
     if candidate.is_empty() || !is_safe_dispatch_fragment(candidate) {
         return None;
@@ -140,7 +153,9 @@ pub(crate) fn plan_implicit_route(
                     fallback_reason: Some(RouteFallbackReason::InvalidSkillContract),
                 };
             };
-            let Some(raw_args) = resolve_direct_dispatch_raw_args(user_message, &command_spec, entry) else {
+            let Some(raw_args) =
+                resolve_direct_dispatch_raw_args(user_message, &command_spec, entry)
+            else {
                 return RouteRunPlan::OpenTask {
                     fallback_reason: Some(RouteFallbackReason::DispatchArgumentResolutionFailed),
                 };
@@ -206,8 +221,7 @@ pub(crate) async fn execute_implicit_route_plan(
                 .map_err(|err| err.to_string())?;
             Ok(RouteRunOutcome::DirectDispatch(output))
         }
-        RouteRunPlan::PromptSkillInline { skill_id, setup }
-        | RouteRunPlan::PromptSkillFork { skill_id, setup } => {
+        RouteRunPlan::PromptSkillInline { skill_id, setup } => {
             let execution_preparation_service = ChatExecutionPreparationService::new();
             let max_iter = RunBudgetPolicy::resolve(
                 if skill_id.eq_ignore_ascii_case("builtin-general") {
@@ -230,8 +244,8 @@ pub(crate) async fn execute_implicit_route_plan(
                 model_name: &prepared_context.route_candidates[0].3,
                 api_key: &prepared_context.route_candidates[0].4,
                 skill_id: &skill_id,
-                source_type: &prepared_context.source_type,
-                pack_path: &prepared_context.pack_path,
+                source_type: &setup.source_type,
+                pack_path: &setup.pack_path,
                 skill_system_prompt: &setup.skill_system_prompt,
                 skill_allowed_tools: setup.skill_allowed_tools.clone(),
                 max_iter,
@@ -266,18 +280,94 @@ pub(crate) async fn execute_implicit_route_plan(
             })
             .await;
 
-            Ok(RouteRunOutcome::Prompt(route_execution))
+            Ok(RouteRunOutcome::Prompt {
+                route_execution,
+                reconstructed_history_len: prepared_context.messages.len(),
+            })
+        }
+        RouteRunPlan::PromptSkillFork { skill_id, setup } => {
+            let execution_preparation_service = ChatExecutionPreparationService::new();
+            let max_iter = RunBudgetPolicy::resolve(
+                if skill_id.eq_ignore_ascii_case("builtin-general") {
+                    RunBudgetScope::GeneralChat
+                } else {
+                    RunBudgetScope::Skill
+                },
+                setup.max_iterations,
+            )
+            .max_turns;
+
+            let prepared_runtime_tools = prepare_runtime_tools(ToolSetupParams {
+                app,
+                db,
+                agent_executor,
+                workspace_skill_entries: &prepared_context.workspace_skill_entries,
+                session_id,
+                api_format: &prepared_context.route_candidates[0].1,
+                base_url: &prepared_context.route_candidates[0].2,
+                model_name: &prepared_context.route_candidates[0].3,
+                api_key: &prepared_context.route_candidates[0].4,
+                skill_id: &skill_id,
+                source_type: &setup.source_type,
+                pack_path: &setup.pack_path,
+                skill_system_prompt: &setup.skill_system_prompt,
+                skill_allowed_tools: setup.skill_allowed_tools.clone(),
+                max_iter,
+                max_call_depth: prepared_context.max_call_depth,
+                execution_preparation_service: &execution_preparation_service,
+                execution_guidance: &prepared_context.execution_guidance,
+                memory_bucket_employee_id: &prepared_context.memory_bucket_employee_id,
+                employee_collaboration_guidance: prepared_context
+                    .employee_collaboration_guidance
+                    .as_deref(),
+            })
+            .await?;
+
+            let fork_messages = build_fork_messages(&prepared_context.messages);
+            let route_execution = execute_route_candidates(RouteExecutionParams {
+                app,
+                agent_executor: agent_executor.as_ref(),
+                db,
+                session_id,
+                requested_capability: &prepared_context.requested_capability,
+                route_candidates: &prepared_context.route_candidates,
+                per_candidate_retry_count: prepared_context.per_candidate_retry_count,
+                system_prompt: &prepared_runtime_tools.system_prompt,
+                messages: &fork_messages,
+                allowed_tools: prepared_runtime_tools.allowed_tools.as_deref(),
+                permission_mode: prepared_context.permission_mode,
+                tool_confirm_responder,
+                executor_work_dir: prepared_context.executor_work_dir.clone(),
+                max_iterations: Some(max_iter),
+                cancel_flag,
+                node_timeout_seconds: prepared_context.node_timeout_seconds,
+                route_retry_count: prepared_context.route_retry_count,
+            })
+            .await;
+
+            Ok(RouteRunOutcome::Prompt {
+                route_execution,
+                reconstructed_history_len: fork_messages.len(),
+            })
         }
     }
 }
 
 fn strip_command_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
-    let mut parts = value.splitn(2, char::is_whitespace);
-    let first = parts.next()?.trim();
-    if !first.eq_ignore_ascii_case(prefix) {
+    let trimmed = value.trim_start();
+    if trimmed.len() < prefix.len() {
         return None;
     }
-    Some(parts.next().unwrap_or("").trim_start())
+    let (head, tail) = trimmed.split_at(prefix.len());
+    if !head.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+    if let Some(next) = tail.chars().next() {
+        if !next.is_whitespace() {
+            return None;
+        }
+    }
+    Some(tail.trim_start())
 }
 
 fn direct_dispatch_prefixes(
@@ -299,11 +389,11 @@ fn direct_dispatch_prefixes(
 fn is_safe_dispatch_fragment(fragment: &str) -> bool {
     let mut saw_signal = false;
     for ch in fragment.chars() {
-        if ch.is_control() || !ch.is_ascii() {
+        if ch.is_control() {
             return false;
         }
-        if ch.is_ascii_alphanumeric()
-            || ch.is_ascii_whitespace()
+        if ch.is_alphanumeric()
+            || ch.is_whitespace()
             || "-_=.,:/\\'\"[]{}()<>+|?&%#~!$".contains(ch)
         {
             if matches!(ch, '-' | '=' | ':') {
@@ -315,6 +405,14 @@ fn is_safe_dispatch_fragment(fragment: &str) -> bool {
     }
 
     saw_signal
+}
+
+fn build_fork_messages(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    messages
+        .last()
+        .cloned()
+        .map(|message| vec![message])
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -386,7 +484,9 @@ mod tests {
         SkillRouteIndex::build(&entries)
     }
 
-    fn build_command_specs(entries: &[WorkspaceSkillRuntimeEntry]) -> Vec<WorkspaceSkillCommandSpec> {
+    fn build_command_specs(
+        entries: &[WorkspaceSkillRuntimeEntry],
+    ) -> Vec<WorkspaceSkillCommandSpec> {
         crate::agent::runtime::runtime_io::build_workspace_skill_command_specs(entries)
     }
 
@@ -447,6 +547,8 @@ mod tests {
             } => {
                 assert_eq!(skill_id, "feishu-pm-task-dispatch");
                 assert_eq!(setup.skill_id, "feishu-pm-task-dispatch");
+                assert_eq!(setup.source_type, "local");
+                assert!(setup.pack_path.is_empty());
                 assert_eq!(command_spec.skill_id, "feishu-pm-task-dispatch");
                 assert_eq!(command_spec.name, "pm_task_dispatch");
                 assert_eq!(raw_args, "--employee xt --date 2026-03-27");
@@ -507,6 +609,79 @@ mod tests {
     }
 
     #[test]
+    fn resolve_direct_dispatch_raw_args_rejects_unprefixed_ascii_sentence() {
+        let entry = build_entry(
+            "feishu-pm-task-dispatch",
+            "PM Task Dispatch",
+            "Create or dispatch PM follow-up tasks",
+            "## When to Use\n- Dispatch a correction task for a leader.\n",
+            Some("fork"),
+            Some(vec!["exec", "read_file"]),
+            Some(11),
+            SkillInvocationPolicy {
+                user_invocable: true,
+                disable_model_invocation: true,
+            },
+            Some("task-dispatch"),
+            Some(SkillCommandDispatchSpec {
+                kind: SkillCommandDispatchKind::Tool,
+                tool_name: "exec".to_string(),
+                arg_mode: SkillCommandArgMode::Raw,
+            }),
+        );
+        let command_spec = build_command_specs(std::slice::from_ref(&entry))
+            .into_iter()
+            .find(|spec| spec.skill_id == "feishu-pm-task-dispatch")
+            .expect("dispatch spec");
+
+        let resolved = resolve_direct_dispatch_raw_args(
+            "please assign xt --date 2026-03-27 and remind the owner",
+            &command_spec,
+            &entry,
+        );
+
+        assert!(resolved.is_none(), "unexpected raw args: {resolved:?}");
+    }
+
+    #[test]
+    fn resolve_direct_dispatch_raw_args_accepts_multi_word_prefix_and_unicode_flags() {
+        let entry = build_entry(
+            "feishu-pm-task-dispatch",
+            "PM Task Dispatch",
+            "Create or dispatch PM follow-up tasks",
+            "## When to Use\n- Dispatch a correction task for a leader.\n",
+            Some("fork"),
+            Some(vec!["exec", "read_file"]),
+            Some(11),
+            SkillInvocationPolicy {
+                user_invocable: true,
+                disable_model_invocation: true,
+            },
+            Some("task-dispatch"),
+            Some(SkillCommandDispatchSpec {
+                kind: SkillCommandDispatchKind::Tool,
+                tool_name: "exec".to_string(),
+                arg_mode: SkillCommandArgMode::Raw,
+            }),
+        );
+        let command_spec = build_command_specs(std::slice::from_ref(&entry))
+            .into_iter()
+            .find(|spec| spec.skill_id == "feishu-pm-task-dispatch")
+            .expect("dispatch spec");
+
+        let resolved = resolve_direct_dispatch_raw_args(
+            "PM Task Dispatch --employee 郝敬 --title 测试任务",
+            &command_spec,
+            &entry,
+        );
+
+        assert_eq!(
+            resolved.as_deref(),
+            Some("--employee 郝敬 --title 测试任务")
+        );
+    }
+
+    #[test]
     fn plan_implicit_route_uses_route_entry_config_for_prompt_inline() {
         let entries = vec![
             build_entry(
@@ -549,6 +724,8 @@ mod tests {
             RouteRunPlan::PromptSkillInline { skill_id, setup } => {
                 assert_eq!(skill_id, "feishu-pm-daily-sync");
                 assert_eq!(setup.skill_id, "feishu-pm-daily-sync");
+                assert_eq!(setup.source_type, "local");
+                assert!(setup.pack_path.is_empty());
                 assert_eq!(
                     setup.skill_system_prompt,
                     "## When to Use\n- 同步项管日报到看板并更新状态。\n"
@@ -606,9 +783,25 @@ mod tests {
             RouteRunPlan::PromptSkillFork { skill_id, setup } => {
                 assert_eq!(skill_id, "feishu-pm-fork-sync");
                 assert_eq!(setup.skill_id, "feishu-pm-fork-sync");
+                assert_eq!(setup.source_type, "local");
+                assert!(setup.pack_path.is_empty());
             }
             other => panic!("expected prompt-fork plan, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn build_fork_messages_keeps_only_latest_turn() {
+        let messages = vec![
+            serde_json::json!({"role": "user", "content": "earlier"}),
+            serde_json::json!({"role": "assistant", "content": "middle"}),
+            serde_json::json!({"role": "user", "content": "latest"}),
+        ];
+
+        let fork_messages = build_fork_messages(&messages);
+
+        assert_eq!(fork_messages.len(), 1);
+        assert_eq!(fork_messages[0]["content"].as_str(), Some("latest"));
     }
 
     #[test]

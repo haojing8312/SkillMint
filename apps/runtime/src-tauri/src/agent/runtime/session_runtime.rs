@@ -1,11 +1,11 @@
 use super::events::{StreamToken, ToolConfirmResponder};
+use crate::agent::context::build_tool_context;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{parse_run_stop_reason, RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::attempt_runner::{
     execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
 };
 use crate::agent::runtime::repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
-use crate::agent::context::build_tool_context;
 use crate::agent::runtime::tool_setup::{
     prepare_runtime_tools, PreparedRuntimeTools, ToolSetupParams,
 };
@@ -44,8 +44,6 @@ pub(crate) struct PreparedSendMessageContext {
     pub max_call_depth: usize,
     pub node_timeout_seconds: u64,
     pub route_retry_count: usize,
-    pub source_type: String,
-    pub pack_path: String,
     pub execution_guidance: ChatExecutionGuidance,
     pub memory_bucket_employee_id: String,
     pub employee_collaboration_guidance: Option<String>,
@@ -94,9 +92,9 @@ impl SessionRuntime {
         skill_command_specs: &[chat_io::WorkspaceSkillCommandSpec],
     ) -> Option<String> {
         let (command_name, raw_args) = Self::parse_user_skill_command(user_message)?;
-        let spec = skill_command_specs
-            .iter()
-            .find(|spec| spec.name.eq_ignore_ascii_case(&command_name) && spec.dispatch.is_none())?;
+        let spec = skill_command_specs.iter().find(|spec| {
+            spec.name.eq_ignore_ascii_case(&command_name) && spec.dispatch.is_none()
+        })?;
 
         let mut parts = vec![format!(
             "Use the \"{}\" skill for this request.",
@@ -140,7 +138,10 @@ impl SessionRuntime {
                 .executor_work_dir
                 .as_ref()
                 .map(PathBuf::from),
-            prepared_context.prepared_runtime_tools.allowed_tools.as_deref(),
+            prepared_context
+                .prepared_runtime_tools
+                .allowed_tools
+                .as_deref(),
         )
         .map_err(|err| err.to_string())?;
         let dispatch_context = crate::agent::runtime::tool_dispatch::ToolDispatchContext {
@@ -148,7 +149,10 @@ impl SessionRuntime {
             app_handle: Some(app),
             session_id: Some(session_id),
             persisted_run_id: Some(run_id),
-            allowed_tools: prepared_context.prepared_runtime_tools.allowed_tools.as_deref(),
+            allowed_tools: prepared_context
+                .prepared_runtime_tools
+                .allowed_tools
+                .as_deref(),
             permission_mode: prepared_context.permission_mode,
             tool_ctx: &tool_ctx,
             tool_confirm_tx: Some(&tool_confirm_responder),
@@ -212,15 +216,7 @@ impl SessionRuntime {
         {
             Ok(Some(output)) => {
                 chat_io::finalize_run_success_with_pool(
-                    db,
-                    journal,
-                    session_id,
-                    &run_id,
-                    &output,
-                    false,
-                    &output,
-                    "",
-                    None,
+                    db, journal, session_id, &run_id, &output, false, &output, "", None,
                 )
                 .await?;
                 let _ = app.emit(
@@ -301,15 +297,7 @@ impl SessionRuntime {
             RouteRunOutcome::OpenTask => {}
             RouteRunOutcome::DirectDispatch(output) => {
                 chat_io::finalize_run_success_with_pool(
-                    db,
-                    journal,
-                    session_id,
-                    &run_id,
-                    &output,
-                    false,
-                    &output,
-                    "",
-                    None,
+                    db, journal, session_id, &run_id, &output, false, &output, "", None,
                 )
                 .await?;
                 let _ = app.emit(
@@ -332,8 +320,10 @@ impl SessionRuntime {
                 );
                 return Ok(());
             }
-            RouteRunOutcome::Prompt(route_execution) => {
-                let route_execution = route_execution;
+            RouteRunOutcome::Prompt {
+                route_execution,
+                reconstructed_history_len,
+            } => {
                 return Self::finalize_send_message_execution(
                     app,
                     db,
@@ -341,7 +331,7 @@ impl SessionRuntime {
                     session_id,
                     &run_id,
                     route_execution,
-                    prepared_context.messages.len(),
+                    reconstructed_history_len,
                 )
                 .await;
             }
@@ -529,9 +519,10 @@ impl SessionRuntime {
         })
         .await?;
 
-        if let Some(rewritten_body) =
-            Self::rewrite_user_skill_command_for_model(params.user_message, &prepared_runtime_tools.skill_command_specs)
-        {
+        if let Some(rewritten_body) = Self::rewrite_user_skill_command_for_model(
+            params.user_message,
+            &prepared_runtime_tools.skill_command_specs,
+        ) {
             let rewritten_parts = vec![serde_json::json!({
                 "type": "text",
                 "text": rewritten_body,
@@ -557,8 +548,6 @@ impl SessionRuntime {
             max_call_depth: chat_preparation.max_call_depth,
             node_timeout_seconds: chat_preparation.node_timeout_seconds,
             route_retry_count: chat_preparation.retry_count,
-            source_type,
-            pack_path,
             execution_guidance,
             memory_bucket_employee_id: execution_preparation_service
                 .resolve_memory_bucket_employee_id(&execution_context)
@@ -702,7 +691,9 @@ mod tests {
 
     #[test]
     fn parse_user_skill_command_extracts_command_and_raw_args() {
-        let parsed = SessionRuntime::parse_user_skill_command("  /pm_summary  --employee xt --date 2026-03-27 ");
+        let parsed = SessionRuntime::parse_user_skill_command(
+            "  /pm_summary  --employee xt --date 2026-03-27 ",
+        );
         assert_eq!(
             parsed,
             Some((
@@ -756,7 +747,10 @@ mod tests {
         }];
 
         assert_eq!(
-            SessionRuntime::rewrite_user_skill_command_for_model("/pm_summary --employee xt", &specs),
+            SessionRuntime::rewrite_user_skill_command_for_model(
+                "/pm_summary --employee xt",
+                &specs
+            ),
             None
         );
     }
