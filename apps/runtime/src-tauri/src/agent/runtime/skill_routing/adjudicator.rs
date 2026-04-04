@@ -6,6 +6,11 @@ use crate::agent::runtime::skill_routing::intent::{
 };
 use crate::agent::runtime::skill_routing::recall::SkillRecallCandidate;
 
+const ROUTE_SCORE_FLOOR: u32 = 60;
+const ROUTE_SCORE_GAP: u32 = 20;
+const ROUTE_SCORE_RATIO_NUMERATOR: u32 = 3;
+const ROUTE_SCORE_RATIO_DENOMINATOR: u32 = 2;
+
 pub fn adjudicate_route(candidates: &[SkillRecallCandidate]) -> RouteDecision {
     if candidates.is_empty() {
         return RouteDecision::OpenTask {
@@ -15,17 +20,15 @@ pub fn adjudicate_route(candidates: &[SkillRecallCandidate]) -> RouteDecision {
     }
 
     let top = &candidates[0];
-    if candidates.len() > 1 {
-        let runner_up = &candidates[1];
-        if !is_clear_winner(top.score, runner_up.score) {
-            return RouteDecision::OpenTask {
-                confidence: score_confidence(top.score, runner_up.score),
-                fallback_reason: Some(RouteFallbackReason::AmbiguousCandidates),
-            };
-        }
+    let runner_up_score = runner_up_score(candidates);
+    if !is_clear_winner(top.score, runner_up_score) {
+        return RouteDecision::OpenTask {
+            confidence: ambiguous_confidence(top.score),
+            fallback_reason: Some(RouteFallbackReason::AmbiguousCandidates),
+        };
     }
 
-    route_to_skill(&top.projection, score_confidence(top.score, runner_up_score(candidates)))
+    route_to_skill(&top.projection, routed_confidence(top.score, runner_up_score))
 }
 
 fn route_to_skill(
@@ -53,18 +56,43 @@ fn runner_up_score(candidates: &[SkillRecallCandidate]) -> u32 {
 }
 
 fn is_clear_winner(top_score: u32, runner_up_score: u32) -> bool {
-    let tie_gap = (top_score / 5).max(3);
-    top_score > runner_up_score && top_score - runner_up_score >= tie_gap
+    if top_score < ROUTE_SCORE_FLOOR {
+        return false;
+    }
+
+    if runner_up_score == 0 {
+        return true;
+    }
+
+    let score_gap = top_score.saturating_sub(runner_up_score);
+    score_gap >= ROUTE_SCORE_GAP
+        && top_score.saturating_mul(ROUTE_SCORE_RATIO_DENOMINATOR)
+            >= runner_up_score.saturating_mul(ROUTE_SCORE_RATIO_NUMERATOR)
 }
 
-fn score_confidence(top_score: u32, runner_up_score: u32) -> RouteConfidence {
-    let total = top_score.saturating_add(runner_up_score);
-    let raw = if total == 0 {
-        0.0
+fn ambiguous_confidence(top_score: u32) -> RouteConfidence {
+    let raw = if top_score >= ROUTE_SCORE_FLOOR { 0.55 } else { 0.45 };
+    RouteConfidence::new(raw).expect("ambiguous confidence is normalized")
+}
+
+fn routed_confidence(top_score: u32, runner_up_score: u32) -> RouteConfidence {
+    let raw = if runner_up_score == 0 {
+        if top_score >= 120 {
+            0.95
+        } else if top_score >= 90 {
+            0.85
+        } else {
+            0.70
+        }
+    } else if top_score >= 120 || top_score.saturating_sub(runner_up_score) >= 40 {
+        0.95
+    } else if top_score >= 90 || top_score.saturating_sub(runner_up_score) >= 30 {
+        0.85
     } else {
-        top_score as f32 / total as f32
+        0.70
     };
-    RouteConfidence::new(raw.clamp(0.0, 1.0)).expect("confidence is normalized")
+
+    RouteConfidence::new(raw).expect("route confidence is normalized")
 }
 
 #[cfg(test)]
@@ -116,23 +144,36 @@ mod tests {
     fn clear_single_winner_routes_to_skill() {
         let decision = adjudicate_route(&[build_candidate(
             "feishu-pm-daily-sync",
-            40,
-            WorkspaceSkillRouteExecutionMode::DirectDispatch,
-            Some(SkillCommandDispatchSpec {
-                kind: SkillCommandDispatchKind::Tool,
-                tool_name: "exec".to_string(),
-                arg_mode: SkillCommandArgMode::Raw,
-            }),
+            60,
+            WorkspaceSkillRouteExecutionMode::Inline,
+            None,
         )]);
 
         assert_eq!(decision.skill_id(), Some("feishu-pm-daily-sync"));
-        assert_eq!(decision.confidence().score(), 1.0);
+        assert_eq!(decision.confidence().score(), 0.70);
         assert_eq!(
             decision.intent(),
-            crate::agent::runtime::skill_routing::intent::InvocationIntent::DirectDispatchSkill {
+            crate::agent::runtime::skill_routing::intent::InvocationIntent::PromptSkillInline {
                 skill_id: "feishu-pm-daily-sync".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn weak_single_candidate_below_floor_falls_back_to_open_task() {
+        let decision = adjudicate_route(&[build_candidate(
+            "feishu-pm-daily-sync",
+            59,
+            WorkspaceSkillRouteExecutionMode::Inline,
+            None,
+        )]);
+
+        assert_eq!(decision.skill_id(), None);
+        assert_eq!(
+            decision.fallback_reason(),
+            Some(RouteFallbackReason::AmbiguousCandidates)
+        );
+        assert_eq!(decision.confidence().score(), 0.45);
     }
 
     #[test]
@@ -140,13 +181,13 @@ mod tests {
         let decision = adjudicate_route(&[
             build_candidate(
                 "feishu-pm-daily-sync",
-                20,
+                80,
                 WorkspaceSkillRouteExecutionMode::Inline,
                 None,
             ),
             build_candidate(
                 "feishu-pm-weekly-work-summary",
-                18,
+                70,
                 WorkspaceSkillRouteExecutionMode::Inline,
                 None,
             ),
@@ -163,6 +204,7 @@ mod tests {
                 fallback_reason: Some(RouteFallbackReason::AmbiguousCandidates),
             }
         );
+        assert_eq!(decision.confidence().score(), 0.55);
     }
 
     #[test]
@@ -186,19 +228,19 @@ mod tests {
     fn execution_mode_selects_prompt_or_dispatch_lane() {
         let inline = adjudicate_route(&[build_candidate(
             "feishu-pm-inline",
-            50,
+            95,
             WorkspaceSkillRouteExecutionMode::Inline,
             None,
         )]);
         let fork = adjudicate_route(&[build_candidate(
             "feishu-pm-fork",
-            50,
+            95,
             WorkspaceSkillRouteExecutionMode::Fork,
             None,
         )]);
         let dispatch = adjudicate_route(&[build_candidate(
             "feishu-pm-dispatch",
-            50,
+            120,
             WorkspaceSkillRouteExecutionMode::DirectDispatch,
             Some(SkillCommandDispatchSpec {
                 kind: SkillCommandDispatchKind::Tool,
@@ -214,6 +256,7 @@ mod tests {
                 skill_id: "feishu-pm-inline".to_string(),
             }
         );
+        assert_eq!(inline.confidence().score(), 0.85);
 
         assert_eq!(fork.skill_id(), Some("feishu-pm-fork"));
         assert_eq!(
@@ -222,6 +265,7 @@ mod tests {
                 skill_id: "feishu-pm-fork".to_string(),
             }
         );
+        assert_eq!(fork.confidence().score(), 0.85);
 
         assert_eq!(dispatch.skill_id(), Some("feishu-pm-dispatch"));
         assert_eq!(
@@ -230,5 +274,6 @@ mod tests {
                 skill_id: "feishu-pm-dispatch".to_string(),
             }
         );
+        assert_eq!(dispatch.confidence().score(), 0.95);
     }
 }
