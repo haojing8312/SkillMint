@@ -16,6 +16,9 @@ pub struct WorkspaceSkillRouteProjection {
     pub aliases: Vec<String>,
     pub description: String,
     pub when_to_use: String,
+    pub allowed_tools: Vec<String>,
+    pub max_iterations: Option<usize>,
+    pub invocation: SkillInvocationPolicy,
     pub execution_mode: WorkspaceSkillRouteExecutionMode,
     pub command_dispatch: Option<SkillCommandDispatchSpec>,
 }

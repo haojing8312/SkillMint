@@ -9,13 +9,19 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SkillRouteIndex {
-    entries: HashMap<String, WorkspaceSkillRouteProjection>,
+    entries: Vec<WorkspaceSkillRouteProjection>,
+    entries_by_skill_id: HashMap<String, usize>,
 }
 
 impl SkillRouteIndex {
     pub fn build(entries: &[WorkspaceSkillRuntimeEntry]) -> Self {
         let entries = entries
             .iter()
+            .filter(|entry| {
+                entry.invocation.user_invocable
+                    && (!entry.invocation.disable_model_invocation
+                        || entry.command_dispatch.is_some())
+            })
             .map(|entry| {
                 let projection = WorkspaceSkillRouteProjection {
                     skill_id: entry.skill_id.clone(),
@@ -23,15 +29,26 @@ impl SkillRouteIndex {
                     aliases: collect_aliases(entry),
                     description: entry.description.trim().to_string(),
                     when_to_use: extract_when_to_use(&entry.config.system_prompt, &entry.description),
+                    allowed_tools: entry.config.allowed_tools.clone().unwrap_or_default(),
+                    max_iterations: entry.config.max_iterations,
+                    invocation: entry.invocation.clone(),
                     execution_mode: resolve_execution_mode(entry),
                     command_dispatch: entry.command_dispatch.clone(),
                 };
-
-                (entry.skill_id.clone(), projection)
+                projection
             })
+            .collect::<Vec<_>>();
+
+        let entries_by_skill_id = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.skill_id.clone(), index))
             .collect();
 
-        Self { entries }
+        Self {
+            entries,
+            entries_by_skill_id,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -39,11 +56,13 @@ impl SkillRouteIndex {
     }
 
     pub fn get(&self, skill_id: &str) -> Option<&WorkspaceSkillRouteProjection> {
-        self.entries.get(skill_id)
+        self.entries_by_skill_id
+            .get(skill_id)
+            .and_then(|index| self.entries.get(*index))
     }
 
     pub fn entries(&self) -> impl Iterator<Item = &WorkspaceSkillRouteProjection> {
-        self.entries.values()
+        self.entries.iter()
     }
 }
 
@@ -119,10 +138,13 @@ fn extract_when_to_use(system_prompt: &str, description: &str) -> String {
 fn resolve_execution_mode(entry: &WorkspaceSkillRuntimeEntry) -> WorkspaceSkillRouteExecutionMode {
     if entry.command_dispatch.is_some() {
         WorkspaceSkillRouteExecutionMode::DirectDispatch
-    } else if matches!(
-        entry.config.context.as_deref().map(str::trim),
-        Some("fork")
-    ) {
+    } else if entry
+        .config
+        .context
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("fork"))
+    {
         WorkspaceSkillRouteExecutionMode::Fork
     } else {
         WorkspaceSkillRouteExecutionMode::Inline
@@ -139,10 +161,16 @@ mod tests {
         description: &str,
         system_prompt: &str,
         context: Option<&str>,
+        allowed_tools: Option<Vec<&str>>,
+        max_iterations: Option<usize>,
+        invocation: SkillInvocationPolicy,
         metadata_skill_key: Option<&str>,
         command_dispatch: Option<SkillCommandDispatchSpec>,
     ) -> WorkspaceSkillRuntimeEntry {
         let command_dispatch_for_config = command_dispatch.clone();
+        let allowed_tools_for_config = allowed_tools
+            .clone()
+            .map(|values| values.into_iter().map(|value| value.to_string()).collect());
         WorkspaceSkillRuntimeEntry {
             skill_id: skill_id.to_string(),
             name: name.to_string(),
@@ -152,16 +180,13 @@ mod tests {
             config: SkillConfig {
                 name: Some(name.to_string()),
                 description: Some(description.to_string()),
-                allowed_tools: None,
+                allowed_tools: allowed_tools_for_config,
                 model: None,
-                max_iterations: None,
+                max_iterations,
                 argument_hint: None,
-                disable_model_invocation: command_dispatch_for_config.is_some(),
-                user_invocable: true,
-                invocation: SkillInvocationPolicy {
-                    user_invocable: true,
-                    disable_model_invocation: command_dispatch_for_config.is_some(),
-                },
+                disable_model_invocation: invocation.disable_model_invocation,
+                user_invocable: invocation.user_invocable,
+                invocation: invocation.clone(),
                 metadata: metadata_skill_key.map(|skill_key| OpenClawSkillMetadata {
                     skill_key: Some(skill_key.to_string()),
                     ..Default::default()
@@ -172,10 +197,7 @@ mod tests {
                 mcp_servers: vec![],
                 system_prompt: system_prompt.to_string(),
             },
-            invocation: SkillInvocationPolicy {
-                user_invocable: true,
-                disable_model_invocation: command_dispatch.is_some(),
-            },
+            invocation,
             metadata: metadata_skill_key.map(|skill_key| OpenClawSkillMetadata {
                 skill_key: Some(skill_key.to_string()),
                 ..Default::default()
@@ -195,7 +217,13 @@ mod tests {
                 "PM Task Dispatch",
                 "Create or dispatch PM follow-up tasks",
                 "## When to Use\n- Use when a leader wants to create a correction task.\n\n## Workflow\n- Resolve assignee.\n- Dispatch task.",
-                None,
+                Some("FoRk"),
+                Some(vec!["exec", "read_file"]),
+                Some(11),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: true,
+                },
                 Some("task-dispatch"),
                 Some(SkillCommandDispatchSpec {
                     kind: SkillCommandDispatchKind::Tool,
@@ -208,7 +236,13 @@ mod tests {
                 "PM Fork Skill",
                 "Run PM flow in a forked context",
                 "## When to Use\n- Use when the task needs isolated execution.\n",
-                Some("fork"),
+                Some("FoRk"),
+                Some(vec!["read_file", "edit"]),
+                Some(7),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
                 None,
                 None,
             ),
@@ -218,6 +252,12 @@ mod tests {
                 "Summarize PM work",
                 "## When to Use\n- Use when you need to summarize PM updates for a week.\n",
                 None,
+                Some(vec!["read_file"]),
+                Some(3),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
                 None,
                 None,
             ),
@@ -229,21 +269,35 @@ mod tests {
                 None,
                 None,
                 None,
+                SkillInvocationPolicy {
+                    user_invocable: false,
+                    disable_model_invocation: true,
+                },
+                None,
+                None,
             ),
         ];
 
         let index = SkillRouteIndex::build(&entries);
 
-        assert_eq!(index.len(), 4);
+        assert_eq!(index.len(), 3);
         let corpus_skill_ids = index
             .entries()
             .map(|entry| entry.skill_id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(corpus_skill_ids.len(), 4);
+        assert_eq!(corpus_skill_ids.len(), 3);
         assert!(corpus_skill_ids.contains(&"feishu-pm-task-dispatch"));
         assert!(corpus_skill_ids.contains(&"feishu-pm-fork-skill"));
         assert!(corpus_skill_ids.contains(&"feishu-pm-weekly-work-summary"));
-        assert!(corpus_skill_ids.contains(&"feishu-pm-bare-skill"));
+        assert_eq!(
+            corpus_skill_ids,
+            vec![
+                "feishu-pm-task-dispatch",
+                "feishu-pm-fork-skill",
+                "feishu-pm-weekly-work-summary",
+            ]
+        );
+        assert!(!corpus_skill_ids.contains(&"feishu-pm-bare-skill"));
 
         let dispatch = index.get("feishu-pm-task-dispatch").expect("dispatch entry");
         assert_eq!(dispatch.skill_id, "feishu-pm-task-dispatch");
@@ -259,6 +313,18 @@ mod tests {
         assert_eq!(
             dispatch.description,
             "Create or dispatch PM follow-up tasks"
+        );
+        assert_eq!(
+            dispatch.allowed_tools,
+            vec!["exec".to_string(), "read_file".to_string()]
+        );
+        assert_eq!(dispatch.max_iterations, Some(11));
+        assert_eq!(
+            dispatch.invocation,
+            SkillInvocationPolicy {
+                user_invocable: true,
+                disable_model_invocation: true,
+            }
         );
         assert_eq!(
             dispatch.when_to_use,
@@ -289,6 +355,15 @@ mod tests {
             ]
         );
         assert_eq!(inline.description, "Summarize PM work");
+        assert_eq!(inline.allowed_tools, vec!["read_file".to_string()]);
+        assert_eq!(inline.max_iterations, Some(3));
+        assert_eq!(
+            inline.invocation,
+            SkillInvocationPolicy {
+                user_invocable: true,
+                disable_model_invocation: false,
+            }
+        );
         assert_eq!(
             inline.when_to_use,
             "Use when you need to summarize PM updates for a week."
@@ -301,14 +376,21 @@ mod tests {
 
         let fork = index.get("feishu-pm-fork-skill").expect("fork entry");
         assert_eq!(fork.skill_id, "feishu-pm-fork-skill");
+        assert_eq!(fork.allowed_tools, vec!["read_file".to_string(), "edit".to_string()]);
+        assert_eq!(fork.max_iterations, Some(7));
+        assert_eq!(
+            fork.invocation,
+            SkillInvocationPolicy {
+                user_invocable: true,
+                disable_model_invocation: false,
+            }
+        );
         assert_eq!(fork.execution_mode, WorkspaceSkillRouteExecutionMode::Fork);
         assert_eq!(fork.when_to_use, "Use when the task needs isolated execution.");
 
-        let bare = index.get("feishu-pm-bare-skill").expect("bare entry");
-        assert_eq!(bare.when_to_use, "");
-        assert_eq!(
-            bare.execution_mode,
-            WorkspaceSkillRouteExecutionMode::Inline
+        assert!(
+            index.get("feishu-pm-bare-skill").is_none(),
+            "internal-only skills must be excluded from the route corpus"
         );
     }
 }
