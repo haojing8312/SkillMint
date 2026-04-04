@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { PersistedChatRuntimeState, SessionInfo } from "../types";
+import {
+  arePersistedChatRuntimeStatesEqual,
+  clonePersistedChatRuntimeState,
+} from "./chat/chatRuntimeState";
 
 type SessionBlockingStateUpdate = {
   blocking: boolean;
@@ -74,10 +78,16 @@ export function useSessionRuntimeStateCoordinator(options: {
     (sessionId: string, state: PersistedChatRuntimeState) => {
       const normalizedSessionId = sessionId.trim();
       if (!normalizedSessionId) return;
-      setSessionRuntimeStateById((prev) => ({
-        ...prev,
-        [normalizedSessionId]: state,
-      }));
+      const nextState = clonePersistedChatRuntimeState(state);
+      setSessionRuntimeStateById((prev) => {
+        if (arePersistedChatRuntimeStatesEqual(prev[normalizedSessionId], nextState)) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [normalizedSessionId]: nextState,
+        };
+      });
     },
     [setSessionRuntimeStateById],
   );

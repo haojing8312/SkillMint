@@ -389,6 +389,31 @@ export function ChatView({
     setDelegationCards(next.delegationCards);
   };
 
+  const runtimeSnapshot = useMemo<PersistedChatRuntimeState>(
+    () => ({
+      streaming,
+      streamItems: [...streamItems],
+      streamReasoning: streamReasoning ? { ...streamReasoning } : null,
+      agentState: agentState ? { ...agentState } : null,
+      subAgentBuffer,
+      subAgentRoleName,
+      mainRoleName,
+      mainSummaryDelivered,
+      delegationCards: delegationCards.map((item) => ({ ...item })),
+    }),
+    [
+      agentState,
+      delegationCards,
+      mainRoleName,
+      mainSummaryDelivered,
+      streamItems,
+      streamReasoning,
+      streaming,
+      subAgentBuffer,
+      subAgentRoleName,
+    ],
+  );
+
   const {
     messages,
     setMessages,
@@ -410,17 +435,7 @@ export function ChatView({
     initialMessage,
     draftInput: input,
     persistedRuntimeState,
-    runtimeSnapshot: {
-      streaming,
-      streamItems: [...streamItems],
-      streamReasoning: streamReasoning ? { ...streamReasoning } : null,
-      agentState: agentState ? { ...agentState } : null,
-      subAgentBuffer,
-      subAgentRoleName,
-      mainRoleName,
-      mainSummaryDelivered,
-      delegationCards: delegationCards.map((item) => ({ ...item })),
-    },
+    runtimeSnapshot,
     onPersistRuntimeState,
     onApplyPersistedRuntimeState: applyPersistedRuntimeState,
     onDraftLoaded: setInput,

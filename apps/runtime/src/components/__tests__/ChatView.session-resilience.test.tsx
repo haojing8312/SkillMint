@@ -458,6 +458,127 @@ describe("ChatView session resilience", () => {
     });
   });
 
+  test("does not re-persist unchanged runtime state on parent rerender", async () => {
+    const onPersistRuntimeState = vi.fn();
+    const never = new Promise<never>(() => {});
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_sessions") return never;
+      if (command === "list_pending_approvals") return never;
+      if (command === "list_session_runs") return never;
+      if (command === "get_messages") return never;
+      return Promise.resolve(null);
+    });
+
+    function PersistRuntimeHarness() {
+      const [tick, setTick] = useState(0);
+
+      return (
+        <>
+          <button type="button" onClick={() => setTick((prev) => prev + 1)}>
+            rerender-{tick}
+          </button>
+          <ChatView
+            skill={{
+              id: "builtin-general",
+              name: "General",
+              description: "desc",
+              version: "1.0.0",
+              author: "test",
+              recommended_model: "",
+              tags: [],
+              created_at: new Date().toISOString(),
+            }}
+            models={[
+              {
+                id: "m1",
+                name: "model",
+                api_format: "openai",
+                base_url: "https://example.com",
+                model_name: "model",
+                is_default: true,
+              },
+            ]}
+            sessionId="sess-persist-loop"
+            onPersistRuntimeState={(state) => onPersistRuntimeState(state)}
+          />
+        </>
+      );
+    }
+
+    render(<PersistRuntimeHarness />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const initialPersistCallCount = onPersistRuntimeState.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "rerender-0" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onPersistRuntimeState).toHaveBeenCalledTimes(initialPersistCallCount);
+  });
+
+  test("persists runtime state again after stream content changes", async () => {
+    const onPersistRuntimeState = vi.fn();
+    const never = new Promise<never>(() => {});
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "list_sessions") return never;
+      if (command === "list_pending_approvals") return never;
+      if (command === "list_session_runs") return never;
+      if (command === "get_messages") return never;
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="sess-persist-stream"
+        onPersistRuntimeState={onPersistRuntimeState}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const initialPersistCallCount = onPersistRuntimeState.mock.calls.length;
+
+    act(() => {
+      emit("stream-token", {
+        session_id: "sess-persist-stream",
+        token: "新的流式输出",
+        done: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(onPersistRuntimeState.mock.calls.length).toBeGreaterThan(initialPersistCallCount);
+    });
+  });
+
   test("still sends the initial message after the parent clears the pending value", async () => {
     vi.useFakeTimers();
 

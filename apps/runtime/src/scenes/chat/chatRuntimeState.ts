@@ -52,3 +52,53 @@ export function clonePersistedChatRuntimeState(
     delegationCards: state?.delegationCards ? state.delegationCards.map((item) => ({ ...item })) : [],
   };
 }
+
+function areComparableValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (left === null || right === null || left === undefined || right === undefined) {
+    return left === right;
+  }
+  if (typeof left !== typeof right) {
+    return false;
+  }
+  if (typeof left !== "object") {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((item, index) => areComparableValuesEqual(item, right[index]));
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => rightKeys.includes(key) && areComparableValuesEqual(leftRecord[key], rightRecord[key]));
+}
+
+export function arePersistedChatRuntimeStatesEqual(
+  left?: PersistedChatRuntimeState | null,
+  right?: PersistedChatRuntimeState | null,
+): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+  return (
+    left.streaming === right.streaming &&
+    areComparableValuesEqual(left.streamItems, right.streamItems) &&
+    areComparableValuesEqual(left.streamReasoning, right.streamReasoning) &&
+    areComparableValuesEqual(left.agentState, right.agentState) &&
+    left.subAgentBuffer === right.subAgentBuffer &&
+    left.subAgentRoleName === right.subAgentRoleName &&
+    left.mainRoleName === right.mainRoleName &&
+    left.mainSummaryDelivered === right.mainSummaryDelivered &&
+    areComparableValuesEqual(left.delegationCards, right.delegationCards)
+  );
+}

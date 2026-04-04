@@ -4,6 +4,10 @@ import type { PersistedChatRuntimeState, SessionRunProjection, Message } from ".
 import type { PendingApprovalRecord } from "../../services/chat/chatApprovalService";
 import { getMessages, listSessionRuns, listSessions, updateSessionWorkspace } from "../../services/chat/chatSessionService";
 import { listPendingApprovals as listPendingApprovalRecords } from "../../services/chat/chatApprovalService";
+import {
+  arePersistedChatRuntimeStatesEqual,
+  clonePersistedChatRuntimeState,
+} from "./chatRuntimeState";
 
 export interface PendingApprovalView {
   approvalId: string;
@@ -59,6 +63,10 @@ export function useChatSessionController({
   const [workspace, setWorkspace] = useState<string>((workDir || "").trim());
   const pendingApprovalsRef = useRef<PendingApprovalView[]>([]);
   const resolvingApprovalIdRef = useRef<string | null>(null);
+  const lastPersistedRuntimeSnapshotRef = useRef<PersistedChatRuntimeState>(
+    clonePersistedChatRuntimeState(persistedRuntimeState),
+  );
+  const skipNextRuntimePersistRef = useRef(true);
 
   const loadWorkspace = async (sid: string) => {
     try {
@@ -135,6 +143,8 @@ export function useChatSessionController({
   }, [sessionId, workDir]);
 
   useEffect(() => {
+    skipNextRuntimePersistRef.current = true;
+    lastPersistedRuntimeSnapshotRef.current = clonePersistedChatRuntimeState(persistedRuntimeState);
     if (!initialMessage?.trim()) {
       void loadMessages(sessionId);
       onDraftLoaded(readSessionDraft(sessionId));
@@ -152,7 +162,19 @@ export function useChatSessionController({
   }, [sessionId]);
 
   useEffect(() => {
-    onPersistRuntimeState?.(runtimeSnapshot);
+    if (!onPersistRuntimeState) {
+      return;
+    }
+    if (skipNextRuntimePersistRef.current) {
+      skipNextRuntimePersistRef.current = false;
+      return;
+    }
+    if (arePersistedChatRuntimeStatesEqual(lastPersistedRuntimeSnapshotRef.current, runtimeSnapshot)) {
+      return;
+    }
+    const nextSnapshot = clonePersistedChatRuntimeState(runtimeSnapshot);
+    lastPersistedRuntimeSnapshotRef.current = nextSnapshot;
+    onPersistRuntimeState(nextSnapshot);
   }, [onPersistRuntimeState, runtimeSnapshot]);
 
   useEffect(() => {
