@@ -23,12 +23,15 @@ impl SkillRouteIndex {
                         || entry.command_dispatch.is_some())
             })
             .map(|entry| {
+                let family_key = derive_family_key(&entry.skill_id);
                 let projection = WorkspaceSkillRouteProjection {
                     skill_id: entry.skill_id.clone(),
                     display_name: entry.name.trim().to_string(),
                     aliases: collect_aliases(entry),
                     description: entry.description.trim().to_string(),
                     when_to_use: extract_when_to_use(&entry.config.system_prompt, &entry.description),
+                    family_key: family_key.clone(),
+                    domain_tags: family_domain_tags(family_key.as_deref()),
                     allowed_tools: entry.config.allowed_tools.clone().unwrap_or_default(),
                     max_iterations: entry.config.max_iterations,
                     invocation: entry.invocation.clone(),
@@ -91,6 +94,30 @@ fn collect_aliases(entry: &WorkspaceSkillRuntimeEntry) -> Vec<String> {
     }
 
     aliases
+}
+
+fn derive_family_key(skill_id: &str) -> Option<String> {
+    let segments = skill_id
+        .split('-')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+
+    match segments.as_slice() {
+        [first, second, ..] => Some(format!("{first}-{second}")),
+        [single] => Some((*single).to_string()),
+        [] => None,
+    }
+}
+
+fn family_domain_tags(family_key: Option<&str>) -> Vec<String> {
+    let tags = match family_key {
+        Some("feishu-pm") => vec!["项管", "日报", "任务", "汇总", "同步"],
+        Some("feishu-bitable") => vec!["多维表格", "表格", "字段", "视图", "关系"],
+        _ => Vec::new(),
+    };
+
+    tags.into_iter().map(String::from).collect()
 }
 
 fn extract_when_to_use(system_prompt: &str, description: &str) -> String {
@@ -330,6 +357,17 @@ mod tests {
             dispatch.when_to_use,
             "Use when a leader wants to create a correction task."
         );
+        assert_eq!(dispatch.family_key.as_deref(), Some("feishu-pm"));
+        assert_eq!(
+            dispatch.domain_tags,
+            vec![
+                "项管".to_string(),
+                "日报".to_string(),
+                "任务".to_string(),
+                "汇总".to_string(),
+                "同步".to_string(),
+            ]
+        );
         assert_eq!(
             dispatch.execution_mode,
             WorkspaceSkillRouteExecutionMode::DirectDispatch
@@ -368,6 +406,17 @@ mod tests {
             inline.when_to_use,
             "Use when you need to summarize PM updates for a week."
         );
+        assert_eq!(inline.family_key.as_deref(), Some("feishu-pm"));
+        assert_eq!(
+            inline.domain_tags,
+            vec![
+                "项管".to_string(),
+                "日报".to_string(),
+                "任务".to_string(),
+                "汇总".to_string(),
+                "同步".to_string(),
+            ]
+        );
         assert_eq!(
             inline.execution_mode,
             WorkspaceSkillRouteExecutionMode::Inline
@@ -376,6 +425,17 @@ mod tests {
 
         let fork = index.get("feishu-pm-fork-skill").expect("fork entry");
         assert_eq!(fork.skill_id, "feishu-pm-fork-skill");
+        assert_eq!(fork.family_key.as_deref(), Some("feishu-pm"));
+        assert_eq!(
+            fork.domain_tags,
+            vec![
+                "项管".to_string(),
+                "日报".to_string(),
+                "任务".to_string(),
+                "汇总".to_string(),
+                "同步".to_string(),
+            ]
+        );
         assert_eq!(fork.allowed_tools, vec!["read_file".to_string(), "edit".to_string()]);
         assert_eq!(fork.max_iterations, Some(7));
         assert_eq!(

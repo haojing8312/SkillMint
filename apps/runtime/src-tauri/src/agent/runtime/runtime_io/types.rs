@@ -16,6 +16,8 @@ pub struct WorkspaceSkillRouteProjection {
     pub aliases: Vec<String>,
     pub description: String,
     pub when_to_use: String,
+    pub family_key: Option<String>,
+    pub domain_tags: Vec<String>,
     pub allowed_tools: Vec<String>,
     pub max_iterations: Option<usize>,
     pub invocation: SkillInvocationPolicy,

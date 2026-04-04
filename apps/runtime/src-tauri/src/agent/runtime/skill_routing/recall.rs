@@ -82,20 +82,17 @@ struct ProjectionProfile {
     alias_tokens: HashSet<String>,
     description_tokens: HashSet<String>,
     when_to_use_tokens: HashSet<String>,
-    family_tokens: HashSet<String>,
     skill_id_compact: String,
     display_name_compact: String,
     alias_compacts: Vec<String>,
     description_compact: String,
     when_to_use_compact: String,
-    family_compact: Option<String>,
+    domain_tag_compacts: Vec<String>,
 }
 
 impl ProjectionProfile {
     fn from_projection(projection: &WorkspaceSkillRouteProjection) -> Self {
         let aliases = projection.aliases.clone();
-        let family = derive_skill_family(&projection.skill_id);
-        let family_compact = family.as_ref().map(|value| normalize_compact(value));
 
         Self {
             skill_id_tokens: tokenize(&projection.skill_id).into_iter().collect(),
@@ -106,16 +103,17 @@ impl ProjectionProfile {
                 .collect::<HashSet<_>>(),
             description_tokens: tokenize(&projection.description).into_iter().collect(),
             when_to_use_tokens: tokenize(&projection.when_to_use).into_iter().collect(),
-            family_tokens: family
-                .as_ref()
-                .map(|value| tokenize(value).into_iter().collect())
-                .unwrap_or_default(),
             skill_id_compact: normalize_compact(&projection.skill_id),
             display_name_compact: normalize_compact(&projection.display_name),
             alias_compacts: aliases.iter().map(|alias| normalize_compact(alias)).collect(),
             description_compact: normalize_compact(&projection.description),
             when_to_use_compact: normalize_compact(&projection.when_to_use),
-            family_compact,
+            domain_tag_compacts: projection
+                .domain_tags
+                .iter()
+                .map(|tag| normalize_compact(tag))
+                .filter(|tag| !tag.is_empty())
+                .collect(),
         }
     }
 }
@@ -126,6 +124,7 @@ fn score_projection(query: &QueryProfile, projection: &WorkspaceSkillRouteProjec
 
     score += score_exact_compact_match(query, &profile);
     score += score_token_overlap(query, &profile);
+    score += score_domain_tags(query, &profile);
 
     score
 }
@@ -160,12 +159,6 @@ fn score_exact_compact_match(query: &QueryProfile, profile: &ProjectionProfile) 
         score += 15;
     }
 
-    if let Some(family_compact) = &profile.family_compact {
-        if family_compact.contains(&query.compact) || query.compact.contains(family_compact) {
-            score += 24;
-        }
-    }
-
     score
 }
 
@@ -186,24 +179,22 @@ fn score_token_overlap(query: &QueryProfile, profile: &ProjectionProfile) -> u32
         if profile.when_to_use_tokens.contains(token) {
             score += 10;
         }
-        if profile.family_tokens.contains(token) {
-            score += 30;
-        }
         score
     })
 }
 
-fn derive_skill_family(skill_id: &str) -> Option<String> {
-    let segments = skill_id
-        .split('-')
-        .filter(|segment| !segment.trim().is_empty())
-        .collect::<Vec<_>>();
-
-    match segments.as_slice() {
-        [] => None,
-        [single] => Some((*single).to_string()),
-        [first, second, ..] => Some(format!("{first}-{second}")),
-    }
+fn score_domain_tags(query: &QueryProfile, profile: &ProjectionProfile) -> u32 {
+    profile
+        .domain_tag_compacts
+        .iter()
+        .fold(0, |mut score, tag| {
+            if query.compact == *tag {
+                score += 38;
+            } else if query.compact.contains(tag) || tag.contains(&query.compact) {
+                score += 22;
+            }
+            score
+        })
 }
 
 fn normalize_compact(value: &str) -> String {
@@ -301,32 +292,28 @@ mod tests {
     }
 
     #[test]
-    fn recall_prefers_family_match_for_domain_words() {
+    fn recall_prefers_family_domain_tags_for_chinese_vocabulary() {
         let index = build_index(vec![
             build_entry(
-                "feishu-pm-task-dispatch",
-                "PM Task Dispatch",
-                "Create or dispatch PM follow-up tasks",
-                "## When to Use\n- Use when a leader wants to create a correction task.\n",
-                Some("fork"),
-                Some(vec!["exec", "read_file"]),
-                Some(11),
+                "feishu-pm-daily-sync",
+                "PM Daily Sync",
+                "Coordinate routine reporting",
+                "## When to Use\n- Keep the routine reporting flow aligned.\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(4),
                 SkillInvocationPolicy {
                     user_invocable: true,
-                    disable_model_invocation: true,
+                    disable_model_invocation: false,
                 },
-                Some("task-dispatch"),
-                Some(SkillCommandDispatchSpec {
-                    kind: SkillCommandDispatchKind::Tool,
-                    tool_name: "exec".to_string(),
-                    arg_mode: SkillCommandArgMode::Raw,
-                }),
+                Some("daily-sync"),
+                None,
             ),
             build_entry(
                 "feishu-bitable-analyst",
                 "Bitable Analyst",
-                "Inspect table health and relationship structure",
-                "## When to Use\n- Use when a table needs review.\n",
+                "Inspect table health and relationships",
+                "## When to Use\n- Review table layout and fields.\n",
                 None,
                 Some(vec!["read_file"]),
                 None,
@@ -339,9 +326,9 @@ mod tests {
             ),
         ]);
 
-        let candidates = recall_skill_candidates(&index, "bitable");
+        let candidates = recall_skill_candidates(&index, "帮我整理项管日报并同步");
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].projection.skill_id, "feishu-bitable-analyst");
+        assert_eq!(candidates[0].projection.skill_id, "feishu-pm-daily-sync");
         assert!(candidates[0].score > 0);
     }
 
@@ -352,7 +339,7 @@ mod tests {
                 "feishu-pm-task-dispatch",
                 "PM Task Dispatch",
                 "Create or dispatch PM follow-up tasks",
-                "## When to Use\n- Use when a leader wants to create a correction task.\n",
+                "## When to Use\n- Dispatch a correction task for a leader.\n",
                 Some("fork"),
                 Some(vec!["exec", "read_file"]),
                 Some(11),
@@ -369,9 +356,9 @@ mod tests {
             ),
             build_entry(
                 "feishu-pm-weekly-work-summary",
-                "项管周工作汇总",
-                "Summarize PM work",
-                "## When to Use\n- Use when you need to summarize PM updates for a week.\n",
+                "PM Weekly Summary",
+                "Organize weekly reporting",
+                "## When to Use\n- Keep reporting aligned.\n",
                 None,
                 Some(vec!["read_file"]),
                 Some(3),
@@ -394,10 +381,10 @@ mod tests {
     fn recall_orders_multiple_candidates_deterministically() {
         let index = build_index(vec![
             build_entry(
-                "feishu-pm-alpha",
-                "PM Alpha",
-                "Track PM alpha work",
-                "## When to Use\n- Use when the request is pm related.\n",
+                "feishu-pm-weekly-work-summary",
+                "PM Weekly Summary",
+                "项管日报汇总与任务追踪",
+                "## When to Use\n- 处理项管日报汇总并整理任务。\n",
                 None,
                 Some(vec!["read_file"]),
                 None,
@@ -405,14 +392,14 @@ mod tests {
                     user_invocable: true,
                     disable_model_invocation: false,
                 },
-                Some("alpha"),
+                Some("weekly-summary"),
                 None,
             ),
             build_entry(
-                "feishu-pm-beta",
-                "PM Beta",
-                "Track PM beta work",
-                "## When to Use\n- Use when the request is pm related.\n",
+                "feishu-pm-daily-sync",
+                "PM Daily Sync",
+                "项管日报同步",
+                "## When to Use\n- 同步项管日报到看板。\n",
                 None,
                 Some(vec!["read_file"]),
                 None,
@@ -420,14 +407,14 @@ mod tests {
                     user_invocable: true,
                     disable_model_invocation: false,
                 },
-                Some("beta"),
+                Some("daily-sync"),
                 None,
             ),
             build_entry(
                 "feishu-bitable-analyst",
                 "Bitable Analyst",
-                "Inspect table health and relationship structure",
-                "## When to Use\n- Use when a table needs review.\n",
+                "Inspect table health and relationships",
+                "## When to Use\n- Review table layout and fields.\n",
                 None,
                 Some(vec!["read_file"]),
                 None,
@@ -440,13 +427,17 @@ mod tests {
             ),
         ]);
 
-        let candidates = recall_skill_candidates(&index, "pm");
+        let candidates = recall_skill_candidates(&index, "日报汇总");
         let skill_ids = candidates
             .iter()
             .map(|candidate| candidate.projection.skill_id.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(skill_ids, vec!["feishu-pm-alpha", "feishu-pm-beta"]);
+        assert_eq!(
+            skill_ids,
+            vec!["feishu-pm-weekly-work-summary", "feishu-pm-daily-sync"]
+        );
+        assert!(candidates[0].score > candidates[1].score);
     }
 
     #[test]
@@ -472,6 +463,6 @@ mod tests {
         )]);
 
         assert!(recall_skill_candidates(&index, "   ").is_empty());
-        assert!(recall_skill_candidates(&index, "no-such-skill-domain").is_empty());
+        assert!(recall_skill_candidates(&index, "完全无关的查询").is_empty());
     }
 }
