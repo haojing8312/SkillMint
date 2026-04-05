@@ -2,10 +2,19 @@
 name = "runtime"
 version = "0.5.7"
 edition = "2021"
+default-run = "runtime"
 
 [lib]
 name = "runtime_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "agent_eval"
+path = "src/bin/agent_eval.rs"
 
 [dependencies]
 tauri = { version = "2", features = ["test"] }
