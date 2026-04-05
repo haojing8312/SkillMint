@@ -87,6 +87,52 @@ impl SessionRuntime {
         Some((command.to_ascii_lowercase(), args))
     }
 
+    fn resolve_explicit_prompt_following_skill(
+        user_message: &str,
+        entries: &[chat_io::WorkspaceSkillRuntimeEntry],
+    ) -> Option<ExplicitPromptSkillSelection> {
+        let message = user_message.trim();
+        if message.is_empty() {
+            return None;
+        }
+
+        let message_lower = message.to_ascii_lowercase();
+        let has_explicit_skill_marker = ["技能", "skill", "使用", "调用", "执行", "run"]
+            .iter()
+            .any(|marker| message_lower.contains(marker));
+
+        let mut matches = entries
+            .iter()
+            .filter(|entry| {
+                entry.invocation.user_invocable
+                    && !entry.invocation.disable_model_invocation
+                    && entry.command_dispatch.is_none()
+            })
+            .filter(|entry| {
+                let skill_id = entry.skill_id.trim().to_ascii_lowercase();
+                let skill_name = entry.name.trim().to_ascii_lowercase();
+                (!skill_id.is_empty() && message_lower.contains(&skill_id))
+                    || (has_explicit_skill_marker
+                        && !skill_name.is_empty()
+                        && message_lower.contains(&skill_name))
+            })
+            .map(|entry| ExplicitPromptSkillSelection {
+                skill_id: entry.skill_id.clone(),
+                skill_name: entry.name.clone(),
+                system_prompt: entry.config.system_prompt.clone(),
+                allowed_tools: entry.config.allowed_tools.clone(),
+                max_iterations: entry.config.max_iterations,
+            })
+            .collect::<Vec<_>>();
+
+        matches.dedup_by(|left, right| left.skill_id == right.skill_id);
+        if matches.len() == 1 {
+            matches.pop()
+        } else {
+            None
+        }
+    }
+
     fn rewrite_user_skill_command_for_model(
         user_message: &str,
         skill_command_specs: &[chat_io::WorkspaceSkillCommandSpec],
@@ -490,13 +536,31 @@ impl SessionRuntime {
             Self::append_current_turn_message(&mut messages, current_turn);
         }
         let skill_config = crate::agent::skill_config::SkillConfig::parse(&raw_prompt);
-        let budget_scope = if skill_id.trim().eq_ignore_ascii_case("builtin-general") {
+        let explicit_skill_selection =
+            Self::resolve_explicit_prompt_following_skill(params.user_message, &workspace_skill_entries);
+        let effective_skill_id = explicit_skill_selection
+            .as_ref()
+            .map(|selection| selection.skill_id.clone())
+            .unwrap_or_else(|| skill_id.clone());
+        let effective_skill_system_prompt = explicit_skill_selection
+            .as_ref()
+            .map(|selection| selection.system_prompt.clone())
+            .unwrap_or_else(|| skill_config.system_prompt.clone());
+        let effective_skill_allowed_tools = explicit_skill_selection
+            .as_ref()
+            .and_then(|selection| selection.allowed_tools.clone())
+            .or_else(|| skill_config.allowed_tools.clone());
+        let effective_skill_max_iterations = explicit_skill_selection
+            .as_ref()
+            .and_then(|selection| selection.max_iterations)
+            .or(skill_config.max_iterations);
+        let budget_scope = if effective_skill_id.trim().eq_ignore_ascii_case("builtin-general") {
             RunBudgetScope::GeneralChat
         } else {
             RunBudgetScope::Skill
         };
         let default_max_iter =
-            RunBudgetPolicy::resolve(budget_scope, skill_config.max_iterations).max_turns;
+            RunBudgetPolicy::resolve(budget_scope, effective_skill_max_iterations).max_turns;
         let max_iter = params
             .max_iterations_override
             .map(|override_value| override_value.max(1))
@@ -512,13 +576,14 @@ impl SessionRuntime {
             base_url: &base_url,
             model_name: &model_name,
             api_key: &api_key,
-            skill_id: &skill_id,
+            skill_id: &effective_skill_id,
             source_type: &source_type,
             pack_path: &pack_path,
-            skill_system_prompt: &skill_config.system_prompt,
-            skill_allowed_tools: skill_config.allowed_tools.clone(),
+            skill_system_prompt: &effective_skill_system_prompt,
+            skill_allowed_tools: effective_skill_allowed_tools.clone(),
             max_iter,
             max_call_depth: chat_preparation.max_call_depth,
+            suppress_workspace_skills_prompt: explicit_skill_selection.is_some(),
             execution_preparation_service: &execution_preparation_service,
             execution_guidance: &execution_guidance,
             memory_bucket_employee_id: execution_preparation_service
@@ -691,11 +756,47 @@ impl SessionRuntime {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExplicitPromptSkillSelection {
+    skill_id: String,
+    skill_name: String,
+    system_prompt: String,
+    allowed_tools: Option<Vec<String>>,
+    max_iterations: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::SessionRuntime;
     use crate::agent::runtime::runtime_io as chat_io;
+    use crate::agent::runtime::runtime_io::{
+        WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
+    };
+    use runtime_skill_core::{SkillConfig, SkillInvocationPolicy};
     use serde_json::json;
+
+    fn prompt_following_entry(skill_id: &str, name: &str) -> WorkspaceSkillRuntimeEntry {
+        WorkspaceSkillRuntimeEntry {
+            skill_id: skill_id.to_string(),
+            name: name.to_string(),
+            description: format!("Use {name}"),
+            source_type: "local".to_string(),
+            projected_dir_name: skill_id.to_string(),
+            config: SkillConfig {
+                system_prompt: format!("Prompt for {name}"),
+                allowed_tools: Some(vec!["skill".to_string(), "exec".to_string()]),
+                max_iterations: Some(7),
+                ..SkillConfig::default()
+            },
+            invocation: SkillInvocationPolicy {
+                user_invocable: true,
+                disable_model_invocation: false,
+            },
+            metadata: None,
+            command_dispatch: None,
+            content: WorkspaceSkillContent::FileTree(std::collections::HashMap::new()),
+        }
+    }
 
     #[test]
     fn parse_user_skill_command_extracts_command_and_raw_args() {
@@ -780,5 +881,53 @@ mod tests {
         assert_eq!(messages[0]["content"].as_str(), Some("你是谁"));
         assert_eq!(messages[2]["role"].as_str(), Some("user"));
         assert_eq!(messages[2]["content"].as_str(), Some("你能做什么"));
+    }
+
+    #[test]
+    fn resolve_explicit_prompt_following_skill_matches_skill_id_mentions() {
+        let entries = vec![prompt_following_entry("feishu-pm-hub", "Feishu PM Hub")];
+
+        let matched = SessionRuntime::resolve_explicit_prompt_following_skill(
+            "请使用 feishu-pm-hub 技能帮我查询谢涛上周日报",
+            &entries,
+        )
+        .expect("should match explicit skill id");
+
+        assert_eq!(matched.skill_id, "feishu-pm-hub");
+        assert_eq!(matched.skill_name, "Feishu PM Hub");
+        assert_eq!(matched.max_iterations, Some(7));
+        assert_eq!(
+            matched.allowed_tools,
+            Some(vec!["skill".to_string(), "exec".to_string()])
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_prompt_following_skill_returns_none_for_implicit_requests() {
+        let entries = vec![prompt_following_entry("feishu-pm-hub", "Feishu PM Hub")];
+
+        assert_eq!(
+            SessionRuntime::resolve_explicit_prompt_following_skill(
+                "帮我查询谢涛上周工作日报",
+                &entries,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_prompt_following_skill_returns_none_when_multiple_skills_match() {
+        let entries = vec![
+            prompt_following_entry("feishu-pm-hub", "Feishu PM Hub"),
+            prompt_following_entry("feishu-pm-task-query", "Feishu PM Task Query"),
+        ];
+
+        assert_eq!(
+            SessionRuntime::resolve_explicit_prompt_following_skill(
+                "请使用 feishu-pm-hub 和 feishu-pm-task-query 技能帮我查一下",
+                &entries,
+            ),
+            None
+        );
     }
 }

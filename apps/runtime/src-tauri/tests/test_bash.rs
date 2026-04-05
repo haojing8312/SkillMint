@@ -1,4 +1,4 @@
-use runtime_lib::agent::{BashTool, Tool, ToolContext};
+use runtime_lib::agent::{BashTool, ExecTool, Tool, ToolContext};
 use serde_json::json;
 use std::path::PathBuf;
 use tempfile::tempdir;
@@ -187,4 +187,61 @@ fn test_bash_no_timeout_fast_command() {
         .as_str()
         .unwrap_or_default()
         .contains("fast"));
+}
+
+#[test]
+fn test_exec_simple_command() {
+    let tool = ExecTool::new();
+    let ctx = ToolContext::default();
+
+    let input = json!({"command": "echo Hello"});
+
+    let result = tool.execute(input, &ctx).unwrap();
+    let parsed = parse_bash_result(&result);
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(parsed["tool"], "exec");
+    assert_eq!(parsed["details"]["timed_out"], false);
+    assert_eq!(parsed["details"]["background"], false);
+    assert_eq!(parsed["details"]["exit_code"], 0);
+    assert!(parsed["details"]["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Hello"));
+}
+
+#[test]
+fn test_exec_includes_execution_context_metadata() {
+    let tool = ExecTool::new();
+    let work_dir = tempdir().expect("work dir");
+    let task_temp_dir = tempdir().expect("task temp dir");
+    let ctx = ToolContext {
+        work_dir: Some(PathBuf::from(work_dir.path())),
+        allowed_tools: None,
+        session_id: None,
+        task_temp_dir: Some(PathBuf::from(task_temp_dir.path())),
+        execution_caps: None,
+        file_task_caps: None,
+    };
+
+    let input = json!({"command": "echo metadata"});
+    let result = tool.execute(input, &ctx).unwrap();
+    let parsed = parse_bash_result(&result);
+
+    assert_eq!(parsed["ok"], true);
+    assert_eq!(
+        parsed["details"]["work_dir"].as_str(),
+        Some(&*work_dir.path().to_string_lossy())
+    );
+    assert_eq!(
+        parsed["details"]["task_temp_dir"].as_str(),
+        Some(&*task_temp_dir.path().to_string_lossy())
+    );
+    assert_eq!(
+        parsed["details"]["platform_shell"],
+        if cfg!(target_os = "windows") {
+            "powershell"
+        } else {
+            "bash"
+        }
+    );
 }

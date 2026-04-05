@@ -5,8 +5,8 @@ use crate::agent::tools::search_providers::create_provider;
 use crate::agent::tools::{
     browser_compat::register_browser_compat_tool, browser_tools::register_browser_tools,
     register_tool_alias, AskUserTool, BashKillTool, BashOutputTool, BashTool, ClawhubRecommendTool,
-    ClawhubSearchTool, CompactTool, EmployeeManageTool, GithubRepoDownloadTool, MemoryTool,
-    ProcessManager, SkillInvokeTool, TaskTool, WebSearchTool,
+    ClawhubSearchTool, CompactTool, EmployeeManageTool, ExecTool, GithubRepoDownloadTool,
+    MemoryTool, ProcessManager, SkillInvokeTool, TaskTool, WebSearchTool,
 };
 use crate::agent::{AgentExecutor, Tool, ToolContext, ToolRegistry};
 use crate::session_journal::SessionJournalStateHandle;
@@ -241,6 +241,7 @@ pub(crate) struct ToolSetupParams<'a> {
     pub skill_allowed_tools: Option<Vec<String>>,
     pub max_iter: usize,
     pub max_call_depth: usize,
+    pub suppress_workspace_skills_prompt: bool,
     pub execution_preparation_service: &'a ChatExecutionPreparationService,
     pub execution_guidance: &'a ChatExecutionGuidance,
     pub memory_bucket_employee_id: &'a str,
@@ -266,6 +267,12 @@ pub(crate) async fn prepare_runtime_tools(
         .register(Arc::new(BashTool::with_process_manager(Arc::clone(
             &process_manager,
         ))));
+    params
+        .agent_executor
+        .registry()
+        .register(Arc::new(ExecTool::with_process_manager(Arc::clone(
+            &process_manager,
+        ))));
 
     register_browser_tools(params.agent_executor.registry(), "http://localhost:8765");
     register_browser_compat_tool(params.agent_executor.registry(), "http://localhost:8765");
@@ -278,10 +285,6 @@ pub(crate) async fn prepare_runtime_tools(
     if let Some(tool) = params.agent_executor.registry().get("list_dir") {
         register_tool_alias(params.agent_executor.registry(), "ls", tool);
     }
-    if let Some(tool) = params.agent_executor.registry().get("bash") {
-        register_tool_alias(params.agent_executor.registry(), "exec", tool);
-    }
-
     let task_tool = TaskTool::new(
         params.agent_executor.registry_arc(),
         params.api_format.to_string(),
@@ -390,11 +393,19 @@ pub(crate) async fn prepare_runtime_tools(
         .resolve_executor_work_dir(params.execution_guidance)
     {
         Some(work_dir) => {
+            chat_io::sync_workspace_skills_to_directory(
+                std::path::Path::new(&work_dir),
+                params.workspace_skill_entries,
+            )?;
             (
-                Some(chat_io::prepare_workspace_skills_prompt(
-                    std::path::Path::new(&work_dir),
-                    params.workspace_skill_entries,
-                )?),
+                if params.suppress_workspace_skills_prompt {
+                    None
+                } else {
+                    Some(chat_io::prepare_workspace_skills_prompt(
+                        std::path::Path::new(&work_dir),
+                        params.workspace_skill_entries,
+                    )?)
+                },
                 chat_io::build_workspace_skill_command_specs(params.workspace_skill_entries),
             )
         }

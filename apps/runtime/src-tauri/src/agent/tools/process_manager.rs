@@ -62,11 +62,21 @@ impl ProcessManager {
 
     /// 启动一个后台进程，返回 process_id（UUID 前 8 位）
     pub fn spawn(&self, command: &str, work_dir: Option<&Path>) -> Result<String> {
+        let (shell, flag) = Self::get_shell();
+        self.spawn_with_shell(command, work_dir, shell, &[flag])
+    }
+
+    pub fn spawn_with_shell(
+        &self,
+        command: &str,
+        work_dir: Option<&Path>,
+        shell: &str,
+        shell_args: &[&str],
+    ) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string()[..8].to_string();
 
-        let (shell, flag) = Self::get_shell();
         let mut cmd = Command::new(shell);
-        cmd.arg(flag)
+        cmd.args(shell_args)
             .arg(command)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

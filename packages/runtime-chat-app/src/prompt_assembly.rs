@@ -33,6 +33,7 @@ pub fn compose_system_prompt(
         || tool_names.contains("edit")
         || tool_names.contains("glob")
         || tool_names.contains("grep")
+        || tool_names.contains("exec")
         || tool_names.contains("bash")
         || tool_names.contains("bash_output")
         || tool_names.contains("bash_kill")
