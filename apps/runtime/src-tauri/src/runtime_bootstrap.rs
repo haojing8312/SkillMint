@@ -1,10 +1,16 @@
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const BOOTSTRAP_FILE_NAME: &str = "bootstrap-root.json";
+pub const BOOTSTRAP_RECOVERY_FILE_NAME: &str = "bootstrap-root.recovery.json";
 pub const BOOTSTRAP_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +90,47 @@ impl From<serde_json::Error> for RuntimeBootstrapError {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static BOOTSTRAP_WRITE_FAILURE_PLAN: RefCell<VecDeque<usize>> = const { RefCell::new(VecDeque::new()) };
+}
+
+#[cfg(test)]
+fn maybe_fail_bootstrap_write_for_tests() -> Result<(), RuntimeBootstrapError> {
+    BOOTSTRAP_WRITE_FAILURE_PLAN.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if let Some(remaining_successful_writes) = slot.front_mut() {
+            if *remaining_successful_writes == 0 {
+                slot.pop_front();
+                return Err(RuntimeBootstrapError::Io(std::io::Error::other(
+                    "injected bootstrap write failure for tests",
+                )));
+            }
+
+            *remaining_successful_writes -= 1;
+        }
+
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn set_bootstrap_write_failure_after_calls_for_tests(
+    remaining_successful_writes: Option<usize>,
+) {
+    let plan = remaining_successful_writes
+        .into_iter()
+        .collect::<VecDeque<_>>();
+    BOOTSTRAP_WRITE_FAILURE_PLAN.with(|slot| *slot.borrow_mut() = plan);
+}
+
+#[cfg(test)]
+pub(crate) fn set_bootstrap_write_failure_plan_for_tests(plan: &[usize]) {
+    BOOTSTRAP_WRITE_FAILURE_PLAN.with(|slot| {
+        *slot.borrow_mut() = plan.iter().copied().collect::<VecDeque<_>>();
+    });
+}
+
 fn is_recoverable_bootstrap_read_error(error: &RuntimeBootstrapError) -> bool {
     match error {
         RuntimeBootstrapError::Io(io_error) => io_error.kind() == std::io::ErrorKind::NotFound,
@@ -93,6 +140,10 @@ fn is_recoverable_bootstrap_read_error(error: &RuntimeBootstrapError) -> bool {
 
 pub fn bootstrap_file_path(bootstrap_dir: &Path) -> PathBuf {
     bootstrap_dir.join(BOOTSTRAP_FILE_NAME)
+}
+
+pub fn bootstrap_recovery_file_path(bootstrap_dir: &Path) -> PathBuf {
+    bootstrap_dir.join(BOOTSTRAP_RECOVERY_FILE_NAME)
 }
 
 fn build_runtime_bootstrap_location(base_dir: PathBuf) -> RuntimeBootstrapLocation {
@@ -146,16 +197,54 @@ pub fn read_runtime_root_bootstrap(
     Ok(bootstrap)
 }
 
+fn write_runtime_root_bootstrap_file(
+    bootstrap_file_path: &Path,
+    bootstrap: &RuntimeRootBootstrap,
+) -> Result<(), RuntimeBootstrapError> {
+    #[cfg(test)]
+    maybe_fail_bootstrap_write_for_tests()?;
+
+    let parent_dir = bootstrap_file_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent_dir)?;
+
+    let raw = serde_json::to_string_pretty(bootstrap)?;
+    let mut temp_file = tempfile::NamedTempFile::new_in(parent_dir)?;
+    temp_file.write_all(raw.as_bytes())?;
+    temp_file.as_file_mut().sync_all()?;
+    temp_file
+        .persist(bootstrap_file_path)
+        .map_err(|error| RuntimeBootstrapError::Io(error.error))?;
+    Ok(())
+}
+
 pub fn write_runtime_root_bootstrap(
     bootstrap_path: &Path,
     bootstrap: &RuntimeRootBootstrap,
 ) -> Result<(), RuntimeBootstrapError> {
-    if let Some(parent) = bootstrap_path.parent() {
-        fs::create_dir_all(parent)?;
+    write_runtime_root_bootstrap_file(bootstrap_path, bootstrap)
+}
+
+pub fn write_runtime_root_bootstrap_recovery(
+    bootstrap_path: &Path,
+    bootstrap: &RuntimeRootBootstrap,
+) -> Result<(), RuntimeBootstrapError> {
+    let recovery_path =
+        bootstrap_recovery_file_path(bootstrap_path.parent().unwrap_or_else(|| Path::new(".")));
+    write_runtime_root_bootstrap_file(&recovery_path, bootstrap)
+}
+
+pub fn clear_runtime_root_bootstrap_recovery(
+    bootstrap_path: &Path,
+) -> Result<(), RuntimeBootstrapError> {
+    let recovery_path =
+        bootstrap_recovery_file_path(bootstrap_path.parent().unwrap_or_else(|| Path::new(".")));
+    match fs::remove_file(&recovery_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RuntimeBootstrapError::Io(error)),
     }
-    let raw = serde_json::to_string_pretty(bootstrap)?;
-    fs::write(bootstrap_path, raw)?;
-    Ok(())
 }
 
 pub fn write_runtime_root_bootstrap_pending_migration(
@@ -189,8 +278,59 @@ pub fn discover_runtime_root_bootstrap(
     legacy_root: Option<&Path>,
     default_root: &Path,
 ) -> Result<RuntimeRootBootstrap, RuntimeBootstrapError> {
+    let recovery_path =
+        bootstrap_recovery_file_path(bootstrap_path.parent().unwrap_or_else(|| Path::new(".")));
+    let recovery_bootstrap = if recovery_path.exists() {
+        match read_runtime_root_bootstrap(&recovery_path) {
+            Ok(bootstrap) => Some(bootstrap),
+            Err(error) if is_recoverable_bootstrap_read_error(&error) => {
+                let _ = fs::remove_file(&recovery_path);
+                None
+            }
+            Err(error) => return Err(error),
+        }
+    } else {
+        None
+    };
+
     if bootstrap_path.exists() {
-        return load_or_create_runtime_root_bootstrap(bootstrap_path, default_root);
+        match read_runtime_root_bootstrap(bootstrap_path) {
+            Ok(bootstrap) => {
+                let should_apply_recovery = recovery_bootstrap.is_some()
+                    && matches!(
+                        bootstrap
+                            .pending_migration
+                            .as_ref()
+                            .map(|pending| pending.status),
+                        Some(BootstrapMigrationStatus::InProgress)
+                    );
+
+                if should_apply_recovery {
+                    let recovery_bootstrap = recovery_bootstrap.expect("recovery bootstrap");
+                    write_runtime_root_bootstrap(bootstrap_path, &recovery_bootstrap)?;
+                    clear_runtime_root_bootstrap_recovery(bootstrap_path)?;
+                    return Ok(recovery_bootstrap);
+                }
+
+                if recovery_bootstrap.is_some() {
+                    let _ = clear_runtime_root_bootstrap_recovery(bootstrap_path);
+                }
+
+                return Ok(bootstrap);
+            }
+            Err(error) if is_recoverable_bootstrap_read_error(&error) => {
+                if let Some(recovery_bootstrap) = recovery_bootstrap {
+                    write_runtime_root_bootstrap(bootstrap_path, &recovery_bootstrap)?;
+                    clear_runtime_root_bootstrap_recovery(bootstrap_path)?;
+                    return Ok(recovery_bootstrap);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    } else if let Some(recovery_bootstrap) = recovery_bootstrap {
+        write_runtime_root_bootstrap(bootstrap_path, &recovery_bootstrap)?;
+        clear_runtime_root_bootstrap_recovery(bootstrap_path)?;
+        return Ok(recovery_bootstrap);
     }
 
     if let Some(legacy_root) = legacy_root {
