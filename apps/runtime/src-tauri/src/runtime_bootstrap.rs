@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const BOOTSTRAP_FILE_NAME: &str = "bootstrap-root.json";
@@ -105,7 +105,10 @@ fn build_runtime_bootstrap_location(base_dir: PathBuf) -> RuntimeBootstrapLocati
 }
 
 pub fn resolve_runtime_bootstrap_location() -> RuntimeBootstrapLocation {
-    resolve_runtime_bootstrap_location_with_env(std::env::var_os("APPDATA"), std::env::var_os("USERPROFILE"))
+    resolve_runtime_bootstrap_location_with_env(
+        std::env::var_os("APPDATA"),
+        std::env::var_os("USERPROFILE"),
+    )
 }
 
 pub fn resolve_runtime_bootstrap_location_with_env(
@@ -153,6 +156,17 @@ pub fn write_runtime_root_bootstrap(
     let raw = serde_json::to_string_pretty(bootstrap)?;
     fs::write(bootstrap_path, raw)?;
     Ok(())
+}
+
+pub fn write_runtime_root_bootstrap_pending_migration(
+    bootstrap_path: &Path,
+    bootstrap: &mut RuntimeRootBootstrap,
+    pending_migration: RuntimeRootBootstrapMigration,
+) -> Result<(), RuntimeBootstrapError> {
+    bootstrap.previous_root = Some(bootstrap.current_root.clone());
+    bootstrap.pending_migration = Some(pending_migration);
+    bootstrap.last_migration_result = None;
+    write_runtime_root_bootstrap(bootstrap_path, bootstrap)
 }
 
 pub fn load_or_create_runtime_root_bootstrap(
@@ -215,10 +229,8 @@ mod tests {
 
     #[test]
     fn resolves_stable_bootstrap_location_from_userprofile_when_appdata_is_missing() {
-        let location = resolve_runtime_bootstrap_location_with_env(
-            None,
-            Some(OsString::from(r"C:\Users\me")),
-        );
+        let location =
+            resolve_runtime_bootstrap_location_with_env(None, Some(OsString::from(r"C:\Users\me")));
 
         let expected_dir = PathBuf::from(r"C:\Users\me")
             .join("AppData")
@@ -237,10 +249,8 @@ mod tests {
 
     #[test]
     fn only_not_found_and_json_errors_are_recoverable() {
-        let missing = RuntimeBootstrapError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "missing",
-        ));
+        let missing =
+            RuntimeBootstrapError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
         let denied = RuntimeBootstrapError::Io(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "denied",
@@ -327,9 +337,8 @@ mod tests {
             .expect("write invalid bootstrap");
         let fallback_root = PathBuf::from(r"D:\WorkClawData");
 
-        let discovered =
-            discover_runtime_root_bootstrap(&bootstrap_path, None, &fallback_root)
-                .expect("discover fallback bootstrap");
+        let discovered = discover_runtime_root_bootstrap(&bootstrap_path, None, &fallback_root)
+            .expect("discover fallback bootstrap");
 
         assert_eq!(discovered.current_root, fallback_root.to_string_lossy());
     }
