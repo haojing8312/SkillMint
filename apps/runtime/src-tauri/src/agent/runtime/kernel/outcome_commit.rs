@@ -1,2 +1,2 @@
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ExecutionOutcome;
+pub(crate) struct OutcomeCommitter;

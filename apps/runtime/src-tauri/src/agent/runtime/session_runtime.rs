@@ -1,10 +1,10 @@
 use super::events::{StreamToken, ToolConfirmResponder};
+use crate::agent::runtime::kernel::execution_plan::ExecutionOutcome;
+use crate::agent::runtime::kernel::session_engine::SessionEngine;
 use crate::agent::context::build_tool_context;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{parse_run_stop_reason, RunBudgetPolicy, RunBudgetScope};
-use crate::agent::runtime::attempt_runner::{
-    execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
-};
+use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
 use crate::agent::runtime::repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
 use crate::agent::runtime::tool_setup::{
     prepare_runtime_tools, PreparedRuntimeTools, ToolSetupParams,
@@ -22,9 +22,6 @@ use uuid::Uuid;
 
 use super::runtime_io as chat_io;
 use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
-use crate::agent::runtime::skill_routing::runner::{
-    execute_implicit_route_plan, plan_implicit_route_with_observation, RouteRunOutcome,
-};
 use crate::model_transport::{resolve_model_transport, ModelTransportKind};
 use runtime_chat_app::ChatExecutionGuidance;
 
@@ -156,7 +153,7 @@ impl SessionRuntime {
         messages.push(current_turn);
     }
 
-    async fn maybe_execute_user_skill_command(
+    pub(crate) async fn maybe_execute_user_skill_command(
         app: &AppHandle,
         agent_executor: &Arc<AgentExecutor>,
         session_id: &str,
@@ -233,34 +230,25 @@ impl SessionRuntime {
         cancel_flag: Arc<AtomicBool>,
         tool_confirm_responder: ToolConfirmResponder,
     ) -> Result<(), String> {
-        let prepared_context = Self::prepare_send_message_context(PrepareSendMessageParams {
+        let run_id = Uuid::new_v4().to_string();
+
+        match SessionEngine::run_local_turn(
             app,
-            db,
             agent_executor,
+            db,
+            journal,
             session_id,
+            &run_id,
+            user_message_id,
             user_message,
             user_message_parts,
             max_iterations_override,
-        })
-        .await?;
-
-        let run_id = Uuid::new_v4().to_string();
-        chat_io::append_run_started_with_pool(db, journal, session_id, &run_id, user_message_id)
-            .await?;
-
-        match Self::maybe_execute_user_skill_command(
-            app,
-            agent_executor,
-            session_id,
-            &run_id,
-            user_message,
-            &prepared_context,
             cancel_flag.clone(),
             tool_confirm_responder.clone(),
         )
         .await
         {
-            Ok(Some(output)) => {
+            Ok(ExecutionOutcome::DirectDispatch(output)) => {
                 chat_io::finalize_run_success_with_pool(
                     db, journal, session_id, &run_id, &output, false, &output, "", None,
                 )
@@ -285,7 +273,21 @@ impl SessionRuntime {
                 );
                 return Ok(());
             }
-            Ok(None) => {}
+            Ok(ExecutionOutcome::RouteExecution {
+                route_execution,
+                reconstructed_history_len,
+            }) => {
+                return Self::finalize_send_message_execution(
+                    app,
+                    db,
+                    journal,
+                    session_id,
+                    &run_id,
+                    route_execution,
+                    reconstructed_history_len,
+                )
+                .await;
+            }
             Err(error) => {
                 if let Some(stop_reason) = parse_run_stop_reason(&error) {
                     let _ = chat_io::append_run_stopped_with_pool(
@@ -319,112 +321,6 @@ impl SessionRuntime {
                 return Err(error);
             }
         }
-
-        let planned_route = plan_implicit_route_with_observation(
-            &prepared_context.route_index,
-            &prepared_context.workspace_skill_entries,
-            &prepared_context.prepared_runtime_tools.skill_command_specs,
-            user_message,
-        );
-        chat_io::append_skill_route_recorded_with_pool(
-            db,
-            journal,
-            session_id,
-            &run_id,
-            &planned_route.observation,
-        )
-        .await?;
-
-        match execute_implicit_route_plan(
-            app,
-            agent_executor,
-            db,
-            session_id,
-            &run_id,
-            &prepared_context,
-            planned_route.route_plan,
-            cancel_flag.clone(),
-            tool_confirm_responder.clone(),
-        )
-        .await?
-        {
-            RouteRunOutcome::OpenTask => {}
-            RouteRunOutcome::DirectDispatch(output) => {
-                chat_io::finalize_run_success_with_pool(
-                    db, journal, session_id, &run_id, &output, false, &output, "", None,
-                )
-                .await?;
-                let _ = app.emit(
-                    "stream-token",
-                    StreamToken {
-                        session_id: session_id.to_string(),
-                        token: output,
-                        done: false,
-                        sub_agent: false,
-                    },
-                );
-                let _ = app.emit(
-                    "stream-token",
-                    StreamToken {
-                        session_id: session_id.to_string(),
-                        token: String::new(),
-                        done: true,
-                        sub_agent: false,
-                    },
-                );
-                return Ok(());
-            }
-            RouteRunOutcome::Prompt {
-                route_execution,
-                reconstructed_history_len,
-            } => {
-                return Self::finalize_send_message_execution(
-                    app,
-                    db,
-                    journal,
-                    session_id,
-                    &run_id,
-                    route_execution,
-                    reconstructed_history_len,
-                )
-                .await;
-            }
-        }
-
-        let route_execution = execute_route_candidates(RouteExecutionParams {
-            app,
-            agent_executor: agent_executor.as_ref(),
-            db,
-            session_id,
-            requested_capability: &prepared_context.requested_capability,
-            route_candidates: &prepared_context.route_candidates,
-            per_candidate_retry_count: prepared_context.per_candidate_retry_count,
-            system_prompt: &prepared_context.prepared_runtime_tools.system_prompt,
-            messages: &prepared_context.messages,
-            allowed_tools: prepared_context
-                .prepared_runtime_tools
-                .allowed_tools
-                .as_deref(),
-            permission_mode: prepared_context.permission_mode,
-            tool_confirm_responder,
-            executor_work_dir: prepared_context.executor_work_dir.clone(),
-            max_iterations: prepared_context.max_iterations,
-            cancel_flag,
-            node_timeout_seconds: prepared_context.node_timeout_seconds,
-            route_retry_count: prepared_context.route_retry_count,
-        })
-        .await;
-
-        Self::finalize_send_message_execution(
-            app,
-            db,
-            journal,
-            session_id,
-            &run_id,
-            route_execution,
-            prepared_context.messages.len(),
-        )
-        .await
     }
 
     pub(crate) async fn prepare_send_message_context(
@@ -816,6 +712,14 @@ mod tests {
     fn parse_user_skill_command_ignores_non_command_messages() {
         assert_eq!(SessionRuntime::parse_user_skill_command("pm_summary"), None);
         assert_eq!(SessionRuntime::parse_user_skill_command("/"), None);
+    }
+
+    #[test]
+    fn session_runtime_still_parses_user_skill_commands_after_engine_extraction() {
+        assert_eq!(
+            SessionRuntime::parse_user_skill_command("/pm_summary --employee xt"),
+            Some(("pm_summary".to_string(), "--employee xt".to_string()))
+        );
     }
 
     #[test]

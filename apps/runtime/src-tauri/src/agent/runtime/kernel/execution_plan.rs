@@ -1,3 +1,5 @@
+use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionLane {
     OpenTask,
@@ -13,6 +15,15 @@ pub(crate) struct ExecutionPlan {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ExecutionContext;
+
+#[derive(Debug, Clone)]
+pub(crate) enum ExecutionOutcome {
+    DirectDispatch(String),
+    RouteExecution {
+        route_execution: RouteExecutionOutcome,
+        reconstructed_history_len: usize,
+    },
+}
 
 #[cfg(test)]
 mod tests {
