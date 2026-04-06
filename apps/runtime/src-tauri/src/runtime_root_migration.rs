@@ -131,7 +131,12 @@ pub fn schedule_runtime_root_migration(
         return Err(RuntimeRootMigrationError::EmptyTargetRoot);
     }
 
-    let mut bootstrap = crate::runtime_bootstrap::read_runtime_root_bootstrap(bootstrap_path)?;
+    let default_root = runtime_paths::resolve_runtime_root();
+    let mut bootstrap = crate::runtime_bootstrap::discover_runtime_root_bootstrap(
+        bootstrap_path,
+        None,
+        &default_root,
+    )?;
     if bootstrap.pending_migration.is_some() {
         return Err(
             RuntimeRootMigrationError::PendingMigrationAlreadyScheduled {
@@ -196,6 +201,27 @@ mod tests {
 
         let persisted = read_runtime_root_bootstrap(&bootstrap_path).expect("read bootstrap");
         assert_eq!(persisted.pending_migration, Some(pending));
+    }
+
+    #[test]
+    fn schedule_migration_recovers_from_malformed_bootstrap() {
+        let (temp_dir, bootstrap_path) = make_bootstrap_path();
+        std::fs::write(&bootstrap_path, "{ this is not valid json")
+            .expect("write malformed bootstrap");
+        let target_root = temp_dir.path().join("scheduled-target");
+        let expected_current_root = runtime_paths::resolve_runtime_root();
+
+        let scheduled = schedule_runtime_root_migration(&bootstrap_path, &target_root)
+            .expect("schedule migration");
+
+        assert_eq!(
+            scheduled.current_root,
+            expected_current_root.to_string_lossy()
+        );
+        assert!(scheduled.pending_migration.is_some());
+
+        let persisted = read_runtime_root_bootstrap(&bootstrap_path).expect("read bootstrap");
+        assert!(persisted.pending_migration.is_some());
     }
 
     #[test]
