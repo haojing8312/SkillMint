@@ -436,18 +436,9 @@ pub(crate) async fn prepare_runtime_tools(
         .registry()
         .register(Arc::new(ask_user_tool));
 
-    let tool_names =
-        chat_io::resolve_tool_names(&params.skill_allowed_tools, params.agent_executor);
-    let resolved_tool_names = match &params.skill_allowed_tools {
-        Some(whitelist) => whitelist.clone(),
-        None => params
-            .agent_executor
-            .registry()
-            .get_tool_definitions()
-            .iter()
-            .filter_map(|tool| tool["name"].as_str().map(str::to_string))
-            .collect(),
-    };
+    let resolved_tool_names =
+        chat_io::resolve_tool_name_list(&params.skill_allowed_tools, params.agent_executor);
+    let tool_names = resolved_tool_names.join(", ");
     let memory_content = chat_io::load_memory_content(&memory_dir);
     let capability_snapshot = CapabilitySnapshot {
         allowed_tools: params.skill_allowed_tools.clone(),
@@ -471,14 +462,12 @@ pub(crate) async fn prepare_runtime_tools(
         system_prompt
     };
 
-    let prepared_runtime_tools = PreparedRuntimeTools {
+    Ok(PreparedRuntimeTools {
         allowed_tools: params.skill_allowed_tools,
         system_prompt,
         skill_command_specs,
         capability_snapshot,
-    };
-    let _ = &prepared_runtime_tools.capability_snapshot;
-    Ok(prepared_runtime_tools)
+    })
 }
 
 #[cfg(test)]
