@@ -84,6 +84,13 @@ impl From<serde_json::Error> for RuntimeBootstrapError {
     }
 }
 
+fn is_recoverable_bootstrap_read_error(error: &RuntimeBootstrapError) -> bool {
+    match error {
+        RuntimeBootstrapError::Io(io_error) => io_error.kind() == std::io::ErrorKind::NotFound,
+        RuntimeBootstrapError::Json(_) => true,
+    }
+}
+
 pub fn bootstrap_file_path(bootstrap_dir: &Path) -> PathBuf {
     bootstrap_dir.join(BOOTSTRAP_FILE_NAME)
 }
@@ -154,11 +161,12 @@ pub fn load_or_create_runtime_root_bootstrap(
 ) -> Result<RuntimeRootBootstrap, RuntimeBootstrapError> {
     match read_runtime_root_bootstrap(bootstrap_path) {
         Ok(bootstrap) => Ok(bootstrap),
-        Err(_) => {
+        Err(error) if is_recoverable_bootstrap_read_error(&error) => {
             let bootstrap = default_runtime_root_bootstrap(default_root);
             write_runtime_root_bootstrap(bootstrap_path, &bootstrap)?;
             Ok(bootstrap)
         }
+        Err(error) => Err(error),
     }
 }
 
@@ -225,6 +233,26 @@ mod tests {
                 .join("dev.workclaw.runtime")
                 .join(BOOTSTRAP_FILE_NAME)
         );
+    }
+
+    #[test]
+    fn only_not_found_and_json_errors_are_recoverable() {
+        let missing = RuntimeBootstrapError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing",
+        ));
+        let denied = RuntimeBootstrapError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        ));
+        let malformed = RuntimeBootstrapError::Json(
+            serde_json::from_str::<RuntimeRootBootstrap>("{ invalid json")
+                .expect_err("invalid json should fail"),
+        );
+
+        assert!(is_recoverable_bootstrap_read_error(&missing));
+        assert!(!is_recoverable_bootstrap_read_error(&denied));
+        assert!(is_recoverable_bootstrap_read_error(&malformed));
     }
 
     #[test]
