@@ -113,7 +113,6 @@ pub(crate) fn plan_implicit_route(
     )
     .execution_plan
     .route_plan
-    .expect("implicit route planning should preserve the transitional route plan")
 }
 
 pub(crate) fn plan_implicit_route_with_observation(
@@ -205,6 +204,40 @@ pub(crate) fn plan_implicit_route_with_observation(
             started_at.elapsed().as_millis() as u64,
         ),
         execution_plan,
+    }
+}
+
+pub(crate) async fn execute_planned_route(
+    app: &AppHandle,
+    agent_executor: &Arc<AgentExecutor>,
+    db: &sqlx::SqlitePool,
+    session_id: &str,
+    run_id: &str,
+    prepared_context: &crate::agent::runtime::session_runtime::PreparedSendMessageContext,
+    execution_plan: &ExecutionPlan,
+    cancel_flag: Arc<AtomicBool>,
+    tool_confirm_responder: crate::agent::runtime::events::ToolConfirmResponder,
+) -> Result<RouteRunOutcome, String> {
+    match execution_plan.lane {
+        crate::agent::runtime::kernel::execution_plan::ExecutionLane::OpenTask => {
+            Ok(RouteRunOutcome::OpenTask)
+        }
+        crate::agent::runtime::kernel::execution_plan::ExecutionLane::PromptInline
+        | crate::agent::runtime::kernel::execution_plan::ExecutionLane::PromptFork
+        | crate::agent::runtime::kernel::execution_plan::ExecutionLane::DirectDispatch => {
+            execute_implicit_route_plan(
+                app,
+                agent_executor,
+                db,
+                session_id,
+                run_id,
+                prepared_context,
+                execution_plan.route_plan.clone(),
+                cancel_flag,
+                tool_confirm_responder,
+            )
+            .await
+        }
     }
 }
 

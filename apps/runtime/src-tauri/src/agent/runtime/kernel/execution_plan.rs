@@ -14,7 +14,7 @@ pub(crate) enum ExecutionLane {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExecutionPlan {
     pub lane: ExecutionLane,
-    pub route_plan: Option<RouteRunPlan>,
+    pub route_plan: RouteRunPlan,
 }
 
 impl ExecutionPlan {
@@ -22,7 +22,7 @@ impl ExecutionPlan {
         let lane = Self::lane_for_route_plan(&route_plan);
         Self {
             lane,
-            route_plan: Some(route_plan),
+            route_plan,
         }
     }
 
@@ -87,11 +87,8 @@ mod tests {
         let execution_plan = ExecutionPlan::from_route_plan(route_plan.clone());
 
         assert_eq!(execution_plan.lane, ExecutionLane::OpenTask);
-        assert!(matches!(
-            execution_plan.route_plan,
-            Some(RouteRunPlan::OpenTask {
-                fallback_reason: Some(RouteFallbackReason::NoCandidates)
-            })
-        ));
+        assert!(matches!(execution_plan.route_plan, RouteRunPlan::OpenTask {
+            fallback_reason: Some(RouteFallbackReason::NoCandidates)
+        }));
     }
 }
