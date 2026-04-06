@@ -1,5 +1,27 @@
 use crate::types::{ChatEmployeeSnapshot, ChatExecutionGuidance};
 
+pub fn compose_system_prompt_from_tool_names(
+    tool_names: &[String],
+    base_prompt: &str,
+    model_name: &str,
+    max_iter: usize,
+    guidance: &ChatExecutionGuidance,
+    workspace_skills_prompt: Option<&str>,
+    employee_collaboration_guidance: Option<&str>,
+    memory_content: Option<&str>,
+) -> String {
+    compose_system_prompt(
+        base_prompt,
+        &tool_names.join(", "),
+        model_name,
+        max_iter,
+        guidance,
+        workspace_skills_prompt,
+        employee_collaboration_guidance,
+        memory_content,
+    )
+}
+
 pub fn compose_system_prompt(
     base_prompt: &str,
     tool_names: &str,

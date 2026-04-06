@@ -1,4 +1,5 @@
 use super::events::{AskUserState, SearchCacheState};
+use crate::agent::runtime::kernel::context_bundle::ContextBundle;
 use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
 use super::runtime_io as chat_io;
 use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
@@ -11,9 +12,7 @@ use crate::agent::tools::{
 };
 use crate::agent::{AgentExecutor, Tool, ToolContext, ToolRegistry};
 use crate::session_journal::SessionJournalStateHandle;
-use runtime_chat_app::{
-    compose_system_prompt, ChatExecutionGuidance, ChatExecutionPreparationService,
-};
+use runtime_chat_app::{ChatExecutionGuidance, ChatExecutionPreparationService};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -438,33 +437,27 @@ pub(crate) async fn prepare_runtime_tools(
 
     let resolved_tool_names =
         chat_io::resolve_tool_name_list(&params.skill_allowed_tools, params.agent_executor);
-    let tool_names = resolved_tool_names.join(", ");
-    let memory_content = chat_io::load_memory_content(&memory_dir);
     let capability_snapshot = CapabilitySnapshot {
         allowed_tools: params.skill_allowed_tools.clone(),
         resolved_tool_names,
         skill_command_specs: skill_command_specs.clone(),
         runtime_notes: runtime_search_note.iter().cloned().collect(),
     };
-    let system_prompt = compose_system_prompt(
+    let memory_content = chat_io::load_memory_content(&memory_dir);
+    let context_bundle = ContextBundle::build(
         params.skill_system_prompt,
-        &tool_names,
+        &capability_snapshot,
         params.model_name,
         params.max_iter,
         params.execution_guidance,
-        workspace_skills_prompt.as_deref(),
-        params.employee_collaboration_guidance,
-        Some(&memory_content),
+        workspace_skills_prompt,
+        params.employee_collaboration_guidance.map(str::to_string),
+        Some(memory_content),
     );
-    let system_prompt = if let Some(runtime_search_note) = runtime_search_note {
-        format!("{system_prompt}\n\n[联网检索状态]\n{runtime_search_note}")
-    } else {
-        system_prompt
-    };
 
     Ok(PreparedRuntimeTools {
         allowed_tools: params.skill_allowed_tools,
-        system_prompt,
+        system_prompt: context_bundle.system_prompt,
         skill_command_specs,
         capability_snapshot,
     })
