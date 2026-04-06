@@ -4,6 +4,7 @@ use super::intent::RouteFallbackReason;
 use super::observability::{build_implicit_route_observation, PlannedImplicitRoute};
 use super::recall::recall_skill_candidates;
 use crate::agent::context::build_tool_context;
+use crate::agent::runtime::kernel::execution_plan::ExecutionPlan;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::attempt_runner::{
     execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
@@ -110,7 +111,9 @@ pub(crate) fn plan_implicit_route(
         command_specs,
         user_message,
     )
+    .execution_plan
     .route_plan
+    .expect("implicit route planning should preserve the transitional route plan")
 }
 
 pub(crate) fn plan_implicit_route_with_observation(
@@ -193,6 +196,7 @@ pub(crate) fn plan_implicit_route_with_observation(
             }
         }
     };
+    let execution_plan = ExecutionPlan::from_route_plan(route_plan.clone());
 
     PlannedImplicitRoute {
         observation: build_implicit_route_observation(
@@ -200,7 +204,7 @@ pub(crate) fn plan_implicit_route_with_observation(
             candidates.len(),
             started_at.elapsed().as_millis() as u64,
         ),
-        route_plan,
+        execution_plan,
     }
 }
 
@@ -773,6 +777,56 @@ mod tests {
             }
             other => panic!("expected prompt-inline plan, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn plan_implicit_route_with_observation_attaches_execution_plan() {
+        let entries = vec![
+            build_entry(
+                "feishu-pm-daily-sync",
+                "PM Daily Sync",
+                "同步项管日报到看板",
+                "## When to Use\n- 同步项管日报到看板并更新状态。\n",
+                None,
+                Some(vec!["read_file", "edit"]),
+                Some(4),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("daily-sync"),
+                None,
+            ),
+            build_entry(
+                "feishu-pm-weekly-work-summary",
+                "PM Weekly Summary",
+                "项管日报汇总",
+                "## When to Use\n- 汇总项管日报并整理任务。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(3),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("weekly-summary"),
+                None,
+            ),
+        ];
+        let index = build_index(entries.clone());
+        let command_specs = build_command_specs(&entries);
+
+        let planned_route = plan_implicit_route_with_observation(
+            &index,
+            &entries,
+            &command_specs,
+            "帮我同步项管日报到看板",
+        );
+
+        assert_eq!(
+            planned_route.execution_plan.lane,
+            crate::agent::runtime::kernel::execution_plan::ExecutionLane::PromptInline
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::execution_plan::{ExecutionOutcome, SessionEngineError};
+use super::execution_plan::{ExecutionLane, ExecutionOutcome, SessionEngineError};
 use crate::agent::runtime::attempt_runner::{
     execute_route_candidates, RouteExecutionParams,
 };
@@ -82,6 +82,11 @@ impl SessionEngine {
             &prepared_context.prepared_runtime_tools.skill_command_specs,
             user_message,
         );
+        let execution_plan = planned_route.execution_plan.clone();
+        let route_plan = execution_plan
+            .route_plan
+            .clone()
+            .expect("execution plan should carry the transitional route plan");
         chat_io::append_skill_route_recorded_with_pool(
             db,
             journal,
@@ -92,21 +97,8 @@ impl SessionEngine {
         .await
         .map_err(SessionEngineError::Generic)?;
 
-        let route_execution = match execute_implicit_route_plan(
-            app,
-            agent_executor,
-            db,
-            session_id,
-            run_id,
-            &prepared_context,
-            planned_route.route_plan,
-            cancel_flag.clone(),
-            tool_confirm_responder.clone(),
-        )
-        .await
-        .map_err(SessionEngineError::Generic)?
-        {
-            RouteRunOutcome::OpenTask => execute_route_candidates(RouteExecutionParams {
+        let route_execution = match execution_plan.lane {
+            ExecutionLane::OpenTask => execute_route_candidates(RouteExecutionParams {
                 app,
                 agent_executor: agent_executor.as_ref(),
                 db,
@@ -129,18 +121,58 @@ impl SessionEngine {
                 route_retry_count: prepared_context.route_retry_count,
             })
             .await,
-            RouteRunOutcome::DirectDispatch(output) => {
-                return Ok(ExecutionOutcome::DirectDispatch(output));
-            }
-            RouteRunOutcome::Prompt {
-                route_execution,
-                reconstructed_history_len,
-            } => {
-                return Ok(ExecutionOutcome::RouteExecution {
+            ExecutionLane::PromptInline
+            | ExecutionLane::PromptFork
+            | ExecutionLane::DirectDispatch => match execute_implicit_route_plan(
+                app,
+                agent_executor,
+                db,
+                session_id,
+                run_id,
+                &prepared_context,
+                route_plan,
+                cancel_flag.clone(),
+                tool_confirm_responder.clone(),
+            )
+            .await
+            .map_err(SessionEngineError::Generic)?
+            {
+                RouteRunOutcome::OpenTask => execute_route_candidates(RouteExecutionParams {
+                    app,
+                    agent_executor: agent_executor.as_ref(),
+                    db,
+                    session_id,
+                    requested_capability: &prepared_context.requested_capability,
+                    route_candidates: &prepared_context.route_candidates,
+                    per_candidate_retry_count: prepared_context.per_candidate_retry_count,
+                    system_prompt: &prepared_context.prepared_runtime_tools.system_prompt,
+                    messages: &prepared_context.messages,
+                    allowed_tools: prepared_context
+                        .prepared_runtime_tools
+                        .allowed_tools
+                        .as_deref(),
+                    permission_mode: prepared_context.permission_mode,
+                    tool_confirm_responder,
+                    executor_work_dir: prepared_context.executor_work_dir.clone(),
+                    max_iterations: prepared_context.max_iterations,
+                    cancel_flag,
+                    node_timeout_seconds: prepared_context.node_timeout_seconds,
+                    route_retry_count: prepared_context.route_retry_count,
+                })
+                .await,
+                RouteRunOutcome::DirectDispatch(output) => {
+                    return Ok(ExecutionOutcome::DirectDispatch(output));
+                }
+                RouteRunOutcome::Prompt {
                     route_execution,
                     reconstructed_history_len,
-                });
-            }
+                } => {
+                    return Ok(ExecutionOutcome::RouteExecution {
+                        route_execution,
+                        reconstructed_history_len,
+                    });
+                }
+            },
         };
 
         Ok(ExecutionOutcome::RouteExecution {

@@ -1,5 +1,6 @@
 use super::intent::RouteFallbackReason;
 use super::runner::RouteRunPlan;
+use crate::agent::runtime::kernel::execution_plan::ExecutionPlan;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImplicitRouteObservation {
@@ -12,7 +13,7 @@ pub(crate) struct ImplicitRouteObservation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlannedImplicitRoute {
-    pub route_plan: RouteRunPlan,
+    pub execution_plan: ExecutionPlan,
     pub observation: ImplicitRouteObservation,
 }
 
