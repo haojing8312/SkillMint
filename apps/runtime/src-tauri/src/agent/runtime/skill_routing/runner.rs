@@ -4,7 +4,9 @@ use super::intent::RouteFallbackReason;
 use super::observability::{build_implicit_route_observation, PlannedImplicitRoute};
 use super::recall::recall_skill_candidates;
 use crate::agent::context::build_tool_context;
-use crate::agent::runtime::kernel::execution_plan::ExecutionPlan;
+use crate::agent::runtime::kernel::execution_plan::{
+    ExecutionContext, ExecutionPlan, TurnContext,
+};
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::attempt_runner::{
     execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
@@ -213,7 +215,8 @@ pub(crate) async fn execute_planned_route(
     db: &sqlx::SqlitePool,
     session_id: &str,
     run_id: &str,
-    prepared_context: &crate::agent::runtime::session_runtime::PreparedSendMessageContext,
+    turn_context: &TurnContext,
+    execution_context: &ExecutionContext,
     execution_plan: &ExecutionPlan,
     cancel_flag: Arc<AtomicBool>,
     tool_confirm_responder: crate::agent::runtime::events::ToolConfirmResponder,
@@ -231,7 +234,8 @@ pub(crate) async fn execute_planned_route(
                 db,
                 session_id,
                 run_id,
-                prepared_context,
+                turn_context,
+                execution_context,
                 execution_plan.route_plan.clone(),
                 cancel_flag,
                 tool_confirm_responder,
@@ -247,14 +251,12 @@ pub(crate) async fn execute_implicit_route_plan(
     db: &sqlx::SqlitePool,
     session_id: &str,
     run_id: &str,
-    prepared_context: &crate::agent::runtime::session_runtime::PreparedSendMessageContext,
+    turn_context: &TurnContext,
+    execution_context: &ExecutionContext,
     route_plan: RouteRunPlan,
     cancel_flag: Arc<AtomicBool>,
     tool_confirm_responder: crate::agent::runtime::events::ToolConfirmResponder,
 ) -> Result<RouteRunOutcome, String> {
-    let execution_context = &prepared_context.execution_context;
-    let turn_context = &prepared_context.turn_context;
-
     match route_plan {
         RouteRunPlan::OpenTask { .. } => Ok(RouteRunOutcome::OpenTask),
         RouteRunPlan::DirectDispatchSkill {

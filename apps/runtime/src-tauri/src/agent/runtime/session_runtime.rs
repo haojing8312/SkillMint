@@ -161,15 +161,14 @@ impl SessionRuntime {
         session_id: &str,
         run_id: &str,
         user_message: &str,
-        prepared_context: &PreparedSendMessageContext,
+        execution_context: &ExecutionContext,
         cancel_flag: Arc<AtomicBool>,
         tool_confirm_responder: ToolConfirmResponder,
     ) -> Result<Option<String>, String> {
         let Some((command_name, raw_args)) = Self::parse_user_skill_command(user_message) else {
             return Ok(None);
         };
-        let Some(spec) = prepared_context
-            .execution_context
+        let Some(spec) = execution_context
             .skill_command_specs()
             .iter()
             .find(|spec| spec.name.eq_ignore_ascii_case(&command_name) && spec.dispatch.is_some())
@@ -179,14 +178,11 @@ impl SessionRuntime {
 
         let tool_ctx = build_tool_context(
             Some(session_id),
-            prepared_context
-                .execution_context
+            execution_context
                 .executor_work_dir
                 .as_ref()
                 .map(PathBuf::from),
-            prepared_context
-                .execution_context
-                .allowed_tools(),
+            execution_context.allowed_tools(),
         )
         .map_err(|err| err.to_string())?;
         let dispatch_context = crate::agent::runtime::tool_dispatch::ToolDispatchContext {
@@ -194,15 +190,13 @@ impl SessionRuntime {
             app_handle: Some(app),
             session_id: Some(session_id),
             persisted_run_id: Some(run_id),
-            allowed_tools: prepared_context
-                .execution_context
-                .allowed_tools(),
-            permission_mode: prepared_context.execution_context.permission_mode,
+            allowed_tools: execution_context.allowed_tools(),
+            permission_mode: execution_context.permission_mode,
             tool_ctx: &tool_ctx,
             tool_confirm_tx: Some(&tool_confirm_responder),
             cancel_flag: Some(cancel_flag),
             route_run_id: run_id,
-            route_node_timeout_secs: prepared_context.execution_context.node_timeout_seconds,
+            route_node_timeout_secs: execution_context.node_timeout_seconds,
             route_retry_count: 0,
             iteration: 1,
             run_budget_policy: RunBudgetPolicy::for_scope(RunBudgetScope::Skill),

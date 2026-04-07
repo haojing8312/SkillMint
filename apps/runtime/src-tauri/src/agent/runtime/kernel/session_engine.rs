@@ -59,7 +59,7 @@ impl SessionEngine {
             session_id,
             run_id,
             user_message,
-            &prepared_context,
+            execution_context,
             cancel_flag.clone(),
             tool_confirm_responder.clone(),
         )
@@ -101,7 +101,8 @@ impl SessionEngine {
             db,
             session_id,
             run_id,
-            &prepared_context,
+            turn_context,
+            execution_context,
             &execution_plan,
             cancel_flag.clone(),
             tool_confirm_responder.clone(),
