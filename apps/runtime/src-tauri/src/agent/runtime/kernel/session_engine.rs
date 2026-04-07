@@ -47,6 +47,7 @@ impl SessionEngine {
         .await
         .map_err(SessionEngineError::Generic)?;
         let execution_context = &prepared_context.execution_context;
+        let turn_context = &prepared_context.turn_context;
 
         chat_io::append_run_started_with_pool(db, journal, session_id, run_id, user_message_id)
             .await
@@ -113,11 +114,11 @@ impl SessionEngine {
                 agent_executor: agent_executor.as_ref(),
                 db,
                 session_id,
-                requested_capability: &prepared_context.requested_capability,
-                route_candidates: &prepared_context.route_candidates,
-                per_candidate_retry_count: prepared_context.per_candidate_retry_count,
+                requested_capability: &turn_context.requested_capability,
+                route_candidates: &turn_context.route_candidates,
+                per_candidate_retry_count: turn_context.per_candidate_retry_count,
                 system_prompt: &execution_context.system_prompt,
-                messages: &prepared_context.messages,
+                messages: &turn_context.messages,
                 allowed_tools: execution_context.allowed_tools(),
                 permission_mode: execution_context.permission_mode,
                 tool_confirm_responder,
@@ -144,7 +145,7 @@ impl SessionEngine {
 
         Ok(ExecutionOutcome::RouteExecution {
             route_execution,
-            reconstructed_history_len: prepared_context.messages.len(),
+            reconstructed_history_len: turn_context.messages.len(),
         })
     }
 }

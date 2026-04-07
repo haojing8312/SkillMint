@@ -1,6 +1,6 @@
 use super::events::ToolConfirmResponder;
 use crate::agent::runtime::kernel::execution_plan::{
-    ExecutionContext, ExecutionOutcome, SessionEngineError,
+    ExecutionContext, ExecutionOutcome, SessionEngineError, TurnContext,
 };
 use crate::agent::runtime::kernel::outcome_commit::{OutcomeCommitter, TerminalOutcome};
 use crate::agent::runtime::kernel::session_engine::SessionEngine;
@@ -46,10 +46,7 @@ enum SessionTurnCompletion {
 
 #[derive(Clone)]
 pub(crate) struct PreparedSendMessageContext {
-    pub requested_capability: String,
-    pub route_candidates: Vec<(String, String, String, String, String)>,
-    pub per_candidate_retry_count: usize,
-    pub messages: Vec<Value>,
+    pub turn_context: TurnContext,
     pub execution_context: ExecutionContext,
 }
 
@@ -537,10 +534,12 @@ impl SessionRuntime {
         };
 
         Ok(PreparedSendMessageContext {
-            requested_capability,
-            route_candidates,
-            per_candidate_retry_count,
-            messages,
+            turn_context: TurnContext {
+                requested_capability,
+                route_candidates,
+                per_candidate_retry_count,
+                messages,
+            },
             execution_context,
         })
     }

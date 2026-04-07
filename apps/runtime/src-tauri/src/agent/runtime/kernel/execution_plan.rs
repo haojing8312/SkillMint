@@ -6,6 +6,7 @@ use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
 use crate::agent::runtime::skill_routing::runner::RouteRunPlan;
 use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
 use runtime_chat_app::ChatExecutionGuidance;
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecutionLane {
@@ -95,6 +96,14 @@ impl ExecutionContext {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TurnContext {
+    pub requested_capability: String,
+    pub route_candidates: Vec<(String, String, String, String, String)>,
+    pub per_candidate_retry_count: usize,
+    pub messages: Vec<Value>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ExecutionOutcome {
     DirectDispatch(String),
@@ -116,7 +125,7 @@ pub(crate) enum SessionEngineError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecutionContext, ExecutionLane, ExecutionPlan};
+    use super::{ExecutionContext, ExecutionLane, ExecutionPlan, TurnContext};
     use crate::agent::permissions::PermissionMode;
     use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
@@ -189,5 +198,29 @@ mod tests {
             execution_context.employee_collaboration_guidance.as_deref(),
             Some("Work with employee-1")
         );
+    }
+
+    #[test]
+    fn turn_context_keeps_request_and_candidate_state_together() {
+        let turn_context = TurnContext {
+            requested_capability: "chat".to_string(),
+            route_candidates: vec![(
+                "provider-1".to_string(),
+                "openai".to_string(),
+                "https://example.invalid".to_string(),
+                "gpt-4.1".to_string(),
+                "key".to_string(),
+            )],
+            per_candidate_retry_count: 2,
+            messages: vec![serde_json::json!({
+                "role": "user",
+                "content": "请总结今天的变更"
+            })],
+        };
+
+        assert_eq!(turn_context.requested_capability, "chat");
+        assert_eq!(turn_context.route_candidates.len(), 1);
+        assert_eq!(turn_context.per_candidate_retry_count, 2);
+        assert_eq!(turn_context.messages.len(), 1);
     }
 }

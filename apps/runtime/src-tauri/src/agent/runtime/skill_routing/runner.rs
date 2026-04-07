@@ -253,6 +253,7 @@ pub(crate) async fn execute_implicit_route_plan(
     tool_confirm_responder: crate::agent::runtime::events::ToolConfirmResponder,
 ) -> Result<RouteRunOutcome, String> {
     let execution_context = &prepared_context.execution_context;
+    let turn_context = &prepared_context.turn_context;
 
     match route_plan {
         RouteRunPlan::OpenTask { .. } => Ok(RouteRunOutcome::OpenTask),
@@ -311,10 +312,10 @@ pub(crate) async fn execute_implicit_route_plan(
                 agent_executor,
                 workspace_skill_entries: &execution_context.workspace_skill_entries,
                 session_id,
-                api_format: &prepared_context.route_candidates[0].1,
-                base_url: &prepared_context.route_candidates[0].2,
-                model_name: &prepared_context.route_candidates[0].3,
-                api_key: &prepared_context.route_candidates[0].4,
+                api_format: &turn_context.route_candidates[0].1,
+                base_url: &turn_context.route_candidates[0].2,
+                model_name: &turn_context.route_candidates[0].3,
+                api_key: &turn_context.route_candidates[0].4,
                 skill_id: &skill_id,
                 source_type: &setup.source_type,
                 pack_path: &setup.pack_path,
@@ -337,11 +338,11 @@ pub(crate) async fn execute_implicit_route_plan(
                 agent_executor: agent_executor.as_ref(),
                 db,
                 session_id,
-                requested_capability: &prepared_context.requested_capability,
-                route_candidates: &prepared_context.route_candidates,
-                per_candidate_retry_count: prepared_context.per_candidate_retry_count,
+                requested_capability: &turn_context.requested_capability,
+                route_candidates: &turn_context.route_candidates,
+                per_candidate_retry_count: turn_context.per_candidate_retry_count,
                 system_prompt: &prepared_runtime_tools.system_prompt,
-                messages: &prepared_context.messages,
+                messages: &turn_context.messages,
                 allowed_tools: prepared_runtime_tools.allowed_tools.as_deref(),
                 permission_mode: execution_context.permission_mode,
                 tool_confirm_responder,
@@ -355,7 +356,7 @@ pub(crate) async fn execute_implicit_route_plan(
 
             Ok(RouteRunOutcome::Prompt {
                 route_execution,
-                reconstructed_history_len: prepared_context.messages.len(),
+                reconstructed_history_len: turn_context.messages.len(),
             })
         }
         RouteRunPlan::PromptSkillFork { skill_id, setup } => {
@@ -376,10 +377,10 @@ pub(crate) async fn execute_implicit_route_plan(
                 agent_executor,
                 workspace_skill_entries: &execution_context.workspace_skill_entries,
                 session_id,
-                api_format: &prepared_context.route_candidates[0].1,
-                base_url: &prepared_context.route_candidates[0].2,
-                model_name: &prepared_context.route_candidates[0].3,
-                api_key: &prepared_context.route_candidates[0].4,
+                api_format: &turn_context.route_candidates[0].1,
+                base_url: &turn_context.route_candidates[0].2,
+                model_name: &turn_context.route_candidates[0].3,
+                api_key: &turn_context.route_candidates[0].4,
                 skill_id: &skill_id,
                 source_type: &setup.source_type,
                 pack_path: &setup.pack_path,
@@ -397,15 +398,15 @@ pub(crate) async fn execute_implicit_route_plan(
             })
             .await?;
 
-            let fork_messages = build_fork_messages(&prepared_context.messages);
+            let fork_messages = build_fork_messages(&turn_context.messages);
             let route_execution = execute_route_candidates(RouteExecutionParams {
                 app,
                 agent_executor: agent_executor.as_ref(),
                 db,
                 session_id,
-                requested_capability: &prepared_context.requested_capability,
-                route_candidates: &prepared_context.route_candidates,
-                per_candidate_retry_count: prepared_context.per_candidate_retry_count,
+                requested_capability: &turn_context.requested_capability,
+                route_candidates: &turn_context.route_candidates,
+                per_candidate_retry_count: turn_context.per_candidate_retry_count,
                 system_prompt: &prepared_runtime_tools.system_prompt,
                 messages: &fork_messages,
                 allowed_tools: prepared_runtime_tools.allowed_tools.as_deref(),
