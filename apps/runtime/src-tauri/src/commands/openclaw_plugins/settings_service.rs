@@ -4,9 +4,7 @@ use crate::commands::feishu_gateway::{
 };
 use sqlx::SqlitePool;
 
-use super::{
-    merge_pairing_allow_from, OpenClawPluginFeishuAdvancedSettings,
-};
+use super::{merge_pairing_allow_from, OpenClawPluginFeishuAdvancedSettings};
 
 pub(crate) fn app_setting_string_or_default(value: Option<String>, default: &str) -> String {
     value
@@ -72,7 +70,11 @@ fn parse_app_setting_string_list(value: Option<String>) -> serde_json::Value {
 }
 
 fn parse_app_setting_json_object(value: Option<String>) -> serde_json::Value {
-    let Some(raw) = value.as_deref().map(str::trim).filter(|entry| !entry.is_empty()) else {
+    let Some(raw) = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    else {
         return serde_json::json!({});
     };
 

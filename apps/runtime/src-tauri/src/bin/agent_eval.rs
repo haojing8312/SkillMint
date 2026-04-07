@@ -124,8 +124,8 @@ fn scenario_path_for(scenario_id: &str) -> PathBuf {
 }
 
 fn load_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("读取文件失败 {}: {e}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("读取文件失败 {}: {e}", path.display()))?;
     serde_yaml::from_str(&raw).map_err(|e| format!("解析 YAML 失败 {}: {e}", path.display()))
 }
 

@@ -449,13 +449,9 @@ async fn export_session_does_not_duplicate_failed_run_recovery_when_assistant_me
     .await
     .expect("append run started");
 
-    attach_assistant_message_to_run_with_pool(
-        &pool,
-        "run-max-turns",
-        "msg-assistant-max-turns",
-    )
-    .await
-    .expect("attach assistant message");
+    attach_assistant_message_to_run_with_pool(&pool, "run-max-turns", "msg-assistant-max-turns")
+        .await
+        .expect("attach assistant message");
 
     append_session_run_event_with_pool(
         &pool,
