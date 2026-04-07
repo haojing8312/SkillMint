@@ -4,20 +4,19 @@ use super::intent::RouteFallbackReason;
 use super::observability::{build_implicit_route_observation, PlannedImplicitRoute};
 use super::recall::recall_skill_candidates;
 use crate::agent::context::build_tool_context;
-use crate::agent::runtime::kernel::execution_plan::{
-    ExecutionContext, ExecutionPlan, TurnContext,
-};
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::attempt_runner::{
     execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
+};
+use crate::agent::runtime::kernel::execution_plan::{ExecutionContext, ExecutionPlan, TurnContext};
+use crate::agent::runtime::kernel::routed_prompt::{
+    prepare_routed_prompt, RoutedPromptPreparationParams,
 };
 use crate::agent::runtime::runtime_io::{
     WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
 };
 use crate::agent::runtime::tool_dispatch::{dispatch_skill_command, ToolDispatchContext};
-use crate::agent::runtime::tool_setup::{prepare_runtime_tools, ToolSetupParams};
 use crate::agent::AgentExecutor;
-use runtime_chat_app::ChatExecutionPreparationService;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -301,41 +300,22 @@ pub(crate) async fn execute_implicit_route_plan(
             Ok(RouteRunOutcome::DirectDispatch(output))
         }
         RouteRunPlan::PromptSkillInline { skill_id, setup } => {
-            let execution_preparation_service = ChatExecutionPreparationService::new();
-            let max_iter = RunBudgetPolicy::resolve(
-                if skill_id.eq_ignore_ascii_case("builtin-general") {
-                    RunBudgetScope::GeneralChat
-                } else {
-                    RunBudgetScope::Skill
-                },
-                setup.max_iterations,
-            )
-            .max_turns;
-
-            let prepared_runtime_tools = prepare_runtime_tools(ToolSetupParams {
+            let prepared_prompt = prepare_routed_prompt(RoutedPromptPreparationParams {
                 app,
                 db,
                 agent_executor,
-                workspace_skill_entries: &execution_context.workspace_skill_entries,
                 session_id,
+                execution_context,
                 api_format: &primary_route_candidate.1,
                 base_url: &primary_route_candidate.2,
                 model_name: &primary_route_candidate.3,
                 api_key: &primary_route_candidate.4,
                 skill_id: &skill_id,
-                source_type: &setup.source_type,
-                pack_path: &setup.pack_path,
                 skill_system_prompt: &setup.skill_system_prompt,
                 skill_allowed_tools: setup.skill_allowed_tools.clone(),
-                max_iter,
-                max_call_depth: execution_context.max_call_depth,
-                suppress_workspace_skills_prompt: false,
-                execution_preparation_service: &execution_preparation_service,
-                execution_guidance: &execution_context.execution_guidance,
-                memory_bucket_employee_id: &execution_context.memory_bucket_employee_id,
-                employee_collaboration_guidance: execution_context
-                    .employee_collaboration_guidance
-                    .as_deref(),
+                skill_max_iterations: setup.max_iterations,
+                source_type: &setup.source_type,
+                pack_path: &setup.pack_path,
             })
             .await?;
 
@@ -347,13 +327,13 @@ pub(crate) async fn execute_implicit_route_plan(
                 requested_capability: &turn_context.requested_capability,
                 route_candidates: &turn_context.route_candidates,
                 per_candidate_retry_count: turn_context.per_candidate_retry_count,
-                system_prompt: &prepared_runtime_tools.system_prompt,
+                system_prompt: &prepared_prompt.system_prompt,
                 messages: &turn_context.messages,
-                allowed_tools: prepared_runtime_tools.allowed_tools.as_deref(),
+                allowed_tools: prepared_prompt.allowed_tools.as_deref(),
                 permission_mode: execution_context.permission_mode,
                 tool_confirm_responder,
                 executor_work_dir: execution_context.executor_work_dir.clone(),
-                max_iterations: Some(max_iter),
+                max_iterations: Some(prepared_prompt.max_iterations),
                 cancel_flag,
                 node_timeout_seconds: execution_context.node_timeout_seconds,
                 route_retry_count: execution_context.route_retry_count,
@@ -366,41 +346,22 @@ pub(crate) async fn execute_implicit_route_plan(
             })
         }
         RouteRunPlan::PromptSkillFork { skill_id, setup } => {
-            let execution_preparation_service = ChatExecutionPreparationService::new();
-            let max_iter = RunBudgetPolicy::resolve(
-                if skill_id.eq_ignore_ascii_case("builtin-general") {
-                    RunBudgetScope::GeneralChat
-                } else {
-                    RunBudgetScope::Skill
-                },
-                setup.max_iterations,
-            )
-            .max_turns;
-
-            let prepared_runtime_tools = prepare_runtime_tools(ToolSetupParams {
+            let prepared_prompt = prepare_routed_prompt(RoutedPromptPreparationParams {
                 app,
                 db,
                 agent_executor,
-                workspace_skill_entries: &execution_context.workspace_skill_entries,
                 session_id,
+                execution_context,
                 api_format: &primary_route_candidate.1,
                 base_url: &primary_route_candidate.2,
                 model_name: &primary_route_candidate.3,
                 api_key: &primary_route_candidate.4,
                 skill_id: &skill_id,
-                source_type: &setup.source_type,
-                pack_path: &setup.pack_path,
                 skill_system_prompt: &setup.skill_system_prompt,
                 skill_allowed_tools: setup.skill_allowed_tools.clone(),
-                max_iter,
-                max_call_depth: execution_context.max_call_depth,
-                suppress_workspace_skills_prompt: false,
-                execution_preparation_service: &execution_preparation_service,
-                execution_guidance: &execution_context.execution_guidance,
-                memory_bucket_employee_id: &execution_context.memory_bucket_employee_id,
-                employee_collaboration_guidance: execution_context
-                    .employee_collaboration_guidance
-                    .as_deref(),
+                skill_max_iterations: setup.max_iterations,
+                source_type: &setup.source_type,
+                pack_path: &setup.pack_path,
             })
             .await?;
 
@@ -413,13 +374,13 @@ pub(crate) async fn execute_implicit_route_plan(
                 requested_capability: &turn_context.requested_capability,
                 route_candidates: &turn_context.route_candidates,
                 per_candidate_retry_count: turn_context.per_candidate_retry_count,
-                system_prompt: &prepared_runtime_tools.system_prompt,
+                system_prompt: &prepared_prompt.system_prompt,
                 messages: &fork_messages,
-                allowed_tools: prepared_runtime_tools.allowed_tools.as_deref(),
+                allowed_tools: prepared_prompt.allowed_tools.as_deref(),
                 permission_mode: execution_context.permission_mode,
                 tool_confirm_responder,
                 executor_work_dir: execution_context.executor_work_dir.clone(),
-                max_iterations: Some(max_iter),
+                max_iterations: Some(prepared_prompt.max_iterations),
                 cancel_flag,
                 node_timeout_seconds: execution_context.node_timeout_seconds,
                 route_retry_count: execution_context.route_retry_count,
