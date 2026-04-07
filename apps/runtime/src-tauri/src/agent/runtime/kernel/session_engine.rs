@@ -1,15 +1,12 @@
 use super::execution_plan::{ExecutionOutcome, SessionEngineError};
-use crate::agent::runtime::attempt_runner::{
-    execute_route_candidates, RouteExecutionParams,
-};
-use crate::agent::runtime::events::ToolConfirmResponder;
-use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::run_guard::parse_run_stop_reason;
+use crate::agent::runtime::attempt_runner::{execute_route_candidates, RouteExecutionParams};
+use crate::agent::runtime::events::ToolConfirmResponder;
+use crate::agent::runtime::kernel::turn_preparation::{prepare_local_turn, PrepareLocalTurnParams};
+use crate::agent::runtime::runtime_io as chat_io;
+use crate::agent::runtime::session_runtime::SessionRuntime;
 use crate::agent::runtime::skill_routing::runner::{
     execute_planned_route, plan_implicit_route_with_observation, RouteRunOutcome,
-};
-use crate::agent::runtime::session_runtime::{
-    PrepareSendMessageParams, SessionRuntime,
 };
 use crate::agent::AgentExecutor;
 use serde_json::Value;
@@ -35,7 +32,7 @@ impl SessionEngine {
         cancel_flag: Arc<AtomicBool>,
         tool_confirm_responder: ToolConfirmResponder,
     ) -> Result<ExecutionOutcome, SessionEngineError> {
-        let prepared_context = SessionRuntime::prepare_send_message_context(PrepareSendMessageParams {
+        let prepared_context = prepare_local_turn(PrepareLocalTurnParams {
             app,
             db,
             agent_executor,
@@ -68,10 +65,9 @@ impl SessionEngine {
             Ok(None) => {}
             Err(error) => {
                 return Ok(match parse_run_stop_reason(&error) {
-                    Some(stop_reason) => ExecutionOutcome::SkillCommandStopped {
-                        stop_reason,
-                        error,
-                    },
+                    Some(stop_reason) => {
+                        ExecutionOutcome::SkillCommandStopped { stop_reason, error }
+                    }
                     None => ExecutionOutcome::SkillCommandFailed(error),
                 });
             }
@@ -109,26 +105,28 @@ impl SessionEngine {
         .await
         .map_err(SessionEngineError::Generic)?
         {
-            RouteRunOutcome::OpenTask => execute_route_candidates(RouteExecutionParams {
-                app,
-                agent_executor: agent_executor.as_ref(),
-                db,
-                session_id,
-                requested_capability: &turn_context.requested_capability,
-                route_candidates: &turn_context.route_candidates,
-                per_candidate_retry_count: turn_context.per_candidate_retry_count,
-                system_prompt: &execution_context.system_prompt,
-                messages: &turn_context.messages,
-                allowed_tools: execution_context.allowed_tools(),
-                permission_mode: execution_context.permission_mode,
-                tool_confirm_responder,
-                executor_work_dir: execution_context.executor_work_dir.clone(),
-                max_iterations: execution_context.max_iterations,
-                cancel_flag,
-                node_timeout_seconds: execution_context.node_timeout_seconds,
-                route_retry_count: execution_context.route_retry_count,
-            })
-            .await,
+            RouteRunOutcome::OpenTask => {
+                execute_route_candidates(RouteExecutionParams {
+                    app,
+                    agent_executor: agent_executor.as_ref(),
+                    db,
+                    session_id,
+                    requested_capability: &turn_context.requested_capability,
+                    route_candidates: &turn_context.route_candidates,
+                    per_candidate_retry_count: turn_context.per_candidate_retry_count,
+                    system_prompt: &execution_context.system_prompt,
+                    messages: &turn_context.messages,
+                    allowed_tools: execution_context.allowed_tools(),
+                    permission_mode: execution_context.permission_mode,
+                    tool_confirm_responder,
+                    executor_work_dir: execution_context.executor_work_dir.clone(),
+                    max_iterations: execution_context.max_iterations,
+                    cancel_flag,
+                    node_timeout_seconds: execution_context.node_timeout_seconds,
+                    route_retry_count: execution_context.route_retry_count,
+                })
+                .await
+            }
             RouteRunOutcome::DirectDispatch(output) => {
                 return Ok(ExecutionOutcome::DirectDispatch(output));
             }
