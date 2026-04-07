@@ -704,6 +704,8 @@ function createPluginApi(registry, { runtime, logger, config, registrationMode }
 
 function rewriteImportsInFixture(rootDir) {
   const stack = [rootDir];
+  const importMetaCompatBinding =
+    "const __workclawImportMetaUrl = require('node:url').pathToFileURL(__filename).href;";
 
   while (stack.length > 0) {
     const currentDir = stack.pop();
@@ -760,7 +762,7 @@ function rewriteImportsInFixture(rootDir) {
         ["module.exports", "exports.", "Object.defineProperty(exports"].some((marker) =>
           rewritten.includes(marker),
         );
-      const normalized = needsImportMetaCompat
+      let normalized = needsImportMetaCompat
         ? rewritten
             .replaceAll(
               /const __filename = .*?import\.meta\.url.*?;/g,
@@ -768,7 +770,18 @@ function rewriteImportsInFixture(rootDir) {
             )
             .replaceAll("dirname(__filename)", "dirname(__filenameCompat)")
             .replaceAll(".dirname)(__filename)", ".dirname)(__filenameCompat)")
+            .replaceAll("import.meta.url", "__workclawImportMetaUrl")
         : rewritten;
+      if (
+        needsImportMetaCompat &&
+        normalized.includes("__workclawImportMetaUrl") &&
+        !normalized.includes(importMetaCompatBinding)
+      ) {
+        const strictDirectiveMatch = normalized.match(/^(["'])use strict\1;\r?\n?/);
+        normalized = strictDirectiveMatch
+          ? `${strictDirectiveMatch[0]}${importMetaCompatBinding}\n${normalized.slice(strictDirectiveMatch[0].length)}`
+          : `${importMetaCompatBinding}\n${normalized}`;
+      }
       fs.writeFileSync(entryPath, normalized, "utf8");
     }
   }

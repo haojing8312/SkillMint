@@ -678,6 +678,131 @@ describe("plugin runtime", () => {
     }
   }, 20000);
 
+  it("supports CommonJS plugins whose internal files use createRequire fallback with import.meta.url", async () => {
+    const pluginRoot = await createTempPluginRoot();
+    await fs.writeFile(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        openclaw: {
+          extensions: ["./index.js"],
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "index.js"),
+      [
+        "\"use strict\";",
+        "const { getMarker } = require('./src/core/token-store.js');",
+        "module.exports = {",
+        "  register(api) {",
+        "    api.registerChannel({",
+        "      plugin: {",
+        "        id: 'feishu',",
+        "        config: {",
+        "          resolveAccount() {",
+        "            return { accountId: 'default', enabled: true, configured: true };",
+        "          },",
+        "        },",
+        "        outbound: {",
+        "          async sendText({ to, text, accountId }) {",
+        "            return { delivered: true, channel: 'feishu', accountId, target: to, text, chatId: `plugin:${to}`, messageId: 'plugin_cjs_create_require_message_1' };",
+        "          },",
+        "        },",
+        "        gateway: {",
+        "          async startAccount({ setStatus }) {",
+        "            setStatus({ running: true, marker: getMarker() });",
+        "          },",
+        "        },",
+        "      },",
+        "    });",
+        "  },",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.mkdir(path.join(pluginRoot, "src", "core"), { recursive: true });
+    await fs.writeFile(
+      path.join(pluginRoot, "src", "core", "token-store.js"),
+      [
+        "\"use strict\";",
+        "Object.defineProperty(exports, \"__esModule\", { value: true });",
+        "exports.getMarker = getMarker;",
+        "const { createRequire } = require('node:module');",
+        "const logger = require('./lark-logger.js');",
+        "const _require = createRequire(typeof __filename !== 'undefined' ? __filename : import.meta.url);",
+        "function getMarker() {",
+        "  return logger.marker ?? typeof _require;",
+        "}",
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "src", "core", "lark-logger.js"),
+      [
+        "\"use strict\";",
+        "Object.defineProperty(exports, \"__esModule\", { value: true });",
+        "exports.marker = 'create-require-fallback';",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = spawn(
+      process.execPath,
+      [
+        path.join("scripts", "run-feishu-host.mjs"),
+        "--plugin-root",
+        pluginRoot,
+        "--fixture-name",
+        "runtime-cjs-create-require-import-meta",
+        "--account-id",
+        "default",
+      ],
+      {
+        cwd: pluginHostDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const collector = createEventCollector(child.stdout, child.stderr);
+    try {
+      const readyEvent = await collector.waitFor(
+        (event) => event.event === "ready",
+        "expected ready event from CommonJS createRequire fallback fixture",
+      );
+      expect(readyEvent).toMatchObject({
+        event: "ready",
+        accountId: "default",
+      });
+
+      const statusEvent = await collector.waitFor(
+        (event) =>
+          event.event === "status" &&
+          typeof event.patch === "object" &&
+          event.patch !== null &&
+          (event.patch as Record<string, unknown>).running === true,
+        "expected running status from CommonJS createRequire fallback fixture",
+      );
+      expect(statusEvent).toMatchObject({
+        event: "status",
+        patch: expect.objectContaining({
+          running: true,
+          marker: "create-require-fallback",
+        }),
+      });
+
+      child.stdin.end();
+      await collector.waitFor(
+        (event) => event.event === "stopped",
+        "expected stopped event after CommonJS createRequire fallback fixture stdin close",
+      );
+      await once(child, "exit");
+    } finally {
+      collector.close();
+      child.kill();
+    }
+  }, 20000);
+
   it("supports CommonJS plugins that expose the plugin via exports.default", async () => {
     const pluginRoot = await createTempPluginRoot();
     await fs.writeFile(
