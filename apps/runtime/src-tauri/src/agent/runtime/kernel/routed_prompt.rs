@@ -1,8 +1,15 @@
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
+use crate::agent::runtime::attempt_runner::{
+    execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
+};
+use crate::agent::runtime::events::ToolConfirmResponder;
 use crate::agent::runtime::kernel::execution_plan::ExecutionContext;
+use crate::agent::runtime::kernel::execution_plan::TurnContext;
 use crate::agent::runtime::tool_setup::{prepare_runtime_tools, ToolSetupParams};
 use crate::agent::AgentExecutor;
 use runtime_chat_app::ChatExecutionPreparationService;
+use serde_json::Value;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::AppHandle;
 
@@ -30,6 +37,20 @@ pub(crate) struct RoutedPromptPreparationParams<'a> {
     pub skill_max_iterations: Option<usize>,
     pub source_type: &'a str,
     pub pack_path: &'a str,
+}
+
+#[derive(Clone)]
+pub(crate) struct RoutedPromptExecutionParams<'a> {
+    pub app: &'a AppHandle,
+    pub agent_executor: &'a Arc<AgentExecutor>,
+    pub db: &'a sqlx::SqlitePool,
+    pub session_id: &'a str,
+    pub turn_context: &'a TurnContext,
+    pub execution_context: &'a ExecutionContext,
+    pub prepared_prompt: &'a PreparedRoutedPrompt,
+    pub messages: &'a [Value],
+    pub tool_confirm_responder: ToolConfirmResponder,
+    pub cancel_flag: Arc<AtomicBool>,
 }
 
 pub(crate) fn resolve_routed_prompt_max_iterations(
@@ -89,9 +110,34 @@ pub(crate) async fn prepare_routed_prompt(
     })
 }
 
+pub(crate) async fn execute_routed_prompt(
+    params: RoutedPromptExecutionParams<'_>,
+) -> RouteExecutionOutcome {
+    execute_route_candidates(RouteExecutionParams {
+        app: params.app,
+        agent_executor: params.agent_executor.as_ref(),
+        db: params.db,
+        session_id: params.session_id,
+        requested_capability: &params.turn_context.requested_capability,
+        route_candidates: &params.turn_context.route_candidates,
+        per_candidate_retry_count: params.turn_context.per_candidate_retry_count,
+        system_prompt: &params.prepared_prompt.system_prompt,
+        messages: params.messages,
+        allowed_tools: params.prepared_prompt.allowed_tools.as_deref(),
+        permission_mode: params.execution_context.permission_mode,
+        tool_confirm_responder: params.tool_confirm_responder,
+        executor_work_dir: params.execution_context.executor_work_dir.clone(),
+        max_iterations: Some(params.prepared_prompt.max_iterations),
+        cancel_flag: params.cancel_flag,
+        node_timeout_seconds: params.execution_context.node_timeout_seconds,
+        route_retry_count: params.execution_context.route_retry_count,
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_routed_prompt_max_iterations;
+    use super::{resolve_routed_prompt_max_iterations, PreparedRoutedPrompt};
     use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 
     #[test]
@@ -112,5 +158,21 @@ mod tests {
             resolved,
             RunBudgetPolicy::resolve(RunBudgetScope::Skill, Some(7)).max_turns
         );
+    }
+
+    #[test]
+    fn prepared_routed_prompt_carries_execution_contract() {
+        let prepared = PreparedRoutedPrompt {
+            allowed_tools: Some(vec!["read".to_string(), "exec".to_string()]),
+            system_prompt: "Prompt".to_string(),
+            max_iterations: 9,
+        };
+
+        assert_eq!(
+            prepared.allowed_tools.as_deref(),
+            Some(&["read".to_string(), "exec".to_string()][..])
+        );
+        assert_eq!(prepared.system_prompt, "Prompt");
+        assert_eq!(prepared.max_iterations, 9);
     }
 }

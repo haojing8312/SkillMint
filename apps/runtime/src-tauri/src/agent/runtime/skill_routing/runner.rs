@@ -5,12 +5,11 @@ use super::observability::{build_implicit_route_observation, PlannedImplicitRout
 use super::recall::recall_skill_candidates;
 use crate::agent::context::build_tool_context;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
-use crate::agent::runtime::attempt_runner::{
-    execute_route_candidates, RouteExecutionOutcome, RouteExecutionParams,
-};
+use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
 use crate::agent::runtime::kernel::execution_plan::{ExecutionContext, ExecutionPlan, TurnContext};
 use crate::agent::runtime::kernel::routed_prompt::{
-    prepare_routed_prompt, RoutedPromptPreparationParams,
+    execute_routed_prompt, prepare_routed_prompt, RoutedPromptExecutionParams,
+    RoutedPromptPreparationParams,
 };
 use crate::agent::runtime::runtime_io::{
     WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
@@ -319,24 +318,17 @@ pub(crate) async fn execute_implicit_route_plan(
             })
             .await?;
 
-            let route_execution = execute_route_candidates(RouteExecutionParams {
+            let route_execution = execute_routed_prompt(RoutedPromptExecutionParams {
                 app,
-                agent_executor: agent_executor.as_ref(),
+                agent_executor,
                 db,
                 session_id,
-                requested_capability: &turn_context.requested_capability,
-                route_candidates: &turn_context.route_candidates,
-                per_candidate_retry_count: turn_context.per_candidate_retry_count,
-                system_prompt: &prepared_prompt.system_prompt,
+                turn_context,
+                execution_context,
+                prepared_prompt: &prepared_prompt,
                 messages: &turn_context.messages,
-                allowed_tools: prepared_prompt.allowed_tools.as_deref(),
-                permission_mode: execution_context.permission_mode,
                 tool_confirm_responder,
-                executor_work_dir: execution_context.executor_work_dir.clone(),
-                max_iterations: Some(prepared_prompt.max_iterations),
                 cancel_flag,
-                node_timeout_seconds: execution_context.node_timeout_seconds,
-                route_retry_count: execution_context.route_retry_count,
             })
             .await;
 
@@ -366,24 +358,17 @@ pub(crate) async fn execute_implicit_route_plan(
             .await?;
 
             let fork_messages = build_fork_messages(&turn_context.messages);
-            let route_execution = execute_route_candidates(RouteExecutionParams {
+            let route_execution = execute_routed_prompt(RoutedPromptExecutionParams {
                 app,
-                agent_executor: agent_executor.as_ref(),
+                agent_executor,
                 db,
                 session_id,
-                requested_capability: &turn_context.requested_capability,
-                route_candidates: &turn_context.route_candidates,
-                per_candidate_retry_count: turn_context.per_candidate_retry_count,
-                system_prompt: &prepared_prompt.system_prompt,
+                turn_context,
+                execution_context,
+                prepared_prompt: &prepared_prompt,
                 messages: &fork_messages,
-                allowed_tools: prepared_prompt.allowed_tools.as_deref(),
-                permission_mode: execution_context.permission_mode,
                 tool_confirm_responder,
-                executor_work_dir: execution_context.executor_work_dir.clone(),
-                max_iterations: Some(prepared_prompt.max_iterations),
                 cancel_flag,
-                node_timeout_seconds: execution_context.node_timeout_seconds,
-                route_retry_count: execution_context.route_retry_count,
             })
             .await;
 
