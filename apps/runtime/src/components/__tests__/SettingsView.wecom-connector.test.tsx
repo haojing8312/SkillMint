@@ -401,6 +401,55 @@ describe("SettingsView connector visibility", () => {
     expect(screen.getByText("高级设置与控制台")).toBeInTheDocument();
   });
 
+  test("surfaces the host Node.js minimum version requirement when the detected version is too old", async () => {
+    installInvokeMock({
+      get_feishu_plugin_environment_status: async () => ({
+        node_available: true,
+        npm_available: true,
+        node_version: "v20.11.1",
+        npm_version: "10.2.4",
+        node_version_supported: false,
+        required_node_major: 22,
+        can_install_plugin: false,
+        can_start_runtime: false,
+        error: "已检测到 Node.js v20.11.1，但飞书官方插件当前要求 Node.js >= v22",
+      }),
+      get_feishu_setup_progress: async () => ({
+        environment: {
+          node_available: true,
+          npm_available: true,
+          node_version: "v20.11.1",
+          npm_version: "10.2.4",
+          node_version_supported: false,
+          required_node_major: 22,
+          can_install_plugin: false,
+          can_start_runtime: false,
+          error: "已检测到 Node.js v20.11.1，但飞书官方插件当前要求 Node.js >= v22",
+        },
+        credentials_configured: false,
+        plugin_installed: false,
+        plugin_version: null,
+        runtime_running: false,
+        runtime_last_error: null,
+        auth_status: "unknown",
+        pending_pairings: 0,
+        default_routing_employee_name: null,
+        scoped_routing_count: 0,
+        summary_state: "env_missing",
+      }),
+    });
+
+    render(<SettingsView onClose={() => {}} initialTab="feishu" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("飞书连接")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("版本过低")).toBeInTheDocument();
+    expect(screen.getByText("v20.11.1 · 需要 >= v22")).toBeInTheDocument();
+    expect(screen.getByText("已检测到 Node.js v20.11.1，但飞书官方插件当前要求 Node.js >= v22")).toBeInTheDocument();
+  });
+
   test("refreshes plugin host inspection while feishu tab stays open without auto-starting runtime", async () => {
     vi.useFakeTimers();
 

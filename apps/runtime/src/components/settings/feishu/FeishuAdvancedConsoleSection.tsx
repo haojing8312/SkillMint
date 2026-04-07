@@ -97,6 +97,19 @@ export function FeishuAdvancedConsoleSection({
   handleStopFeishuInstallerSession,
   handleSendFeishuInstallerInput,
 }: FeishuAdvancedConsoleSectionProps) {
+  const requiredNodeMajor = feishuEnvironmentStatus?.required_node_major ?? 22;
+  const nodeVersionSupported =
+    feishuEnvironmentStatus?.node_version_supported ?? Boolean(feishuEnvironmentStatus?.node_available);
+  const nodeReady = Boolean(feishuEnvironmentStatus?.node_available) && nodeVersionSupported;
+  const nodeVersionLabel = feishuEnvironmentStatus?.node_version
+    ? nodeVersionSupported
+      ? feishuEnvironmentStatus.node_version
+      : `${feishuEnvironmentStatus.node_version} · 需要 >= v${requiredNodeMajor}`
+    : `请安装 Node.js ${requiredNodeMajor} LTS`;
+  const environmentBlockingHint =
+    feishuEnvironmentStatus?.error ||
+    `请先安装或升级到 Node.js ${requiredNodeMajor} LTS，完成后重新打开 WorkClaw 或回到这里点击“重新检测”。`;
+
   return (
     <details className="rounded-lg border border-gray-200 bg-white p-4">
       <summary className="cursor-pointer text-sm font-medium text-gray-900">高级设置与控制台</summary>
@@ -104,15 +117,18 @@ export function FeishuAdvancedConsoleSection({
         <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
           <div>
             <div className="text-sm font-medium text-gray-900">检查运行环境</div>
-            <div className="text-xs text-gray-500 mt-1">不内置运行环境；如果电脑未安装 Node.js，系统会在这里提示你先完成安装。</div>
+            <div className="text-xs text-gray-500 mt-1">飞书官方插件使用宿主机自己的 Node.js；当前要求 Node.js {requiredNodeMajor}+。</div>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="rounded border border-gray-100 bg-gray-50 px-3 py-3">
               <div className="text-[11px] text-gray-500">Node.js</div>
               <div className="mt-1 text-sm font-medium text-gray-900">
-                {getFeishuEnvironmentLabel(Boolean(feishuEnvironmentStatus?.node_available), "未检测到")}
+                {getFeishuEnvironmentLabel(
+                  nodeReady,
+                  Boolean(feishuEnvironmentStatus?.node_available) ? "版本过低" : "未检测到",
+                )}
               </div>
-              <div className="mt-1 text-[11px] text-gray-500">{feishuEnvironmentStatus?.node_version || "请安装 Node.js LTS"}</div>
+              <div className="mt-1 text-[11px] text-gray-500">{nodeVersionLabel}</div>
             </div>
             <div className="rounded border border-gray-100 bg-gray-50 px-3 py-3">
               <div className="text-[11px] text-gray-500">npm</div>
@@ -131,7 +147,7 @@ export function FeishuAdvancedConsoleSection({
           </div>
           {!feishuEnvironmentStatus?.can_start_runtime ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              当前电脑还没有安装飞书连接所需环境。请先安装 Node.js LTS，完成后重新打开 WorkClaw 或回到这里点击“重新检测”。
+              当前电脑还没有满足飞书连接所需环境。{environmentBlockingHint}
             </div>
           ) : null}
         </div>

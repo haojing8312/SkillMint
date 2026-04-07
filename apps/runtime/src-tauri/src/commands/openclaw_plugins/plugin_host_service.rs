@@ -1,5 +1,5 @@
-use crate::windows_process::hide_console_window;
 use crate::runtime_environment::runtime_paths_from_app;
+use crate::windows_process::hide_console_window;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -8,11 +8,11 @@ use std::process::Command;
 use tauri::AppHandle;
 
 use super::{
-    build_feishu_openclaw_config_with_pool,
-    get_openclaw_plugin_install_by_id_with_pool, list_openclaw_plugin_installs_with_pool,
-    normalize_required, FeishuPluginEnvironmentStatus, OpenClawPluginChannelHost, OpenClawPluginChannelInspection,
+    build_feishu_openclaw_config_with_pool, get_openclaw_plugin_install_by_id_with_pool,
+    list_openclaw_plugin_installs_with_pool, normalize_required, FeishuPluginEnvironmentStatus,
+    OpenClawPluginChannelHost, OpenClawPluginChannelInspection,
     OpenClawPluginChannelSnapshotResult, OpenClawPluginInspectionResult,
-    OpenClawPluginInstallRecord,
+    OpenClawPluginInstallRecord, FEISHU_PLUGIN_MIN_NODE_MAJOR,
 };
 
 fn normalize_command_version_output(output: &[u8]) -> Option<String> {
@@ -21,6 +21,34 @@ fn normalize_command_version_output(output: &[u8]) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_string)
+}
+
+fn parse_node_major_version(version: &str) -> Option<u64> {
+    let normalized = version.trim().trim_start_matches(['v', 'V']);
+    let major = normalized
+        .split('.')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    major.parse::<u64>().ok()
+}
+
+fn is_supported_feishu_host_node_version(version: &str) -> bool {
+    parse_node_major_version(version)
+        .map(|major| major >= FEISHU_PLUGIN_MIN_NODE_MAJOR)
+        .unwrap_or(false)
+}
+
+pub(crate) fn ensure_supported_feishu_host_node_version() -> Result<String, String> {
+    match probe_windows_node_version(&["--version"]) {
+        Ok(Some(version)) if is_supported_feishu_host_node_version(&version) => Ok(version),
+        Ok(Some(version)) => Err(format!(
+            "已检测到 Node.js {version}，但飞书官方插件当前要求 Node.js >= v{}",
+            FEISHU_PLUGIN_MIN_NODE_MAJOR
+        )),
+        Ok(None) => Err("未检测到 Node.js".to_string()),
+        Err(error) => Err(format!("检测 Node.js 失败: {error}")),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -220,7 +248,11 @@ pub(crate) fn collect_windows_node_command_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(program_files).join("nodejs").join("node.exe"));
     }
     if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
-        candidates.push(PathBuf::from(program_files_x86).join("nodejs").join("node.exe"));
+        candidates.push(
+            PathBuf::from(program_files_x86)
+                .join("nodejs")
+                .join("node.exe"),
+        );
     }
     if let Some(local_app_data) = std::env::var_os("LocalAppData") {
         candidates.push(
@@ -277,9 +309,19 @@ pub(crate) fn derive_feishu_plugin_environment_status(
     match node_probe {
         Ok(version) => {
             status.node_available = version.is_some();
+            status.node_version_supported = version
+                .as_deref()
+                .map(is_supported_feishu_host_node_version)
+                .unwrap_or(false);
             status.node_version = version;
             if !status.node_available {
                 errors.push("未检测到 Node.js".to_string());
+            } else if !status.node_version_supported {
+                let version_label = status.node_version.as_deref().unwrap_or("unknown");
+                errors.push(format!(
+                    "已检测到 Node.js {version_label}，但飞书官方插件当前要求 Node.js >= v{}",
+                    FEISHU_PLUGIN_MIN_NODE_MAJOR
+                ));
             }
         }
         Err(error) => {
@@ -304,8 +346,10 @@ pub(crate) fn derive_feishu_plugin_environment_status(
         errors.push("飞书插件运行脚本缺失".to_string());
     }
 
-    status.can_install_plugin = status.node_available && status.npm_available;
-    status.can_start_runtime = status.node_available && runtime_script_exists;
+    status.can_install_plugin =
+        status.node_available && status.node_version_supported && status.npm_available;
+    status.can_start_runtime =
+        status.node_available && status.node_version_supported && runtime_script_exists;
     status.error = if errors.is_empty() {
         None
     } else {

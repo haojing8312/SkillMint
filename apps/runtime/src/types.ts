@@ -407,6 +407,8 @@ export interface FeishuPluginEnvironmentStatus {
   npm_available: boolean;
   node_version?: string | null;
   npm_version?: string | null;
+  node_version_supported?: boolean;
+  required_node_major?: number;
   can_install_plugin: boolean;
   can_start_runtime: boolean;
   error?: string | null;

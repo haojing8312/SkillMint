@@ -3,17 +3,21 @@ use tauri::{AppHandle, State};
 
 use super::{
     current_feishu_runtime_status, current_openclaw_lark_installer_session_status,
-    delete_openclaw_plugin_install_with_pool, get_feishu_plugin_environment_status_internal,
-    get_feishu_setup_progress_with_pool, get_openclaw_plugin_feishu_advanced_settings_with_pool,
+    get_feishu_plugin_environment_status_internal, get_feishu_setup_progress_with_pool,
+    get_openclaw_plugin_feishu_advanced_settings_with_pool,
     get_openclaw_plugin_feishu_channel_snapshot_with_pool_and_app,
     inspect_openclaw_plugin_with_pool_and_app,
+    install_service::{
+        delete_openclaw_plugin_install_with_pool_and_app,
+        install_openclaw_plugin_from_npm_with_pool_and_app,
+    },
     list_openclaw_plugin_channel_hosts_with_pool_and_app, list_openclaw_plugin_installs_with_pool,
-    normalize_required,
-    probe_openclaw_plugin_feishu_credentials_with_app_secret, resolve_controlled_openclaw_state_root,
-    resolve_openclaw_shim_root, set_openclaw_plugin_feishu_advanced_settings_with_pool,
-    install_service::install_openclaw_plugin_from_npm_with_pool_and_app,
-    start_openclaw_lark_installer_session_with_pool, start_openclaw_plugin_feishu_runtime_with_pool,
-    stop_openclaw_lark_installer_session_in_state, stop_openclaw_plugin_feishu_runtime_in_state,
+    normalize_required, probe_openclaw_plugin_feishu_credentials_with_app_secret,
+    resolve_controlled_openclaw_state_root, resolve_openclaw_shim_root,
+    set_openclaw_plugin_feishu_advanced_settings_with_pool,
+    start_openclaw_lark_installer_session_with_pool,
+    start_openclaw_plugin_feishu_runtime_with_pool, stop_openclaw_lark_installer_session_in_state,
+    stop_openclaw_plugin_feishu_runtime_in_state,
     sync_feishu_gateway_credentials_from_openclaw_state_with_pool,
     sync_feishu_gateway_credentials_from_shim_with_pool, upsert_openclaw_plugin_install_with_pool,
     FeishuPluginEnvironmentStatus, FeishuSetupProgress, OpenClawLarkInstallerMode,
@@ -67,7 +71,8 @@ pub(crate) async fn get_feishu_setup_progress_command(
         let _ = sync_feishu_gateway_credentials_from_shim_with_pool(&db.0, &shim_root).await;
     }
     if let Ok(state_root) = resolve_controlled_openclaw_state_root(&app) {
-        let _ = sync_feishu_gateway_credentials_from_openclaw_state_with_pool(&db.0, &state_root).await;
+        let _ =
+            sync_feishu_gateway_credentials_from_openclaw_state_with_pool(&db.0, &state_root).await;
     }
     get_feishu_setup_progress_with_pool(&db.0, runtime.inner()).await
 }
@@ -113,9 +118,12 @@ pub(crate) async fn get_openclaw_lark_installer_session_status_command(
         let _ = sync_feishu_gateway_credentials_from_shim_with_pool(&db.0, &shim_root).await;
     }
     if let Ok(state_root) = resolve_controlled_openclaw_state_root(&app) {
-        let _ = sync_feishu_gateway_credentials_from_openclaw_state_with_pool(&db.0, &state_root).await;
+        let _ =
+            sync_feishu_gateway_credentials_from_openclaw_state_with_pool(&db.0, &state_root).await;
     }
-    Ok(current_openclaw_lark_installer_session_status(installer.inner()))
+    Ok(current_openclaw_lark_installer_session_status(
+        installer.inner(),
+    ))
 }
 
 pub(crate) async fn send_openclaw_lark_installer_input_command(
@@ -153,9 +161,14 @@ pub(crate) async fn list_openclaw_plugin_installs_command(
 
 pub(crate) async fn delete_openclaw_plugin_install_command(
     plugin_id: String,
+    app: AppHandle,
     db: State<'_, DbState>,
+    runtime: State<'_, OpenClawPluginFeishuRuntimeState>,
+    installer: State<'_, OpenClawLarkInstallerSessionState>,
 ) -> Result<(), String> {
-    delete_openclaw_plugin_install_with_pool(&db.0, &plugin_id).await
+    let _ = stop_openclaw_plugin_feishu_runtime_in_state(runtime.inner());
+    let _ = stop_openclaw_lark_installer_session_in_state(installer.inner());
+    delete_openclaw_plugin_install_with_pool_and_app(&db.0, &plugin_id, &app).await
 }
 
 pub(crate) async fn inspect_openclaw_plugin_command(

@@ -1,6 +1,5 @@
 use crate::commands::feishu_gateway::{
-    dispatch_feishu_inbound_to_workclaw_with_pool_and_app,
-    upsert_feishu_pairing_request_with_pool,
+    dispatch_feishu_inbound_to_workclaw_with_pool_and_app, upsert_feishu_pairing_request_with_pool,
 };
 use crate::im::types::{ImEvent, ImEventType};
 use crate::windows_process::hide_console_window;
@@ -13,8 +12,9 @@ use tauri::AppHandle;
 
 use super::{
     app_setting_string_or_default, build_feishu_openclaw_config_with_pool,
-    get_feishu_setup_progress_with_pool, get_openclaw_plugin_install_by_id_with_pool, now_rfc3339,
-    normalize_required, resolve_plugin_host_dir, resolve_plugin_host_fixture_root,
+    ensure_supported_feishu_host_node_version, get_feishu_setup_progress_with_pool,
+    get_openclaw_plugin_install_by_id_with_pool, normalize_required, now_rfc3339,
+    resolve_plugin_host_dir, resolve_plugin_host_fixture_root,
     resolve_plugin_host_run_feishu_script, should_auto_restore_feishu_runtime,
     OpenClawPluginFeishuOutboundCommandErrorEvent, OpenClawPluginFeishuOutboundSendCommandPayload,
     OpenClawPluginFeishuOutboundSendRequest, OpenClawPluginFeishuOutboundSendResult,
@@ -530,17 +530,14 @@ pub(crate) fn handle_openclaw_plugin_feishu_runtime_stdout_line(
         if event == "pairing_request" {
             handle_feishu_runtime_pairing_request_event(pool, &mut guard.status, &value);
         } else if event == "dispatch_request" {
-            match tauri::async_runtime::block_on(
-                parse_feishu_runtime_dispatch_event_with_pool(pool, &value),
-            ) {
+            match tauri::async_runtime::block_on(parse_feishu_runtime_dispatch_event_with_pool(
+                pool, &value,
+            )) {
                 Ok(inbound) => {
                     if let Some(app_handle) = app.as_ref() {
                         match tauri::async_runtime::block_on(
                             dispatch_feishu_inbound_to_workclaw_with_pool_and_app(
-                                pool,
-                                app_handle,
-                                &inbound,
-                                None,
+                                pool, app_handle, &inbound, None,
                             ),
                         ) {
                             Ok(result) => {
@@ -735,6 +732,7 @@ pub(crate) async fn start_openclaw_plugin_feishu_runtime_with_pool(
     account_id: Option<&str>,
     app: Option<AppHandle>,
 ) -> Result<OpenClawPluginFeishuRuntimeStatus, String> {
+    let _node_version = ensure_supported_feishu_host_node_version()?;
     let normalized_plugin_id = normalize_required(plugin_id, "plugin_id")?;
     let normalized_account_id = normalize_required(account_id.unwrap_or("default"), "account_id")
         .unwrap_or_else(|_| "default".to_string());

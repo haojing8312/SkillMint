@@ -688,7 +688,7 @@ export function getFeishuSetupSummary(input: FeishuSetupSummaryInput): FeishuSet
   if (input.summaryState === "env_missing") {
     return {
       title: "这台电脑还没有准备好飞书连接环境",
-      description: "请先安装 Node.js LTS，完成后回到这里重新检测环境。",
+      description: "请先安装或升级到 Node.js 22 LTS，完成后回到这里重新检测环境。",
       primaryActionLabel: "重新检测环境",
     };
   }

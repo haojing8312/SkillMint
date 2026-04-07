@@ -6,7 +6,9 @@ use std::process::Command;
 use tauri::AppHandle;
 
 use super::{
-    apply_command_search_path, normalize_required, resolve_npm_command,
+    apply_command_search_path, delete_openclaw_plugin_install_with_pool,
+    ensure_supported_feishu_host_node_version, get_openclaw_plugin_install_by_id_with_pool,
+    normalize_required, resolve_controlled_openclaw_state_root, resolve_npm_command,
     resolve_openclaw_plugin_workspace_root, upsert_openclaw_plugin_install_with_pool,
     OpenClawPluginInstallInput, OpenClawPluginInstallRecord,
 };
@@ -60,6 +62,7 @@ pub async fn install_openclaw_plugin_from_npm_with_pool_and_app(
     npm_spec: &str,
     app: &AppHandle,
 ) -> Result<OpenClawPluginInstallRecord, String> {
+    let _node_version = ensure_supported_feishu_host_node_version()?;
     let normalized_plugin_id = normalize_required(plugin_id, "plugin_id")?;
     let normalized_npm_spec = normalize_required(npm_spec, "npm_spec")?;
     let plugin_root = resolve_openclaw_plugin_workspace_root(app, &normalized_plugin_id)?;
@@ -126,4 +129,27 @@ pub async fn install_openclaw_plugin_from_npm_with_pool_and_app(
         },
     )
     .await
+}
+
+pub async fn delete_openclaw_plugin_install_with_pool_and_app(
+    pool: &SqlitePool,
+    plugin_id: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let normalized_plugin_id = normalize_required(plugin_id, "plugin_id")?;
+    let _install = get_openclaw_plugin_install_by_id_with_pool(pool, &normalized_plugin_id).await?;
+    let plugin_root = resolve_openclaw_plugin_workspace_root(app, &normalized_plugin_id)?;
+    let controlled_state_extension_dir = resolve_controlled_openclaw_state_root(app)?
+        .join("extensions")
+        .join(&normalized_plugin_id);
+
+    for path in [plugin_root, controlled_state_extension_dir] {
+        if !path.exists() {
+            continue;
+        }
+        fs::remove_dir_all(&path)
+            .map_err(|e| format!("failed to remove plugin data {}: {e}", path.display()))?;
+    }
+
+    delete_openclaw_plugin_install_with_pool(pool, &normalized_plugin_id).await
 }

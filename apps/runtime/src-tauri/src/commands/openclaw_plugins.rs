@@ -1,31 +1,70 @@
 use crate::commands::skills::DbState;
 use crate::windows_process::hide_console_window;
+use std::collections::HashMap;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, ChildStdin};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
-#[path = "openclaw_plugins/tauri_commands.rs"]
-mod tauri_commands;
-#[path = "openclaw_plugins/settings_service.rs"]
-mod settings_service;
-#[path = "openclaw_plugins/setup_service.rs"]
-mod setup_service;
-#[path = "openclaw_plugins/runtime_service.rs"]
-mod runtime_service;
 #[path = "openclaw_plugins/install_repo.rs"]
 mod install_repo;
 #[path = "openclaw_plugins/install_service.rs"]
 mod install_service;
-#[path = "openclaw_plugins/plugin_host_service.rs"]
-mod plugin_host_service;
 #[path = "openclaw_plugins/installer_session.rs"]
 mod installer_session;
+#[path = "openclaw_plugins/plugin_host_service.rs"]
+mod plugin_host_service;
+#[path = "openclaw_plugins/runtime_service.rs"]
+mod runtime_service;
+#[path = "openclaw_plugins/settings_service.rs"]
+mod settings_service;
+#[path = "openclaw_plugins/setup_service.rs"]
+mod setup_service;
+#[path = "openclaw_plugins/tauri_commands.rs"]
+mod tauri_commands;
 
+pub(crate) use install_repo::{
+    delete_openclaw_plugin_install_with_pool, get_openclaw_plugin_install_by_id_with_pool,
+    list_openclaw_plugin_installs_with_pool, upsert_openclaw_plugin_install_with_pool,
+};
+pub(crate) use installer_session::{
+    current_openclaw_lark_installer_session_status, ensure_openclaw_cli_shim,
+    send_openclaw_lark_installer_input_in_state, start_openclaw_lark_installer_session_with_pool,
+    stop_openclaw_lark_installer_session_in_state,
+};
+pub(crate) use plugin_host_service::{
+    append_disable_dep0190_node_option, apply_command_search_path,
+    build_openclaw_lark_tools_npx_args, ensure_supported_feishu_host_node_version,
+    get_feishu_plugin_environment_status_internal,
+    get_openclaw_plugin_feishu_channel_snapshot_with_pool,
+    get_openclaw_plugin_feishu_channel_snapshot_with_pool_and_app_public as get_openclaw_plugin_feishu_channel_snapshot_with_pool_and_app,
+    inspect_openclaw_plugin_with_pool_and_app_public as inspect_openclaw_plugin_with_pool_and_app,
+    list_openclaw_plugin_channel_hosts_with_pool_and_app_public as list_openclaw_plugin_channel_hosts_with_pool_and_app,
+    resolve_npm_command, resolve_npx_command, resolve_openclaw_plugin_workspace_root,
+    resolve_plugin_host_dir, resolve_plugin_host_fixture_root,
+    resolve_plugin_host_run_feishu_script, resolve_windows_node_command_path,
+};
+pub(crate) use runtime_service::{
+    current_feishu_runtime_status, maybe_restore_openclaw_plugin_feishu_runtime_with_pool,
+    send_openclaw_plugin_feishu_runtime_outbound_message_in_state,
+    start_openclaw_plugin_feishu_runtime_with_pool, stop_openclaw_plugin_feishu_runtime_in_state,
+};
+use settings_service::{
+    app_setting_string_or_default, build_feishu_openclaw_config_with_pool,
+    get_openclaw_plugin_feishu_advanced_settings_with_pool,
+    set_openclaw_plugin_feishu_advanced_settings_with_pool,
+};
+pub(crate) use setup_service::resolve_openclaw_shim_root;
+use setup_service::{
+    build_openclaw_shim_state_file_path, get_feishu_setup_progress_with_pool,
+    probe_openclaw_plugin_feishu_credentials_with_app_secret,
+    resolve_controlled_openclaw_state_root, should_auto_restore_feishu_runtime,
+    sync_feishu_gateway_credentials_from_openclaw_state_with_pool,
+    sync_feishu_gateway_credentials_from_shim_with_pool,
+};
 use tauri_commands::{
     delete_openclaw_plugin_install_command, get_feishu_plugin_environment_status_command,
     get_feishu_setup_progress_command, get_openclaw_lark_installer_session_status_command,
@@ -39,44 +78,6 @@ use tauri_commands::{
     start_openclaw_lark_installer_session_command, start_openclaw_plugin_feishu_runtime_command,
     stop_openclaw_lark_installer_session_command, stop_openclaw_plugin_feishu_runtime_command,
     upsert_openclaw_plugin_install_command,
-};
-use settings_service::{
-    app_setting_string_or_default, build_feishu_openclaw_config_with_pool,
-    get_openclaw_plugin_feishu_advanced_settings_with_pool,
-    set_openclaw_plugin_feishu_advanced_settings_with_pool,
-};
-use setup_service::{
-    build_openclaw_shim_state_file_path, get_feishu_setup_progress_with_pool,
-    probe_openclaw_plugin_feishu_credentials_with_app_secret, resolve_controlled_openclaw_state_root,
-    should_auto_restore_feishu_runtime,
-    sync_feishu_gateway_credentials_from_openclaw_state_with_pool,
-    sync_feishu_gateway_credentials_from_shim_with_pool,
-};
-pub(crate) use setup_service::resolve_openclaw_shim_root;
-pub(crate) use runtime_service::{
-    current_feishu_runtime_status, maybe_restore_openclaw_plugin_feishu_runtime_with_pool,
-    send_openclaw_plugin_feishu_runtime_outbound_message_in_state,
-    start_openclaw_plugin_feishu_runtime_with_pool, stop_openclaw_plugin_feishu_runtime_in_state,
-};
-pub(crate) use install_repo::{
-    delete_openclaw_plugin_install_with_pool, get_openclaw_plugin_install_by_id_with_pool,
-    list_openclaw_plugin_installs_with_pool, upsert_openclaw_plugin_install_with_pool,
-};
-pub(crate) use plugin_host_service::{
-    append_disable_dep0190_node_option, apply_command_search_path,
-    build_openclaw_lark_tools_npx_args, get_feishu_plugin_environment_status_internal,
-    get_openclaw_plugin_feishu_channel_snapshot_with_pool,
-    get_openclaw_plugin_feishu_channel_snapshot_with_pool_and_app_public as get_openclaw_plugin_feishu_channel_snapshot_with_pool_and_app,
-    inspect_openclaw_plugin_with_pool_and_app_public as inspect_openclaw_plugin_with_pool_and_app,
-    list_openclaw_plugin_channel_hosts_with_pool_and_app_public as list_openclaw_plugin_channel_hosts_with_pool_and_app,
-    resolve_npm_command, resolve_npx_command, resolve_openclaw_plugin_workspace_root,
-    resolve_plugin_host_dir, resolve_plugin_host_fixture_root,
-    resolve_plugin_host_run_feishu_script, resolve_windows_node_command_path,
-};
-pub(crate) use installer_session::{
-    current_openclaw_lark_installer_session_status, send_openclaw_lark_installer_input_in_state,
-    start_openclaw_lark_installer_session_with_pool, ensure_openclaw_cli_shim,
-    stop_openclaw_lark_installer_session_in_state,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -251,15 +252,25 @@ pub struct OpenClawPluginFeishuRuntimeStatus {
     pub recent_logs: Vec<String>,
 }
 
+pub const FEISHU_PLUGIN_MIN_NODE_MAJOR: u64 = 22;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct FeishuPluginEnvironmentStatus {
     pub node_available: bool,
     pub npm_available: bool,
     pub node_version: Option<String>,
     pub npm_version: Option<String>,
+    #[serde(default)]
+    pub node_version_supported: bool,
+    #[serde(default = "default_feishu_plugin_min_node_major")]
+    pub required_node_major: u64,
     pub can_install_plugin: bool,
     pub can_start_runtime: bool,
     pub error: Option<String>,
+}
+
+fn default_feishu_plugin_min_node_major() -> u64 {
+    FEISHU_PLUGIN_MIN_NODE_MAJOR
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -383,6 +394,8 @@ impl Default for FeishuPluginEnvironmentStatus {
             npm_available: false,
             node_version: None,
             npm_version: None,
+            node_version_supported: false,
+            required_node_major: FEISHU_PLUGIN_MIN_NODE_MAJOR,
             can_install_plugin: false,
             can_start_runtime: false,
             error: None,
@@ -489,8 +502,6 @@ fn normalize_required(value: &str, field: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
-
-
 fn ensure_controlled_openclaw_state_projection(
     state_root: &Path,
     plugin_install_path: &Path,
@@ -530,7 +541,6 @@ fn ensure_controlled_openclaw_state_projection(
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
-
 
 fn merge_pairing_allow_from(base: Option<&str>, extra_entries: Vec<String>) -> serde_json::Value {
     let mut entries = Vec::<String>::new();
@@ -580,7 +590,8 @@ pub async fn get_openclaw_plugin_feishu_runtime_status(
 }
 
 #[tauri::command]
-pub async fn get_feishu_plugin_environment_status() -> Result<FeishuPluginEnvironmentStatus, String> {
+pub async fn get_feishu_plugin_environment_status() -> Result<FeishuPluginEnvironmentStatus, String>
+{
     get_feishu_plugin_environment_status_command().await
 }
 
@@ -671,9 +682,12 @@ pub async fn list_openclaw_plugin_installs(
 #[tauri::command]
 pub async fn delete_openclaw_plugin_install(
     plugin_id: String,
+    app: AppHandle,
     db: State<'_, DbState>,
+    runtime: State<'_, OpenClawPluginFeishuRuntimeState>,
+    installer: State<'_, OpenClawLarkInstallerSessionState>,
 ) -> Result<(), String> {
-    delete_openclaw_plugin_install_command(plugin_id, db).await
+    delete_openclaw_plugin_install_command(plugin_id, app, db, runtime, installer).await
 }
 
 #[tauri::command]
