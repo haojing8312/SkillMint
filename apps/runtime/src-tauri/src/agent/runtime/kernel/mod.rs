@@ -1,7 +1,10 @@
 pub(crate) mod capability_snapshot;
 pub(crate) mod context_bundle;
+pub(crate) mod direct_dispatch;
 pub(crate) mod execution_plan;
+pub(crate) mod lane_executor;
 pub(crate) mod outcome_commit;
+pub(crate) mod route_lane;
 pub(crate) mod routed_prompt;
 pub(crate) mod session_engine;
 pub(crate) mod tool_registry_setup;

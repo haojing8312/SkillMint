@@ -3,79 +3,20 @@ use super::index::SkillRouteIndex;
 use super::intent::RouteFallbackReason;
 use super::observability::{build_implicit_route_observation, PlannedImplicitRoute};
 use super::recall::recall_skill_candidates;
-use crate::agent::context::build_tool_context;
-use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
-use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
+use crate::agent::runtime::kernel::direct_dispatch::execute_direct_dispatch_skill;
 use crate::agent::runtime::kernel::execution_plan::{ExecutionContext, ExecutionPlan, TurnContext};
+use crate::agent::runtime::kernel::route_lane::{
+    build_routed_skill_tool_setup, RouteRunOutcome, RouteRunPlan,
+};
 use crate::agent::runtime::kernel::routed_prompt::{
     execute_routed_prompt, prepare_routed_prompt, RoutedPromptExecutionParams,
     RoutedPromptPreparationParams,
 };
-use crate::agent::runtime::runtime_io::{
-    WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
-};
-use crate::agent::runtime::tool_dispatch::{dispatch_skill_command, ToolDispatchContext};
+use crate::agent::runtime::runtime_io::{WorkspaceSkillCommandSpec, WorkspaceSkillRuntimeEntry};
 use crate::agent::AgentExecutor;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::AppHandle;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RoutedSkillToolSetup {
-    pub skill_id: String,
-    pub skill_system_prompt: String,
-    pub skill_allowed_tools: Option<Vec<String>>,
-    pub max_iterations: Option<usize>,
-    pub source_type: String,
-    pub pack_path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RouteRunPlan {
-    OpenTask {
-        fallback_reason: Option<RouteFallbackReason>,
-    },
-    PromptSkillInline {
-        skill_id: String,
-        setup: RoutedSkillToolSetup,
-    },
-    PromptSkillFork {
-        skill_id: String,
-        setup: RoutedSkillToolSetup,
-    },
-    DirectDispatchSkill {
-        skill_id: String,
-        setup: RoutedSkillToolSetup,
-        command_spec: WorkspaceSkillCommandSpec,
-        raw_args: String,
-    },
-}
-
-#[derive(Debug)]
-pub(crate) enum RouteRunOutcome {
-    OpenTask,
-    DirectDispatch(String),
-    Prompt {
-        route_execution: RouteExecutionOutcome,
-        reconstructed_history_len: usize,
-    },
-}
-
-pub(crate) fn build_routed_skill_tool_setup(
-    entry: &WorkspaceSkillRuntimeEntry,
-) -> RoutedSkillToolSetup {
-    RoutedSkillToolSetup {
-        skill_id: entry.skill_id.clone(),
-        skill_system_prompt: entry.config.system_prompt.clone(),
-        skill_allowed_tools: entry.config.allowed_tools.clone(),
-        max_iterations: entry.config.max_iterations,
-        source_type: entry.source_type.clone(),
-        pack_path: match &entry.content {
-            WorkspaceSkillContent::LocalDir(path) => path.to_string_lossy().to_string(),
-            WorkspaceSkillContent::FileTree(_) => String::new(),
-        },
-    }
-}
 
 pub(crate) fn resolve_direct_dispatch_raw_args(
     user_message: &str,
@@ -267,35 +208,19 @@ pub(crate) async fn execute_implicit_route_plan(
             command_spec,
             raw_args,
         } => {
-            let tool_ctx = build_tool_context(
-                Some(session_id),
-                execution_context
-                    .executor_work_dir
-                    .as_ref()
-                    .map(std::path::PathBuf::from),
-                setup.skill_allowed_tools.as_deref(),
+            let output = execute_direct_dispatch_skill(
+                app,
+                agent_executor,
+                session_id,
+                run_id,
+                execution_context,
+                &setup,
+                &command_spec,
+                &raw_args,
+                cancel_flag,
+                &tool_confirm_responder,
             )
-            .map_err(|err| err.to_string())?;
-            let dispatch_context = ToolDispatchContext {
-                registry: agent_executor.registry(),
-                app_handle: Some(app),
-                session_id: Some(session_id),
-                persisted_run_id: Some(run_id),
-                allowed_tools: setup.skill_allowed_tools.as_deref(),
-                permission_mode: execution_context.permission_mode,
-                tool_ctx: &tool_ctx,
-                tool_confirm_tx: Some(&tool_confirm_responder),
-                cancel_flag: Some(cancel_flag),
-                route_run_id: run_id,
-                route_node_timeout_secs: execution_context.node_timeout_seconds,
-                route_retry_count: 0,
-                iteration: 1,
-                run_budget_policy: RunBudgetPolicy::for_scope(RunBudgetScope::Skill),
-            };
-
-            let output = dispatch_skill_command(&dispatch_context, &command_spec, &raw_args)
-                .await
-                .map_err(|err| err.to_string())?;
+            .await?;
             Ok(RouteRunOutcome::DirectDispatch(output))
         }
         RouteRunPlan::PromptSkillInline { skill_id, setup } => {

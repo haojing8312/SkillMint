@@ -1,6 +1,6 @@
 use super::intent::RouteFallbackReason;
-use super::runner::RouteRunPlan;
 use crate::agent::runtime::kernel::execution_plan::ExecutionPlan;
+use crate::agent::runtime::kernel::route_lane::{RouteRunPlan, RoutedSkillToolSetup};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImplicitRouteObservation {
@@ -69,7 +69,6 @@ mod tests {
     use super::*;
     use crate::agent::runtime::runtime_io::WorkspaceSkillCommandSpec;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
-    use crate::agent::runtime::skill_routing::runner::RoutedSkillToolSetup;
 
     fn build_setup(skill_id: &str) -> RoutedSkillToolSetup {
         RoutedSkillToolSetup {

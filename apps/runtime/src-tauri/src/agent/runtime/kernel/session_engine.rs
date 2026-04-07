@@ -1,13 +1,11 @@
 use super::execution_plan::{ExecutionOutcome, SessionEngineError};
 use crate::agent::run_guard::parse_run_stop_reason;
-use crate::agent::runtime::attempt_runner::{execute_route_candidates, RouteExecutionParams};
 use crate::agent::runtime::events::ToolConfirmResponder;
+use crate::agent::runtime::kernel::lane_executor::{execute_execution_lane, LaneExecutionParams};
 use crate::agent::runtime::kernel::turn_preparation::{prepare_local_turn, PrepareLocalTurnParams};
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::runtime::session_runtime::SessionRuntime;
-use crate::agent::runtime::skill_routing::runner::{
-    execute_planned_route, plan_implicit_route_with_observation, RouteRunOutcome,
-};
+use crate::agent::runtime::skill_routing::runner::plan_implicit_route_with_observation;
 use crate::agent::AgentExecutor;
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
@@ -90,7 +88,7 @@ impl SessionEngine {
         .await
         .map_err(SessionEngineError::Generic)?;
 
-        let route_execution = match execute_planned_route(
+        execute_execution_lane(LaneExecutionParams {
             app,
             agent_executor,
             db,
@@ -98,52 +96,11 @@ impl SessionEngine {
             run_id,
             turn_context,
             execution_context,
-            &execution_plan,
-            cancel_flag.clone(),
-            tool_confirm_responder.clone(),
-        )
-        .await
-        .map_err(SessionEngineError::Generic)?
-        {
-            RouteRunOutcome::OpenTask => {
-                execute_route_candidates(RouteExecutionParams {
-                    app,
-                    agent_executor: agent_executor.as_ref(),
-                    db,
-                    session_id,
-                    requested_capability: &turn_context.requested_capability,
-                    route_candidates: &turn_context.route_candidates,
-                    per_candidate_retry_count: turn_context.per_candidate_retry_count,
-                    system_prompt: &execution_context.system_prompt,
-                    messages: &turn_context.messages,
-                    allowed_tools: execution_context.allowed_tools(),
-                    permission_mode: execution_context.permission_mode,
-                    tool_confirm_responder,
-                    executor_work_dir: execution_context.executor_work_dir.clone(),
-                    max_iterations: execution_context.max_iterations,
-                    cancel_flag,
-                    node_timeout_seconds: execution_context.node_timeout_seconds,
-                    route_retry_count: execution_context.route_retry_count,
-                })
-                .await
-            }
-            RouteRunOutcome::DirectDispatch(output) => {
-                return Ok(ExecutionOutcome::DirectDispatch(output));
-            }
-            RouteRunOutcome::Prompt {
-                route_execution,
-                reconstructed_history_len,
-            } => {
-                return Ok(ExecutionOutcome::RouteExecution {
-                    route_execution,
-                    reconstructed_history_len,
-                });
-            }
-        };
-
-        Ok(ExecutionOutcome::RouteExecution {
-            route_execution,
-            reconstructed_history_len: turn_context.messages.len(),
+            execution_plan: &execution_plan,
+            cancel_flag,
+            tool_confirm_responder,
         })
+        .await
+        .map_err(SessionEngineError::Generic)
     }
 }

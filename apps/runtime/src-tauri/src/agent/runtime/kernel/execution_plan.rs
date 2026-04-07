@@ -1,9 +1,9 @@
-use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
-use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::RunStopReason;
+use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
+use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
+use crate::agent::runtime::kernel::route_lane::RouteRunPlan;
 use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
-use crate::agent::runtime::skill_routing::runner::RouteRunPlan;
 use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
 use runtime_chat_app::ChatExecutionGuidance;
 use serde_json::Value;
@@ -25,10 +25,7 @@ pub(crate) struct ExecutionPlan {
 impl ExecutionPlan {
     pub(crate) fn from_route_plan(route_plan: RouteRunPlan) -> Self {
         let lane = Self::lane_for_route_plan(&route_plan);
-        Self {
-            lane,
-            route_plan,
-        }
+        Self { lane, route_plan }
     }
 
     pub(crate) fn lane_for_route_plan(route_plan: &RouteRunPlan) -> ExecutionLane {
@@ -105,7 +102,9 @@ pub(crate) struct TurnContext {
 }
 
 impl TurnContext {
-    pub(crate) fn primary_route_candidate(&self) -> Option<&(String, String, String, String, String)> {
+    pub(crate) fn primary_route_candidate(
+        &self,
+    ) -> Option<&(String, String, String, String, String)> {
         self.route_candidates.first()
     }
 }
@@ -134,9 +133,9 @@ mod tests {
     use super::{ExecutionContext, ExecutionLane, ExecutionPlan, TurnContext};
     use crate::agent::permissions::PermissionMode;
     use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
-    use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
+    use crate::agent::runtime::kernel::route_lane::RouteRunPlan;
     use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
-    use crate::agent::runtime::skill_routing::runner::RouteRunPlan;
+    use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
     use runtime_chat_app::ChatExecutionGuidance;
 
     #[test]
@@ -160,9 +159,12 @@ mod tests {
         let execution_plan = ExecutionPlan::from_route_plan(route_plan.clone());
 
         assert_eq!(execution_plan.lane, ExecutionLane::OpenTask);
-        assert!(matches!(execution_plan.route_plan, RouteRunPlan::OpenTask {
-            fallback_reason: Some(RouteFallbackReason::NoCandidates)
-        }));
+        assert!(matches!(
+            execution_plan.route_plan,
+            RouteRunPlan::OpenTask {
+                fallback_reason: Some(RouteFallbackReason::NoCandidates)
+            }
+        ));
     }
 
     #[test]
