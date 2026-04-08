@@ -385,6 +385,7 @@ mod tests {
                 category: ToolCategory::Search,
                 source: ToolSource::Runtime,
                 score: 10,
+                stage: crate::agent::runtime::tool_catalog::ToolRecommendationStage::Primary,
                 matched_terms: vec!["search".to_string()],
                 matched_fields: vec!["name".to_string()],
             }],

@@ -8,8 +8,16 @@ pub struct ToolDiscoveryCandidateRecord {
     pub category: ToolCategory,
     pub source: ToolSource,
     pub score: i32,
+    pub stage: ToolRecommendationStage,
     pub matched_terms: Vec<String>,
     pub matched_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolRecommendationStage {
+    Primary,
+    Supporting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +33,7 @@ pub(crate) struct ToolCatalogSearchHit {
     pub category: ToolCategory,
     pub source: ToolSource,
     pub score: i32,
+    pub stage: ToolRecommendationStage,
     pub matched_terms: Vec<String>,
     pub matched_fields: Vec<String>,
 }
@@ -107,8 +116,12 @@ pub(crate) fn format_tool_candidate_hints(
 
     for hit in hits {
         lines.push(format!(
-            "- {}: {} / {}",
+            "- {} [{}]: {} / {}",
             hit.name,
+            match hit.stage {
+                ToolRecommendationStage::Primary => "主推荐",
+                ToolRecommendationStage::Supporting => "补充",
+            },
             category_label(hit.category),
             source_label(hit.source)
         ));
@@ -129,6 +142,7 @@ pub(crate) fn build_tool_candidate_records(
             category: hit.category,
             source: hit.source,
             score: hit.score,
+            stage: hit.stage,
             matched_terms: hit.matched_terms,
             matched_fields: hit.matched_fields,
         })
@@ -154,6 +168,7 @@ pub(crate) fn discover_tool_candidates(
                 category: entry.category,
                 source: entry.source,
                 score: detail.score,
+                stage: ToolRecommendationStage::Supporting,
                 matched_terms: detail.matched_terms,
                 matched_fields: detail.matched_fields,
             })
@@ -166,6 +181,13 @@ pub(crate) fn discover_tool_candidates(
             .cmp(&left.score)
             .then_with(|| left.name.cmp(&right.name))
     });
+    for (index, hit) in hits.iter_mut().enumerate() {
+        hit.stage = if index < 2 || hit.score >= 14 {
+            ToolRecommendationStage::Primary
+        } else {
+            ToolRecommendationStage::Supporting
+        };
+    }
     hits.truncate(limit);
     hits
 }
@@ -184,6 +206,7 @@ fn score_tool_match(entry: &ToolManifestEntry, tokens: &[String]) -> ToolMatchDe
     let category = category_label(entry.category).to_ascii_lowercase();
     let source = source_label(entry.source).to_ascii_lowercase();
     let mut detail = ToolMatchDetail::default();
+    let category_hints = infer_category_hints(tokens);
 
     for token in tokens {
         let mut matched = false;
@@ -221,7 +244,39 @@ fn score_tool_match(entry: &ToolManifestEntry, tokens: &[String]) -> ToolMatchDe
         }
     }
 
+    if category_hints.contains(&entry.category) {
+        detail.score += 7;
+        push_unique(&mut detail.matched_fields, "intent_category");
+    }
+
     detail
+}
+
+fn infer_category_hints(tokens: &[String]) -> Vec<ToolCategory> {
+    let mut categories = Vec::new();
+    for token in tokens {
+        let mapped = match token.as_str() {
+            "file" | "files" | "read" | "write" | "edit" | "folder" | "directory" | "dir" => {
+                Some(ToolCategory::File)
+            }
+            "bash" | "shell" | "terminal" | "command" | "commands" | "script" => {
+                Some(ToolCategory::Shell)
+            }
+            "search" | "latest" | "news" | "lookup" | "find" => Some(ToolCategory::Search),
+            "fetch" | "web" | "url" | "page" | "website" => Some(ToolCategory::Web),
+            "browser" | "click" | "open" | "snapshot" | "submit" => Some(ToolCategory::Browser),
+            "memory" | "remember" | "recall" => Some(ToolCategory::Memory),
+            "plan" | "todo" | "steps" => Some(ToolCategory::Planning),
+            "mcp" | "integration" | "plugin" => Some(ToolCategory::Integration),
+            _ => None,
+        };
+        if let Some(category) = mapped {
+            if !categories.contains(&category) {
+                categories.push(category);
+            }
+        }
+    }
+    categories
 }
 
 fn push_unique(values: &mut Vec<String>, value: &str) {
@@ -275,7 +330,7 @@ fn source_label(source: ToolSource) -> &'static str {
 mod tests {
     use super::{
         build_tool_candidate_records, discover_tool_candidates, format_tool_candidate_hints,
-        format_tool_discovery_index, summarize_tool_catalog,
+        format_tool_discovery_index, summarize_tool_catalog, ToolRecommendationStage,
     };
     use crate::agent::tool_manifest::{ToolCategory, ToolMetadata, ToolSource};
     use crate::agent::ToolManifestEntry;
@@ -362,6 +417,10 @@ mod tests {
             .first()
             .map(|hit| hit.matched_fields.contains(&"name".to_string()))
             .unwrap_or(false));
+        assert_eq!(
+            hits.first().map(|hit| hit.stage),
+            Some(ToolRecommendationStage::Primary)
+        );
     }
 
     #[test]
@@ -436,6 +495,7 @@ mod tests {
             .expect("candidate hints");
         assert!(hints.contains("[当前任务候选工具]"));
         assert!(hints.contains("web_search"));
+        assert!(hints.contains("主推荐"));
     }
 
     #[test]
@@ -489,6 +549,34 @@ mod tests {
         let records = build_tool_candidate_records(&entries, "search latest web news", 2);
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].name, "web_search");
+        assert_eq!(records[0].stage, ToolRecommendationStage::Primary);
         assert!(records[0].matched_terms.contains(&"search".to_string()));
+    }
+
+    #[test]
+    fn discover_tool_candidates_uses_intent_category_boosts() {
+        let entries = vec![
+            entry(
+                "read_file",
+                "Read file",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+            entry(
+                "web_search",
+                "Search web",
+                ToolCategory::Search,
+                ToolSource::Runtime,
+            ),
+        ];
+
+        let hits = discover_tool_candidates(&entries, "latest news", 2);
+        assert_eq!(
+            hits.first().map(|hit| hit.name.as_str()),
+            Some("web_search")
+        );
+        assert!(hits[0]
+            .matched_fields
+            .contains(&"intent_category".to_string()));
     }
 }

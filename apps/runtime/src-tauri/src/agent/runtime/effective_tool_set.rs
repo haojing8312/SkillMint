@@ -1,7 +1,7 @@
 use crate::agent::tool_manifest::{ToolCategory, ToolSource};
 use crate::agent::{ToolManifestEntry, ToolRegistry};
 
-use super::tool_catalog::ToolDiscoveryCandidateRecord;
+use super::tool_catalog::{ToolDiscoveryCandidateRecord, ToolRecommendationStage};
 use super::tool_profiles::{resolve_tool_profile, ToolProfileName};
 use crate::agent::permissions::PermissionMode;
 
@@ -225,6 +225,7 @@ impl EffectiveToolSet {
 
         let recommended_tools = discovery_candidates
             .iter()
+            .filter(|candidate| candidate.stage == ToolRecommendationStage::Primary)
             .map(|candidate| candidate.name.clone())
             .filter(|name| self.tool_names.contains(name))
             .fold(Vec::new(), |mut acc, name| {
@@ -244,6 +245,18 @@ impl EffectiveToolSet {
             return;
         }
 
+        let supporting_tools = discovery_candidates
+            .iter()
+            .filter(|candidate| candidate.stage == ToolRecommendationStage::Supporting)
+            .map(|candidate| candidate.name.clone())
+            .filter(|name| self.tool_names.contains(name))
+            .fold(Vec::new(), |mut acc, name| {
+                if !acc.contains(&name) {
+                    acc.push(name);
+                }
+                acc
+            });
+
         let core_safe_tools = self
             .tool_manifest
             .iter()
@@ -257,6 +270,11 @@ impl EffectiveToolSet {
             });
 
         let mut active_tools = recommended_tools.clone();
+        for tool_name in supporting_tools {
+            if !active_tools.contains(&tool_name) {
+                active_tools.push(tool_name);
+            }
+        }
         for tool_name in core_safe_tools {
             if !active_tools.contains(&tool_name) {
                 active_tools.push(tool_name);
@@ -1320,6 +1338,7 @@ mod tests {
                 category: ToolCategory::Web,
                 source: ToolSource::Native,
                 score: 12,
+                stage: crate::agent::runtime::tool_catalog::ToolRecommendationStage::Primary,
                 matched_terms: vec!["fetch".to_string()],
                 matched_fields: vec!["name".to_string()],
             },
@@ -1328,6 +1347,7 @@ mod tests {
                 category: ToolCategory::File,
                 source: ToolSource::Native,
                 score: 10,
+                stage: crate::agent::runtime::tool_catalog::ToolRecommendationStage::Primary,
                 matched_terms: vec!["read".to_string()],
                 matched_fields: vec!["name".to_string()],
             },
