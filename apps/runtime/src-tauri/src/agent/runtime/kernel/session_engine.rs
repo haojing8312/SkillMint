@@ -99,6 +99,7 @@ impl SessionEngine {
             &execution_context.workspace_skill_entries,
             execution_context.skill_command_specs(),
             user_message,
+            turn_context.continuation_preference.as_ref(),
         );
         let execution_plan = planned_route.execution_plan.clone();
         chat_io::append_skill_route_recorded_with_pool(

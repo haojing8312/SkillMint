@@ -97,11 +97,19 @@ impl ExecutionContext {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ContinuationPreference {
+    pub selected_skill: String,
+    pub selected_runner: Option<String>,
+    pub reconstructed_history_len: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TurnContext {
     pub requested_capability: String,
     pub route_candidates: Vec<(String, String, String, String, String)>,
     pub per_candidate_retry_count: usize,
     pub messages: Vec<Value>,
+    pub continuation_preference: Option<ContinuationPreference>,
 }
 
 impl TurnContext {
@@ -141,7 +149,9 @@ pub(crate) enum SessionEngineError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecutionContext, ExecutionLane, ExecutionPlan, TurnContext};
+    use super::{
+        ContinuationPreference, ExecutionContext, ExecutionLane, ExecutionPlan, TurnContext,
+    };
     use crate::agent::permissions::PermissionMode;
     use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
     use crate::agent::runtime::kernel::route_lane::RouteRunPlan;
@@ -240,12 +250,24 @@ mod tests {
                 "role": "user",
                 "content": "请总结今天的变更"
             })],
+            continuation_preference: Some(ContinuationPreference {
+                selected_skill: "feishu-pm-weekly-work-summary".to_string(),
+                selected_runner: Some("prompt_skill_inline".to_string()),
+                reconstructed_history_len: Some(4),
+            }),
         };
 
         assert_eq!(turn_context.requested_capability, "chat");
         assert_eq!(turn_context.route_candidates.len(), 1);
         assert_eq!(turn_context.per_candidate_retry_count, 2);
         assert_eq!(turn_context.messages.len(), 1);
+        assert_eq!(
+            turn_context
+                .continuation_preference
+                .as_ref()
+                .map(|preference| preference.selected_skill.as_str()),
+            Some("feishu-pm-weekly-work-summary")
+        );
         let primary = turn_context
             .primary_route_candidate()
             .expect("primary route candidate");

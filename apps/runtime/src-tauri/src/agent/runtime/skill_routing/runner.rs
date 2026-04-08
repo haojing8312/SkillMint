@@ -4,7 +4,9 @@ use super::intent::RouteFallbackReason;
 use super::observability::{build_implicit_route_observation, PlannedImplicitRoute};
 use super::recall::recall_skill_candidates;
 use crate::agent::runtime::kernel::direct_dispatch::execute_direct_dispatch_skill;
-use crate::agent::runtime::kernel::execution_plan::{ExecutionContext, ExecutionPlan, TurnContext};
+use crate::agent::runtime::kernel::execution_plan::{
+    ContinuationPreference, ExecutionContext, ExecutionPlan, TurnContext,
+};
 use crate::agent::runtime::kernel::route_lane::{
     build_routed_skill_tool_setup, RouteRunOutcome, RouteRunPlan,
 };
@@ -12,7 +14,9 @@ use crate::agent::runtime::kernel::routed_prompt::{
     execute_routed_prompt, prepare_routed_prompt, RoutedPromptExecutionParams,
     RoutedPromptPreparationParams,
 };
-use crate::agent::runtime::runtime_io::{WorkspaceSkillCommandSpec, WorkspaceSkillRuntimeEntry};
+use crate::agent::runtime::runtime_io::{
+    WorkspaceSkillCommandSpec, WorkspaceSkillRouteExecutionMode, WorkspaceSkillRuntimeEntry,
+};
 use crate::agent::AgentExecutor;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -51,6 +55,7 @@ pub(crate) fn plan_implicit_route(
         workspace_skill_entries,
         command_specs,
         user_message,
+        None,
     )
     .execution_plan
     .route_plan
@@ -61,12 +66,68 @@ pub(crate) fn plan_implicit_route_with_observation(
     workspace_skill_entries: &[WorkspaceSkillRuntimeEntry],
     command_specs: &[WorkspaceSkillCommandSpec],
     user_message: &str,
+    continuation_preference: Option<&ContinuationPreference>,
 ) -> PlannedImplicitRoute {
     let started_at = std::time::Instant::now();
     let candidates = recall_skill_candidates(route_index, user_message);
-    let decision = adjudicate_route(&candidates);
+    let route_plan = resolve_continuation_route_plan(
+        route_index,
+        workspace_skill_entries,
+        continuation_preference,
+    )
+    .unwrap_or_else(|| {
+        let decision = adjudicate_route(&candidates);
+        route_plan_from_decision(
+            workspace_skill_entries,
+            command_specs,
+            user_message,
+            decision,
+        )
+    });
+    let execution_plan = ExecutionPlan::from_route_plan(route_plan.clone());
 
-    let route_plan = match decision {
+    PlannedImplicitRoute {
+        observation: build_implicit_route_observation(
+            &route_plan,
+            candidates.len(),
+            started_at.elapsed().as_millis() as u64,
+        ),
+        execution_plan,
+    }
+}
+
+fn resolve_continuation_route_plan(
+    route_index: &SkillRouteIndex,
+    workspace_skill_entries: &[WorkspaceSkillRuntimeEntry],
+    continuation_preference: Option<&ContinuationPreference>,
+) -> Option<RouteRunPlan> {
+    let preference = continuation_preference?;
+    let projection = route_index.get(&preference.selected_skill)?;
+    let entry = workspace_skill_entries
+        .iter()
+        .find(|entry| entry.skill_id == preference.selected_skill)?;
+    let setup = build_routed_skill_tool_setup(entry);
+
+    match projection.execution_mode {
+        WorkspaceSkillRouteExecutionMode::Inline => Some(RouteRunPlan::PromptSkillInline {
+            skill_id: preference.selected_skill.clone(),
+            setup,
+        }),
+        WorkspaceSkillRouteExecutionMode::Fork => Some(RouteRunPlan::PromptSkillFork {
+            skill_id: preference.selected_skill.clone(),
+            setup,
+        }),
+        WorkspaceSkillRouteExecutionMode::DirectDispatch => None,
+    }
+}
+
+fn route_plan_from_decision(
+    workspace_skill_entries: &[WorkspaceSkillRuntimeEntry],
+    command_specs: &[WorkspaceSkillCommandSpec],
+    user_message: &str,
+    decision: super::intent::RouteDecision,
+) -> RouteRunPlan {
+    match decision {
         super::intent::RouteDecision::OpenTask {
             fallback_reason, ..
         } => RouteRunPlan::OpenTask { fallback_reason },
@@ -135,16 +196,6 @@ pub(crate) fn plan_implicit_route_with_observation(
                 },
             }
         }
-    };
-    let execution_plan = ExecutionPlan::from_route_plan(route_plan.clone());
-
-    PlannedImplicitRoute {
-        observation: build_implicit_route_observation(
-            &route_plan,
-            candidates.len(),
-            started_at.elapsed().as_millis() as u64,
-        ),
-        execution_plan,
     }
 }
 
@@ -370,6 +421,7 @@ fn build_fork_messages(messages: &[serde_json::Value]) -> Vec<serde_json::Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::runtime::kernel::execution_plan::ContinuationPreference;
     use crate::agent::runtime::runtime_io::{
         WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
     };
@@ -734,6 +786,7 @@ mod tests {
             &entries,
             &command_specs,
             "帮我同步项管日报到看板",
+            None,
         );
 
         assert_eq!(
@@ -838,5 +891,70 @@ mod tests {
             } => {}
             other => panic!("expected open-task plan, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn plan_implicit_route_with_observation_prefers_recent_prompt_skill_for_continuation() {
+        let entries = vec![
+            build_entry(
+                "feishu-pm-fork-sync",
+                "PM Fork Sync",
+                "同步项管日报到看板",
+                "## When to Use\n- 同步项管日报到看板并更新状态。\n",
+                Some("fork"),
+                Some(vec!["read_file"]),
+                Some(4),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("fork-sync"),
+                None,
+            ),
+            build_entry(
+                "feishu-pm-weekly-work-summary",
+                "PM Weekly Summary",
+                "项管日报汇总",
+                "## When to Use\n- 汇总项管日报并整理任务。\n",
+                None,
+                Some(vec!["read_file"]),
+                Some(3),
+                SkillInvocationPolicy {
+                    user_invocable: true,
+                    disable_model_invocation: false,
+                },
+                Some("weekly-summary"),
+                None,
+            ),
+        ];
+        let index = build_index(entries.clone());
+        let command_specs = build_command_specs(&entries);
+        let continuation_preference = ContinuationPreference {
+            selected_skill: "feishu-pm-fork-sync".to_string(),
+            selected_runner: Some("prompt_skill_fork".to_string()),
+            reconstructed_history_len: Some(6),
+        };
+
+        let planned_route = plan_implicit_route_with_observation(
+            &index,
+            &entries,
+            &command_specs,
+            "继续",
+            Some(&continuation_preference),
+        );
+
+        assert_eq!(
+            planned_route.observation.selected_skill.as_deref(),
+            Some("feishu-pm-fork-sync")
+        );
+        assert_eq!(
+            planned_route.observation.selected_runner,
+            "prompt_skill_fork"
+        );
+        assert!(matches!(
+            planned_route.execution_plan.route_plan,
+            RouteRunPlan::PromptSkillFork { ref skill_id, .. }
+                if skill_id == "feishu-pm-fork-sync"
+        ));
     }
 }

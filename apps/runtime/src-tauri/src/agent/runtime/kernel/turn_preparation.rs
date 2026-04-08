@@ -1,4 +1,4 @@
-use super::execution_plan::{ExecutionContext, TurnContext};
+use super::execution_plan::{ContinuationPreference, ExecutionContext, TurnContext};
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
@@ -168,8 +168,10 @@ pub(crate) async fn prepare_local_turn(
         .max_iterations_override
         .map(|override_value| override_value.max(1))
         .unwrap_or(default_max_iter);
-    let continuation_runtime_notes =
-        load_recent_compaction_runtime_notes(params.app, params.session_id).await;
+    let recent_compaction_context =
+        load_recent_compaction_context(params.app, params.session_id, params.user_message).await;
+    let continuation_runtime_notes = recent_compaction_context.runtime_notes;
+    let continuation_preference = recent_compaction_context.continuation_preference;
 
     let prepared_runtime_tools = prepare_runtime_tools(ToolSetupParams {
         app: params.app,
@@ -242,21 +244,38 @@ pub(crate) async fn prepare_local_turn(
             route_candidates,
             per_candidate_retry_count,
             messages,
+            continuation_preference,
         },
         execution_context,
     ))
 }
 
-async fn load_recent_compaction_runtime_notes(app: &AppHandle, session_id: &str) -> Vec<String> {
+#[derive(Debug, Default)]
+struct RecentCompactionContext {
+    runtime_notes: Vec<String>,
+    continuation_preference: Option<ContinuationPreference>,
+}
+
+async fn load_recent_compaction_context(
+    app: &AppHandle,
+    session_id: &str,
+    user_message: &str,
+) -> RecentCompactionContext {
     let Some(journal) = app.try_state::<SessionJournalStateHandle>() else {
-        return Vec::new();
+        return RecentCompactionContext::default();
     };
 
     journal
         .0
         .read_state(session_id)
         .await
-        .map(|state| resolve_recent_compaction_runtime_notes(&state))
+        .map(|state| RecentCompactionContext {
+            runtime_notes: resolve_recent_compaction_runtime_notes(&state),
+            continuation_preference: resolve_compaction_continuation_preference(
+                user_message,
+                &state,
+            ),
+        })
         .unwrap_or_default()
 }
 
@@ -289,6 +308,70 @@ fn resolve_recent_compaction_runtime_notes(state: &SessionJournalState) -> Vec<S
             Some(lines.join("\n"))
         })
         .into_iter()
+        .collect()
+}
+
+fn resolve_compaction_continuation_preference(
+    user_message: &str,
+    state: &SessionJournalState,
+) -> Option<ContinuationPreference> {
+    if !is_compaction_continuation_request(user_message) {
+        return None;
+    }
+
+    state.runs.iter().rev().find_map(|run| {
+        let turn_state = run.turn_state.as_ref()?;
+        turn_state.compaction_boundary.as_ref()?;
+        let selected_skill = turn_state.selected_skill.as_ref()?.trim();
+        if selected_skill.is_empty() {
+            return None;
+        }
+        if !matches!(run.status, SessionRunStatus::Failed)
+            && run.last_error_kind.as_deref() != Some("max_turns")
+        {
+            return None;
+        }
+
+        Some(ContinuationPreference {
+            selected_skill: selected_skill.to_string(),
+            selected_runner: turn_state.selected_runner.clone(),
+            reconstructed_history_len: turn_state.reconstructed_history_len,
+        })
+    })
+}
+
+fn is_compaction_continuation_request(user_message: &str) -> bool {
+    let normalized = canonicalize_continuation_match(user_message);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    const EXACT_CONTINUATION_REQUESTS: &[&str] = &[
+        "continue",
+        "continueplease",
+        "pleasecontinue",
+        "继续",
+        "继续执行",
+        "继续上次",
+        "继续刚才",
+        "继续处理",
+        "接着做",
+        "接着来",
+    ];
+
+    EXACT_CONTINUATION_REQUESTS
+        .iter()
+        .any(|candidate| normalized == canonicalize_continuation_match(candidate))
+        || (normalized.starts_with("继续") && normalized.chars().count() <= 12)
+        || (normalized.starts_with("continue") && normalized.chars().count() <= 24)
+}
+
+fn canonicalize_continuation_match(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || ('\u{4e00}'..='\u{9fff}').contains(ch))
+        .flat_map(|ch| ch.to_lowercase())
         .collect()
 }
 
@@ -394,8 +477,8 @@ struct ExplicitPromptSkillSelection {
 mod tests {
     use super::{
         append_current_turn_message, parse_user_skill_command,
-        resolve_explicit_prompt_following_skill, rewrite_user_skill_command_for_model,
-        resolve_recent_compaction_runtime_notes,
+        resolve_compaction_continuation_preference, resolve_explicit_prompt_following_skill,
+        resolve_recent_compaction_runtime_notes, rewrite_user_skill_command_for_model,
     };
     use crate::agent::runtime::runtime_io as chat_io;
     use crate::agent::runtime::runtime_io::{WorkspaceSkillContent, WorkspaceSkillRuntimeEntry};
@@ -631,5 +714,51 @@ mod tests {
         };
 
         assert!(resolve_recent_compaction_runtime_notes(&state).is_empty());
+    }
+
+    #[test]
+    fn resolve_compaction_continuation_preference_prefers_recent_prompt_skill() {
+        let state = SessionJournalState {
+            session_id: "session-1".to_string(),
+            current_run_id: None,
+            runs: vec![SessionRunSnapshot {
+                run_id: "run-1".to_string(),
+                user_message_id: "user-1".to_string(),
+                status: SessionRunStatus::Failed,
+                buffered_text: "已保留当前执行上下文".to_string(),
+                last_error_kind: Some("max_turns".to_string()),
+                last_error_message: Some("已达到执行步数上限".to_string()),
+                turn_state: Some(SessionRunTurnStateSnapshot {
+                    execution_lane: Some("prompt_fork".to_string()),
+                    selected_runner: Some("prompt_skill_fork".to_string()),
+                    selected_skill: Some("feishu-pm-weekly-work-summary".to_string()),
+                    fallback_reason: None,
+                    allowed_tools: vec!["read".to_string(), "exec".to_string()],
+                    invoked_skills: vec!["feishu-pm-weekly-work-summary".to_string()],
+                    partial_assistant_text: "还差最后的日报汇总和任务整理".to_string(),
+                    tool_failure_streak: 0,
+                    reconstructed_history_len: Some(6),
+                    compaction_boundary: Some(SessionRunTurnStateCompactionBoundary {
+                        transcript_path: "temp/transcripts/run-1.json".to_string(),
+                        original_tokens: 4096,
+                        compacted_tokens: 1024,
+                        summary: "保留最近的日报汇总计划和工具结果".to_string(),
+                    }),
+                }),
+            }],
+        };
+
+        let preference =
+            resolve_compaction_continuation_preference("继续执行", &state).expect("preference");
+
+        assert_eq!(
+            preference.selected_skill,
+            "feishu-pm-weekly-work-summary".to_string()
+        );
+        assert_eq!(
+            preference.selected_runner.as_deref(),
+            Some("prompt_skill_fork")
+        );
+        assert_eq!(preference.reconstructed_history_len, Some(6));
     }
 }
