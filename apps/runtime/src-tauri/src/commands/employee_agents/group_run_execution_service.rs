@@ -5,12 +5,11 @@ use super::super::repo::{
     insert_session_message, insert_session_seed, insert_tx_session_message,
     list_session_message_rows, SessionSeedInput,
 };
-use super::{
-    get_employee_group_run_snapshot_by_run_id_with_pool, list_agent_employees_with_pool,
-};
 use super::super::{EmployeeGroupRunResult, StartEmployeeGroupRunInput};
-use crate::agent::permissions::PermissionMode;
-use crate::agent::run_guard::{parse_run_stop_reason, RunStopReasonKind};
+use super::{get_employee_group_run_snapshot_by_run_id_with_pool, list_agent_employees_with_pool};
+use crate::agent::runtime::kernel::execution_plan::{ExecutionOutcome, SessionEngineError};
+use crate::agent::runtime::kernel::session_engine::SessionEngine;
+use crate::agent::runtime::kernel::turn_preparation::prepare_employee_step_turn;
 use crate::agent::tools::{EmployeeManageTool, MemoryTool};
 use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::commands::chat_runtime_io::extract_assistant_text_content;
@@ -50,8 +49,9 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
 
     let (system_prompt, allowed_tools, max_iterations) =
         super::super::build_group_step_system_prompt(&employee, &session_row.skill_id);
-    let user_prompt =
-        super::super::build_group_step_user_prompt(run_id, step_id, user_goal, step_input, &employee);
+    let user_prompt = super::super::build_group_step_user_prompt(
+        run_id, step_id, user_goal, step_input, &employee,
+    );
 
     let now = chrono::Utc::now().to_rfc3339();
     insert_session_message(pool, session_id, "user", &user_prompt, &now).await?;
@@ -87,67 +87,98 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
     registry.register(Arc::new(MemoryTool::new(memory_dir)));
     registry.register(Arc::new(EmployeeManageTool::new(pool.clone())));
 
-    let executor = AgentExecutor::with_max_iterations(Arc::clone(&registry), max_iterations);
-    let final_messages = match executor
-        .execute_turn(
-            &model_row.api_format,
-            &model_row.base_url,
-            &model_row.api_key,
-            &model_row.model_name,
-            &system_prompt,
-            messages,
-            |_| {},
-            None,
-            None,
-            allowed_tools.as_deref(),
-            PermissionMode::Unrestricted,
-            None,
-            if session_row.work_dir.trim().is_empty() {
-                None
-            } else {
-                Some(session_row.work_dir.clone())
-            },
-            Some(max_iterations),
-            None,
-            None,
-            None,
-        )
-        .await
-    {
-        Ok(final_messages) => final_messages,
-        Err(error) => {
-            let error_text = error.to_string();
-            let stop_reason = match parse_run_stop_reason(&error_text) {
-                Some(reason) => reason,
-                None => return Err(error_text),
-            };
-            if stop_reason.kind != RunStopReasonKind::MaxTurns {
-                return Err(error_text);
-            }
+    let executor = Arc::new(AgentExecutor::with_max_iterations(
+        Arc::clone(&registry),
+        max_iterations,
+    ));
+    let (mut turn_context, execution_context) = prepare_employee_step_turn(
+        &executor,
+        &user_prompt,
+        &system_prompt,
+        &model_row.api_format,
+        &model_row.base_url,
+        &model_row.api_key,
+        &model_row.model_name,
+        allowed_tools,
+        max_iterations,
+        if session_row.work_dir.trim().is_empty() {
+            None
+        } else {
+            Some(session_row.work_dir.clone())
+        },
+    );
+    turn_context.messages = messages;
 
-            let fallback_output = super::super::build_group_step_iteration_fallback_output(
-                &employee,
-                user_goal,
-                step_input,
-                stop_reason
-                    .detail
-                    .as_deref()
-                    .unwrap_or(stop_reason.message.as_str()),
-            );
-            let finished_at = chrono::Utc::now().to_rfc3339();
-            insert_session_message(pool, session_id, "assistant", &fallback_output, &finished_at)
+    let assistant_output = match SessionEngine::run_employee_step_turn(
+        None,
+        &executor,
+        session_id,
+        &turn_context,
+        &execution_context,
+        |_| {},
+    )
+    .await
+    {
+        Ok(ExecutionOutcome::RouteExecution {
+            route_execution, ..
+        }) => {
+            if let Some(final_messages) = route_execution.final_messages {
+                let assistant_output = super::super::extract_assistant_text(&final_messages);
+                if assistant_output.trim().is_empty() {
+                    return Err(
+                        "employee step execution returned empty assistant output".to_string()
+                    );
+                }
+                assistant_output
+            } else if let Some(stop_reason) = route_execution.last_stop_reason {
+                if !stop_reason
+                    .kind
+                    .eq(&crate::agent::run_guard::RunStopReasonKind::MaxTurns)
+                {
+                    return Err(route_execution
+                        .last_error
+                        .unwrap_or_else(|| stop_reason.message.clone()));
+                }
+                let fallback_output = super::super::build_group_step_iteration_fallback_output(
+                    &employee,
+                    user_goal,
+                    step_input,
+                    stop_reason
+                        .detail
+                        .as_deref()
+                        .unwrap_or(stop_reason.message.as_str()),
+                );
+                let finished_at = chrono::Utc::now().to_rfc3339();
+                insert_session_message(
+                    pool,
+                    session_id,
+                    "assistant",
+                    &fallback_output,
+                    &finished_at,
+                )
                 .await?;
-            return Ok(fallback_output);
+                return Ok(fallback_output);
+            } else {
+                return Err(route_execution
+                    .last_error
+                    .unwrap_or_else(|| "employee step execution failed".to_string()));
+            }
         }
+        Ok(ExecutionOutcome::DirectDispatch { output, .. }) => output,
+        Ok(ExecutionOutcome::SkillCommandFailed { error, .. })
+        | Ok(ExecutionOutcome::SkillCommandStopped { error, .. }) => return Err(error),
+        Err(SessionEngineError::Generic(message)) => return Err(message),
     };
 
-    let assistant_output = super::super::extract_assistant_text(&final_messages);
-    if assistant_output.trim().is_empty() {
-        return Err("employee step execution returned empty assistant output".to_string());
-    }
-
     let finished_at = chrono::Utc::now().to_rfc3339();
-    insert_session_message(pool, session_id, "assistant", &assistant_output, &finished_at).await?;
+    insert_session_message(
+        pool,
+        session_id,
+        "assistant",
+        &assistant_output,
+        &finished_at,
+    )
+    .await?;
 
     Ok(assistant_output)
 }
@@ -226,7 +257,9 @@ pub(crate) async fn ensure_group_step_session_with_pool(
     assignee_employee_id: &str,
     now: &str,
 ) -> Result<String, String> {
-    if let Some(session_id) = find_recent_group_step_session_id(pool, run_id, assignee_employee_id).await? {
+    if let Some(session_id) =
+        find_recent_group_step_session_id(pool, run_id, assignee_employee_id).await?
+    {
         return Ok(session_id);
     }
 

@@ -156,16 +156,60 @@ impl SessionEngine {
         execution_context: &super::execution_plan::ExecutionContext,
         on_token: impl Fn(StreamDelta) + Send + Clone + 'static,
     ) -> Result<ExecutionOutcome, SessionEngineError> {
-        debug_assert_eq!(
-            execution_context.session_profile.surface,
-            SessionSurfaceKind::HiddenChildSession
-        );
+        Self::run_prepared_surface_turn(
+            SessionSurfaceKind::HiddenChildSession,
+            "隐藏子会话缺少可执行模型候选",
+            "child_session",
+            app_handle,
+            agent_executor,
+            session_id,
+            turn_context,
+            execution_context,
+            on_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn run_employee_step_turn(
+        app_handle: Option<&AppHandle>,
+        agent_executor: &Arc<AgentExecutor>,
+        session_id: &str,
+        turn_context: &super::execution_plan::TurnContext,
+        execution_context: &super::execution_plan::ExecutionContext,
+        on_token: impl Fn(StreamDelta) + Send + Clone + 'static,
+    ) -> Result<ExecutionOutcome, SessionEngineError> {
+        Self::run_prepared_surface_turn(
+            SessionSurfaceKind::EmployeeStepSession,
+            "员工步骤会话缺少可执行模型候选",
+            "employee_step",
+            app_handle,
+            agent_executor,
+            session_id,
+            turn_context,
+            execution_context,
+            on_token,
+        )
+        .await
+    }
+
+    async fn run_prepared_surface_turn(
+        expected_surface: SessionSurfaceKind,
+        missing_candidate_message: &str,
+        default_error_kind: &str,
+        app_handle: Option<&AppHandle>,
+        agent_executor: &Arc<AgentExecutor>,
+        session_id: &str,
+        turn_context: &super::execution_plan::TurnContext,
+        execution_context: &super::execution_plan::ExecutionContext,
+        on_token: impl Fn(StreamDelta) + Send + Clone + 'static,
+    ) -> Result<ExecutionOutcome, SessionEngineError> {
+        debug_assert_eq!(execution_context.session_profile.surface, expected_surface);
 
         let Some((provider_key, api_format, base_url, model_name, api_key)) =
             turn_context.primary_route_candidate()
         else {
             return Err(SessionEngineError::Generic(
-                "隐藏子会话缺少可执行模型候选".to_string(),
+                missing_candidate_message.to_string(),
             ));
         };
 
@@ -231,7 +275,7 @@ impl SessionEngine {
                         stop_reason
                             .as_ref()
                             .map(|reason| reason.kind.as_key().to_string())
-                            .unwrap_or_else(|| "child_session".to_string()),
+                            .unwrap_or_else(|| default_error_kind.to_string()),
                     ),
                     last_stop_reason: stop_reason,
                     partial_text: streamed_text

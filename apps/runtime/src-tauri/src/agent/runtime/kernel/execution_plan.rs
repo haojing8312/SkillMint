@@ -165,10 +165,10 @@ mod tests {
     };
     use crate::agent::permissions::PermissionMode;
     use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
+    use crate::agent::runtime::kernel::route_lane::RouteRunPlan;
     use crate::agent::runtime::kernel::session_profile::{
         SessionExecutionProfile, SessionSurfaceKind,
     };
-    use crate::agent::runtime::kernel::route_lane::RouteRunPlan;
     use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
     use runtime_chat_app::ChatExecutionGuidance;

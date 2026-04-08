@@ -1,10 +1,11 @@
 use super::execution_plan::{
     ContinuationPreference, ContinuationTurnPolicy, ExecutionContext, TurnContext,
 };
-use super::session_profile::{SessionExecutionProfile, SessionSurfaceKind};
+use super::session_profile::SessionExecutionProfile;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
+use crate::agent::runtime::kernel::context_bundle::ContextBundle;
 use crate::agent::runtime::repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
@@ -325,12 +326,83 @@ pub(crate) fn prepare_hidden_child_turn(
     )
 }
 
+pub(crate) fn prepare_employee_step_turn(
+    agent_executor: &Arc<AgentExecutor>,
+    user_prompt: &str,
+    employee_step_system_prompt: &str,
+    api_format: &str,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    allowed_tools: Option<Vec<String>>,
+    max_iterations: usize,
+    work_dir: Option<String>,
+) -> (TurnContext, ExecutionContext) {
+    let capability_snapshot = CapabilitySnapshot::build(
+        allowed_tools.clone(),
+        chat_io::resolve_tool_name_list(&allowed_tools, agent_executor),
+        Vec::new(),
+        Vec::new(),
+    );
+    let execution_guidance = build_minimal_execution_guidance(work_dir.as_deref());
+    let context_bundle = ContextBundle::build(
+        employee_step_system_prompt,
+        &capability_snapshot,
+        model,
+        max_iterations.max(1),
+        &execution_guidance,
+        None,
+        None,
+        None,
+    );
+
+    (
+        TurnContext {
+            requested_capability: "general".to_string(),
+            route_candidates: vec![(
+                String::new(),
+                api_format.to_string(),
+                base_url.to_string(),
+                model.to_string(),
+                api_key.to_string(),
+            )],
+            per_candidate_retry_count: 0,
+            messages: vec![serde_json::json!({
+                "role": "user",
+                "content": user_prompt,
+            })],
+            continuation_preference: None,
+        },
+        ExecutionContext {
+            session_profile: build_employee_step_session_profile(),
+            capability_snapshot,
+            system_prompt: context_bundle.system_prompt,
+            continuation_runtime_notes: Vec::new(),
+            permission_mode: PermissionMode::Unrestricted,
+            executor_work_dir: work_dir,
+            max_iterations: Some(max_iterations.max(1)),
+            max_call_depth: 0,
+            node_timeout_seconds: 60,
+            route_retry_count: 0,
+            execution_guidance,
+            memory_bucket_employee_id: String::new(),
+            employee_collaboration_guidance: None,
+            workspace_skill_entries: Vec::new(),
+            route_index: SkillRouteIndex::default(),
+        },
+    )
+}
+
 fn build_local_chat_session_profile() -> SessionExecutionProfile {
-    SessionExecutionProfile::for_surface(SessionSurfaceKind::LocalChat)
+    SessionExecutionProfile::local_chat()
 }
 
 fn build_hidden_child_session_profile() -> SessionExecutionProfile {
-    SessionExecutionProfile::for_surface(SessionSurfaceKind::HiddenChildSession)
+    SessionExecutionProfile::hidden_child_session()
+}
+
+fn build_employee_step_session_profile() -> SessionExecutionProfile {
+    SessionExecutionProfile::employee_step_session()
 }
 
 fn build_hidden_child_system_prompt(agent_type: &str, delegate_display_name: &str) -> String {
@@ -338,6 +410,18 @@ fn build_hidden_child_system_prompt(agent_type: &str, delegate_display_name: &st
         "你是一个专注的子 Agent (类型: {})，当前承接角色: {}。完成以下任务后返回结果。简洁地报告你的发现。",
         agent_type, delegate_display_name
     )
+}
+
+fn build_minimal_execution_guidance(
+    work_dir: Option<&str>,
+) -> runtime_chat_app::ChatExecutionGuidance {
+    runtime_chat_app::ChatExecutionGuidance {
+        effective_work_dir: work_dir.unwrap_or_default().to_string(),
+        local_timezone: String::new(),
+        local_date: String::new(),
+        local_tomorrow: String::new(),
+        local_month_range: String::new(),
+    }
 }
 
 #[derive(Debug, Default)]
@@ -607,9 +691,10 @@ struct ExplicitPromptSkillSelection {
 mod tests {
     use super::{
         append_current_turn_message, apply_continuation_turn_policy,
-        build_local_chat_session_profile, parse_user_skill_command, prepare_hidden_child_turn,
-        resolve_compaction_continuation_preference, resolve_explicit_prompt_following_skill,
-        resolve_recent_compaction_runtime_notes, rewrite_user_skill_command_for_model,
+        build_local_chat_session_profile, parse_user_skill_command, prepare_employee_step_turn,
+        prepare_hidden_child_turn, resolve_compaction_continuation_preference,
+        resolve_explicit_prompt_following_skill, resolve_recent_compaction_runtime_notes,
+        rewrite_user_skill_command_for_model,
     };
     use crate::agent::registry::ToolRegistry;
     use crate::agent::runtime::kernel::execution_plan::{
@@ -715,6 +800,40 @@ mod tests {
                 .allowed_tools
                 .as_deref(),
             Some(&["read".to_string(), "exec".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn employee_step_turn_preparation_uses_employee_step_surface_profile() {
+        let agent_executor = Arc::new(AgentExecutor::new(Arc::new(ToolRegistry::new())));
+
+        let (turn_context, execution_context) = prepare_employee_step_turn(
+            &agent_executor,
+            "你正在执行多员工团队中的 execute 步骤。",
+            "你是一名专业、可靠、注重交付结果的 AI 员工。",
+            "openai",
+            "https://api.example.com/v1",
+            "test-key",
+            "gpt-test",
+            Some(vec!["read_file".to_string(), "bash".to_string()]),
+            8,
+            Some("E:/workspace/demo".to_string()),
+        );
+
+        assert_eq!(
+            execution_context.session_profile.surface,
+            SessionSurfaceKind::EmployeeStepSession
+        );
+        assert_eq!(turn_context.route_candidates.len(), 1);
+        assert_eq!(turn_context.messages.len(), 1);
+        assert_eq!(execution_context.max_iterations, Some(8));
+        assert!(execution_context.system_prompt.contains("AI 员工"));
+        assert_eq!(
+            execution_context
+                .capability_snapshot
+                .allowed_tools
+                .as_deref(),
+            Some(&["read_file".to_string(), "bash".to_string()][..])
         );
     }
 
