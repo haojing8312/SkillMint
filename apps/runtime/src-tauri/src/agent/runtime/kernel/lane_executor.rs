@@ -30,6 +30,8 @@ fn decorate_turn_state(
     execution_plan: &ExecutionPlan,
     execution_context: &ExecutionContext,
 ) -> TurnStateSnapshot {
+    let turn_state = turn_state.with_session_surface(execution_context.session_profile.surface);
+
     match &execution_plan.route_plan {
         RouteRunPlan::OpenTask { .. } => turn_state
             .with_execution_lane(execution_plan.lane)
@@ -120,5 +122,69 @@ pub(crate) async fn execute_execution_lane(
                 turn_state,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decorate_turn_state;
+    use crate::agent::permissions::PermissionMode;
+    use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
+    use crate::agent::runtime::kernel::execution_plan::{
+        ExecutionContext, ExecutionLane, ExecutionPlan,
+    };
+    use crate::agent::runtime::kernel::route_lane::RouteRunPlan;
+    use crate::agent::runtime::kernel::session_profile::{
+        SessionExecutionProfile, SessionSurfaceKind,
+    };
+    use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
+    use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
+    use runtime_chat_app::ChatExecutionGuidance;
+
+    #[test]
+    fn decorate_turn_state_projects_session_surface_from_execution_context() {
+        let execution_context = ExecutionContext {
+            session_profile: SessionExecutionProfile::for_surface(
+                SessionSurfaceKind::HiddenChildSession,
+            ),
+            capability_snapshot: CapabilitySnapshot::default(),
+            system_prompt: String::new(),
+            continuation_runtime_notes: Vec::new(),
+            permission_mode: PermissionMode::AcceptEdits,
+            executor_work_dir: None,
+            max_iterations: Some(4),
+            max_call_depth: 2,
+            node_timeout_seconds: 60,
+            route_retry_count: 1,
+            execution_guidance: ChatExecutionGuidance {
+                effective_work_dir: "E:/workspace/demo".to_string(),
+                local_timezone: "Asia/Shanghai".to_string(),
+                local_date: "2026-04-08".to_string(),
+                local_tomorrow: "2026-04-09".to_string(),
+                local_month_range: "2026-04-01 ~ 2026-04-30".to_string(),
+            },
+            memory_bucket_employee_id: "employee-1".to_string(),
+            employee_collaboration_guidance: None,
+            workspace_skill_entries: Vec::new(),
+            route_index: SkillRouteIndex::default(),
+        };
+        let execution_plan = ExecutionPlan {
+            lane: ExecutionLane::OpenTask,
+            route_plan: RouteRunPlan::OpenTask {
+                fallback_reason: None,
+            },
+        };
+
+        let turn_state = decorate_turn_state(
+            TurnStateSnapshot::default(),
+            &execution_plan,
+            &execution_context,
+        );
+
+        assert_eq!(
+            turn_state.session_surface,
+            Some(SessionSurfaceKind::HiddenChildSession)
+        );
+        assert_eq!(turn_state.execution_lane, Some(ExecutionLane::OpenTask));
     }
 }

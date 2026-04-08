@@ -977,6 +977,7 @@ mod tests {
                     error_kind: "max_turns".to_string(),
                     error_message: "已达到执行步数上限".to_string(),
                     turn_state: Some(SessionRunTurnStateSnapshot {
+                        session_surface: None,
                         execution_lane: Some("open_task".to_string()),
                         selected_runner: Some("OpenTaskRunner".to_string()),
                         selected_skill: Some("builtin-general".to_string()),

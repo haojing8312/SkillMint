@@ -1,5 +1,6 @@
 use crate::agent::run_guard::RunStopReason;
 use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
+use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
 use crate::agent::runtime::kernel::turn_state::{TurnCompactionBoundary, TurnStateSnapshot};
 use crate::agent::runtime::skill_routing::observability::route_fallback_reason_key;
 use crate::agent::runtime::{
@@ -214,6 +215,8 @@ impl From<&TurnCompactionBoundary> for SessionRunTurnStateCompactionBoundary {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionRunTurnStateSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_surface: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_lane: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_runner: Option<String>,
@@ -238,6 +241,7 @@ pub struct SessionRunTurnStateSnapshot {
 impl From<&TurnStateSnapshot> for SessionRunTurnStateSnapshot {
     fn from(value: &TurnStateSnapshot) -> Self {
         Self {
+            session_surface: value.session_surface.map(session_surface_key),
             execution_lane: value.execution_lane.map(execution_lane_key),
             selected_runner: value
                 .route_observation
@@ -248,14 +252,11 @@ impl From<&TurnStateSnapshot> for SessionRunTurnStateSnapshot {
                 .as_ref()
                 .and_then(|observation| observation.selected_skill.clone())
                 .or_else(|| value.invoked_skills.first().cloned()),
-            fallback_reason: value
-                .route_observation
-                .as_ref()
-                .and_then(|observation| {
-                    observation
-                        .fallback_reason
-                        .map(|reason| route_fallback_reason_key(reason).to_string())
-                }),
+            fallback_reason: value.route_observation.as_ref().and_then(|observation| {
+                observation
+                    .fallback_reason
+                    .map(|reason| route_fallback_reason_key(reason).to_string())
+            }),
             allowed_tools: value.allowed_tools.clone(),
             invoked_skills: value.invoked_skills.clone(),
             partial_assistant_text: value.partial_assistant_text.clone(),
@@ -466,6 +467,14 @@ fn execution_lane_key(lane: ExecutionLane) -> String {
         ExecutionLane::PromptInline => "prompt_inline".to_string(),
         ExecutionLane::PromptFork => "prompt_fork".to_string(),
         ExecutionLane::DirectDispatch => "direct_dispatch".to_string(),
+    }
+}
+
+fn session_surface_key(surface: SessionSurfaceKind) -> String {
+    match surface {
+        SessionSurfaceKind::LocalChat => "local_chat".to_string(),
+        SessionSurfaceKind::HiddenChildSession => "hidden_child_session".to_string(),
+        SessionSurfaceKind::EmployeeStepSession => "employee_step_session".to_string(),
     }
 }
 
@@ -781,9 +790,11 @@ impl SessionRunStatus {
 mod tests {
     use super::{
         format_run_stop_message, SessionJournalState, SessionJournalStore, SessionRunEvent,
-        SessionRunTurnStateSnapshot, SessionRunTurnStateCompactionBoundary,
+        SessionRunTurnStateCompactionBoundary, SessionRunTurnStateSnapshot,
     };
     use crate::agent::run_guard::RunStopReason;
+    use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
+    use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
     use crate::agent::runtime::{RunRegistry, RuntimeObservability};
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -956,6 +967,7 @@ mod tests {
                     error_kind: "max_turns".to_string(),
                     error_message: "达到最大迭代次数".to_string(),
                     turn_state: Some(SessionRunTurnStateSnapshot {
+                        session_surface: None,
                         execution_lane: Some("open_task".to_string()),
                         selected_runner: Some("open_task".to_string()),
                         selected_skill: None,
@@ -997,5 +1009,19 @@ mod tests {
                 .map(|turn_state| turn_state.allowed_tools.clone()),
             Some(vec!["read".to_string(), "exec".to_string()])
         );
+    }
+
+    #[test]
+    fn session_run_turn_state_snapshot_projects_session_surface_from_kernel_state() {
+        let projected = SessionRunTurnStateSnapshot::from(
+            &TurnStateSnapshot::default()
+                .with_session_surface(
+                    crate::agent::runtime::kernel::session_profile::SessionSurfaceKind::LocalChat,
+                )
+                .with_execution_lane(ExecutionLane::OpenTask),
+        );
+
+        assert_eq!(projected.session_surface.as_deref(), Some("local_chat"));
+        assert_eq!(projected.execution_lane.as_deref(), Some("open_task"));
     }
 }

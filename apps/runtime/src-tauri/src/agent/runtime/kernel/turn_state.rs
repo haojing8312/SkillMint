@@ -2,6 +2,7 @@ use crate::agent::run_guard::RunStopReason;
 use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
 use crate::agent::runtime::compaction_pipeline::RuntimeCompactionOutcome;
 use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
+use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
 use crate::agent::runtime::skill_routing::observability::ImplicitRouteObservation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,7 @@ impl From<&RuntimeCompactionOutcome> for TurnCompactionBoundary {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TurnStateSnapshot {
+    pub session_surface: Option<SessionSurfaceKind>,
     pub route_observation: Option<ImplicitRouteObservation>,
     pub execution_lane: Option<ExecutionLane>,
     pub allowed_tools: Vec<String>,
@@ -42,6 +44,11 @@ impl TurnStateSnapshot {
             allowed_tools: allowed_tools.unwrap_or_default(),
             ..Self::default()
         }
+    }
+
+    pub(crate) fn with_session_surface(mut self, surface: SessionSurfaceKind) -> Self {
+        self.session_surface = Some(surface);
+        self
     }
 
     pub(crate) fn with_allowed_tools(mut self, allowed_tools: Option<Vec<String>>) -> Self {
@@ -122,12 +129,14 @@ mod tests {
     use crate::agent::run_guard::RunStopReason;
     use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
     use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
+    use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
     use crate::agent::runtime::skill_routing::observability::ImplicitRouteObservation;
 
     #[test]
     fn turn_state_snapshot_keeps_route_and_tool_state_together() {
         let snapshot = TurnStateSnapshot::new(Some(vec!["read".to_string(), "exec".to_string()]))
+            .with_session_surface(SessionSurfaceKind::LocalChat)
             .with_route_observation(ImplicitRouteObservation {
                 route_latency_ms: 18,
                 candidate_count: 2,
@@ -150,6 +159,10 @@ mod tests {
         assert_eq!(
             snapshot.allowed_tools,
             vec!["read".to_string(), "exec".to_string()]
+        );
+        assert_eq!(
+            snapshot.session_surface,
+            Some(SessionSurfaceKind::LocalChat)
         );
         assert_eq!(snapshot.execution_lane, Some(ExecutionLane::PromptInline));
         assert_eq!(snapshot.invoked_skills, vec!["pm-summary".to_string()]);
@@ -222,5 +235,18 @@ mod tests {
             Some(4096)
         );
         assert!(snapshot.stop_reason.is_some());
+    }
+
+    #[test]
+    fn turn_state_snapshot_keeps_session_surface_with_lane_state() {
+        let snapshot = TurnStateSnapshot::default()
+            .with_session_surface(SessionSurfaceKind::EmployeeStepSession)
+            .with_execution_lane(ExecutionLane::PromptFork);
+
+        assert_eq!(
+            snapshot.session_surface,
+            Some(SessionSurfaceKind::EmployeeStepSession)
+        );
+        assert_eq!(snapshot.execution_lane, Some(ExecutionLane::PromptFork));
     }
 }

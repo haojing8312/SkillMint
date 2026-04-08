@@ -723,6 +723,7 @@ mod tests {
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    session_surface: None,
                     execution_lane: Some("open_task".to_string()),
                     selected_runner: Some("OpenTaskRunner".to_string()),
                     selected_skill: Some("builtin-general".to_string()),
@@ -764,6 +765,7 @@ mod tests {
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    session_surface: None,
                     execution_lane: None,
                     selected_runner: None,
                     selected_skill: None,
@@ -794,6 +796,7 @@ mod tests {
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    session_surface: None,
                     execution_lane: Some("prompt_fork".to_string()),
                     selected_runner: Some("prompt_skill_fork".to_string()),
                     selected_skill: Some("feishu-pm-weekly-work-summary".to_string()),

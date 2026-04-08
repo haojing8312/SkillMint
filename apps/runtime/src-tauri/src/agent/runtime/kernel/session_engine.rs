@@ -71,6 +71,7 @@ impl SessionEngine {
                         .allowed_tools()
                         .map(|tools| tools.to_vec()),
                 )
+                .with_session_surface(execution_context.session_profile.surface)
                 .with_execution_lane(ExecutionLane::DirectDispatch)
                 .with_invoked_skill(dispatch_outcome.skill_id);
                 return Ok(ExecutionOutcome::DirectDispatch {
@@ -86,6 +87,7 @@ impl SessionEngine {
                         .allowed_tools()
                         .map(|tools| tools.to_vec()),
                 )
+                .with_session_surface(execution_context.session_profile.surface)
                 .with_execution_lane(ExecutionLane::DirectDispatch)
                 .with_invoked_skill(dispatch_error.skill_id);
                 return Ok(match parse_run_stop_reason(&error) {
@@ -118,6 +120,7 @@ impl SessionEngine {
         .map_err(SessionEngineError::Generic)?;
 
         let mut turn_state = TurnStateSnapshot::default()
+            .with_session_surface(execution_context.session_profile.surface)
             .with_route_observation(planned_route.observation.clone())
             .with_execution_lane(execution_plan.lane);
         if let Some(skill_id) = planned_route.observation.selected_skill.as_deref() {
