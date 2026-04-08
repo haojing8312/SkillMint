@@ -97,10 +97,17 @@ impl ExecutionContext {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ContinuationTurnPolicy {
+    pub per_candidate_retry_count: Option<usize>,
+    pub route_retry_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ContinuationPreference {
     pub selected_skill: String,
     pub selected_runner: Option<String>,
     pub reconstructed_history_len: Option<usize>,
+    pub turn_policy: ContinuationTurnPolicy,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -150,7 +157,8 @@ pub(crate) enum SessionEngineError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContinuationPreference, ExecutionContext, ExecutionLane, ExecutionPlan, TurnContext,
+        ContinuationPreference, ContinuationTurnPolicy, ExecutionContext, ExecutionLane,
+        ExecutionPlan, TurnContext,
     };
     use crate::agent::permissions::PermissionMode;
     use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
@@ -254,6 +262,10 @@ mod tests {
                 selected_skill: "feishu-pm-weekly-work-summary".to_string(),
                 selected_runner: Some("prompt_skill_inline".to_string()),
                 reconstructed_history_len: Some(4),
+                turn_policy: ContinuationTurnPolicy {
+                    per_candidate_retry_count: Some(0),
+                    route_retry_count: Some(0),
+                },
             }),
         };
 
@@ -267,6 +279,13 @@ mod tests {
                 .as_ref()
                 .map(|preference| preference.selected_skill.as_str()),
             Some("feishu-pm-weekly-work-summary")
+        );
+        assert_eq!(
+            turn_context
+                .continuation_preference
+                .as_ref()
+                .and_then(|preference| preference.turn_policy.route_retry_count),
+            Some(0)
         );
         let primary = turn_context
             .primary_route_candidate()

@@ -1,4 +1,6 @@
-use super::execution_plan::{ContinuationPreference, ExecutionContext, TurnContext};
+use super::execution_plan::{
+    ContinuationPreference, ContinuationTurnPolicy, ExecutionContext, TurnContext,
+};
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
@@ -172,6 +174,11 @@ pub(crate) async fn prepare_local_turn(
         load_recent_compaction_context(params.app, params.session_id, params.user_message).await;
     let continuation_runtime_notes = recent_compaction_context.runtime_notes;
     let continuation_preference = recent_compaction_context.continuation_preference;
+    let (per_candidate_retry_count, route_retry_count) = apply_continuation_turn_policy(
+        per_candidate_retry_count,
+        chat_preparation.retry_count,
+        continuation_preference.as_ref(),
+    );
 
     let prepared_runtime_tools = prepare_runtime_tools(ToolSetupParams {
         app: params.app,
@@ -228,7 +235,7 @@ pub(crate) async fn prepare_local_turn(
         max_iterations: Some(max_iter),
         max_call_depth: chat_preparation.max_call_depth,
         node_timeout_seconds: chat_preparation.node_timeout_seconds,
-        route_retry_count: chat_preparation.retry_count,
+        route_retry_count,
         execution_guidance,
         memory_bucket_employee_id: execution_preparation_service
             .resolve_memory_bucket_employee_id(&prepared_execution_context)
@@ -336,8 +343,48 @@ fn resolve_compaction_continuation_preference(
             selected_skill: selected_skill.to_string(),
             selected_runner: turn_state.selected_runner.clone(),
             reconstructed_history_len: turn_state.reconstructed_history_len,
+            turn_policy: resolve_continuation_turn_policy(run),
         })
     })
+}
+
+fn resolve_continuation_turn_policy(
+    run: &crate::session_journal::SessionRunSnapshot,
+) -> ContinuationTurnPolicy {
+    let should_clamp_retries = matches!(
+        run.last_error_kind.as_deref(),
+        Some("max_turns" | "loop_detected" | "no_progress" | "tool_failure_circuit_breaker")
+    );
+
+    if should_clamp_retries {
+        ContinuationTurnPolicy {
+            per_candidate_retry_count: Some(0),
+            route_retry_count: Some(0),
+        }
+    } else {
+        ContinuationTurnPolicy::default()
+    }
+}
+
+fn apply_continuation_turn_policy(
+    per_candidate_retry_count: usize,
+    route_retry_count: usize,
+    continuation_preference: Option<&ContinuationPreference>,
+) -> (usize, usize) {
+    let Some(preference) = continuation_preference else {
+        return (per_candidate_retry_count, route_retry_count);
+    };
+
+    (
+        preference
+            .turn_policy
+            .per_candidate_retry_count
+            .unwrap_or(per_candidate_retry_count),
+        preference
+            .turn_policy
+            .route_retry_count
+            .unwrap_or(route_retry_count),
+    )
 }
 
 fn is_compaction_continuation_request(user_message: &str) -> bool {
@@ -476,9 +523,12 @@ struct ExplicitPromptSkillSelection {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_current_turn_message, parse_user_skill_command,
+        append_current_turn_message, apply_continuation_turn_policy, parse_user_skill_command,
         resolve_compaction_continuation_preference, resolve_explicit_prompt_following_skill,
         resolve_recent_compaction_runtime_notes, rewrite_user_skill_command_for_model,
+    };
+    use crate::agent::runtime::kernel::execution_plan::{
+        ContinuationPreference, ContinuationTurnPolicy,
     };
     use crate::agent::runtime::runtime_io as chat_io;
     use crate::agent::runtime::runtime_io::{WorkspaceSkillContent, WorkspaceSkillRuntimeEntry};
@@ -760,5 +810,26 @@ mod tests {
             Some("prompt_skill_fork")
         );
         assert_eq!(preference.reconstructed_history_len, Some(6));
+        assert_eq!(preference.turn_policy.per_candidate_retry_count, Some(0));
+        assert_eq!(preference.turn_policy.route_retry_count, Some(0));
+    }
+
+    #[test]
+    fn apply_continuation_turn_policy_clamps_retry_budgets_for_recovery_turns() {
+        let preference = ContinuationPreference {
+            selected_skill: "feishu-pm-weekly-work-summary".to_string(),
+            selected_runner: Some("prompt_skill_fork".to_string()),
+            reconstructed_history_len: Some(6),
+            turn_policy: ContinuationTurnPolicy {
+                per_candidate_retry_count: Some(0),
+                route_retry_count: Some(0),
+            },
+        };
+
+        let (per_candidate_retry_count, route_retry_count) =
+            apply_continuation_turn_policy(2, 2, Some(&preference));
+
+        assert_eq!(per_candidate_retry_count, 0);
+        assert_eq!(route_retry_count, 0);
     }
 }

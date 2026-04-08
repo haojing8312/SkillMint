@@ -421,7 +421,9 @@ fn build_fork_messages(messages: &[serde_json::Value]) -> Vec<serde_json::Value>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::runtime::kernel::execution_plan::ContinuationPreference;
+    use crate::agent::runtime::kernel::execution_plan::{
+        ContinuationPreference, ContinuationTurnPolicy,
+    };
     use crate::agent::runtime::runtime_io::{
         WorkspaceSkillCommandSpec, WorkspaceSkillContent, WorkspaceSkillRuntimeEntry,
     };
@@ -933,6 +935,10 @@ mod tests {
             selected_skill: "feishu-pm-fork-sync".to_string(),
             selected_runner: Some("prompt_skill_fork".to_string()),
             reconstructed_history_len: Some(6),
+            turn_policy: ContinuationTurnPolicy {
+                per_candidate_retry_count: Some(0),
+                route_retry_count: Some(0),
+            },
         };
 
         let planned_route = plan_implicit_route_with_observation(
