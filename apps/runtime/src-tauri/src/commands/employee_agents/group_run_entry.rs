@@ -8,6 +8,7 @@ use crate::agent::runtime::kernel::employee_step_profile::{
     build_employee_step_iteration_fallback_output as kernel_build_group_step_iteration_fallback_output,
     build_employee_step_user_prompt as kernel_build_group_step_user_prompt, EmployeeStepPersona,
 };
+use crate::session_journal::SessionJournalStore;
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
@@ -16,7 +17,16 @@ pub(crate) async fn start_employee_group_run_with_pool(
     pool: &SqlitePool,
     input: StartEmployeeGroupRunInput,
 ) -> Result<EmployeeGroupRunResult, String> {
-    start_employee_group_run_internal_with_pool(pool, input, None, true).await
+    start_employee_group_run_internal_with_pool_and_journal(pool, None, input, None, true).await
+}
+
+pub(crate) async fn start_employee_group_run_with_pool_and_journal(
+    pool: &SqlitePool,
+    journal: &SessionJournalStore,
+    input: StartEmployeeGroupRunInput,
+) -> Result<EmployeeGroupRunResult, String> {
+    start_employee_group_run_internal_with_pool_and_journal(pool, Some(journal), input, None, true)
+        .await
 }
 
 pub(crate) async fn start_employee_group_run_internal_with_pool(
@@ -25,8 +35,26 @@ pub(crate) async fn start_employee_group_run_internal_with_pool(
     preferred_session_id: Option<&str>,
     persist_user_message: bool,
 ) -> Result<EmployeeGroupRunResult, String> {
+    start_employee_group_run_internal_with_pool_and_journal(
+        pool,
+        None,
+        input,
+        preferred_session_id,
+        persist_user_message,
+    )
+    .await
+}
+
+pub(crate) async fn start_employee_group_run_internal_with_pool_and_journal(
+    pool: &SqlitePool,
+    journal: Option<&SessionJournalStore>,
+    input: StartEmployeeGroupRunInput,
+    preferred_session_id: Option<&str>,
+    persist_user_message: bool,
+) -> Result<EmployeeGroupRunResult, String> {
     super::service::start_employee_group_run_internal_with_pool(
         pool,
+        journal,
         input,
         preferred_session_id,
         persist_user_message,
@@ -131,6 +159,7 @@ pub(crate) fn extract_assistant_text(messages: &[Value]) -> String {
 
 async fn execute_group_step_in_employee_context_with_pool(
     pool: &SqlitePool,
+    journal: Option<&SessionJournalStore>,
     run_id: &str,
     step_id: &str,
     session_id: &str,
@@ -140,6 +169,7 @@ async fn execute_group_step_in_employee_context_with_pool(
 ) -> Result<String, String> {
     super::service::execute_group_step_in_employee_context_with_pool(
         pool,
+        journal,
         run_id,
         step_id,
         session_id,
@@ -342,6 +372,14 @@ pub(crate) async fn continue_employee_group_run_with_pool(
     pool: &SqlitePool,
     run_id: &str,
 ) -> Result<EmployeeGroupRunSnapshot, String> {
+    continue_employee_group_run_with_pool_and_journal(pool, None, run_id).await
+}
+
+pub(crate) async fn continue_employee_group_run_with_pool_and_journal(
+    pool: &SqlitePool,
+    journal: Option<&SessionJournalStore>,
+    run_id: &str,
+) -> Result<EmployeeGroupRunSnapshot, String> {
     let normalized_run_id = run_id.trim();
     let (state, current_phase) =
         super::service::load_group_run_continue_state(pool, normalized_run_id).await?;
@@ -370,7 +408,7 @@ pub(crate) async fn continue_employee_group_run_with_pool(
     }
 
     for step_id in pending_execute_steps {
-        run_group_step_with_pool(pool, &step_id).await?;
+        run_group_step_with_pool_and_journal(pool, journal, &step_id).await?;
     }
     maybe_finalize_group_run_with_pool(pool, normalized_run_id).await?;
     get_employee_group_run_snapshot_by_run_id_with_pool(pool, normalized_run_id).await
@@ -378,6 +416,14 @@ pub(crate) async fn continue_employee_group_run_with_pool(
 
 pub(crate) async fn run_group_step_with_pool(
     pool: &SqlitePool,
+    step_id: &str,
+) -> Result<GroupStepExecutionResult, String> {
+    run_group_step_with_pool_and_journal(pool, None, step_id).await
+}
+
+pub(crate) async fn run_group_step_with_pool_and_journal(
+    pool: &SqlitePool,
+    journal: Option<&SessionJournalStore>,
     step_id: &str,
 ) -> Result<GroupStepExecutionResult, String> {
     let (
@@ -411,6 +457,7 @@ pub(crate) async fn run_group_step_with_pool(
 
     let execution = execute_group_step_in_employee_context_with_pool(
         pool,
+        journal,
         &run_id,
         &step_id,
         &session_id,

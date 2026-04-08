@@ -1023,5 +1023,15 @@ mod tests {
 
         assert_eq!(projected.session_surface.as_deref(), Some("local_chat"));
         assert_eq!(projected.execution_lane.as_deref(), Some("open_task"));
+
+        let employee_step_projected = SessionRunTurnStateSnapshot::from(
+            &TurnStateSnapshot::default().with_session_surface(
+                crate::agent::runtime::kernel::session_profile::SessionSurfaceKind::EmployeeStepSession,
+            ),
+        );
+        assert_eq!(
+            employee_step_projected.session_surface.as_deref(),
+            Some("employee_step_session")
+        );
     }
 }

@@ -977,7 +977,7 @@ mod tests {
                     error_kind: "max_turns".to_string(),
                     error_message: "已达到执行步数上限".to_string(),
                     turn_state: Some(SessionRunTurnStateSnapshot {
-                        session_surface: None,
+                        session_surface: Some("employee_step_session".to_string()),
                         execution_lane: Some("open_task".to_string()),
                         selected_runner: Some("OpenTaskRunner".to_string()),
                         selected_skill: Some("builtin-general".to_string()),
@@ -1004,6 +1004,13 @@ mod tests {
             .expect("list session runs");
 
         assert_eq!(runs.len(), 1);
+        assert_eq!(
+            runs[0]
+                .turn_state
+                .as_ref()
+                .and_then(|turn_state| turn_state.session_surface.as_deref()),
+            Some("employee_step_session")
+        );
         assert_eq!(
             runs[0]
                 .turn_state
