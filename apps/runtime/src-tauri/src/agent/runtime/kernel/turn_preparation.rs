@@ -4,6 +4,7 @@ use super::execution_plan::{
 use super::session_profile::{SessionExecutionProfile, SessionSurfaceKind};
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
+use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
 use crate::agent::runtime::repo::{PoolChatEmployeeDirectory, PoolChatSettingsRepository};
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
@@ -259,8 +260,84 @@ pub(crate) async fn prepare_local_turn(
     ))
 }
 
+pub(crate) fn prepare_hidden_child_turn(
+    agent_executor: &Arc<AgentExecutor>,
+    prompt: &str,
+    agent_type: &str,
+    delegate_display_name: &str,
+    api_format: &str,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    allowed_tools: Option<Vec<String>>,
+    max_iterations: usize,
+    work_dir: Option<String>,
+) -> (TurnContext, ExecutionContext) {
+    let messages = vec![serde_json::json!({
+        "role": "user",
+        "content": prompt,
+    })];
+    let resolved_tool_names = chat_io::resolve_tool_name_list(&allowed_tools, agent_executor);
+    let capability_snapshot = CapabilitySnapshot::build(
+        allowed_tools.clone(),
+        resolved_tool_names,
+        Vec::new(),
+        vec!["当前处于隐藏子会话中，请面向上级代理直接返回必要结论。".to_string()],
+    );
+
+    (
+        TurnContext {
+            requested_capability: "general".to_string(),
+            route_candidates: vec![(
+                String::new(),
+                api_format.to_string(),
+                base_url.to_string(),
+                model.to_string(),
+                api_key.to_string(),
+            )],
+            per_candidate_retry_count: 0,
+            messages,
+            continuation_preference: None,
+        },
+        ExecutionContext {
+            session_profile: build_hidden_child_session_profile(),
+            capability_snapshot,
+            system_prompt: build_hidden_child_system_prompt(agent_type, delegate_display_name),
+            continuation_runtime_notes: Vec::new(),
+            permission_mode: PermissionMode::Unrestricted,
+            executor_work_dir: work_dir,
+            max_iterations: Some(max_iterations.max(1)),
+            max_call_depth: 0,
+            node_timeout_seconds: 60,
+            route_retry_count: 0,
+            execution_guidance: runtime_chat_app::ChatExecutionGuidance {
+                effective_work_dir: String::new(),
+                local_timezone: String::new(),
+                local_date: String::new(),
+                local_tomorrow: String::new(),
+                local_month_range: String::new(),
+            },
+            memory_bucket_employee_id: String::new(),
+            employee_collaboration_guidance: None,
+            workspace_skill_entries: Vec::new(),
+            route_index: SkillRouteIndex::default(),
+        },
+    )
+}
+
 fn build_local_chat_session_profile() -> SessionExecutionProfile {
     SessionExecutionProfile::for_surface(SessionSurfaceKind::LocalChat)
+}
+
+fn build_hidden_child_session_profile() -> SessionExecutionProfile {
+    SessionExecutionProfile::for_surface(SessionSurfaceKind::HiddenChildSession)
+}
+
+fn build_hidden_child_system_prompt(agent_type: &str, delegate_display_name: &str) -> String {
+    format!(
+        "你是一个专注的子 Agent (类型: {})，当前承接角色: {}。完成以下任务后返回结果。简洁地报告你的发现。",
+        agent_type, delegate_display_name
+    )
 }
 
 #[derive(Debug, Default)]
@@ -530,22 +607,25 @@ struct ExplicitPromptSkillSelection {
 mod tests {
     use super::{
         append_current_turn_message, apply_continuation_turn_policy,
-        build_local_chat_session_profile, parse_user_skill_command,
+        build_local_chat_session_profile, parse_user_skill_command, prepare_hidden_child_turn,
         resolve_compaction_continuation_preference, resolve_explicit_prompt_following_skill,
         resolve_recent_compaction_runtime_notes, rewrite_user_skill_command_for_model,
     };
+    use crate::agent::registry::ToolRegistry;
     use crate::agent::runtime::kernel::execution_plan::{
         ContinuationPreference, ContinuationTurnPolicy,
     };
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::runtime_io as chat_io;
     use crate::agent::runtime::runtime_io::{WorkspaceSkillContent, WorkspaceSkillRuntimeEntry};
+    use crate::agent::AgentExecutor;
     use crate::session_journal::{
         SessionJournalState, SessionRunSnapshot, SessionRunStatus,
         SessionRunTurnStateCompactionBoundary, SessionRunTurnStateSnapshot,
     };
     use runtime_skill_core::{SkillConfig, SkillInvocationPolicy};
     use serde_json::json;
+    use std::sync::Arc;
 
     fn prompt_following_entry(skill_id: &str, name: &str) -> WorkspaceSkillRuntimeEntry {
         WorkspaceSkillRuntimeEntry {
@@ -601,6 +681,41 @@ mod tests {
         let profile = build_local_chat_session_profile();
 
         assert_eq!(profile.surface, SessionSurfaceKind::LocalChat);
+    }
+
+    #[test]
+    fn hidden_child_turn_preparation_uses_hidden_child_surface_profile() {
+        let agent_executor = Arc::new(AgentExecutor::new(Arc::new(ToolRegistry::new())));
+
+        let (turn_context, execution_context) = prepare_hidden_child_turn(
+            &agent_executor,
+            "请继续完成剩余调查",
+            "research",
+            "研究子智能体",
+            "openai",
+            "https://api.example.com/v1",
+            "test-key",
+            "gpt-test",
+            Some(vec!["read".to_string(), "exec".to_string()]),
+            6,
+            Some("E:/workspace/demo".to_string()),
+        );
+
+        assert_eq!(
+            execution_context.session_profile.surface,
+            SessionSurfaceKind::HiddenChildSession
+        );
+        assert_eq!(turn_context.route_candidates.len(), 1);
+        assert_eq!(turn_context.messages.len(), 1);
+        assert_eq!(execution_context.max_iterations, Some(6));
+        assert!(execution_context.system_prompt.contains("研究子智能体"));
+        assert_eq!(
+            execution_context
+                .capability_snapshot
+                .allowed_tools
+                .as_deref(),
+            Some(&["read".to_string(), "exec".to_string()][..])
+        );
     }
 
     #[test]
