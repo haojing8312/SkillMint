@@ -109,6 +109,9 @@ impl TurnStateSnapshot {
         if let Some(stop_reason) = route_execution.last_stop_reason.clone() {
             self.stop_reason = Some(stop_reason);
         }
+        if let Some(compaction_boundary) = route_execution.compaction_boundary.clone() {
+            self.compaction_boundary = Some(compaction_boundary);
+        }
         self.with_reconstructed_history_len(reconstructed_history_len)
     }
 }
@@ -117,6 +120,7 @@ impl TurnStateSnapshot {
 mod tests {
     use super::{TurnCompactionBoundary, TurnStateSnapshot};
     use crate::agent::run_guard::RunStopReason;
+    use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
     use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
     use crate::agent::runtime::skill_routing::observability::ImplicitRouteObservation;
@@ -186,5 +190,37 @@ mod tests {
                 .and_then(|observation| observation.fallback_reason),
             Some(RouteFallbackReason::NoCandidates)
         );
+    }
+
+    #[test]
+    fn turn_state_snapshot_absorbs_compaction_boundary_from_route_execution() {
+        let route_execution = RouteExecutionOutcome {
+            final_messages: None,
+            last_error: None,
+            last_error_kind: None,
+            last_stop_reason: Some(RunStopReason::max_turns(6)),
+            partial_text: "partial".to_string(),
+            reasoning_text: String::new(),
+            reasoning_duration_ms: None,
+            compaction_boundary: Some(TurnCompactionBoundary {
+                transcript_path: "temp/transcripts/route.json".to_string(),
+                original_tokens: 4096,
+                compacted_tokens: 1024,
+                summary: "summary".to_string(),
+            }),
+        };
+
+        let snapshot = TurnStateSnapshot::default().with_route_execution(&route_execution, 3);
+
+        assert_eq!(snapshot.partial_assistant_text, "partial");
+        assert_eq!(snapshot.reconstructed_history_len, Some(3));
+        assert_eq!(
+            snapshot
+                .compaction_boundary
+                .as_ref()
+                .map(|boundary| boundary.original_tokens),
+            Some(4096)
+        );
+        assert!(snapshot.stop_reason.is_some());
     }
 }

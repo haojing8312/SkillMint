@@ -157,6 +157,7 @@ impl OutcomeCommitter {
             partial_text,
             reasoning_text,
             reasoning_duration_ms,
+            compaction_boundary: _,
         } = route_execution;
 
         let final_messages = match final_messages {
@@ -337,6 +338,7 @@ mod tests {
             partial_text: partial_text.to_string(),
             reasoning_text: "reasoning".to_string(),
             reasoning_duration_ms: Some(17),
+            compaction_boundary: None,
         }
     }
 

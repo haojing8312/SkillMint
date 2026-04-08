@@ -1,12 +1,13 @@
 use super::events::{StreamToken, ToolConfirmResponder};
-use super::observability::RuntimeObservabilityState;
 use super::failover::{
     runtime_failover_error_kind_from_error_text, runtime_failover_error_kind_from_stop_reason_kind,
     runtime_failover_error_kind_key, CandidateAttemptOutcome, RuntimeFailover,
     RuntimeFailoverOutcome, RuntimeFailoverParams,
 };
+use super::observability::RuntimeObservabilityState;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::parse_run_stop_reason;
+use crate::agent::runtime::kernel::turn_state::TurnCompactionBoundary;
 use crate::agent::types::{AgentStateEvent, StreamDelta};
 use crate::agent::AgentExecutor;
 use crate::diagnostics::{self, LogLevel, ManagedDiagnosticsState};
@@ -129,20 +130,20 @@ fn emit_reasoning_completed_if_needed(
 ) -> Option<u64> {
     let mut emitted_guard = completion_emitted.lock().ok()?;
     if *emitted_guard {
-        return reasoning_started_at
-            .lock()
-            .ok()
-            .and_then(|started| last_reasoning_at.lock().ok().and_then(|ended| {
-                compute_reasoning_duration_ms(*started, *ended)
-            }));
+        return reasoning_started_at.lock().ok().and_then(|started| {
+            last_reasoning_at
+                .lock()
+                .ok()
+                .and_then(|ended| compute_reasoning_duration_ms(*started, *ended))
+        });
     }
 
-    let duration_ms = reasoning_started_at
-        .lock()
-        .ok()
-        .and_then(|started| last_reasoning_at.lock().ok().and_then(|ended| {
-            compute_reasoning_duration_ms(*started, *ended)
-        }))?;
+    let duration_ms = reasoning_started_at.lock().ok().and_then(|started| {
+        last_reasoning_at
+            .lock()
+            .ok()
+            .and_then(|ended| compute_reasoning_duration_ms(*started, *ended))
+    })?;
 
     let _ = app.emit(
         "assistant-reasoning-completed",
@@ -212,7 +213,7 @@ async fn execute_candidate_attempt(
 
     let attempt = params
         .agent_executor
-        .execute_turn_with_transport(
+        .execute_turn_with_transport_outcome(
             transport,
             effective_api_format,
             candidate_base_url,
@@ -288,7 +289,7 @@ async fn execute_candidate_attempt(
         .await;
 
     match attempt {
-        Ok(messages_out) => {
+        Ok(turn_outcome) => {
             chat_io::record_route_attempt_log_with_pool(
                 params.db,
                 params.session_id,
@@ -310,7 +311,7 @@ async fn execute_candidate_attempt(
                 &reasoning_completion_emitted,
             );
             CandidateAttemptOutcome {
-                final_messages: Some(messages_out),
+                final_messages: Some(turn_outcome.messages),
                 last_error: None,
                 last_error_kind: None,
                 error_kind: None,
@@ -324,10 +325,18 @@ async fn execute_candidate_attempt(
                     .map(|buffer| buffer.clone())
                     .unwrap_or_default(),
                 reasoning_duration_ms,
+                compaction_boundary: turn_outcome
+                    .compaction_outcome
+                    .as_ref()
+                    .map(TurnCompactionBoundary::from),
             }
         }
-        Err(err) => {
-            let err_text = err.to_string();
+        Err(turn_error) => {
+            let compaction_boundary = turn_error
+                .compaction_outcome
+                .as_ref()
+                .map(TurnCompactionBoundary::from);
+            let err_text = turn_error.error.to_string();
             let parsed_stop_reason = parse_run_stop_reason(&err_text);
             let kind = parsed_stop_reason
                 .as_ref()
@@ -383,6 +392,7 @@ async fn execute_candidate_attempt(
                     .map(|buffer| buffer.clone())
                     .unwrap_or_default(),
                 reasoning_duration_ms: None,
+                compaction_boundary,
             }
         }
     }
@@ -420,10 +430,7 @@ mod tests {
     fn compute_reasoning_duration_defaults_to_zero_without_end_boundary() {
         let started = std::time::Instant::now();
 
-        assert_eq!(
-            compute_reasoning_duration_ms(Some(started), None),
-            Some(0)
-        );
+        assert_eq!(compute_reasoning_duration_ms(Some(started), None), Some(0));
         assert_eq!(compute_reasoning_duration_ms(None, None), None);
     }
 }

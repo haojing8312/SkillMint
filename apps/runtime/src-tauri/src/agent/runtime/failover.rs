@@ -1,4 +1,5 @@
 use crate::agent::run_guard::{parse_run_stop_reason, RunStopReason, RunStopReasonKind};
+use crate::agent::runtime::kernel::turn_state::TurnCompactionBoundary;
 use crate::model_errors::normalize_model_error;
 use serde_json::Value;
 use std::future::Future;
@@ -28,6 +29,7 @@ pub(crate) struct CandidateAttemptOutcome {
     pub partial_text: String,
     pub reasoning_text: String,
     pub reasoning_duration_ms: Option<u64>,
+    pub compaction_boundary: Option<TurnCompactionBoundary>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +41,7 @@ pub(crate) struct RuntimeFailoverOutcome {
     pub partial_text: String,
     pub reasoning_text: String,
     pub reasoning_duration_ms: Option<u64>,
+    pub compaction_boundary: Option<TurnCompactionBoundary>,
 }
 
 pub(crate) struct RuntimeFailoverParams<'a> {
@@ -73,6 +76,7 @@ impl RuntimeFailover {
         let mut last_stop_reason: Option<RunStopReason> = None;
         let mut streamed_text = String::new();
         let mut streamed_reasoning = String::new();
+        let mut compaction_boundary: Option<TurnCompactionBoundary> = None;
 
         for (
             candidate_provider_key,
@@ -80,8 +84,7 @@ impl RuntimeFailover {
             candidate_base_url,
             candidate_model_name,
             candidate_api_key,
-        ) in
-            params.route_candidates
+        ) in params.route_candidates
         {
             let mut attempt_idx = 0usize;
             loop {
@@ -102,6 +105,7 @@ impl RuntimeFailover {
                     last_error = attempt.last_error;
                     last_error_kind = attempt.last_error_kind;
                     last_stop_reason = attempt.last_stop_reason;
+                    compaction_boundary = attempt.compaction_boundary;
                     return RuntimeFailoverOutcome {
                         final_messages: final_messages_opt,
                         last_error,
@@ -110,6 +114,7 @@ impl RuntimeFailover {
                         partial_text: streamed_text,
                         reasoning_text: streamed_reasoning,
                         reasoning_duration_ms: attempt.reasoning_duration_ms,
+                        compaction_boundary,
                     };
                 }
 
@@ -118,6 +123,9 @@ impl RuntimeFailover {
                 last_error = attempt.last_error.or(last_error);
                 last_error_kind = attempt.last_error_kind.or(last_error_kind);
                 last_stop_reason = attempt.last_stop_reason.or(last_stop_reason);
+                if let Some(boundary) = attempt.compaction_boundary {
+                    compaction_boundary = Some(boundary);
+                }
 
                 let current_kind = attempt
                     .error_kind
@@ -161,6 +169,7 @@ impl RuntimeFailover {
             partial_text: streamed_text,
             reasoning_text: streamed_reasoning,
             reasoning_duration_ms: None,
+            compaction_boundary,
         }
     }
 }
@@ -321,6 +330,7 @@ fn runtime_retry_backoff_ms(kind: RuntimeFailoverErrorKind, attempt_idx: usize) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::runtime::kernel::turn_state::TurnCompactionBoundary;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
@@ -372,6 +382,13 @@ mod tests {
                                 partial_text: "done".to_string(),
                                 reasoning_text: String::new(),
                                 reasoning_duration_ms: Some(12),
+                                compaction_boundary: Some(TurnCompactionBoundary {
+                                    transcript_path: "temp/transcripts/retry-success.json"
+                                        .to_string(),
+                                    original_tokens: 6400,
+                                    compacted_tokens: 1600,
+                                    summary: "summary".to_string(),
+                                }),
                             };
                         }
 
@@ -384,6 +401,7 @@ mod tests {
                             partial_text: "partial".to_string(),
                             reasoning_text: "thinking".to_string(),
                             reasoning_duration_ms: None,
+                            compaction_boundary: None,
                         }
                     })
                 },
@@ -403,6 +421,15 @@ mod tests {
         assert_eq!(result.partial_text, "done");
         assert_eq!(result.reasoning_text, "");
         assert_eq!(result.reasoning_duration_ms, Some(12));
+        assert_eq!(
+            result.compaction_boundary,
+            Some(TurnCompactionBoundary {
+                transcript_path: "temp/transcripts/retry-success.json".to_string(),
+                original_tokens: 6400,
+                compacted_tokens: 1600,
+                summary: "summary".to_string(),
+            })
+        );
     }
 
     #[tokio::test]
@@ -440,6 +467,7 @@ mod tests {
                             partial_text: String::new(),
                             reasoning_text: String::new(),
                             reasoning_duration_ms: None,
+                            compaction_boundary: None,
                         }
                     })
                 },
@@ -461,7 +489,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn execute_candidates_reports_error_kinds_to_observer() {
         let observed = Arc::new(Mutex::new(Vec::new()));
@@ -482,7 +509,12 @@ mod tests {
                 observed_clone.lock().expect("observed lock").push(kind);
             })),
             attempt_once: Box::new(
-                move |_provider_key, _api_format, _base_url, _model_name, _api_key, _attempt_idx| {
+                move |_provider_key,
+                      _api_format,
+                      _base_url,
+                      _model_name,
+                      _api_key,
+                      _attempt_idx| {
                     Box::pin(async move {
                         CandidateAttemptOutcome {
                             final_messages: None,
@@ -493,6 +525,7 @@ mod tests {
                             partial_text: String::new(),
                             reasoning_text: String::new(),
                             reasoning_duration_ms: None,
+                            compaction_boundary: None,
                         }
                     })
                 },
@@ -529,7 +562,12 @@ mod tests {
             })),
             on_error_kind: None,
             attempt_once: Box::new(
-                move |_provider_key, _api_format, _base_url, _model_name, _api_key, _attempt_idx| {
+                move |_provider_key,
+                      _api_format,
+                      _base_url,
+                      _model_name,
+                      _api_key,
+                      _attempt_idx| {
                     Box::pin(async move {
                         CandidateAttemptOutcome {
                             final_messages: None,
@@ -540,6 +578,7 @@ mod tests {
                             partial_text: String::new(),
                             reasoning_text: String::new(),
                             reasoning_duration_ms: None,
+                            compaction_boundary: None,
                         }
                     })
                 },
