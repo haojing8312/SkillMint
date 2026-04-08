@@ -1248,6 +1248,7 @@ mod tests {
             active_tools: vec!["read_file".to_string()],
             active_tool_manifest: Vec::new(),
             recommended_tools: Vec::new(),
+            supporting_tools: Vec::new(),
             deferred_tools: Vec::new(),
             loading_policy: crate::agent::runtime::effective_tool_set::ToolLoadingPolicy::Full,
             expanded_to_full: false,

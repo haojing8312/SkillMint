@@ -947,6 +947,7 @@ mod tests {
                         allowed_tool_count: 3,
                         active_tool_count: 3,
                         recommended_tool_count: 0,
+                        supporting_tool_count: 0,
                         deferred_tool_count: 0,
                         excluded_tool_count: 2,
                         active_tools: vec![
@@ -955,6 +956,7 @@ mod tests {
                             "mcp_repo_files_read".to_string(),
                         ],
                         recommended_tools: Vec::new(),
+                        supporting_tools: Vec::new(),
                         deferred_tools: Vec::new(),
                         missing_tools: vec!["missing_tool".to_string()],
                         filtered_out_tools: vec!["bash".to_string()],

@@ -71,14 +71,25 @@ pub(crate) fn attach_tool_recommendation_observation(
         .cloned()
         .collect::<Vec<_>>()
         .join(", ");
+    let supporting_sample = plan
+        .supporting_tools
+        .iter()
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
     let loading_label = match plan.loading_policy {
         ToolLoadingPolicy::Full => "full",
         ToolLoadingPolicy::RecommendedOnly => "recommended_only",
         ToolLoadingPolicy::RecommendedPlusCoreSafeTools => "recommended_plus_core_safe_tools",
     };
     observation.tool_recommendation_summary = Some(format!(
-        "tool_recommendation={} active={} deferred={} loading_policy={}",
-        recommendation_sample, plan.active_tool_count, plan.deferred_tool_count, loading_label
+        "tool_recommendation={} supporting={} active={} deferred={} loading_policy={}",
+        recommendation_sample,
+        supporting_sample,
+        plan.active_tool_count,
+        plan.deferred_tool_count,
+        loading_label
     ));
     observation.tool_recommendation_aligned =
         Some(observation.selected_runner != "open_task" || plan.expanded_to_full);
@@ -190,10 +201,12 @@ mod tests {
                 allowed_tool_count: 4,
                 active_tool_count: 2,
                 recommended_tool_count: 2,
+                supporting_tool_count: 1,
                 deferred_tool_count: 2,
                 excluded_tool_count: 0,
                 active_tools: vec!["read_file".to_string(), "web_search".to_string()],
                 recommended_tools: vec!["web_search".to_string(), "web_fetch".to_string()],
+                supporting_tools: vec!["read_file".to_string()],
                 deferred_tools: vec!["bash".to_string(), "edit".to_string()],
                 missing_tools: Vec::new(),
                 filtered_out_tools: Vec::new(),

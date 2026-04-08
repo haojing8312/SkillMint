@@ -22,6 +22,7 @@ pub(crate) struct EffectiveToolSet {
     pub active_tools: Vec<String>,
     pub active_tool_manifest: Vec<ToolManifestEntry>,
     pub recommended_tools: Vec<String>,
+    pub supporting_tools: Vec<String>,
     pub deferred_tools: Vec<String>,
     pub loading_policy: ToolLoadingPolicy,
     pub expanded_to_full: bool,
@@ -81,10 +82,12 @@ pub struct EffectiveToolDecisionRecord {
     pub allowed_tool_count: usize,
     pub active_tool_count: usize,
     pub recommended_tool_count: usize,
+    pub supporting_tool_count: usize,
     pub deferred_tool_count: usize,
     pub excluded_tool_count: usize,
     pub active_tools: Vec<String>,
     pub recommended_tools: Vec<String>,
+    pub supporting_tools: Vec<String>,
     pub deferred_tools: Vec<String>,
     pub missing_tools: Vec<String>,
     pub filtered_out_tools: Vec<String>,
@@ -170,10 +173,12 @@ impl EffectiveToolSet {
             allowed_tool_count: self.tool_names.len(),
             active_tool_count: self.active_tools.len(),
             recommended_tool_count: self.recommended_tools.len(),
+            supporting_tool_count: self.supporting_tools.len(),
             deferred_tool_count: self.deferred_tools.len(),
             excluded_tool_count: self.excluded_tools.len(),
             active_tools: self.active_tools.clone(),
             recommended_tools: self.recommended_tools.clone(),
+            supporting_tools: self.supporting_tools.clone(),
             deferred_tools: self.deferred_tools.clone(),
             missing_tools: self.missing_tools.clone(),
             filtered_out_tools: self.filtered_out_tools.clone(),
@@ -270,9 +275,9 @@ impl EffectiveToolSet {
             });
 
         let mut active_tools = recommended_tools.clone();
-        for tool_name in supporting_tools {
+        for tool_name in supporting_tools.iter().take(2) {
             if !active_tools.contains(&tool_name) {
-                active_tools.push(tool_name);
+                active_tools.push(tool_name.clone());
             }
         }
         for tool_name in core_safe_tools {
@@ -292,6 +297,7 @@ impl EffectiveToolSet {
         }
 
         self.recommended_tools = recommended_tools;
+        self.supporting_tools = supporting_tools;
         self.active_tools = active_tools.clone();
         self.active_tool_manifest = self
             .tool_manifest
@@ -573,6 +579,7 @@ pub(crate) fn resolve_effective_tool_set(
             active_tools: tool_names.clone(),
             active_tool_manifest: tool_manifest.clone(),
             recommended_tools: Vec::new(),
+            supporting_tools: Vec::new(),
             deferred_tools: Vec::new(),
             loading_policy: ToolLoadingPolicy::Full,
             expanded_to_full: false,
@@ -602,6 +609,7 @@ pub(crate) fn resolve_effective_tool_set(
             active_tools: tool_names.clone(),
             active_tool_manifest: tool_manifest.clone(),
             recommended_tools: Vec::new(),
+            supporting_tools: Vec::new(),
             deferred_tools: Vec::new(),
             loading_policy: ToolLoadingPolicy::Full,
             expanded_to_full: false,
@@ -628,6 +636,7 @@ pub(crate) fn resolve_effective_tool_set(
         active_tools: tool_names.clone(),
         active_tool_manifest: tool_manifest.clone(),
         recommended_tools: Vec::new(),
+        supporting_tools: Vec::new(),
         deferred_tools: Vec::new(),
         loading_policy: ToolLoadingPolicy::Full,
         expanded_to_full: false,
@@ -1351,6 +1360,15 @@ mod tests {
                 matched_terms: vec!["read".to_string()],
                 matched_fields: vec!["name".to_string()],
             },
+            ToolDiscoveryCandidateRecord {
+                name: "glob".to_string(),
+                category: ToolCategory::File,
+                source: ToolSource::Alias,
+                score: 8,
+                stage: crate::agent::runtime::tool_catalog::ToolRecommendationStage::Supporting,
+                matched_terms: vec!["glob".to_string()],
+                matched_fields: vec!["name".to_string()],
+            },
         ];
 
         effective.apply_recommended_tools(&candidates);
@@ -1363,6 +1381,8 @@ mod tests {
         assert!(effective
             .recommended_tools
             .contains(&"read_file".to_string()));
+        assert!(effective.supporting_tools.contains(&"glob".to_string()));
+        assert!(effective.active_tools.contains(&"glob".to_string()));
         assert!(!effective.deferred_tools.is_empty());
         assert_eq!(
             effective.allowed_tools,

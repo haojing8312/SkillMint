@@ -18,6 +18,7 @@ pub struct ToolDiscoveryCandidateRecord {
 pub enum ToolRecommendationStage {
     Primary,
     Supporting,
+    Fallback,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,25 +110,22 @@ pub(crate) fn format_tool_candidate_hints(
         return None;
     }
 
-    let mut lines = vec![
-        "[当前任务候选工具]".to_string(),
-        "基于当前任务描述，优先考虑以下工具；若不适合，再退回其它工具。".to_string(),
-    ];
-
-    for hit in hits {
-        lines.push(format!(
-            "- {} [{}]: {} / {}",
-            hit.name,
-            match hit.stage {
-                ToolRecommendationStage::Primary => "主推荐",
-                ToolRecommendationStage::Supporting => "补充",
-            },
-            category_label(hit.category),
-            source_label(hit.source)
-        ));
-    }
-
-    Some(lines.join("\n"))
+    format_tool_candidate_record_hints(
+        &hits
+            .into_iter()
+            .map(|hit| ToolDiscoveryCandidateRecord {
+                name: hit.name,
+                category: hit.category,
+                source: hit.source,
+                score: hit.score,
+                stage: hit.stage,
+                matched_terms: hit.matched_terms,
+                matched_fields: hit.matched_fields,
+            })
+            .collect::<Vec<_>>(),
+        &[],
+        limit,
+    )
 }
 
 pub(crate) fn build_tool_candidate_records(
@@ -147,6 +145,39 @@ pub(crate) fn build_tool_candidate_records(
             matched_fields: hit.matched_fields,
         })
         .collect()
+}
+
+pub(crate) fn format_tool_candidate_record_hints(
+    records: &[ToolDiscoveryCandidateRecord],
+    active_tools: &[String],
+    limit: usize,
+) -> Option<String> {
+    if records.is_empty() || limit == 0 {
+        return None;
+    }
+
+    let mut lines = vec![
+        "[当前任务候选工具]".to_string(),
+        "基于当前任务描述，优先考虑以下工具；若不适合，再退回其它工具。".to_string(),
+    ];
+
+    for record in records.iter().take(limit) {
+        let exposure = if active_tools.is_empty() || active_tools.contains(&record.name) {
+            "首轮暴露"
+        } else {
+            "延后暴露"
+        };
+        lines.push(format!(
+            "- {} [{} / {}]: {} / {}",
+            record.name,
+            stage_label(record.stage),
+            exposure,
+            category_label(record.category),
+            source_label(record.source)
+        ));
+    }
+
+    Some(lines.join("\n"))
 }
 
 pub(crate) fn discover_tool_candidates(
@@ -184,12 +215,22 @@ pub(crate) fn discover_tool_candidates(
     for (index, hit) in hits.iter_mut().enumerate() {
         hit.stage = if index < 2 || hit.score >= 14 {
             ToolRecommendationStage::Primary
-        } else {
+        } else if index < 5 || hit.score >= 8 {
             ToolRecommendationStage::Supporting
+        } else {
+            ToolRecommendationStage::Fallback
         };
     }
     hits.truncate(limit);
     hits
+}
+
+fn stage_label(stage: ToolRecommendationStage) -> &'static str {
+    match stage {
+        ToolRecommendationStage::Primary => "主推荐",
+        ToolRecommendationStage::Supporting => "补充",
+        ToolRecommendationStage::Fallback => "扩展",
+    }
 }
 
 #[derive(Debug, Default)]
@@ -330,7 +371,8 @@ fn source_label(source: ToolSource) -> &'static str {
 mod tests {
     use super::{
         build_tool_candidate_records, discover_tool_candidates, format_tool_candidate_hints,
-        format_tool_discovery_index, summarize_tool_catalog, ToolRecommendationStage,
+        format_tool_candidate_record_hints, format_tool_discovery_index, summarize_tool_catalog,
+        ToolDiscoveryCandidateRecord, ToolRecommendationStage,
     };
     use crate::agent::tool_manifest::{ToolCategory, ToolMetadata, ToolSource};
     use crate::agent::ToolManifestEntry;
@@ -578,5 +620,91 @@ mod tests {
         assert!(hits[0]
             .matched_fields
             .contains(&"intent_category".to_string()));
+    }
+
+    #[test]
+    fn discover_tool_candidates_assigns_fallback_stage_to_lower_ranked_matches() {
+        let entries = vec![
+            entry(
+                "read_file",
+                "Read file",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+            entry(
+                "write_file",
+                "Write file",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+            entry(
+                "edit_file",
+                "Edit file",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+            entry(
+                "list_dir",
+                "List dir",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+            entry(
+                "web_fetch",
+                "Fetch web",
+                ToolCategory::Web,
+                ToolSource::Native,
+            ),
+            entry(
+                "web_search",
+                "Search web",
+                ToolCategory::Search,
+                ToolSource::Runtime,
+            ),
+            entry(
+                "browser_snapshot",
+                "Snapshot browser",
+                ToolCategory::Browser,
+                ToolSource::Sidecar,
+            ),
+        ];
+
+        let hits = discover_tool_candidates(&entries, "file read write edit list", 7);
+
+        assert!(hits
+            .iter()
+            .any(|hit| hit.stage == ToolRecommendationStage::Fallback));
+    }
+
+    #[test]
+    fn format_tool_candidate_record_hints_marks_deferred_exposure() {
+        let hints = format_tool_candidate_record_hints(
+            &[
+                ToolDiscoveryCandidateRecord {
+                    name: "web_search".to_string(),
+                    category: ToolCategory::Search,
+                    source: ToolSource::Runtime,
+                    score: 18,
+                    stage: ToolRecommendationStage::Primary,
+                    matched_terms: vec!["search".to_string()],
+                    matched_fields: vec!["name".to_string()],
+                },
+                ToolDiscoveryCandidateRecord {
+                    name: "bash".to_string(),
+                    category: ToolCategory::Shell,
+                    source: ToolSource::Runtime,
+                    score: 9,
+                    stage: ToolRecommendationStage::Supporting,
+                    matched_terms: vec!["command".to_string()],
+                    matched_fields: vec!["description".to_string()],
+                },
+            ],
+            &["web_search".to_string()],
+            4,
+        )
+        .expect("record hints");
+
+        assert!(hints.contains("主推荐 / 首轮暴露"));
+        assert!(hints.contains("补充 / 延后暴露"));
     }
 }

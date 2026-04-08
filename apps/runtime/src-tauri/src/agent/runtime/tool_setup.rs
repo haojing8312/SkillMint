@@ -5,7 +5,7 @@ use super::effective_tool_set::{
 use super::events::SearchCacheState;
 use super::runtime_io as chat_io;
 use super::tool_catalog::{
-    build_tool_candidate_records, format_tool_candidate_hints, format_tool_discovery_index,
+    build_tool_candidate_records, format_tool_candidate_record_hints, format_tool_discovery_index,
     ToolDiscoveryCandidateRecord,
 };
 use super::tool_registry_builder::{RuntimeToolRegistryBuilder, DEFAULT_BROWSER_SIDECAR_URL};
@@ -263,10 +263,10 @@ pub(crate) async fn prepare_runtime_tools(
     };
     let mut effective_tool_set = effective_tool_set;
     effective_tool_set.apply_recommended_tools(&discovery_candidates);
-    let system_prompt = if let Some(discovery_query) = params.tool_discovery_query {
-        if let Some(candidate_hints) = format_tool_candidate_hints(
-            &effective_tool_set.active_tool_manifest,
-            discovery_query,
+    let system_prompt = if params.tool_discovery_query.is_some() {
+        if let Some(candidate_hints) = format_tool_candidate_record_hints(
+            &discovery_candidates,
+            &effective_tool_set.active_tools,
             4,
         ) {
             format!("{system_prompt}\n\n{candidate_hints}")
@@ -314,6 +314,7 @@ mod tests {
                 active_tools: vec!["read_file".to_string(), "bash".to_string()],
                 active_tool_manifest: Vec::new(),
                 recommended_tools: Vec::new(),
+                supporting_tools: Vec::new(),
                 deferred_tools: Vec::new(),
                 loading_policy: crate::agent::runtime::effective_tool_set::ToolLoadingPolicy::Full,
                 expanded_to_full: false,
@@ -362,6 +363,7 @@ mod tests {
                 active_tools: vec!["web_search".to_string()],
                 active_tool_manifest: Vec::new(),
                 recommended_tools: Vec::new(),
+                supporting_tools: Vec::new(),
                 deferred_tools: Vec::new(),
                 loading_policy: crate::agent::runtime::effective_tool_set::ToolLoadingPolicy::Full,
                 expanded_to_full: false,

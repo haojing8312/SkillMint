@@ -540,6 +540,7 @@ mod tests {
                 allowed_tool_count: 4,
                 active_tool_count: 4,
                 recommended_tool_count: 0,
+                supporting_tool_count: 0,
                 deferred_tool_count: 0,
                 excluded_tool_count: 1,
                 active_tools: vec![
@@ -549,6 +550,7 @@ mod tests {
                     "web_fetch".to_string(),
                 ],
                 recommended_tools: Vec::new(),
+                supporting_tools: Vec::new(),
                 deferred_tools: Vec::new(),
                 missing_tools: Vec::new(),
                 filtered_out_tools: vec!["bash".to_string()],
