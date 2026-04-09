@@ -10,9 +10,6 @@ use crate::agent::runtime::kernel::turn_preparation::prepare_hidden_child_turn;
 use crate::agent::runtime::task_engine::{TaskBeginParentContext, TaskEngine};
 use crate::agent::runtime::task_record::TaskRecord;
 use crate::agent::runtime::task_state::TaskState;
-use crate::agent::runtime::task_transition::{
-    resolve_stop_transition, resolve_terminal_transition,
-};
 use crate::agent::types::StreamDelta;
 use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::session_journal::SessionJournalStore;
@@ -126,13 +123,13 @@ pub(crate) async fn finalize_hidden_child_session_success_with_messages(
     )
     .await
     .map_err(anyhow::Error::msg)?;
-    let transition = resolve_terminal_transition(true, None);
-    let _ = TaskEngine::apply_transition(
+    TaskEngine::finalize_after_terminal(
         db,
         journal,
         &prepared.child_session_id,
         &prepared.task_record,
-        &transition,
+        true,
+        None,
     )
     .await;
 
@@ -172,13 +169,13 @@ async fn finalize_hidden_child_session_execution_outcome(
                 )
                 .await
                 .map_err(anyhow::Error::msg)?;
-                let transition = resolve_terminal_transition(true, None);
-                let _ = TaskEngine::apply_transition(
+                TaskEngine::finalize_after_terminal(
                     db,
                     journal,
                     &prepared.child_session_id,
                     &prepared.task_record,
-                    &transition,
+                    true,
+                    None,
                 )
                 .await;
 
@@ -219,14 +216,13 @@ async fn finalize_hidden_child_session_execution_outcome(
                     )
                     .await
                     .map_err(anyhow::Error::msg)?;
-                    let transition =
-                        resolve_stop_transition(stop_reason.kind, Some(stop_reason.kind.as_key()));
-                    let _ = TaskEngine::apply_transition(
+                    TaskEngine::finalize_after_stop(
                         db,
                         journal,
                         &prepared.child_session_id,
                         &prepared.task_record,
-                        &transition,
+                        stop_reason.kind,
+                        Some(stop_reason.kind.as_key()),
                     )
                     .await;
                 } else {
@@ -243,19 +239,16 @@ async fn finalize_hidden_child_session_execution_outcome(
                         Some(&turn_state),
                     )
                     .await;
-                    let transition = resolve_terminal_transition(
+                    TaskEngine::finalize_after_terminal(
+                        db,
+                        journal,
+                        &prepared.child_session_id,
+                        &prepared.task_record,
                         false,
                         route_execution
                             .last_error_kind
                             .as_deref()
                             .or(Some("child_session")),
-                    );
-                    let _ = TaskEngine::apply_transition(
-                        db,
-                        journal,
-                        &prepared.child_session_id,
-                        &prepared.task_record,
-                        &transition,
                     )
                     .await;
                 }
@@ -277,13 +270,13 @@ async fn finalize_hidden_child_session_execution_outcome(
             )
             .await
             .map_err(anyhow::Error::msg)?;
-            let transition = resolve_terminal_transition(true, None);
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_terminal(
                 db,
                 journal,
                 &prepared.child_session_id,
                 &prepared.task_record,
-                &transition,
+                true,
+                None,
             )
             .await;
             Ok(ChildSessionRunOutcome { final_text: output })
@@ -299,13 +292,13 @@ async fn finalize_hidden_child_session_execution_outcome(
                 Some(&turn_state),
             )
             .await;
-            let transition = resolve_terminal_transition(false, Some("skill_command_dispatch"));
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_terminal(
                 db,
                 journal,
                 &prepared.child_session_id,
                 &prepared.task_record,
-                &transition,
+                false,
+                Some("skill_command_dispatch"),
             )
             .await;
             Err(anyhow::Error::msg(error))
@@ -325,14 +318,13 @@ async fn finalize_hidden_child_session_execution_outcome(
             )
             .await
             .map_err(anyhow::Error::msg)?;
-            let transition =
-                resolve_stop_transition(stop_reason.kind, Some(stop_reason.kind.as_key()));
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_stop(
                 db,
                 journal,
                 &prepared.child_session_id,
                 &prepared.task_record,
-                &transition,
+                stop_reason.kind,
+                Some(stop_reason.kind.as_key()),
             )
             .await;
             Err(anyhow::Error::msg(error))
@@ -418,13 +410,13 @@ pub(crate) async fn run_hidden_child_session(
                 None,
             )
             .await;
-            let transition = resolve_terminal_transition(false, Some(&message));
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_terminal(
                 params.db,
                 params.journal,
                 &prepared.child_session_id,
                 &prepared.task_record,
-                &transition,
+                false,
+                Some(&message),
             )
             .await;
             return Err(anyhow::Error::msg(message));

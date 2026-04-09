@@ -10,7 +10,6 @@ use crate::agent::runtime::kernel::turn_preparation::parse_user_skill_command;
 use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
 use crate::agent::runtime::task_engine::{TaskEngine, TaskExecutionOutcome};
 use crate::agent::runtime::task_record::TaskRecord;
-use crate::agent::runtime::task_transition::resolve_commit_transition;
 use crate::agent::AgentExecutor;
 use crate::session_journal::SessionJournalStore;
 use serde_json::Value;
@@ -286,10 +285,15 @@ impl SessionRuntime {
         commit_result: Result<(), String>,
         failure_reason: Option<String>,
     ) -> Result<(), String> {
-        let transition = resolve_commit_transition(&commit_result, failure_reason.as_deref());
-        let _ =
-            TaskEngine::apply_transition(db, journal, session_id, task_record, &transition).await;
-        commit_result
+        TaskEngine::finalize_after_commit(
+            db,
+            journal,
+            session_id,
+            task_record,
+            commit_result,
+            failure_reason,
+        )
+        .await
     }
 
     fn classify_task_engine_result(

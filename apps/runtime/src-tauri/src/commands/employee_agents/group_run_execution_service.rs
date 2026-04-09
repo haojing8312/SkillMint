@@ -19,9 +19,6 @@ use crate::agent::runtime::runtime_io::{
 use crate::agent::runtime::task_engine::{TaskBeginParentContext, TaskEngine};
 use crate::agent::runtime::task_record::TaskRecord;
 use crate::agent::runtime::task_state::TaskState;
-use crate::agent::runtime::task_transition::{
-    resolve_stop_transition, resolve_terminal_transition,
-};
 use crate::agent::tools::{EmployeeManageTool, MemoryTool};
 use crate::agent::{runtime::RuntimeTranscript, AgentExecutor, ToolRegistry};
 use crate::commands::chat_runtime_io::extract_assistant_text_content;
@@ -132,13 +129,13 @@ async fn finalize_employee_step_execution_outcome(
                     Some(&turn_state),
                 )
                 .await?;
-                let transition = resolve_terminal_transition(true, None);
-                let _ = TaskEngine::apply_transition(
+                TaskEngine::finalize_after_terminal(
                     pool,
                     journal,
                     &prepared.session_id,
                     &prepared.task_record,
-                    &transition,
+                    true,
+                    None,
                 )
                 .await;
 
@@ -178,14 +175,13 @@ async fn finalize_employee_step_execution_outcome(
                         Some(&turn_state),
                     )
                     .await?;
-                    let transition =
-                        resolve_stop_transition(stop_reason.kind, Some(stop_reason.kind.as_key()));
-                    let _ = TaskEngine::apply_transition(
+                    TaskEngine::finalize_after_stop(
                         pool,
                         journal,
                         &prepared.session_id,
                         &prepared.task_record,
-                        &transition,
+                        stop_reason.kind,
+                        Some(stop_reason.kind.as_key()),
                     )
                     .await;
                     Ok(FinalizedEmployeeStepExecutionOutcome::Stopped {
@@ -206,19 +202,16 @@ async fn finalize_employee_step_execution_outcome(
                         Some(&turn_state),
                     )
                     .await;
-                    let transition = resolve_terminal_transition(
+                    TaskEngine::finalize_after_terminal(
+                        pool,
+                        journal,
+                        &prepared.session_id,
+                        &prepared.task_record,
                         false,
                         route_execution
                             .last_error_kind
                             .as_deref()
                             .or(Some("employee_step")),
-                    );
-                    let _ = TaskEngine::apply_transition(
-                        pool,
-                        journal,
-                        &prepared.session_id,
-                        &prepared.task_record,
-                        &transition,
                     )
                     .await;
                     Ok(FinalizedEmployeeStepExecutionOutcome::Failed { error: error_text })
@@ -239,13 +232,13 @@ async fn finalize_employee_step_execution_outcome(
                 Some(&turn_state),
             )
             .await?;
-            let transition = resolve_terminal_transition(true, None);
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_terminal(
                 pool,
                 journal,
                 &prepared.session_id,
                 &prepared.task_record,
-                &transition,
+                true,
+                None,
             )
             .await;
             Ok(FinalizedEmployeeStepExecutionOutcome::Completed { output })
@@ -261,13 +254,13 @@ async fn finalize_employee_step_execution_outcome(
                 Some(&turn_state),
             )
             .await;
-            let transition = resolve_terminal_transition(false, Some("skill_command_dispatch"));
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_terminal(
                 pool,
                 journal,
                 &prepared.session_id,
                 &prepared.task_record,
-                &transition,
+                false,
+                Some("skill_command_dispatch"),
             )
             .await;
             Ok(FinalizedEmployeeStepExecutionOutcome::Failed { error })
@@ -286,14 +279,13 @@ async fn finalize_employee_step_execution_outcome(
                 Some(&turn_state),
             )
             .await?;
-            let transition =
-                resolve_stop_transition(stop_reason.kind, Some(stop_reason.kind.as_key()));
-            let _ = TaskEngine::apply_transition(
+            TaskEngine::finalize_after_stop(
                 pool,
                 journal,
                 &prepared.session_id,
                 &prepared.task_record,
-                &transition,
+                stop_reason.kind,
+                Some(stop_reason.kind.as_key()),
             )
             .await;
             Ok(FinalizedEmployeeStepExecutionOutcome::Stopped { stop_reason, error })
@@ -504,13 +496,13 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
                     None,
                 )
                 .await;
-                let transition = resolve_terminal_transition(false, Some(&message));
-                let _ = TaskEngine::apply_transition(
+                TaskEngine::finalize_after_terminal(
                     pool,
                     journal,
                     session_id,
                     &prepared_run.task_record,
-                    &transition,
+                    false,
+                    Some(&message),
                 )
                 .await;
             }

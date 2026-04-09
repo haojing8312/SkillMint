@@ -1,3 +1,4 @@
+use crate::agent::run_guard::RunStopReasonKind;
 use crate::agent::runtime::events::ToolConfirmResponder;
 use crate::agent::runtime::kernel::execution_plan::{ExecutionOutcome, SessionEngineError};
 use crate::agent::runtime::kernel::session_engine::SessionEngine;
@@ -5,7 +6,10 @@ use crate::agent::runtime::session_runs::append_session_run_event_with_pool;
 use crate::agent::runtime::task_record::{TaskLifecycleStatus, TaskRecord};
 use crate::agent::runtime::task_repo::TaskRepo;
 use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
-use crate::agent::runtime::task_transition::{resolve_initial_transition, TaskTransition};
+use crate::agent::runtime::task_transition::{
+    resolve_commit_transition, resolve_initial_transition, resolve_stop_transition,
+    resolve_terminal_transition, TaskTransition,
+};
 use crate::agent::AgentExecutor;
 use crate::session_journal::{
     SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot, SessionTaskRecordSnapshot,
@@ -409,6 +413,46 @@ impl TaskEngine {
         }
     }
 
+    pub(crate) async fn finalize_after_commit(
+        db: &sqlx::SqlitePool,
+        journal: &SessionJournalStore,
+        session_id: &str,
+        active_task_record: &TaskRecord,
+        commit_result: Result<(), String>,
+        failure_reason: Option<String>,
+    ) -> Result<(), String> {
+        let transition = resolve_commit_transition(&commit_result, failure_reason.as_deref());
+        let _ =
+            Self::apply_transition(db, journal, session_id, active_task_record, &transition).await;
+        commit_result
+    }
+
+    pub(crate) async fn finalize_after_terminal(
+        db: &sqlx::SqlitePool,
+        journal: &SessionJournalStore,
+        session_id: &str,
+        active_task_record: &TaskRecord,
+        success: bool,
+        failure_reason: Option<&str>,
+    ) {
+        let transition = resolve_terminal_transition(success, failure_reason);
+        let _ =
+            Self::apply_transition(db, journal, session_id, active_task_record, &transition).await;
+    }
+
+    pub(crate) async fn finalize_after_stop(
+        db: &sqlx::SqlitePool,
+        journal: &SessionJournalStore,
+        session_id: &str,
+        active_task_record: &TaskRecord,
+        stop_reason_kind: RunStopReasonKind,
+        fallback_reason: Option<&str>,
+    ) {
+        let transition = resolve_stop_transition(stop_reason_kind, fallback_reason);
+        let _ =
+            Self::apply_transition(db, journal, session_id, active_task_record, &transition).await;
+    }
+
     pub(crate) async fn mark_task_completed(
         db: &sqlx::SqlitePool,
         journal: &SessionJournalStore,
@@ -773,6 +817,44 @@ mod tests {
                 .as_ref()
                 .map(|identity| identity.task_id.as_str()),
             Some(task_state.task_identity.task_id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_after_commit_marks_running_task_as_failed_when_commit_fails() {
+        let pool = setup_task_engine_pool().await;
+        let journal_root = tempdir().expect("journal tempdir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+        let task_state =
+            TaskEngine::build_primary_local_chat_task_state("session-1", "user-1", "run-1");
+        let task_record = TaskEngine::begin_task_run(
+            &pool,
+            &journal,
+            &task_state,
+            Option::<TaskBeginParentContext<'_>>::None,
+        )
+        .await
+        .expect("begin primary task");
+
+        let commit_result = TaskEngine::finalize_after_commit(
+            &pool,
+            &journal,
+            "session-1",
+            &task_record,
+            Err("commit failed".to_string()),
+            Some("skill_command_dispatch".to_string()),
+        )
+        .await;
+
+        assert_eq!(commit_result, Err("commit failed".to_string()));
+
+        let task_record = TaskEngine::resolve_latest_task_record_for_session(&journal, "session-1")
+            .await
+            .expect("load latest task record");
+        assert_eq!(task_record.status.as_key(), "failed");
+        assert_eq!(
+            task_record.terminal_reason.as_deref(),
+            Some("skill_command_dispatch")
         );
     }
 }

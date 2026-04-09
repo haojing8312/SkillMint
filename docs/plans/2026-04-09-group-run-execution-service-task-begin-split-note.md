@@ -4,13 +4,18 @@
 
 ## Change scope
 
-This step only replaces the local `start_task + project_task_state + delegation apply` sequence with a shared `TaskEngine::begin_task_run(...)` helper so employee-step execution enters the task engine through the same path as local chat and hidden child sessions.
+This step only replaces the local task lifecycle edges that now belong in `TaskEngine`:
+
+- `start_task + project_task_state + delegation apply`
+- the matching terminal transition handoff
+
+The goal is to keep employee-step execution entering and leaving through the same task-engine-owned path as local chat and hidden child sessions.
 
 ## Why this stays here for now
 
 - The behavior is still specific to employee-step execution startup.
 - Extracting a full employee-step runtime module split in the same change would create much larger churn than the current task requires.
-- The new helper reduces logic in this file rather than adding another bespoke branch.
+- The new helpers reduce logic in this file rather than adding another bespoke branch.
 
 ## Follow-up split direction
 
