@@ -725,6 +725,7 @@ diagnostics:
                 turn_state: None,
                 task_path: None,
                 task_status: None,
+                task_record: None,
             }],
             route_attempt_logs: vec![RouteAttemptLog {
                 session_id: "session-1".to_string(),
@@ -927,6 +928,7 @@ diagnostics:
                 turn_state: None,
                 task_path: None,
                 task_status: None,
+                task_record: None,
             }],
             route_attempt_logs: vec![RouteAttemptLog {
                 session_id: "session-1".to_string(),

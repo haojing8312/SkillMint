@@ -6,7 +6,7 @@ use crate::agent::runtime::trace_builder::{
 };
 use crate::session_journal::{
     SessionJournalStateHandle, SessionJournalStore, SessionRunEvent,
-    SessionRunTaskIdentitySnapshot, SessionRunTurnStateSnapshot,
+    SessionRunTaskIdentitySnapshot, SessionRunTurnStateSnapshot, SessionTaskRecordSnapshot,
 };
 use chrono::Utc;
 use serde::Serialize;
@@ -34,6 +34,45 @@ pub struct SessionRunProjection {
     pub task_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_record: Option<SessionRunTaskRecordProjection>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SessionRunTaskRecordProjection {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+    pub root_task_id: String,
+    pub task_kind: String,
+    pub surface_kind: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+}
+
+impl From<&SessionTaskRecordSnapshot> for SessionRunTaskRecordProjection {
+    fn from(value: &SessionTaskRecordSnapshot) -> Self {
+        Self {
+            task_id: value.task_identity.task_id.clone(),
+            parent_task_id: value.task_identity.parent_task_id.clone(),
+            root_task_id: value.task_identity.root_task_id.clone(),
+            task_kind: value.task_identity.task_kind.clone(),
+            surface_kind: value.task_identity.surface_kind.clone(),
+            status: value.status.as_key().to_string(),
+            created_at: value.created_at.clone(),
+            updated_at: value.updated_at.clone(),
+            started_at: value.started_at.clone(),
+            completed_at: value.completed_at.clone(),
+            terminal_reason: value.terminal_reason.clone(),
+        }
+    }
 }
 
 pub async fn list_session_runs_with_pool(
@@ -99,15 +138,16 @@ pub async fn list_session_runs_with_pool(
                 turn_state: None,
                 task_path: None,
                 task_status: None,
+                task_record: None,
             },
         )
         .collect())
 }
 
-fn resolve_task_status_for_run(
-    state: &crate::session_journal::SessionJournalState,
+fn resolve_task_record_for_run<'a>(
+    state: &'a crate::session_journal::SessionJournalState,
     snapshot: &crate::session_journal::SessionRunSnapshot,
-) -> Option<String> {
+) -> Option<&'a SessionTaskRecordSnapshot> {
     let effective_identity = effective_task_identity(
         snapshot.task_identity.as_ref(),
         snapshot.turn_state.as_ref(),
@@ -118,8 +158,7 @@ fn resolve_task_status_for_run(
             .tasks
             .iter()
             .rev()
-            .find(|task| task.task_identity.task_id == task_identity.task_id)
-            .map(|task| task.status.as_key().to_string());
+            .find(|task| task.task_identity.task_id == task_identity.task_id);
     }
 
     state
@@ -127,7 +166,6 @@ fn resolve_task_status_for_run(
         .iter()
         .rev()
         .find(|task| task.run_id == snapshot.run_id)
-        .map(|task| task.status.as_key().to_string())
 }
 
 pub async fn list_session_runs_with_runtime_state(
@@ -150,7 +188,9 @@ pub async fn list_session_runs_with_runtime_state(
                 effective_task_identity(snapshot.task_identity.as_ref(), run.turn_state.as_ref());
             run.task_identity = effective_identity.cloned();
             run.task_path = effective_identity.and_then(build_task_path);
-            run.task_status = resolve_task_status_for_run(&state, snapshot);
+            run.task_record = resolve_task_record_for_run(&state, snapshot)
+                .map(SessionRunTaskRecordProjection::from);
+            run.task_status = run.task_record.as_ref().map(|task| task.status.clone());
         }
     }
 
@@ -1235,6 +1275,143 @@ mod tests {
 
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_status.as_deref(), Some("failed"));
+    }
+
+    #[tokio::test]
+    async fn list_session_runs_with_runtime_state_projects_task_record_summary() {
+        let pool = setup_session_run_event_pool().await;
+        let journal_root = tempdir().expect("journal temp dir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+
+        sqlx::query(
+            "INSERT INTO session_runs (id, session_id, user_message_id, assistant_message_id, status, buffered_text, error_kind, error_message, created_at, updated_at)
+             VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("run-task-record")
+        .bind("session-1")
+        .bind("user-1")
+        .bind("failed")
+        .bind("保留输出")
+        .bind("max_turns")
+        .bind("stopped")
+        .bind("2026-04-09T00:00:00Z")
+        .bind("2026-04-09T00:00:02Z")
+        .execute(&pool)
+        .await
+        .expect("insert session run");
+
+        journal
+            .append_event(
+                "session-1",
+                SessionRunEvent::TaskRecordUpserted {
+                    run_id: "run-task-record".to_string(),
+                    task: TaskRecordUpsertPayload {
+                        task_identity: crate::agent::runtime::task_state::TaskIdentity::new(
+                            "task-1",
+                            Option::<String>::None,
+                            Some("task-1"),
+                        ),
+                        task_kind: crate::agent::runtime::task_state::TaskKind::PrimaryUserTask,
+                        surface_kind:
+                            crate::agent::runtime::task_state::TaskSurfaceKind::LocalChatSurface,
+                        session_id: "session-1".to_string(),
+                        user_message_id: "user-1".to_string(),
+                        run_id: "run-task-record".to_string(),
+                        status: crate::agent::runtime::task_record::TaskLifecycleStatus::Running,
+                        created_at: "2026-04-09T00:00:00Z".to_string(),
+                        updated_at: "2026-04-09T00:00:01Z".to_string(),
+                        started_at: Some("2026-04-09T00:00:01Z".to_string()),
+                        completed_at: None,
+                        terminal_reason: None,
+                    },
+                },
+            )
+            .await
+            .expect("append task upsert");
+        journal
+            .append_event(
+                "session-1",
+                SessionRunEvent::TaskStatusChanged {
+                    run_id: "run-task-record".to_string(),
+                    status_change: TaskStatusChangedPayload {
+                        task_id: "task-1".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-1".to_string(),
+                        from_status:
+                            crate::agent::runtime::task_record::TaskLifecycleStatus::Running,
+                        to_status: crate::agent::runtime::task_record::TaskLifecycleStatus::Failed,
+                        terminal_reason: Some("max_turns".to_string()),
+                        updated_at: "2026-04-09T00:00:02Z".to_string(),
+                    },
+                },
+            )
+            .await
+            .expect("append task status changed");
+        journal
+            .append_event(
+                "session-1",
+                SessionRunEvent::TaskStateProjected {
+                    run_id: "run-task-record".to_string(),
+                    task_identity: crate::session_journal::SessionRunTaskIdentitySnapshot {
+                        task_id: "task-1".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-1".to_string(),
+                        task_kind: "primary_user_task".to_string(),
+                        surface_kind: "local_chat_surface".to_string(),
+                    },
+                },
+            )
+            .await
+            .expect("append task state projected");
+
+        let runs = super::list_session_runs_with_runtime_state(&pool, "session-1", Some(&journal))
+            .await
+            .expect("list session runs");
+
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].task_status.as_deref(), Some("failed"));
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .map(|record| record.task_kind.as_str()),
+            Some("primary_user_task")
+        );
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .map(|record| record.surface_kind.as_str()),
+            Some("local_chat_surface")
+        );
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .map(|record| record.status.as_str()),
+            Some("failed")
+        );
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .and_then(|record| record.started_at.as_deref()),
+            Some("2026-04-09T00:00:01Z")
+        );
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .and_then(|record| record.completed_at.as_deref()),
+            Some("2026-04-09T00:00:02Z")
+        );
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .and_then(|record| record.terminal_reason.as_deref()),
+            Some("max_turns")
+        );
     }
 
     #[tokio::test]

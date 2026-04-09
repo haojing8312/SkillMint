@@ -273,6 +273,7 @@ export interface SessionRunProjection {
   turn_state?: SessionRunTurnStateSnapshot | null;
   task_path?: string | null;
   task_status?: string | null;
+  task_record?: SessionRunTaskRecordProjection | null;
 }
 
 export interface SessionRunTaskIdentitySnapshot {
@@ -281,6 +282,20 @@ export interface SessionRunTaskIdentitySnapshot {
   root_task_id: string;
   task_kind: string;
   surface_kind: string;
+}
+
+export interface SessionRunTaskRecordProjection {
+  task_id: string;
+  parent_task_id?: string | null;
+  root_task_id: string;
+  task_kind: string;
+  surface_kind: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  terminal_reason?: string | null;
 }
 
 export interface SessionRunTurnStateCompactionBoundary {

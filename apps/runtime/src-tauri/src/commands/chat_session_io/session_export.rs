@@ -4,7 +4,7 @@ use crate::agent::runtime::task_lineage::{
 };
 use crate::session_journal::{
     SessionJournalState, SessionJournalStore, SessionRunEvent, SessionRunSnapshot,
-    SessionRunStatus, SessionRunTurnStateSnapshot,
+    SessionRunStatus, SessionRunTurnStateSnapshot, SessionTaskRecordSnapshot,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -573,6 +573,9 @@ fn render_recovered_run_sections(
         if let Some(task_identity) = effective_recovered_task_identity(run) {
             sections.extend(render_recovered_task_identity_lines(task_identity));
         }
+        if let Some(task_record) = resolve_recovered_task_record(state, run) {
+            sections.extend(render_recovered_task_record_lines(task_record));
+        }
         if let Some(summary) = run_stop_summaries_by_run.get(&run.run_id) {
             if !summary.title.trim().is_empty() {
                 sections.push(format!("- 停止原因：{}", summary.title.trim()));
@@ -659,6 +662,63 @@ fn effective_recovered_task_identity(
     run: &SessionRunSnapshot,
 ) -> Option<&crate::session_journal::SessionRunTaskIdentitySnapshot> {
     effective_task_identity(run.task_identity.as_ref(), run.turn_state.as_ref())
+}
+
+fn resolve_recovered_task_record<'a>(
+    state: &'a SessionJournalState,
+    run: &SessionRunSnapshot,
+) -> Option<&'a SessionTaskRecordSnapshot> {
+    let effective_identity = effective_recovered_task_identity(run);
+
+    if let Some(task_identity) = effective_identity {
+        return state
+            .tasks
+            .iter()
+            .rev()
+            .find(|task| task.task_identity.task_id == task_identity.task_id);
+    }
+
+    state
+        .tasks
+        .iter()
+        .rev()
+        .find(|task| task.run_id == run.run_id)
+}
+
+fn render_recovered_task_record_lines(task_record: &SessionTaskRecordSnapshot) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(format!("- task_status: {}", task_record.status.as_key()));
+    if !task_record.created_at.trim().is_empty() {
+        lines.push(format!(
+            "- task_created_at: {}",
+            task_record.created_at.trim()
+        ));
+    }
+    if !task_record.updated_at.trim().is_empty() {
+        lines.push(format!(
+            "- task_updated_at: {}",
+            task_record.updated_at.trim()
+        ));
+    }
+    if let Some(started_at) = task_record.started_at.as_ref() {
+        let started_at = started_at.trim();
+        if !started_at.is_empty() {
+            lines.push(format!("- task_started_at: {}", started_at));
+        }
+    }
+    if let Some(completed_at) = task_record.completed_at.as_ref() {
+        let completed_at = completed_at.trim();
+        if !completed_at.is_empty() {
+            lines.push(format!("- task_completed_at: {}", completed_at));
+        }
+    }
+    if let Some(terminal_reason) = task_record.terminal_reason.as_ref() {
+        let terminal_reason = terminal_reason.trim();
+        if !terminal_reason.is_empty() {
+            lines.push(format!("- task_terminal_reason: {}", terminal_reason));
+        }
+    }
+    lines
 }
 
 fn render_recovered_turn_state_lines(turn_state: &SessionRunTurnStateSnapshot) -> Vec<String> {
@@ -856,5 +916,58 @@ mod tests {
         assert!(output.contains("#### 任务链路"));
         assert!(output.contains("primary_user_task (local_chat_surface): task-root"));
         assert!(output.contains("sub_agent_task (hidden_child_surface): task-root -> task-child"));
+    }
+
+    #[test]
+    fn recovered_run_sections_include_task_record_lines() {
+        let output = render_recovered_run_sections(
+            &[],
+            &SessionJournalState {
+                session_id: "session-1".to_string(),
+                current_run_id: None,
+                runs: vec![SessionRunSnapshot {
+                    run_id: "run-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                    status: SessionRunStatus::Failed,
+                    buffered_text: "保留输出".to_string(),
+                    last_error_kind: Some("max_turns".to_string()),
+                    last_error_message: Some("已达到执行步数上限".to_string()),
+                    task_identity: Some(SessionRunTaskIdentitySnapshot {
+                        task_id: "task-1".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-1".to_string(),
+                        task_kind: "primary_user_task".to_string(),
+                        surface_kind: "local_chat_surface".to_string(),
+                    }),
+                    turn_state: None,
+                }],
+                tasks: vec![crate::session_journal::SessionTaskRecordSnapshot {
+                    task_identity: SessionRunTaskIdentitySnapshot {
+                        task_id: "task-1".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-1".to_string(),
+                        task_kind: "primary_user_task".to_string(),
+                        surface_kind: "local_chat_surface".to_string(),
+                    },
+                    session_id: "session-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                    run_id: "run-1".to_string(),
+                    status: crate::agent::runtime::task_record::TaskLifecycleStatus::Failed,
+                    created_at: "2026-04-09T00:00:00Z".to_string(),
+                    updated_at: "2026-04-09T00:00:02Z".to_string(),
+                    started_at: Some("2026-04-09T00:00:01Z".to_string()),
+                    completed_at: Some("2026-04-09T00:00:02Z".to_string()),
+                    terminal_reason: Some("max_turns".to_string()),
+                }],
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+
+        assert!(output.contains("task_status: failed"));
+        assert!(output.contains("task_started_at: 2026-04-09T00:00:01Z"));
+        assert!(output.contains("task_completed_at: 2026-04-09T00:00:02Z"));
+        assert!(output.contains("task_terminal_reason: max_turns"));
     }
 }
