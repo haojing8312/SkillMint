@@ -12,6 +12,7 @@ import { ChatCollaborationStatusPanel } from "./chat/ChatCollaborationStatusPane
 import { ChatMessageRail } from "./chat/ChatMessageRail";
 import { ChatGroupRunSection } from "./chat/group-run/ChatGroupRunSection";
 import { ChatShell } from "./chat/ChatShell";
+import { computeVirtualWindow } from "./chat/chatVirtualization";
 import {
   clearSessionDraft,
   clonePersistedChatRuntimeState,
@@ -278,6 +279,8 @@ export function ChatView({
   const [isNearTop, setIsNearTop] = useState(true);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [hasScrollableContent, setHasScrollableContent] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const [delegationCards, setDelegationCards] = useState<ChatDelegationCardState[]>(initialRuntimeState.delegationCards);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRegionRef = useRef<HTMLDivElement>(null);
@@ -602,6 +605,8 @@ export function ChatView({
     setIsNearBottom(nextNearBottom);
     setIsNearTop(nextNearTop);
     setHasScrollableContent(element.scrollHeight > element.clientHeight + 4);
+    setScrollTop(element.scrollTop);
+    setViewportHeight(element.clientHeight);
     autoFollowScrollRef.current = keepFollowingBottom || nextNearBottom;
   };
 
@@ -914,6 +919,43 @@ export function ChatView({
   const renderedMessages = useMemo<Message[]>(
     () => (recoveredAssistantMessage ? [...messages, recoveredAssistantMessage] : messages),
     [messages, recoveredAssistantMessage]
+  );
+  const estimatedRenderedMessageHeights = useMemo(
+    () =>
+      renderedMessages.map((message) => {
+        if (message.role === "user") {
+          return message.contentParts?.length ? 140 : 92;
+        }
+        if (message.streamItems?.length) {
+          return 280;
+        }
+        if (message.toolCalls?.length) {
+          return 240;
+        }
+        if (message.reasoning?.content?.trim()) {
+          return 260;
+        }
+        const lineCount = Math.max(1, Math.ceil((message.content || "").length / 48));
+        return Math.min(360, 120 + lineCount * 22);
+      }),
+    [renderedMessages],
+  );
+  const virtualWindow = useMemo(
+    () =>
+      computeVirtualWindow({
+        itemCount: renderedMessages.length,
+        itemHeights: estimatedRenderedMessageHeights,
+        scrollTop,
+        viewportHeight,
+        overscan: 6,
+        minVirtualizeCount: 40,
+        forceIncludeIndex: highlightedMessageIndex,
+      }),
+    [estimatedRenderedMessageHeights, highlightedMessageIndex, renderedMessages.length, scrollTop, viewportHeight],
+  );
+  const virtualizedRenderedMessages = useMemo(
+    () => renderedMessages.slice(virtualWindow.startIndex, virtualWindow.endIndex),
+    [renderedMessages, virtualWindow.endIndex, virtualWindow.startIndex],
   );
   const sidePanelMessages = useMemo<Message[]>(() => {
     if (streamItems.length === 0) return renderedMessages;
@@ -1988,7 +2030,10 @@ export function ChatView({
           sessionDisplaySubtitle={sessionDisplaySubtitle}
         />
         <ChatMessageRail
-          renderedMessages={renderedMessages}
+          renderedMessages={virtualizedRenderedMessages}
+          visibleStartIndex={virtualWindow.startIndex}
+          topSpacerHeight={virtualWindow.topSpacerHeight}
+          bottomSpacerHeight={virtualWindow.bottomSpacerHeight}
           highlightedMessageIndex={highlightedMessageIndex}
           messageElementRefs={messageElementRefs}
           expandedThinkingKeys={expandedThinkingKeys}

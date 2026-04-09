@@ -1,4 +1,4 @@
-import { Fragment, type MutableRefObject, useMemo } from "react";
+import { Fragment, memo, type MutableRefObject, useMemo } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,6 +20,9 @@ type TaskJourneyModel = ReturnType<
 
 type ChatMessageRailProps = {
   renderedMessages: Message[];
+  visibleStartIndex: number;
+  topSpacerHeight: number;
+  bottomSpacerHeight: number;
   highlightedMessageIndex: number | null;
   messageElementRefs: MutableRefObject<Record<number, HTMLDivElement | null>>;
   expandedThinkingKeys: string[];
@@ -66,8 +69,11 @@ type ChatMessageRailProps = {
   onOpenExternalLink?: (url: string) => Promise<void> | void;
 };
 
-export function ChatMessageRail({
+function ChatMessageRailImpl({
   renderedMessages,
+  visibleStartIndex,
+  topSpacerHeight,
+  bottomSpacerHeight,
   highlightedMessageIndex,
   messageElementRefs,
   expandedThinkingKeys,
@@ -107,9 +113,11 @@ export function ChatMessageRail({
   const streamText = useMemo(() => extractPlainTextFromStreamItems(streamItems), [streamItems]);
   return (
     <>
+      {topSpacerHeight > 0 && <div aria-hidden="true" style={{ height: topSpacerHeight }} />}
       {renderedMessages.map((message, index) => {
-        const isLatest = index === renderedMessages.length - 1;
-        const isSessionFocusTarget = highlightedMessageIndex === index;
+        const absoluteIndex = visibleStartIndex + index;
+        const isLatest = absoluteIndex === visibleStartIndex + renderedMessages.length - 1;
+        const isSessionFocusTarget = highlightedMessageIndex === absoluteIndex;
         const messageJourneyModel = message.role === "assistant" ? buildTaskJourneyModel([message]) : null;
         const shouldRenderJourneySummary =
           messageJourneyModel !== null && shouldRenderCompletedJourneySummary(messageJourneyModel);
@@ -125,9 +133,9 @@ export function ChatMessageRail({
           <Fragment key={message.id || `${index}-${message.created_at}`}>
             <motion.div
               ref={(node) => {
-                messageElementRefs.current[index] = node;
+                messageElementRefs.current[absoluteIndex] = node;
               }}
-              data-testid={`chat-message-${index}`}
+              data-testid={`chat-message-${absoluteIndex}`}
               data-recovered-run-message={message.id?.startsWith("recovered-run-") ? "true" : "false"}
               data-session-focus-highlighted={isSessionFocusTarget ? "true" : "false"}
               initial={isLatest ? { opacity: 0, x: message.role === "user" ? 20 : -20 } : false}
@@ -153,10 +161,10 @@ export function ChatMessageRail({
                     expanded={expandedThinkingKeys.includes(`message-${message.id || index}`)}
                     onToggle={
                       message.reasoning.content.trim()
-                        ? () => onToggleThinkingBlock(`message-${message.id || index}`)
+                        ? () => onToggleThinkingBlock(`message-${message.id || absoluteIndex}`)
                         : undefined
                     }
-                    toggleTestId={`thinking-block-toggle-${message.id || index}`}
+                    toggleTestId={`thinking-block-toggle-${message.id || absoluteIndex}`}
                   />
                 )}
                 {message.role === "assistant" && message.streamItems ? (
@@ -197,10 +205,10 @@ export function ChatMessageRail({
                       data-testid={`assistant-copy-action-${message.id || index}`}
                       aria-label="复制回答"
                       title={copiedAssistantMessageKey === `message-${message.id || index}` ? "已复制" : "复制回答"}
-                      onClick={() => void onCopyAssistantMessage(`message-${message.id || index}`, message.content)}
+                      onClick={() => void onCopyAssistantMessage(`message-${message.id || absoluteIndex}`, message.content)}
                       className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
                     >
-                      <CopyActionIcon copied={copiedAssistantMessageKey === `message-${message.id || index}`} />
+                      <CopyActionIcon copied={copiedAssistantMessageKey === `message-${message.id || absoluteIndex}`} />
                     </button>
                   </div>
                 )}
@@ -225,6 +233,7 @@ export function ChatMessageRail({
           </Fragment>
         );
       })}
+      {bottomSpacerHeight > 0 && <div aria-hidden="true" style={{ height: bottomSpacerHeight }} />}
 
       {orphanFailedRuns.map((run) =>
         renderChatRunFailureCard({
@@ -343,3 +352,31 @@ export function ChatMessageRail({
     </>
   );
 }
+
+export const ChatMessageRail = memo(ChatMessageRailImpl, (prev, next) => {
+  return (
+    prev.renderedMessages === next.renderedMessages &&
+    prev.visibleStartIndex === next.visibleStartIndex &&
+    prev.topSpacerHeight === next.topSpacerHeight &&
+    prev.bottomSpacerHeight === next.bottomSpacerHeight &&
+    prev.highlightedMessageIndex === next.highlightedMessageIndex &&
+    prev.messageElementRefs === next.messageElementRefs &&
+    prev.expandedThinkingKeys === next.expandedThinkingKeys &&
+    prev.failedRunsByAssistantMessageId === next.failedRunsByAssistantMessageId &&
+    prev.failedRunsByUserMessageId === next.failedRunsByUserMessageId &&
+    prev.copiedAssistantMessageKey === next.copiedAssistantMessageKey &&
+    prev.expandedRunDetailIds === next.expandedRunDetailIds &&
+    prev.streaming === next.streaming &&
+    prev.orphanFailedRuns === next.orphanFailedRuns &&
+    prev.showStreamingAssistantBubble === next.showStreamingAssistantBubble &&
+    prev.showStreamingThinkingState === next.showStreamingThinkingState &&
+    prev.streamReasoning === next.streamReasoning &&
+    prev.streamItems === next.streamItems &&
+    prev.toolManifest === next.toolManifest &&
+    prev.subAgentBuffer === next.subAgentBuffer &&
+    prev.subAgentRoleName === next.subAgentRoleName &&
+    prev.askUserQuestion === next.askUserQuestion &&
+    prev.askUserOptions === next.askUserOptions &&
+    prev.askUserAnswer === next.askUserAnswer
+  );
+});

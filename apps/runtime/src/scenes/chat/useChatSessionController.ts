@@ -23,6 +23,8 @@ export interface PendingApprovalView {
   usesLegacyConfirm?: boolean;
 }
 
+const SESSION_DRAFT_PERSIST_DEBOUNCE_MS = 500;
+
 type UseChatSessionControllerArgs = {
   sessionId: string;
   workDir?: string;
@@ -67,6 +69,8 @@ export function useChatSessionController({
     clonePersistedChatRuntimeState(persistedRuntimeState),
   );
   const skipNextRuntimePersistRef = useRef(true);
+  const pendingDraftPersistRef = useRef<{ sessionId: string; value: string } | null>(null);
+  const draftPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadWorkspace = async (sid: string) => {
     try {
@@ -178,8 +182,39 @@ export function useChatSessionController({
   }, [onPersistRuntimeState, runtimeSnapshot]);
 
   useEffect(() => {
-    persistSessionDraft(sessionId, draftInput);
+    pendingDraftPersistRef.current = { sessionId, value: draftInput };
+
+    if (draftPersistTimerRef.current) {
+      clearTimeout(draftPersistTimerRef.current);
+    }
+
+    draftPersistTimerRef.current = setTimeout(() => {
+      const pending = pendingDraftPersistRef.current;
+      if (!pending) return;
+      persistSessionDraft(pending.sessionId, pending.value);
+      draftPersistTimerRef.current = null;
+    }, SESSION_DRAFT_PERSIST_DEBOUNCE_MS);
+
+    return () => {
+      if (draftPersistTimerRef.current) {
+        clearTimeout(draftPersistTimerRef.current);
+        draftPersistTimerRef.current = null;
+      }
+    };
   }, [draftInput, persistSessionDraft, sessionId]);
+
+  useEffect(() => {
+    return () => {
+      if (draftPersistTimerRef.current) {
+        clearTimeout(draftPersistTimerRef.current);
+        draftPersistTimerRef.current = null;
+      }
+      const pending = pendingDraftPersistRef.current;
+      if (!pending) return;
+      persistSessionDraft(pending.sessionId, pending.value);
+      pendingDraftPersistRef.current = null;
+    };
+  }, [persistSessionDraft, sessionId]);
 
   return {
     messages,

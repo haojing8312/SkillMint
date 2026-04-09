@@ -1,4 +1,4 @@
-import type { ChangeEvent, KeyboardEvent, RefObject } from "react";
+import { memo, type ChangeEvent, type KeyboardEvent, type RefObject } from "react";
 
 import { buildPendingAttachmentMeta } from "../../lib/chatAttachments";
 import type { ModelConfig, PendingAttachment } from "../../types";
@@ -22,7 +22,7 @@ type ChatComposerProps = {
   onCancel: () => void;
 };
 
-export function ChatComposer({
+function ChatComposerImpl({
   operationPermissionMode = "standard",
   quickPrompts,
   streaming,
@@ -213,3 +213,16 @@ export function ChatComposer({
     </div>
   );
 }
+
+export const ChatComposer = memo(ChatComposerImpl, (prev, next) => {
+  return (
+    prev.operationPermissionMode === next.operationPermissionMode &&
+    prev.streaming === next.streaming &&
+    prev.composerError === next.composerError &&
+    prev.input === next.input &&
+    prev.displayWorkDirLabel === next.displayWorkDirLabel &&
+    prev.currentModel?.id === next.currentModel?.id &&
+    prev.quickPrompts === next.quickPrompts &&
+    prev.attachedFiles === next.attachedFiles
+  );
+});
