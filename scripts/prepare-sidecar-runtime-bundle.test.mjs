@@ -9,8 +9,45 @@ import {
   hasRequiredBundleOutputs,
   isRetryableWindowsDeployError,
   pruneNonRuntimeBundlePaths,
+  readPnpmMajorVersion,
   repairBrokenBundleLinks,
+  resolvePnpmRunner,
 } from "./prepare-sidecar-runtime-bundle.mjs";
+
+test("resolvePnpmRunner prefers npm_execpath when available", () => {
+  const runner = resolvePnpmRunner({
+    npm_execpath: "C:\\Users\\builder\\AppData\\Roaming\\npm\\pnpm.cjs",
+  }, "win32");
+
+  assert.equal(runner.command, process.execPath);
+  assert.deepEqual(runner.args, ["C:\\Users\\builder\\AppData\\Roaming\\npm\\pnpm.cjs"]);
+});
+
+test("readPnpmMajorVersion shells out without Windows shell wrapping", () => {
+  const spawnCalls = [];
+  const major = readPnpmMajorVersion(
+    { command: "pnpm.cmd", args: [] },
+    {
+      env: { PATH: "C:\\pnpm" },
+      cwd: "D:\\code\\WorkClaw",
+      spawn(command, args, options) {
+        spawnCalls.push({ command, args, options });
+        return {
+          status: 0,
+          stdout: "10.11.0\n",
+        };
+      },
+    },
+  );
+
+  assert.equal(major, 10);
+  assert.equal(spawnCalls.length, 1);
+  assert.equal(spawnCalls[0].command, "pnpm.cmd");
+  assert.deepEqual(spawnCalls[0].args, ["--version"]);
+  assert.equal(spawnCalls[0].options.cwd, "D:\\code\\WorkClaw");
+  assert.equal(spawnCalls[0].options.shell, false);
+  assert.deepEqual(spawnCalls[0].options.env, { PATH: "C:\\pnpm" });
+});
 
 test("buildDeployCommand disables bin links via environment on Windows-safe deploys", () => {
   const runner = { command: "pnpm.cmd", args: [] };

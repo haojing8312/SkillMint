@@ -33,7 +33,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm exec vite --config e2e/vite.e2e.config.ts --host 127.0.0.1 --port ${port} --strictPort`,
+    command: "node scripts/run-playwright-web-server.mjs",
     url: baseUrl,
     reuseExistingServer: false,
     timeout: 120_000,

@@ -10,7 +10,7 @@
     "doctor:windows": "node scripts/doctor-windows.mjs",
     "report:frontend-large-files": "node scripts/report-frontend-large-files.mjs",
     "report:rust-large-files": "node scripts/report-rust-large-files.mjs",
-    "test:e2e:runtime": "pnpm --dir apps/runtime test:e2e",
+    "test:e2e:runtime": "node scripts/run-runtime-e2e.mjs",
     "release:check-version": "node scripts/check-release-version.mjs",
     "test:release": "node --test scripts/check-release-version.test.mjs",
     "test:installer": "node --test scripts/check-installer-branding.test.mjs scripts/check-runtime-binary-selection.test.mjs",

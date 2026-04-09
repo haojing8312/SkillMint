@@ -161,13 +161,23 @@ function runOrThrow(command, args, cwd) {
   }
 }
 
-function runPnpmOrThrow(args, cwd) {
-  if (process.platform === "win32") {
-    runOrThrow("cmd.exe", ["/d", "/s", "/c", "pnpm", ...args], cwd);
-    return;
+function resolvePnpmRunner(env = process.env, platform = process.platform) {
+  if (env.npm_execpath) {
+    return {
+      command: process.execPath,
+      args: [env.npm_execpath],
+    };
   }
 
-  runOrThrow("pnpm", args, cwd);
+  return {
+    command: platform === "win32" ? "pnpm.cmd" : "pnpm",
+    args: [],
+  };
+}
+
+function runPnpmOrThrow(args, cwd) {
+  const runner = resolvePnpmRunner(process.env, process.platform);
+  runOrThrow(runner.command, [...runner.args, ...args], cwd);
 }
 
 function generateTauriIcons({ projectRoot, sourceIconPath, outputDir }) {

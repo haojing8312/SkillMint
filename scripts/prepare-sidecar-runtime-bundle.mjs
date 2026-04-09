@@ -21,9 +21,16 @@ const mcpSdkExampleSuffixes = [
   path.join("node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "examples"),
 ];
 
-function resolvePnpmRunner() {
+export function resolvePnpmRunner(env = process.env, platform = process.platform) {
+  if (env.npm_execpath) {
+    return {
+      command: process.execPath,
+      args: [env.npm_execpath],
+    };
+  }
+
   return {
-    command: process.platform === "win32" ? "pnpm.cmd" : "pnpm",
+    command: platform === "win32" ? "pnpm.cmd" : "pnpm",
     args: [],
   };
 }
@@ -134,13 +141,20 @@ export function pruneNonRuntimeBundlePaths(targetDir) {
   return prunedPaths;
 }
 
-function readPnpmMajorVersion(runner) {
-  const result = spawnSync(runner.command, [...runner.args, "--version"], {
-    cwd: projectRoot,
+export function readPnpmMajorVersion(
+  runner,
+  {
+    cwd = projectRoot,
+    env = process.env,
+    spawn = spawnSync,
+  } = {},
+) {
+  const result = spawn(runner.command, [...runner.args, "--version"], {
+    cwd,
     encoding: "utf8",
     windowsHide: true,
-    env: process.env,
-    shell: process.platform === "win32",
+    env,
+    shell: false,
   });
 
   if (result.status !== 0) {
@@ -162,7 +176,7 @@ function runOrThrow(command, args, env = process.env) {
     encoding: "utf8",
     windowsHide: true,
     env,
-    shell: process.platform === "win32",
+    shell: false,
   });
 
   if (result.stdout) {
@@ -276,8 +290,8 @@ export function hasRequiredBundleOutputs(targetDir) {
 }
 
 function main() {
-  const runner = resolvePnpmRunner();
-  const pnpmMajor = readPnpmMajorVersion(runner);
+  const runner = resolvePnpmRunner(process.env, process.platform);
+  const pnpmMajor = readPnpmMajorVersion(runner, { cwd: projectRoot, env: process.env });
   const deployCommand = buildDeployCommand(runner, pnpmMajor, bundleDir);
   let deployAttempt = 0;
   while (true) {

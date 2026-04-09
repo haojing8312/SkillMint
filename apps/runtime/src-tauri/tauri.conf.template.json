@@ -4,8 +4,8 @@
   "version": "__APP_VERSION__",
   "identifier": "__BUNDLE_IDENTIFIER__",
   "build": {
-    "beforeDevCommand": "pnpm dev:tauri",
-    "beforeBuildCommand": "pnpm build:tauri",
+    "beforeDevCommand": "node scripts/run-tauri-hook.mjs dev",
+    "beforeBuildCommand": "node scripts/run-tauri-hook.mjs build",
     "devUrl": "http://localhost:5174",
     "frontendDist": "../dist"
   },

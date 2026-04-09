@@ -1,14 +1,14 @@
 {
   "name": "runtime",
   "private": true,
-  "version": "0.5.8",
+  "version": "0.5.9",
   "type": "module",
   "scripts": {
     "brand:apply": "node ../../scripts/apply-brand.mjs",
     "dev": "vite --port 5174",
-    "dev:tauri": "pnpm --dir sidecar build && pnpm dev",
+    "dev:tauri": "node scripts/run-tauri-hook.mjs dev",
     "build": "tsc && vite build",
-    "build:tauri": "node ../../scripts/apply-brand.mjs && pnpm --dir sidecar build && node ../../scripts/prepare-sidecar-runtime-bundle.mjs && pnpm build",
+    "build:tauri": "node scripts/run-tauri-hook.mjs build",
     "tauri": "tauri",
     "test": "node ../../scripts/run-runtime-vitest.mjs run --passWithNoTests",
     "test:watch": "node ../../scripts/run-runtime-vitest.mjs",
