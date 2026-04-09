@@ -1,3 +1,6 @@
+use crate::agent::runtime::task_lineage::{
+    build_task_path, project_task_graph_nodes, SessionRunTaskGraphNode,
+};
 use crate::session_journal::SessionRunEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -91,6 +94,8 @@ pub struct SessionRunTrace {
     pub guard_warnings: Vec<RunTraceGuardWarningSummary>,
     pub parse_warnings: Vec<String>,
     pub child_session_link: Option<SessionRunChildSessionLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_graph: Vec<SessionRunTaskGraphNode>,
     pub events: Vec<SessionRunEventSummary>,
 }
 
@@ -124,6 +129,84 @@ fn summarize_event(
     event: SessionRunEvent,
 ) -> SessionRunEventSummary {
     match event {
+        SessionRunEvent::TaskStateProjected { task_identity, .. } => SessionRunEventSummary {
+            session_id: record.session_id.clone(),
+            run_id: record.run_id.clone(),
+            event_type: record.event_type.clone(),
+            created_at: record.created_at.clone(),
+            status: None,
+            tool_name: None,
+            call_id: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            message: Some(format!(
+                "task={} surface={}",
+                task_identity.task_kind, task_identity.surface_kind
+            )),
+            detail: Some(summarize_task_identity_detail(&task_identity)),
+            irreversible: None,
+            last_completed_step: None,
+            child_session_id: None,
+            is_error: Some(false),
+            parse_warning: None,
+        },
+        SessionRunEvent::TaskRecordUpserted { task, .. } => SessionRunEventSummary {
+            session_id: record.session_id.clone(),
+            run_id: record.run_id.clone(),
+            event_type: record.event_type.clone(),
+            created_at: record.created_at.clone(),
+            status: Some(task.status.as_key().to_string()),
+            tool_name: None,
+            call_id: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            message: Some(format!(
+                "task={} surface={}",
+                task.task_kind.journal_key(),
+                task.surface_kind.journal_key()
+            )),
+            detail: Some(format!(
+                "task_id={}, root_task_id={}, parent_task_id={}",
+                task.task_identity.task_id,
+                task.task_identity.root_task_id,
+                task.task_identity.parent_task_id.as_deref().unwrap_or("-")
+            )),
+            irreversible: None,
+            last_completed_step: None,
+            child_session_id: None,
+            is_error: Some(false),
+            parse_warning: None,
+        },
+        SessionRunEvent::TaskStatusChanged { status_change, .. } => SessionRunEventSummary {
+            session_id: record.session_id.clone(),
+            run_id: record.run_id.clone(),
+            event_type: record.event_type.clone(),
+            created_at: record.created_at.clone(),
+            status: Some(status_change.to_status.as_key().to_string()),
+            tool_name: None,
+            call_id: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            message: Some(format!(
+                "task={} {} -> {}",
+                status_change.task_id,
+                status_change.from_status.as_key(),
+                status_change.to_status.as_key()
+            )),
+            detail: status_change.terminal_reason.clone(),
+            irreversible: None,
+            last_completed_step: None,
+            child_session_id: None,
+            is_error: Some(matches!(
+                status_change.to_status,
+                crate::agent::runtime::task_record::TaskLifecycleStatus::Failed
+                    | crate::agent::runtime::task_record::TaskLifecycleStatus::Cancelled
+            )),
+            parse_warning: None,
+        },
         SessionRunEvent::RunStarted {
             user_message_id, ..
         } => SessionRunEventSummary {
@@ -408,9 +491,19 @@ pub fn build_session_run_trace(
     let mut approvals = Vec::new();
     let mut guard_warnings = Vec::new();
     let mut parse_warnings = Vec::new();
+    let mut observed_task_identities = Vec::new();
 
     if summaries.is_empty() {
         parse_warnings.push("no persisted session_run_events found for run".to_string());
+    }
+
+    for record in events {
+        let Ok(event) = serde_json::from_str::<SessionRunEvent>(&record.payload_json) else {
+            continue;
+        };
+        if let Some(task_identity) = extract_task_identity(&event) {
+            observed_task_identities.push(task_identity.clone());
+        }
     }
 
     for summary in &summaries {
@@ -523,6 +616,7 @@ pub fn build_session_run_trace(
         guard_warnings,
         parse_warnings,
         child_session_link: hidden_child_session_link(session_id),
+        task_graph: project_task_graph_nodes(observed_task_identities.iter()),
         events: summaries,
     }
 }
@@ -541,6 +635,38 @@ fn compact_json(value: &Value) -> Option<String> {
         _ => serde_json::to_string(value)
             .ok()
             .map(|json| truncate_text(&json, 160)),
+    }
+}
+
+fn summarize_task_identity_detail(
+    task_identity: &crate::session_journal::SessionRunTaskIdentitySnapshot,
+) -> String {
+    let mut detail_parts = Vec::new();
+    detail_parts.push(format!("task_id={}", task_identity.task_id));
+    if let Some(parent_task_id) = task_identity.parent_task_id.as_deref() {
+        if !parent_task_id.trim().is_empty() {
+            detail_parts.push(format!("parent_task_id={}", parent_task_id.trim()));
+        }
+    }
+    detail_parts.push(format!("root_task_id={}", task_identity.root_task_id));
+    if let Some(task_path) = build_task_path(task_identity) {
+        detail_parts.push(format!("task_path={}", task_path));
+    }
+    detail_parts.join(", ")
+}
+
+fn extract_task_identity(
+    event: &SessionRunEvent,
+) -> Option<&crate::session_journal::SessionRunTaskIdentitySnapshot> {
+    match event {
+        SessionRunEvent::TaskStateProjected { task_identity, .. } => Some(task_identity),
+        SessionRunEvent::RunCompleted { turn_state, .. }
+        | SessionRunEvent::RunFailed { turn_state, .. }
+        | SessionRunEvent::RunStopped { turn_state, .. } => turn_state
+            .as_ref()
+            .and_then(|turn_state| turn_state.task_identity.as_ref()),
+        SessionRunEvent::RunCancelled { .. } => None,
+        _ => None,
     }
 }
 
@@ -993,6 +1119,38 @@ mod tests {
             .expect("hidden child session linkage");
         assert_eq!(child_link.parent_session_key, "parent_session");
         assert_eq!(trace.final_status, "completed");
+    }
+
+    #[test]
+    fn summarize_stored_event_includes_task_lineage_details() {
+        let summary = summarize_stored_event(&stored_event(
+            "session-1",
+            "run-1",
+            "task_state_projected",
+            "2026-04-09T00:00:00Z",
+            SessionRunEvent::TaskStateProjected {
+                run_id: "run-1".to_string(),
+                task_identity: crate::session_journal::SessionRunTaskIdentitySnapshot {
+                    task_id: "task-child".to_string(),
+                    parent_task_id: Some("task-parent".to_string()),
+                    root_task_id: "task-root".to_string(),
+                    task_kind: "sub_agent_task".to_string(),
+                    surface_kind: "hidden_child_surface".to_string(),
+                },
+            },
+        ));
+
+        assert_eq!(
+            summary.message.as_deref(),
+            Some("task=sub_agent_task surface=hidden_child_surface")
+        );
+        assert!(summary
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("parent_task_id=task-parent")));
+        assert!(summary.detail.as_deref().is_some_and(
+            |detail| detail.contains("task_path=task-root -> task-parent -> task-child")
+        ));
     }
 
     #[test]

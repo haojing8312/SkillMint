@@ -1,3 +1,4 @@
+use crate::agent::permissions::PermissionMode;
 use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
 use crate::agent::runtime::effective_tool_set::{
     resolve_effective_tool_set, session_tool_policy_input, skill_tool_policy_input,
@@ -9,7 +10,6 @@ use crate::agent::runtime::runtime_io::{
 use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
 use crate::agent::runtime::tool_profiles::ToolProfileName;
 use crate::agent::tool_manifest::{ToolCategory, ToolSource};
-use crate::agent::permissions::PermissionMode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoutedSkillToolSetup {
@@ -82,9 +82,7 @@ pub(crate) fn build_routed_skill_tool_setup(
     }
 }
 
-pub(crate) fn skill_allowed_mcp_servers(
-    entry: &WorkspaceSkillRuntimeEntry,
-) -> Option<Vec<String>> {
+pub(crate) fn skill_allowed_mcp_servers(entry: &WorkspaceSkillRuntimeEntry) -> Option<Vec<String>> {
     let servers = entry
         .config
         .mcp_servers

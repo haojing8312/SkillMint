@@ -48,6 +48,9 @@ impl RunRegistry {
 
     pub fn apply_event(&self, session_id: &str, event: &SessionRunEvent) {
         match event {
+            SessionRunEvent::TaskStateProjected { .. }
+            | SessionRunEvent::TaskRecordUpserted { .. }
+            | SessionRunEvent::TaskStatusChanged { .. } => {}
             SessionRunEvent::RunStarted { run_id, .. } => {
                 self.register_active_run(session_id, run_id);
             }

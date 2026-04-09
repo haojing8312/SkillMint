@@ -222,7 +222,10 @@ fn merge_runtime_notes(
         if trimmed.is_empty() {
             continue;
         }
-        if runtime_notes.iter().any(|existing| existing.trim() == trimmed) {
+        if runtime_notes
+            .iter()
+            .any(|existing| existing.trim() == trimmed)
+        {
             continue;
         }
         runtime_notes.push(trimmed.to_string());
@@ -247,10 +250,21 @@ mod tests {
     fn build_effective_tool_plan(allowed_tools: &[&str]) -> EffectiveToolSet {
         EffectiveToolSet {
             source: EffectiveToolSetSource::ExplicitAllowList,
-            allowed_tools: Some(allowed_tools.iter().map(|name| (*name).to_string()).collect()),
-            tool_names: allowed_tools.iter().map(|name| (*name).to_string()).collect(),
+            allowed_tools: Some(
+                allowed_tools
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+            ),
+            tool_names: allowed_tools
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
             tool_manifest: Vec::new(),
-            active_tools: allowed_tools.iter().map(|name| (*name).to_string()).collect(),
+            active_tools: allowed_tools
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
             active_tool_manifest: Vec::new(),
             recommended_tools: Vec::new(),
             supporting_tools: Vec::new(),

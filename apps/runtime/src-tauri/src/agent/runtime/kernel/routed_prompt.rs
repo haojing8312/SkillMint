@@ -40,10 +40,8 @@ pub(crate) struct RoutedPromptPreparationParams<'a> {
     pub skill_denied_tools: Option<Vec<String>>,
     pub skill_allowed_tool_sources: Option<Vec<crate::agent::tool_manifest::ToolSource>>,
     pub skill_denied_tool_sources: Option<Vec<crate::agent::tool_manifest::ToolSource>>,
-    pub skill_allowed_tool_categories:
-        Option<Vec<crate::agent::tool_manifest::ToolCategory>>,
-    pub skill_denied_tool_categories:
-        Option<Vec<crate::agent::tool_manifest::ToolCategory>>,
+    pub skill_allowed_tool_categories: Option<Vec<crate::agent::tool_manifest::ToolCategory>>,
+    pub skill_denied_tool_categories: Option<Vec<crate::agent::tool_manifest::ToolCategory>>,
     pub skill_allowed_mcp_servers: Option<Vec<String>>,
     pub skill_max_iterations: Option<usize>,
     pub source_type: &'a str,

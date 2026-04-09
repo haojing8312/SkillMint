@@ -259,13 +259,15 @@ fn evaluate_structured_assertions(
         find_string_value(&candidates, "end_date").as_deref() == Some(expected.end_date.as_str());
     let daily_count_ok = match expected.daily_count {
         Some(count) => {
-            resolve_expected_count(&candidates, "daily_count", "daily_facts") == Some(u64::from(count))
+            resolve_expected_count(&candidates, "daily_count", "daily_facts")
+                == Some(u64::from(count))
         }
         None => true,
     };
     let plan_count_ok = match expected.plan_count {
         Some(count) => {
-            resolve_expected_count(&candidates, "plan_count", "plan_facts") == Some(u64::from(count))
+            resolve_expected_count(&candidates, "plan_count", "plan_facts")
+                == Some(u64::from(count))
         }
         None => true,
     };
@@ -719,7 +721,10 @@ diagnostics:
                 error_message: None,
                 created_at: "2026-04-04T09:00:00Z".to_string(),
                 updated_at: completed,
+                task_identity: None,
                 turn_state: None,
+                task_path: None,
+                task_status: None,
             }],
             route_attempt_logs: vec![RouteAttemptLog {
                 session_id: "session-1".to_string(),
@@ -762,6 +767,7 @@ diagnostics:
                 guard_warnings: Vec::new(),
                 parse_warnings: Vec::new(),
                 child_session_link: None,
+                task_graph: Vec::new(),
                 events: vec![
                     SessionRunEventSummary {
                         session_id: "session-1".to_string(),
@@ -861,7 +867,10 @@ diagnostics:
         }
     }
 
-    fn build_run_with_nested_summary_facts(total_duration_ms: u64, daily_count: u64) -> HeadlessEvalRun {
+    fn build_run_with_nested_summary_facts(
+        total_duration_ms: u64,
+        daily_count: u64,
+    ) -> HeadlessEvalRun {
         let total_seconds = total_duration_ms / 1000;
         let minutes = total_seconds / 60;
         let seconds = total_seconds % 60;
@@ -914,7 +923,10 @@ diagnostics:
                 error_message: None,
                 created_at: "2026-04-04T09:00:00Z".to_string(),
                 updated_at: completed,
+                task_identity: None,
                 turn_state: None,
+                task_path: None,
+                task_status: None,
             }],
             route_attempt_logs: vec![RouteAttemptLog {
                 session_id: "session-1".to_string(),
@@ -957,6 +969,7 @@ diagnostics:
                 guard_warnings: Vec::new(),
                 parse_warnings: Vec::new(),
                 child_session_link: None,
+                task_graph: Vec::new(),
                 events: vec![
                     SessionRunEventSummary {
                         session_id: "session-1".to_string(),

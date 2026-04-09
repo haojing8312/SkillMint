@@ -1,6 +1,4 @@
-use crate::agent::runtime::effective_tool_set::{
-    EffectiveToolDecisionRecord, EffectiveToolSet,
-};
+use crate::agent::runtime::effective_tool_set::{EffectiveToolDecisionRecord, EffectiveToolSet};
 use crate::agent::runtime::runtime_io::WorkspaceSkillCommandSpec;
 use crate::agent::runtime::tool_catalog::ToolDiscoveryCandidateRecord;
 use crate::agent::ToolManifestEntry;

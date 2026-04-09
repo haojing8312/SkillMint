@@ -4,6 +4,7 @@ use crate::agent::runtime::compaction_pipeline::RuntimeCompactionOutcome;
 use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
 use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
 use crate::agent::runtime::skill_routing::observability::ImplicitRouteObservation;
+use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TurnCompactionBoundary {
@@ -26,6 +27,9 @@ impl From<&RuntimeCompactionOutcome> for TurnCompactionBoundary {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TurnStateSnapshot {
+    pub task_identity: Option<TaskIdentity>,
+    pub task_kind: Option<TaskKind>,
+    pub task_surface: Option<TaskSurfaceKind>,
     pub session_surface: Option<SessionSurfaceKind>,
     pub route_observation: Option<ImplicitRouteObservation>,
     pub execution_lane: Option<ExecutionLane>,
@@ -48,6 +52,13 @@ impl TurnStateSnapshot {
 
     pub(crate) fn with_session_surface(mut self, surface: SessionSurfaceKind) -> Self {
         self.session_surface = Some(surface);
+        self
+    }
+
+    pub(crate) fn with_task_state(mut self, task_state: &TaskState) -> Self {
+        self.task_identity = Some(task_state.task_identity.clone());
+        self.task_kind = Some(task_state.task_kind);
+        self.task_surface = Some(task_state.surface_kind);
         self
     }
 
@@ -136,6 +147,7 @@ mod tests {
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
     use crate::agent::runtime::skill_routing::observability::ImplicitRouteObservation;
+    use crate::agent::runtime::task_state::{TaskKind, TaskState, TaskSurfaceKind};
 
     #[test]
     fn turn_state_snapshot_keeps_route_and_tool_state_together() {
@@ -267,6 +279,26 @@ mod tests {
         assert_eq!(
             snapshot.resolved_session_surface(),
             SessionSurfaceKind::LocalChat
+        );
+    }
+
+    #[test]
+    fn turn_state_snapshot_can_attach_task_state_reference() {
+        let task_state = TaskState::new_primary_local_chat("session-1", "user-1", "run-1");
+
+        let snapshot = TurnStateSnapshot::default().with_task_state(&task_state);
+
+        assert_eq!(
+            snapshot
+                .task_identity
+                .as_ref()
+                .map(|identity| identity.task_id.as_str()),
+            Some(task_state.task_identity.task_id.as_str())
+        );
+        assert_eq!(snapshot.task_kind, Some(TaskKind::PrimaryUserTask));
+        assert_eq!(
+            snapshot.task_surface,
+            Some(TaskSurfaceKind::LocalChatSurface)
         );
     }
 }

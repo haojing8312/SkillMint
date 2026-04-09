@@ -269,7 +269,18 @@ export interface SessionRunProjection {
   error_message?: string | null;
   created_at: string;
   updated_at: string;
+  task_identity?: SessionRunTaskIdentitySnapshot | null;
   turn_state?: SessionRunTurnStateSnapshot | null;
+  task_path?: string | null;
+  task_status?: string | null;
+}
+
+export interface SessionRunTaskIdentitySnapshot {
+  task_id: string;
+  parent_task_id?: string | null;
+  root_task_id: string;
+  task_kind: string;
+  surface_kind: string;
 }
 
 export interface SessionRunTurnStateCompactionBoundary {
@@ -280,6 +291,7 @@ export interface SessionRunTurnStateCompactionBoundary {
 }
 
 export interface SessionRunTurnStateSnapshot {
+  task_identity?: SessionRunTaskIdentitySnapshot | null;
   execution_lane?: string | null;
   selected_runner?: string | null;
   selected_skill?: string | null;

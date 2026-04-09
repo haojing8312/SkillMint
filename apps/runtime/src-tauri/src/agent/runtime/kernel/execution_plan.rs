@@ -204,8 +204,8 @@ pub(crate) enum SessionEngineError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContinuationKind, ContinuationPreference, ContinuationTurnPolicy, ExecutionContext,
-        EffectiveToolPolicyInput, ExecutionLane, ExecutionPlan, TurnContext,
+        ContinuationKind, ContinuationPreference, ContinuationTurnPolicy, EffectiveToolPolicyInput,
+        ExecutionContext, ExecutionLane, ExecutionPlan, TurnContext,
     };
     use crate::agent::permissions::PermissionMode;
     use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;

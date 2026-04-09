@@ -33,6 +33,9 @@ pub(crate) async fn append_session_run_event_with_pool(
     .map_err(|e| format!("写入 session run event 失败: {e}"))?;
 
     match event {
+        SessionRunEvent::TaskStateProjected { .. }
+        | SessionRunEvent::TaskRecordUpserted { .. }
+        | SessionRunEvent::TaskStatusChanged { .. } => {}
         SessionRunEvent::RunStarted {
             run_id,
             user_message_id,
@@ -262,6 +265,9 @@ async fn upsert_run_status(
 
 fn event_type(event: &SessionRunEvent) -> &'static str {
     match event {
+        SessionRunEvent::TaskStateProjected { .. } => "task_state_projected",
+        SessionRunEvent::TaskRecordUpserted { .. } => "task_record_upserted",
+        SessionRunEvent::TaskStatusChanged { .. } => "task_status_changed",
         SessionRunEvent::RunStarted { .. } => "run_started",
         SessionRunEvent::SkillRouteRecorded { .. } => "skill_route_recorded",
         SessionRunEvent::AssistantChunkAppended { .. } => "assistant_chunk_appended",
@@ -278,7 +284,10 @@ fn event_type(event: &SessionRunEvent) -> &'static str {
 
 fn event_run_id(event: &SessionRunEvent) -> &str {
     match event {
-        SessionRunEvent::RunStarted { run_id, .. }
+        SessionRunEvent::TaskStateProjected { run_id, .. }
+        | SessionRunEvent::TaskRecordUpserted { run_id, .. }
+        | SessionRunEvent::TaskStatusChanged { run_id, .. }
+        | SessionRunEvent::RunStarted { run_id, .. }
         | SessionRunEvent::SkillRouteRecorded { run_id, .. }
         | SessionRunEvent::AssistantChunkAppended { run_id, .. }
         | SessionRunEvent::ToolStarted { run_id, .. }

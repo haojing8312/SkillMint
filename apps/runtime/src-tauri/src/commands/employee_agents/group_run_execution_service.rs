@@ -16,6 +16,9 @@ use crate::agent::runtime::runtime_io::{
     append_run_started_with_pool, append_run_stopped_with_pool, finalize_run_success_with_pool,
     insert_session_message_with_pool,
 };
+use crate::agent::runtime::task_engine::TaskEngine;
+use crate::agent::runtime::task_record::TaskRecord;
+use crate::agent::runtime::task_state::TaskState;
 use crate::agent::tools::{EmployeeManageTool, MemoryTool};
 use crate::agent::{runtime::RuntimeTranscript, AgentExecutor, ToolRegistry};
 use crate::commands::chat_runtime_io::extract_assistant_text_content;
@@ -31,6 +34,8 @@ use uuid::Uuid;
 struct PreparedEmployeeStepSessionRun {
     session_id: String,
     run_id: String,
+    task_state: TaskState,
+    task_record: TaskRecord,
 }
 
 #[derive(Debug, Clone)]
@@ -56,11 +61,23 @@ async fn prepare_employee_step_session_run(
     let user_message_id =
         insert_session_message_with_pool(pool, session_id, "user", prompt, None).await?;
     let run_id = Uuid::new_v4().to_string();
+    let parent_task_identity =
+        TaskEngine::resolve_latest_task_identity_for_session(journal, session_id).await;
+    let task_state = TaskEngine::build_employee_step_task_state(
+        session_id,
+        &user_message_id,
+        &run_id,
+        parent_task_identity.as_ref(),
+    );
+    let task_record = TaskEngine::start_task(pool, journal, session_id, &task_state).await?;
+    TaskEngine::project_task_state(pool, journal, session_id, &task_state).await?;
     append_run_started_with_pool(pool, journal, session_id, &run_id, &user_message_id).await?;
 
     Ok(PreparedEmployeeStepSessionRun {
         session_id: session_id.to_string(),
         run_id,
+        task_state,
+        task_record,
     })
 }
 
@@ -70,7 +87,7 @@ async fn finalize_employee_step_execution_outcome(
     prepared: &PreparedEmployeeStepSessionRun,
     outcome: ExecutionOutcome,
 ) -> Result<FinalizedEmployeeStepExecutionOutcome, String> {
-    match outcome {
+    match TaskEngine::attach_task_state(&prepared.task_state, outcome) {
         ExecutionOutcome::RouteExecution {
             route_execution,
             reconstructed_history_len,
@@ -100,6 +117,14 @@ async fn finalize_employee_step_execution_outcome(
                     Some(&turn_state),
                 )
                 .await?;
+                let _ = TaskEngine::mark_task_completed(
+                    pool,
+                    journal,
+                    &prepared.session_id,
+                    &prepared.task_record,
+                    "completed",
+                )
+                .await;
 
                 Ok(FinalizedEmployeeStepExecutionOutcome::Completed { output: final_text })
             } else {
@@ -137,6 +162,14 @@ async fn finalize_employee_step_execution_outcome(
                         Some(&turn_state),
                     )
                     .await?;
+                    let _ = TaskEngine::mark_task_failed(
+                        pool,
+                        journal,
+                        &prepared.session_id,
+                        &prepared.task_record,
+                        stop_reason.kind.as_key(),
+                    )
+                    .await;
                     Ok(FinalizedEmployeeStepExecutionOutcome::Stopped {
                         stop_reason: stop_reason.clone(),
                         error: error_text,
@@ -153,6 +186,17 @@ async fn finalize_employee_step_execution_outcome(
                             .unwrap_or("employee_step"),
                         &error_text,
                         Some(&turn_state),
+                    )
+                    .await;
+                    let _ = TaskEngine::mark_task_failed(
+                        pool,
+                        journal,
+                        &prepared.session_id,
+                        &prepared.task_record,
+                        route_execution
+                            .last_error_kind
+                            .clone()
+                            .unwrap_or_else(|| "employee_step".to_string()),
                     )
                     .await;
                     Ok(FinalizedEmployeeStepExecutionOutcome::Failed { error: error_text })
@@ -173,6 +217,14 @@ async fn finalize_employee_step_execution_outcome(
                 Some(&turn_state),
             )
             .await?;
+            let _ = TaskEngine::mark_task_completed(
+                pool,
+                journal,
+                &prepared.session_id,
+                &prepared.task_record,
+                "completed",
+            )
+            .await;
             Ok(FinalizedEmployeeStepExecutionOutcome::Completed { output })
         }
         ExecutionOutcome::SkillCommandFailed { error, turn_state } => {
@@ -184,6 +236,14 @@ async fn finalize_employee_step_execution_outcome(
                 "skill_command_dispatch",
                 &error,
                 Some(&turn_state),
+            )
+            .await;
+            let _ = TaskEngine::mark_task_failed(
+                pool,
+                journal,
+                &prepared.session_id,
+                &prepared.task_record,
+                "skill_command_dispatch",
             )
             .await;
             Ok(FinalizedEmployeeStepExecutionOutcome::Failed { error })
@@ -202,6 +262,14 @@ async fn finalize_employee_step_execution_outcome(
                 Some(&turn_state),
             )
             .await?;
+            let _ = TaskEngine::mark_task_failed(
+                pool,
+                journal,
+                &prepared.session_id,
+                &prepared.task_record,
+                stop_reason.kind.as_key(),
+            )
+            .await;
             Ok(FinalizedEmployeeStepExecutionOutcome::Stopped { stop_reason, error })
         }
     }
@@ -398,7 +466,29 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
                 }
             }
         }
-        Err(SessionEngineError::Generic(message)) => return Err(message),
+        Err(SessionEngineError::Generic(message)) => {
+            if let (Some(journal), Some(prepared_run)) = (journal, prepared_run.as_ref()) {
+                append_run_failed_with_pool(
+                    pool,
+                    journal,
+                    session_id,
+                    &prepared_run.run_id,
+                    "employee_step",
+                    &message,
+                    None,
+                )
+                .await;
+                let _ = TaskEngine::mark_task_failed(
+                    pool,
+                    journal,
+                    session_id,
+                    &prepared_run.task_record,
+                    &message,
+                )
+                .await;
+            }
+            return Err(message);
+        }
     };
 
     let finished_at = chrono::Utc::now().to_rfc3339();
@@ -705,7 +795,9 @@ mod tests {
     use crate::agent::runtime::kernel::execution_plan::{ExecutionLane, ExecutionOutcome};
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
-    use crate::session_journal::SessionJournalStore;
+    use crate::session_journal::{
+        SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot,
+    };
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::tempdir;
@@ -829,6 +921,78 @@ mod tests {
                 .as_ref()
                 .and_then(|turn_state| turn_state.session_surface.as_deref()),
             Some("employee_step_session")
+        );
+        assert_eq!(
+            run.turn_state
+                .as_ref()
+                .and_then(|turn_state| turn_state.task_identity.as_ref())
+                .map(|identity| identity.task_kind.as_str()),
+            Some("employee_step_task")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_employee_step_session_run_projects_employee_task_identity_from_session_lineage(
+    ) {
+        let pool = setup_employee_step_runtime_pool().await;
+        let journal_root = tempdir().expect("journal tempdir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+        journal
+            .append_event(
+                "session-1",
+                SessionRunEvent::TaskStateProjected {
+                    run_id: "run-parent".to_string(),
+                    task_identity: SessionRunTaskIdentitySnapshot {
+                        task_id: "task-parent".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-root".to_string(),
+                        task_kind: "primary_user_task".to_string(),
+                        surface_kind: "local_chat_surface".to_string(),
+                    },
+                },
+            )
+            .await
+            .expect("append parent task identity");
+
+        let prepared = prepare_employee_step_session_run(
+            &pool,
+            &journal,
+            "session-1",
+            "请先汇总本周日报，再补充风险项。",
+        )
+        .await
+        .expect("prepare employee step session");
+
+        let state = journal.read_state("session-1").await.expect("read state");
+        let run = state
+            .runs
+            .iter()
+            .find(|run| run.run_id == prepared.run_id)
+            .expect("prepared run snapshot");
+
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .and_then(|identity| identity.parent_task_id.as_deref()),
+            Some("task-parent")
+        );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.root_task_id.as_str()),
+            Some("task-root")
+        );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.task_kind.as_str()),
+            Some("employee_step_task")
+        );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.surface_kind.as_str()),
+            Some("employee_step_surface")
         );
     }
 }

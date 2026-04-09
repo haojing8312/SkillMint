@@ -8,9 +8,7 @@ use crate::agent::runtime::skill_routing::observability::{
     route_fallback_reason_key, ImplicitRouteObservation,
 };
 use crate::agent::runtime::tool_dispatch::INTERNAL_SKILL_DISPATCH_INPUT_KEY;
-use crate::session_journal::{
-    SessionJournalStore, SessionRunEvent, SessionRunTurnStateSnapshot,
-};
+use crate::session_journal::{SessionJournalStore, SessionRunEvent, SessionRunTurnStateSnapshot};
 use chrono::Utc;
 use serde_json::{json, Value};
 use uuid::Uuid;

@@ -7,6 +7,9 @@ use super::RuntimeTranscript;
 use crate::agent::runtime::kernel::execution_plan::{ExecutionOutcome, SessionEngineError};
 use crate::agent::runtime::kernel::session_engine::SessionEngine;
 use crate::agent::runtime::kernel::turn_preparation::prepare_hidden_child_turn;
+use crate::agent::runtime::task_engine::TaskEngine;
+use crate::agent::runtime::task_record::TaskRecord;
+use crate::agent::runtime::task_state::TaskState;
 use crate::agent::types::StreamDelta;
 use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::session_journal::SessionJournalStore;
@@ -46,6 +49,8 @@ pub(crate) struct ChildSessionRunOutcome {
 pub(crate) struct PreparedChildSessionRun {
     pub child_session_id: String,
     pub run_id: String,
+    pub task_state: TaskState,
+    pub task_record: TaskRecord,
 }
 
 pub(crate) async fn prepare_hidden_child_session_run(
@@ -60,6 +65,20 @@ pub(crate) async fn prepare_hidden_child_session_run(
             .await
             .map_err(anyhow::Error::msg)?;
     let run_id = Uuid::new_v4().to_string();
+    let parent_task_identity =
+        TaskEngine::resolve_latest_task_identity_for_session(journal, parent_session_id).await;
+    let task_state = TaskEngine::build_hidden_child_task_state(
+        &child_session_id,
+        &user_message_id,
+        &run_id,
+        parent_task_identity.as_ref(),
+    );
+    let task_record = TaskEngine::start_task(db, journal, &child_session_id, &task_state)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    TaskEngine::project_task_state(db, journal, &child_session_id, &task_state)
+        .await
+        .map_err(anyhow::Error::msg)?;
     append_run_started_with_pool(db, journal, &child_session_id, &run_id, &user_message_id)
         .await
         .map_err(anyhow::Error::msg)?;
@@ -68,6 +87,8 @@ pub(crate) async fn prepare_hidden_child_session_run(
     Ok(PreparedChildSessionRun {
         child_session_id,
         run_id,
+        task_state,
+        task_record,
     })
 }
 
@@ -93,6 +114,14 @@ pub(crate) async fn finalize_hidden_child_session_success_with_messages(
     )
     .await
     .map_err(anyhow::Error::msg)?;
+    let _ = TaskEngine::mark_task_completed(
+        db,
+        journal,
+        &prepared.child_session_id,
+        &prepared.task_record,
+        "completed",
+    )
+    .await;
 
     Ok(final_text)
 }
@@ -103,7 +132,7 @@ async fn finalize_hidden_child_session_execution_outcome(
     prepared: &PreparedChildSessionRun,
     outcome: ExecutionOutcome,
 ) -> Result<ChildSessionRunOutcome> {
-    match outcome {
+    match TaskEngine::attach_task_state(&prepared.task_state, outcome) {
         ExecutionOutcome::RouteExecution {
             route_execution,
             reconstructed_history_len,
@@ -130,6 +159,14 @@ async fn finalize_hidden_child_session_execution_outcome(
                 )
                 .await
                 .map_err(anyhow::Error::msg)?;
+                let _ = TaskEngine::mark_task_completed(
+                    db,
+                    journal,
+                    &prepared.child_session_id,
+                    &prepared.task_record,
+                    "completed",
+                )
+                .await;
 
                 Ok(ChildSessionRunOutcome { final_text })
             } else {
@@ -168,6 +205,14 @@ async fn finalize_hidden_child_session_execution_outcome(
                     )
                     .await
                     .map_err(anyhow::Error::msg)?;
+                    let _ = TaskEngine::mark_task_failed(
+                        db,
+                        journal,
+                        &prepared.child_session_id,
+                        &prepared.task_record,
+                        stop_reason.kind.as_key(),
+                    )
+                    .await;
                 } else {
                     append_run_failed_with_pool(
                         db,
@@ -180,6 +225,17 @@ async fn finalize_hidden_child_session_execution_outcome(
                             .unwrap_or("child_session"),
                         &error_text,
                         Some(&turn_state),
+                    )
+                    .await;
+                    let _ = TaskEngine::mark_task_failed(
+                        db,
+                        journal,
+                        &prepared.child_session_id,
+                        &prepared.task_record,
+                        route_execution
+                            .last_error_kind
+                            .clone()
+                            .unwrap_or_else(|| "child_session".to_string()),
                     )
                     .await;
                 }
@@ -201,6 +257,14 @@ async fn finalize_hidden_child_session_execution_outcome(
             )
             .await
             .map_err(anyhow::Error::msg)?;
+            let _ = TaskEngine::mark_task_completed(
+                db,
+                journal,
+                &prepared.child_session_id,
+                &prepared.task_record,
+                "completed",
+            )
+            .await;
             Ok(ChildSessionRunOutcome { final_text: output })
         }
         ExecutionOutcome::SkillCommandFailed { error, turn_state } => {
@@ -212,6 +276,14 @@ async fn finalize_hidden_child_session_execution_outcome(
                 "skill_command_dispatch",
                 &error,
                 Some(&turn_state),
+            )
+            .await;
+            let _ = TaskEngine::mark_task_failed(
+                db,
+                journal,
+                &prepared.child_session_id,
+                &prepared.task_record,
+                "skill_command_dispatch",
             )
             .await;
             Err(anyhow::Error::msg(error))
@@ -231,6 +303,14 @@ async fn finalize_hidden_child_session_execution_outcome(
             )
             .await
             .map_err(anyhow::Error::msg)?;
+            let _ = TaskEngine::mark_task_failed(
+                db,
+                journal,
+                &prepared.child_session_id,
+                &prepared.task_record,
+                stop_reason.kind.as_key(),
+            )
+            .await;
             Err(anyhow::Error::msg(error))
         }
     }
@@ -299,10 +379,32 @@ pub(crate) async fn run_hidden_child_session(
             }
         },
     )
-    .await
-    .map_err(|error| match error {
-        SessionEngineError::Generic(message) => anyhow::Error::msg(message),
-    })?;
+    .await;
+
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(SessionEngineError::Generic(message)) => {
+            append_run_failed_with_pool(
+                params.db,
+                params.journal,
+                &prepared.child_session_id,
+                &prepared.run_id,
+                "child_session",
+                &message,
+                None,
+            )
+            .await;
+            let _ = TaskEngine::mark_task_failed(
+                params.db,
+                params.journal,
+                &prepared.child_session_id,
+                &prepared.task_record,
+                &message,
+            )
+            .await;
+            return Err(anyhow::Error::msg(message));
+        }
+    };
 
     let finalized = finalize_hidden_child_session_execution_outcome(
         params.db,
@@ -368,7 +470,9 @@ mod tests {
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
     use crate::agent::runtime::{RunRegistry, RuntimeObservability};
-    use crate::session_journal::SessionJournalStore;
+    use crate::session_journal::{
+        SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot,
+    };
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::tempdir;
@@ -517,6 +621,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prepare_hidden_child_session_run_projects_subagent_task_identity_from_parent_session()
+    {
+        let pool = setup_hidden_child_session_pool().await;
+        let journal_root = tempdir().expect("journal tempdir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+        journal
+            .append_event(
+                "parent-session",
+                SessionRunEvent::TaskStateProjected {
+                    run_id: "run-parent".to_string(),
+                    task_identity: SessionRunTaskIdentitySnapshot {
+                        task_id: "task-parent".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-root".to_string(),
+                        task_kind: "primary_user_task".to_string(),
+                        surface_kind: "local_chat_surface".to_string(),
+                    },
+                },
+            )
+            .await
+            .expect("append parent task identity");
+
+        let prepared = prepare_hidden_child_session_run(
+            &pool,
+            &journal,
+            "parent-session",
+            "summarize workspace",
+        )
+        .await
+        .expect("prepare hidden child session");
+
+        let state = journal
+            .read_state(&prepared.child_session_id)
+            .await
+            .expect("read child state");
+        let run = state.runs.first().expect("run snapshot");
+
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .and_then(|identity| identity.parent_task_id.as_deref()),
+            Some("task-parent")
+        );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.root_task_id.as_str()),
+            Some("task-root")
+        );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.task_kind.as_str()),
+            Some("sub_agent_task")
+        );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.surface_kind.as_str()),
+            Some("hidden_child_surface")
+        );
+    }
+
+    #[tokio::test]
     async fn finalize_hidden_child_session_success_persists_assistant_message_and_completes_run() {
         let pool = setup_hidden_child_session_pool().await;
         let journal_root = tempdir().expect("journal tempdir");
@@ -622,6 +790,13 @@ mod tests {
                 .as_ref()
                 .and_then(|turn_state| turn_state.session_surface.as_deref()),
             Some("hidden_child_session")
+        );
+        assert_eq!(
+            run.turn_state
+                .as_ref()
+                .and_then(|turn_state| turn_state.task_identity.as_ref())
+                .map(|identity| identity.task_kind.as_str()),
+            Some("sub_agent_task")
         );
     }
 }

@@ -3,8 +3,7 @@ use super::execution_plan::{
 };
 use super::route_lane::{
     parse_skill_allowed_tool_categories, parse_skill_allowed_tool_sources,
-    parse_skill_denied_tool_categories, parse_skill_denied_tool_sources,
-    skill_allowed_mcp_servers,
+    parse_skill_denied_tool_categories, parse_skill_denied_tool_sources, skill_allowed_mcp_servers,
 };
 use super::session_profile::{SessionExecutionProfile, SessionSurfaceKind};
 use crate::agent::permissions::PermissionMode;
@@ -664,11 +663,7 @@ fn resolve_continuation_turn_policy(
     let should_clamp_retries = matches!(
         run.last_error_kind.as_deref(),
         Some(
-            "max_turns"
-                | "loop_detected"
-                | "no_progress"
-                | "tool_failure_circuit_breaker"
-                | "auth"
+            "max_turns" | "loop_detected" | "no_progress" | "tool_failure_circuit_breaker" | "auth"
         )
     );
 
@@ -853,11 +848,10 @@ mod tests {
     use super::{
         append_current_turn_message, apply_continuation_turn_policy,
         build_employee_step_session_profile, build_hidden_child_session_profile,
-        build_local_chat_session_profile,
-        parse_user_skill_command, prepare_employee_step_turn, prepare_hidden_child_turn,
-        resolve_compaction_continuation_preference, resolve_explicit_prompt_following_skill,
-        resolve_recent_compaction_runtime_notes, resolve_session_continuation_preference,
-        rewrite_user_skill_command_for_model,
+        build_local_chat_session_profile, parse_user_skill_command, prepare_employee_step_turn,
+        prepare_hidden_child_turn, resolve_compaction_continuation_preference,
+        resolve_explicit_prompt_following_skill, resolve_recent_compaction_runtime_notes,
+        resolve_session_continuation_preference, rewrite_user_skill_command_for_model,
     };
     use crate::agent::registry::ToolRegistry;
     use crate::agent::runtime::kernel::execution_plan::{
@@ -1119,7 +1113,9 @@ mod tests {
                 buffered_text: "已保留当前执行上下文".to_string(),
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
+                task_identity: None,
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    task_identity: None,
                     session_surface: None,
                     execution_lane: Some("open_task".to_string()),
                     selected_runner: Some("OpenTaskRunner".to_string()),
@@ -1138,6 +1134,7 @@ mod tests {
                     }),
                 }),
             }],
+            tasks: vec![],
         };
 
         let notes =
@@ -1162,7 +1159,9 @@ mod tests {
                 buffered_text: String::new(),
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
+                task_identity: None,
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    task_identity: None,
                     session_surface: None,
                     execution_lane: None,
                     selected_runner: None,
@@ -1176,6 +1175,7 @@ mod tests {
                     compaction_boundary: None,
                 }),
             }],
+            tasks: vec![],
         };
 
         assert!(resolve_recent_compaction_runtime_notes(
@@ -1197,7 +1197,9 @@ mod tests {
                 buffered_text: "已保留当前执行上下文".to_string(),
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
+                task_identity: None,
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    task_identity: None,
                     session_surface: None,
                     execution_lane: Some("prompt_fork".to_string()),
                     selected_runner: Some("prompt_skill_fork".to_string()),
@@ -1216,6 +1218,7 @@ mod tests {
                     }),
                 }),
             }],
+            tasks: vec![],
         };
 
         let preference =
@@ -1247,7 +1250,9 @@ mod tests {
                 buffered_text: "继续整理剩余执行项".to_string(),
                 last_error_kind: Some("max_turns".to_string()),
                 last_error_message: Some("已达到执行步数上限".to_string()),
+                task_identity: None,
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    task_identity: None,
                     session_surface: Some("employee_step_session".to_string()),
                     execution_lane: Some("open_task".to_string()),
                     selected_runner: Some("OpenTaskRunner".to_string()),
@@ -1261,6 +1266,7 @@ mod tests {
                     compaction_boundary: None,
                 }),
             }],
+            tasks: vec![],
         };
 
         assert!(resolve_session_continuation_preference(
@@ -1293,7 +1299,9 @@ mod tests {
                 buffered_text: "已停止，保留当前分析上下文".to_string(),
                 last_error_kind: Some("cancelled".to_string()),
                 last_error_message: Some("user cancelled".to_string()),
+                task_identity: None,
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    task_identity: None,
                     session_surface: Some("hidden_child_session".to_string()),
                     execution_lane: Some("open_task".to_string()),
                     selected_runner: Some("OpenTaskRunner".to_string()),
@@ -1307,6 +1315,7 @@ mod tests {
                     compaction_boundary: None,
                 }),
             }],
+            tasks: vec![],
         };
 
         let preference = resolve_session_continuation_preference(
@@ -1336,7 +1345,9 @@ mod tests {
                 buffered_text: "继续时需要保留当前受限工具上下文".to_string(),
                 last_error_kind: Some("auth".to_string()),
                 last_error_message: Some("permission denied".to_string()),
+                task_identity: None,
                 turn_state: Some(SessionRunTurnStateSnapshot {
+                    task_identity: None,
                     session_surface: Some("employee_step_session".to_string()),
                     execution_lane: Some("open_task".to_string()),
                     selected_runner: Some("OpenTaskRunner".to_string()),
@@ -1350,6 +1361,7 @@ mod tests {
                     compaction_boundary: None,
                 }),
             }],
+            tasks: vec![],
         };
 
         let preference = resolve_session_continuation_preference(

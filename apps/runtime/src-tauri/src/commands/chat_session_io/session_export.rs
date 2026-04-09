@@ -1,7 +1,10 @@
 use super::session_view::render_user_content_parts;
+use crate::agent::runtime::task_lineage::{
+    build_task_path, effective_task_identity, project_task_graph_nodes, SessionRunTaskGraphNode,
+};
 use crate::session_journal::{
-    SessionJournalState, SessionJournalStore, SessionRunEvent, SessionRunStatus,
-    SessionRunTurnStateSnapshot,
+    SessionJournalState, SessionJournalStore, SessionRunEvent, SessionRunSnapshot,
+    SessionRunStatus, SessionRunTurnStateSnapshot,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -505,7 +508,16 @@ fn render_recovered_run_sections(
         })
         .collect();
 
+    let recovered_task_graph = project_task_graph_nodes(
+        state
+            .runs
+            .iter()
+            .filter_map(|run| effective_recovered_task_identity(run)),
+    );
     let mut sections = Vec::new();
+    if !recovered_task_graph.is_empty() {
+        sections.extend(render_recovered_task_graph_section(&recovered_task_graph));
+    }
     for run in &state.runs {
         let buffered = run.buffered_text.trim();
         let error_message = run.last_error_message.as_deref().unwrap_or("").trim();
@@ -519,12 +531,15 @@ fn render_recovered_run_sections(
             })
             .unwrap_or_default();
         let buffered_already_exported = !buffered.is_empty()
-            && assistant_contents.iter().any(|content| content.contains(buffered));
+            && assistant_contents
+                .iter()
+                .any(|content| content.contains(buffered));
         let error_already_exported = !error_message.is_empty()
             && assistant_contents
                 .iter()
                 .any(|content| content.contains(error_message));
-        let missing_assistant_message_for_run = !assistant_run_ids_in_messages.contains(&run.run_id);
+        let missing_assistant_message_for_run =
+            !assistant_run_ids_in_messages.contains(&run.run_id);
         let should_recover = missing_assistant_message_for_run
             && ((!buffered.is_empty() && !buffered_already_exported)
                 || (!error_message.is_empty() && !error_already_exported)
@@ -554,6 +569,9 @@ fn render_recovered_run_sections(
             if !error_kind.trim().is_empty() {
                 sections.push(format!("- error_kind: {}", error_kind));
             }
+        }
+        if let Some(task_identity) = effective_recovered_task_identity(run) {
+            sections.extend(render_recovered_task_identity_lines(task_identity));
         }
         if let Some(summary) = run_stop_summaries_by_run.get(&run.run_id) {
             if !summary.title.trim().is_empty() {
@@ -586,6 +604,61 @@ fn render_recovered_run_sections(
     }
 
     sections.join("\n")
+}
+
+fn render_recovered_task_graph_section(task_graph: &[SessionRunTaskGraphNode]) -> Vec<String> {
+    if task_graph.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = vec!["#### 任务链路".to_string(), String::new()];
+    for node in task_graph {
+        lines.push(format!(
+            "- {} ({}): {}",
+            node.task_kind, node.surface_kind, node.task_path
+        ));
+    }
+    lines.push(String::new());
+    lines
+}
+
+fn render_recovered_task_identity_lines(
+    task_identity: &crate::session_journal::SessionRunTaskIdentitySnapshot,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !task_identity.task_id.trim().is_empty() {
+        lines.push(format!("- task_id: {}", task_identity.task_id.trim()));
+    }
+    if let Some(parent_task_id) = task_identity.parent_task_id.as_deref().map(str::trim) {
+        if !parent_task_id.is_empty() {
+            lines.push(format!("- parent_task_id: {}", parent_task_id));
+        }
+    }
+    if !task_identity.root_task_id.trim().is_empty() {
+        lines.push(format!(
+            "- root_task_id: {}",
+            task_identity.root_task_id.trim()
+        ));
+    }
+    if let Some(task_path) = build_task_path(task_identity) {
+        lines.push(format!("- task_path: {}", task_path));
+    }
+    if !task_identity.task_kind.trim().is_empty() {
+        lines.push(format!("- task_kind: {}", task_identity.task_kind.trim()));
+    }
+    if !task_identity.surface_kind.trim().is_empty() {
+        lines.push(format!(
+            "- surface_kind: {}",
+            task_identity.surface_kind.trim()
+        ));
+    }
+    lines
+}
+
+fn effective_recovered_task_identity(
+    run: &SessionRunSnapshot,
+) -> Option<&crate::session_journal::SessionRunTaskIdentitySnapshot> {
+    effective_task_identity(run.task_identity.as_ref(), run.turn_state.as_ref())
 }
 
 fn render_recovered_turn_state_lines(turn_state: &SessionRunTurnStateSnapshot) -> Vec<String> {
@@ -624,5 +697,164 @@ fn export_status_label(status: &SessionRunStatus) -> &'static str {
         SessionRunStatus::Completed => "completed",
         SessionRunStatus::Failed => "failed",
         SessionRunStatus::Cancelled => "cancelled",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_recovered_run_sections;
+    use crate::session_journal::{
+        SessionJournalState, SessionRunSnapshot, SessionRunStatus, SessionRunTaskIdentitySnapshot,
+    };
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn recovered_run_sections_include_task_identity_lines() {
+        let output = render_recovered_run_sections(
+            &[],
+            &SessionJournalState {
+                session_id: "session-1".to_string(),
+                current_run_id: None,
+                runs: vec![SessionRunSnapshot {
+                    run_id: "run-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                    status: SessionRunStatus::Failed,
+                    buffered_text: "保留输出".to_string(),
+                    last_error_kind: Some("max_turns".to_string()),
+                    last_error_message: Some("已达到执行步数上限".to_string()),
+                    task_identity: Some(SessionRunTaskIdentitySnapshot {
+                        task_id: "task-1".to_string(),
+                        parent_task_id: None,
+                        root_task_id: "task-1".to_string(),
+                        task_kind: "primary_user_task".to_string(),
+                        surface_kind: "local_chat_surface".to_string(),
+                    }),
+                    turn_state: None,
+                }],
+                tasks: vec![],
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+
+        assert!(output.contains("task_id: task-1"));
+        assert!(output.contains("task_kind: primary_user_task"));
+        assert!(output.contains("surface_kind: local_chat_surface"));
+        assert!(output.contains("task_path: task-1"));
+    }
+
+    #[test]
+    fn recovered_run_sections_fall_back_to_turn_state_task_identity_lines() {
+        let output = render_recovered_run_sections(
+            &[],
+            &SessionJournalState {
+                session_id: "session-1".to_string(),
+                current_run_id: None,
+                runs: vec![SessionRunSnapshot {
+                    run_id: "run-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                    status: SessionRunStatus::Failed,
+                    buffered_text: "保留输出".to_string(),
+                    last_error_kind: Some("max_turns".to_string()),
+                    last_error_message: Some("已达到执行步数上限".to_string()),
+                    task_identity: None,
+                    turn_state: Some(crate::session_journal::SessionRunTurnStateSnapshot {
+                        task_identity: Some(SessionRunTaskIdentitySnapshot {
+                            task_id: "task-child".to_string(),
+                            parent_task_id: Some("task-parent".to_string()),
+                            root_task_id: "task-root".to_string(),
+                            task_kind: "sub_agent_task".to_string(),
+                            surface_kind: "hidden_child_surface".to_string(),
+                        }),
+                        session_surface: None,
+                        execution_lane: None,
+                        selected_runner: None,
+                        selected_skill: None,
+                        fallback_reason: None,
+                        allowed_tools: Vec::new(),
+                        invoked_skills: Vec::new(),
+                        partial_assistant_text: String::new(),
+                        tool_failure_streak: 0,
+                        reconstructed_history_len: None,
+                        compaction_boundary: None,
+                    }),
+                }],
+                tasks: vec![],
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+
+        assert!(output.contains("task_id: task-child"));
+        assert!(output.contains("parent_task_id: task-parent"));
+        assert!(output.contains("task_path: task-root -> task-parent -> task-child"));
+    }
+
+    #[test]
+    fn recovered_run_sections_include_task_graph_section() {
+        let output = render_recovered_run_sections(
+            &[],
+            &SessionJournalState {
+                session_id: "session-1".to_string(),
+                current_run_id: None,
+                runs: vec![
+                    SessionRunSnapshot {
+                        run_id: "run-1".to_string(),
+                        user_message_id: "user-1".to_string(),
+                        status: SessionRunStatus::Failed,
+                        buffered_text: "保留输出".to_string(),
+                        last_error_kind: Some("max_turns".to_string()),
+                        last_error_message: Some("已达到执行步数上限".to_string()),
+                        task_identity: Some(SessionRunTaskIdentitySnapshot {
+                            task_id: "task-root".to_string(),
+                            parent_task_id: None,
+                            root_task_id: "task-root".to_string(),
+                            task_kind: "primary_user_task".to_string(),
+                            surface_kind: "local_chat_surface".to_string(),
+                        }),
+                        turn_state: None,
+                    },
+                    SessionRunSnapshot {
+                        run_id: "run-2".to_string(),
+                        user_message_id: "user-2".to_string(),
+                        status: SessionRunStatus::Failed,
+                        buffered_text: "子任务输出".to_string(),
+                        last_error_kind: Some("max_turns".to_string()),
+                        last_error_message: Some("子任务停止".to_string()),
+                        task_identity: None,
+                        turn_state: Some(crate::session_journal::SessionRunTurnStateSnapshot {
+                            task_identity: Some(SessionRunTaskIdentitySnapshot {
+                                task_id: "task-child".to_string(),
+                                parent_task_id: Some("task-root".to_string()),
+                                root_task_id: "task-root".to_string(),
+                                task_kind: "sub_agent_task".to_string(),
+                                surface_kind: "hidden_child_surface".to_string(),
+                            }),
+                            session_surface: None,
+                            execution_lane: None,
+                            selected_runner: None,
+                            selected_skill: None,
+                            fallback_reason: None,
+                            allowed_tools: Vec::new(),
+                            invoked_skills: Vec::new(),
+                            partial_assistant_text: String::new(),
+                            tool_failure_streak: 0,
+                            reconstructed_history_len: None,
+                            compaction_boundary: None,
+                        }),
+                    },
+                ],
+                tasks: vec![],
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+
+        assert!(output.contains("#### 任务链路"));
+        assert!(output.contains("primary_user_task (local_chat_surface): task-root"));
+        assert!(output.contains("sub_agent_task (hidden_child_surface): task-root -> task-child"));
     }
 }
