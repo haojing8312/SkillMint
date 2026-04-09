@@ -220,6 +220,8 @@ pub struct SessionRunTaskIdentitySnapshot {
     pub root_task_id: String,
     pub task_kind: String,
     pub surface_kind: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub backend_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -248,6 +250,7 @@ impl From<&TaskRecordUpsertPayload> for SessionTaskRecordSnapshot {
                 root_task_id: value.task_identity.root_task_id.clone(),
                 task_kind: value.task_kind.journal_key().to_string(),
                 surface_kind: value.surface_kind.journal_key().to_string(),
+                backend_kind: value.backend_kind.journal_key().to_string(),
             },
             session_id: value.session_id.clone(),
             user_message_id: value.user_message_id.clone(),
@@ -316,6 +319,10 @@ impl From<&TurnStateSnapshot> for SessionRunTurnStateSnapshot {
                     surface_kind: value
                         .task_surface
                         .map(|surface| surface.journal_key().to_string())
+                        .unwrap_or_default(),
+                    backend_kind: value
+                        .task_backend
+                        .map(|backend| backend.journal_key().to_string())
                         .unwrap_or_default(),
                 }
             }),
@@ -619,6 +626,7 @@ fn upsert_task_record_index(state: &mut SessionJournalState, task_id: &str) -> u
             root_task_id: task_id.to_string(),
             task_kind: String::new(),
             surface_kind: String::new(),
+            backend_kind: String::new(),
         },
         session_id: String::new(),
         user_message_id: String::new(),
@@ -707,6 +715,7 @@ fn build_observed_session_run_event(
                     "root_task_id": task_identity.root_task_id,
                     "task_kind": task_identity.task_kind,
                     "surface_kind": task_identity.surface_kind,
+                    "backend_kind": task_identity.backend_kind,
                 })
                 .to_string(),
             ),
@@ -745,6 +754,7 @@ fn build_observed_session_run_event(
                     "delegated_root_task_id": delegated_task.root_task_id,
                     "delegated_task_kind": delegated_task.task_kind,
                     "delegated_surface_kind": delegated_task.surface_kind,
+                    "delegated_backend_kind": delegated_task.backend_kind,
                 })
                 .to_string(),
             ),
@@ -1535,6 +1545,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                 },
             )
@@ -1565,6 +1576,12 @@ mod tests {
                 .map(|identity| identity.surface_kind.as_str()),
             Some("local_chat_surface")
         );
+        assert_eq!(
+            run.task_identity
+                .as_ref()
+                .map(|identity| identity.backend_kind.as_str()),
+            Some("interactive_chat_backend")
+        );
     }
 
     #[tokio::test]
@@ -1586,6 +1603,8 @@ mod tests {
                         task_kind: crate::agent::runtime::task_state::TaskKind::EmployeeStepTask,
                         surface_kind:
                             crate::agent::runtime::task_state::TaskSurfaceKind::EmployeeStepSurface,
+                        backend_kind:
+                            crate::agent::runtime::task_state::TaskBackendKind::EmployeeStepBackend,
                         session_id: "session-task-record".to_string(),
                         user_message_id: "user-1".to_string(),
                         run_id: "run-1".to_string(),
@@ -1615,6 +1634,7 @@ mod tests {
         assert_eq!(task.task_identity.root_task_id, "task-root");
         assert_eq!(task.task_identity.task_kind, "employee_step_task");
         assert_eq!(task.task_identity.surface_kind, "employee_step_surface");
+        assert_eq!(task.task_identity.backend_kind, "employee_step_backend");
         assert_eq!(task.status, TaskLifecycleStatus::Running);
         assert_eq!(task.started_at.as_deref(), Some("2026-04-09T10:01:00Z"));
     }
@@ -1638,6 +1658,8 @@ mod tests {
                         task_kind: crate::agent::runtime::task_state::TaskKind::PrimaryUserTask,
                         surface_kind:
                             crate::agent::runtime::task_state::TaskSurfaceKind::LocalChatSurface,
+                        backend_kind:
+                            crate::agent::runtime::task_state::TaskBackendKind::InteractiveChatBackend,
                         session_id: "session-task-status".to_string(),
                         user_message_id: "user-1".to_string(),
                         run_id: "run-1".to_string(),

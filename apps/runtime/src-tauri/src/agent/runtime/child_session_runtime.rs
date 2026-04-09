@@ -5,8 +5,11 @@ use super::runtime_io::{
 };
 use super::RuntimeTranscript;
 use crate::agent::runtime::kernel::execution_plan::{ExecutionOutcome, SessionEngineError};
-use crate::agent::runtime::kernel::session_engine::SessionEngine;
-use crate::agent::runtime::kernel::turn_preparation::prepare_hidden_child_turn;
+use crate::agent::runtime::task_backend::{
+    execute_prepared_task_backend, prepare_task_backend, DelegatedPreparedTaskBackendExecution,
+    HiddenChildTaskBackendPreparationRequest, PreparedTaskBackendExecutionRequest,
+    TaskBackendPreparationRequest, TaskBackendTokenCallback,
+};
 use crate::agent::runtime::task_engine::{TaskBeginParentContext, TaskEngine};
 use crate::agent::runtime::task_record::TaskRecord;
 use crate::agent::runtime::task_state::TaskState;
@@ -353,48 +356,52 @@ pub(crate) async fn run_hidden_child_session(
     let child_run_for_stream = prepared.run_id.clone();
     let role_id = params.delegate_role_id.unwrap_or_default().to_string();
     let role_name = params.delegate_role_name.unwrap_or_default().to_string();
-    let (turn_context, execution_context) = prepare_hidden_child_turn(
-        &executor,
-        params.prompt,
-        params.agent_type,
-        params.delegate_display_name,
-        params.api_format,
-        params.base_url,
-        params.api_key,
-        params.model,
-        params.allowed_tools.clone(),
-        params.max_iterations,
-        params.work_dir.clone(),
-    );
-
-    let outcome = SessionEngine::run_hidden_child_turn(
-        params.app_handle,
-        &executor,
-        &prepared.child_session_id,
-        &turn_context,
-        &execution_context,
-        move |delta: StreamDelta| {
-            if let StreamDelta::Text(token) = delta {
-                if let (Some(app), Some(parent_session_id)) =
-                    (&stream_app, &parent_stream_session_id)
-                {
-                    let _ = app.emit(
-                        "stream-token",
-                        json!({
-                            "session_id": parent_session_id,
-                            "token": token,
-                            "done": false,
-                            "sub_agent": true,
-                            "child_session_id": child_session_for_stream,
-                            "child_run_id": child_run_for_stream,
-                            "role_id": role_id,
-                            "role_name": role_name,
-                        }),
-                    );
-                }
-            }
+    let prepared_surface = prepare_task_backend(TaskBackendPreparationRequest::HiddenChild(
+        HiddenChildTaskBackendPreparationRequest {
+            agent_executor: &executor,
+            prompt: params.prompt,
+            agent_type: params.agent_type,
+            delegate_display_name: params.delegate_display_name,
+            api_format: params.api_format,
+            base_url: params.base_url,
+            api_key: params.api_key,
+            model: params.model,
+            allowed_tools: params.allowed_tools.clone(),
+            max_iterations: params.max_iterations,
+            work_dir: params.work_dir.clone(),
         },
-    )
+    ))
+    .await
+    .map_err(anyhow::Error::msg)?;
+
+    let token_callback: TaskBackendTokenCallback = Arc::new(move |delta: StreamDelta| {
+        if let StreamDelta::Text(token) = delta {
+            if let (Some(app), Some(parent_session_id)) = (&stream_app, &parent_stream_session_id) {
+                let _ = app.emit(
+                    "stream-token",
+                    json!({
+                        "session_id": parent_session_id,
+                        "token": token,
+                        "done": false,
+                        "sub_agent": true,
+                        "child_session_id": child_session_for_stream,
+                        "child_run_id": child_run_for_stream,
+                        "role_id": role_id,
+                        "role_name": role_name,
+                    }),
+                );
+            }
+        }
+    });
+    let outcome = execute_prepared_task_backend(PreparedTaskBackendExecutionRequest::Delegated(
+        DelegatedPreparedTaskBackendExecution {
+            prepared_surface: &prepared_surface,
+            app_handle: params.app_handle.cloned(),
+            agent_executor: Arc::clone(&executor),
+            session_id: &prepared.child_session_id,
+            on_token: token_callback,
+        },
+    ))
     .await;
 
     let outcome = match outcome {
@@ -654,6 +661,7 @@ mod tests {
                         root_task_id: "task-root".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                 },
             )

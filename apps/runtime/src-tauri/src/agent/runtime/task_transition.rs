@@ -1,5 +1,7 @@
 use crate::agent::run_guard::RunStopReasonKind;
-use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
+use crate::agent::runtime::task_state::{
+    TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskTransition {
@@ -8,11 +10,13 @@ pub(crate) enum TaskTransition {
         delegated_task_identity: TaskIdentity,
         delegated_task_kind: TaskKind,
         delegated_surface_kind: TaskSurfaceKind,
+        delegated_backend_kind: TaskBackendKind,
     },
     DelegateToEmployee {
         delegated_task_identity: TaskIdentity,
         delegated_task_kind: TaskKind,
         delegated_surface_kind: TaskSurfaceKind,
+        delegated_backend_kind: TaskBackendKind,
     },
     StopCompleted {
         terminal_reason: String,
@@ -99,6 +103,7 @@ pub(crate) fn resolve_delegation_transition(task_state: &TaskState) -> Option<Ta
                 delegated_task_identity: task_state.task_identity.clone(),
                 delegated_task_kind: task_state.task_kind,
                 delegated_surface_kind: task_state.surface_kind,
+                delegated_backend_kind: task_state.backend_kind,
             })
         }
         (TaskKind::EmployeeStepTask, TaskSurfaceKind::EmployeeStepSurface) => {
@@ -106,6 +111,7 @@ pub(crate) fn resolve_delegation_transition(task_state: &TaskState) -> Option<Ta
                 delegated_task_identity: task_state.task_identity.clone(),
                 delegated_task_kind: task_state.task_kind,
                 delegated_surface_kind: task_state.surface_kind,
+                delegated_backend_kind: task_state.backend_kind,
             })
         }
         _ => None,
@@ -123,7 +129,9 @@ mod tests {
         resolve_stop_transition, resolve_terminal_transition, TaskTransition,
     };
     use crate::agent::run_guard::RunStopReasonKind;
-    use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
+    use crate::agent::runtime::task_state::{
+        TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
+    };
 
     #[test]
     fn resolve_commit_transition_marks_success_as_completed() {
@@ -224,6 +232,7 @@ mod tests {
                 delegated_task_identity,
                 delegated_task_kind: TaskKind::SubAgentTask,
                 delegated_surface_kind: TaskSurfaceKind::HiddenChildSurface,
+                delegated_backend_kind: TaskBackendKind::HiddenChildBackend,
             }) if delegated_task_identity.parent_task_id.as_deref() == Some("task-parent")
         ));
     }
@@ -240,6 +249,7 @@ mod tests {
                 delegated_task_identity,
                 delegated_task_kind: TaskKind::EmployeeStepTask,
                 delegated_surface_kind: TaskSurfaceKind::EmployeeStepSurface,
+                delegated_backend_kind: TaskBackendKind::EmployeeStepBackend,
             }) if delegated_task_identity.parent_task_id.as_deref() == Some("task-parent")
         ));
     }

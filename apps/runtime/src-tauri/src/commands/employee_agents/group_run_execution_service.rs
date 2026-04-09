@@ -9,12 +9,15 @@ use super::super::{EmployeeGroupRunResult, StartEmployeeGroupRunInput};
 use super::{get_employee_group_run_snapshot_by_run_id_with_pool, list_agent_employees_with_pool};
 use crate::agent::run_guard::{RunStopReason, RunStopReasonKind};
 use crate::agent::runtime::kernel::execution_plan::{ExecutionOutcome, SessionEngineError};
-use crate::agent::runtime::kernel::session_engine::SessionEngine;
-use crate::agent::runtime::kernel::turn_preparation::prepare_employee_step_turn;
 use crate::agent::runtime::runtime_io::{
     append_partial_assistant_chunk_with_pool, append_run_failed_with_pool,
     append_run_started_with_pool, append_run_stopped_with_pool, finalize_run_success_with_pool,
     insert_session_message_with_pool,
+};
+use crate::agent::runtime::task_backend::{
+    execute_prepared_task_backend, prepare_task_backend, DelegatedPreparedTaskBackendExecution,
+    EmployeeStepTaskBackendPreparationRequest, PreparedTaskBackendExecutionRequest,
+    TaskBackendPreparationRequest, TaskBackendTokenCallback,
 };
 use crate::agent::runtime::task_engine::{TaskBeginParentContext, TaskEngine};
 use crate::agent::runtime::task_record::TaskRecord;
@@ -370,31 +373,35 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
         Arc::clone(&registry),
         max_iterations,
     ));
-    let (mut turn_context, execution_context) = prepare_employee_step_turn(
-        &executor,
-        &user_prompt,
-        &system_prompt,
-        &model_row.api_format,
-        &model_row.base_url,
-        &model_row.api_key,
-        &model_row.model_name,
-        allowed_tools,
-        max_iterations,
-        if session_row.work_dir.trim().is_empty() {
-            None
-        } else {
-            Some(session_row.work_dir.clone())
+    let mut prepared_surface = prepare_task_backend(TaskBackendPreparationRequest::EmployeeStep(
+        EmployeeStepTaskBackendPreparationRequest {
+            agent_executor: &executor,
+            user_prompt: &user_prompt,
+            employee_step_system_prompt: &system_prompt,
+            api_format: &model_row.api_format,
+            base_url: &model_row.base_url,
+            api_key: &model_row.api_key,
+            model: &model_row.model_name,
+            allowed_tools,
+            max_iterations,
+            work_dir: if session_row.work_dir.trim().is_empty() {
+                None
+            } else {
+                Some(session_row.work_dir.clone())
+            },
         },
-    );
-    turn_context.messages = messages;
+    ))
+    .await?;
+    prepared_surface.turn_context.messages = messages;
 
-    let assistant_output = match SessionEngine::run_employee_step_turn(
-        None,
-        &executor,
-        session_id,
-        &turn_context,
-        &execution_context,
-        |_| {},
+    let assistant_output = match execute_prepared_task_backend(
+        PreparedTaskBackendExecutionRequest::Delegated(DelegatedPreparedTaskBackendExecution {
+            prepared_surface: &prepared_surface,
+            app_handle: None,
+            agent_executor: Arc::clone(&executor),
+            session_id,
+            on_token: Arc::new(|_| {}) as TaskBackendTokenCallback,
+        }),
     )
     .await
     {
@@ -967,6 +974,7 @@ mod tests {
                         root_task_id: "task-root".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                 },
             )

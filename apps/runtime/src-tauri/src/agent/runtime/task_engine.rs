@@ -1,11 +1,17 @@
 use crate::agent::run_guard::RunStopReasonKind;
 use crate::agent::runtime::events::ToolConfirmResponder;
 use crate::agent::runtime::kernel::execution_plan::{ExecutionOutcome, SessionEngineError};
-use crate::agent::runtime::kernel::session_engine::SessionEngine;
 use crate::agent::runtime::session_runs::append_session_run_event_with_pool;
+use crate::agent::runtime::task_backend::{
+    execute_prepared_task_backend, prepare_task_backend,
+    InteractiveChatPreparedTaskBackendExecution, InteractiveChatTaskBackendPreparationRequest,
+    PreparedTaskBackendExecutionRequest, TaskBackendPreparationRequest,
+};
 use crate::agent::runtime::task_record::{TaskLifecycleStatus, TaskRecord};
 use crate::agent::runtime::task_repo::TaskRepo;
-use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
+use crate::agent::runtime::task_state::{
+    TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
+};
 use crate::agent::runtime::task_transition::{
     resolve_commit_transition, resolve_initial_transition, resolve_stop_transition,
     resolve_terminal_transition, TaskTransition,
@@ -55,6 +61,7 @@ impl TaskEngine {
         task_identity: &TaskIdentity,
         task_kind: TaskKind,
         surface_kind: TaskSurfaceKind,
+        backend_kind: TaskBackendKind,
     ) -> SessionRunTaskIdentitySnapshot {
         SessionRunTaskIdentitySnapshot {
             task_id: task_identity.task_id.clone(),
@@ -62,6 +69,7 @@ impl TaskEngine {
             root_task_id: task_identity.root_task_id.clone(),
             task_kind: task_kind.journal_key().to_string(),
             surface_kind: surface_kind.journal_key().to_string(),
+            backend_kind: backend_kind.journal_key().to_string(),
         }
     }
 
@@ -70,6 +78,7 @@ impl TaskEngine {
             &task_state.task_identity,
             task_state.task_kind,
             task_state.surface_kind,
+            task_state.backend_kind,
         )
     }
 
@@ -78,6 +87,7 @@ impl TaskEngine {
             task_state.task_identity.clone(),
             task_state.task_kind,
             task_state.surface_kind,
+            task_state.backend_kind,
             task_state.session_id.clone(),
             task_state.user_message_id.clone(),
             task_state.run_id.clone(),
@@ -155,6 +165,11 @@ impl TaskEngine {
                 "hidden_child_surface" => TaskSurfaceKind::HiddenChildSurface,
                 "employee_step_surface" => TaskSurfaceKind::EmployeeStepSurface,
                 _ => TaskSurfaceKind::LocalChatSurface,
+            },
+            backend_kind: match snapshot.task_identity.backend_kind.as_str() {
+                "hidden_child_backend" => TaskBackendKind::HiddenChildBackend,
+                "employee_step_backend" => TaskBackendKind::EmployeeStepBackend,
+                _ => TaskBackendKind::InteractiveChatBackend,
             },
             session_id: snapshot.session_id.clone(),
             user_message_id: snapshot.user_message_id.clone(),
@@ -249,6 +264,7 @@ impl TaskEngine {
         delegated_task_identity: &TaskIdentity,
         delegated_task_kind: TaskKind,
         delegated_surface_kind: TaskSurfaceKind,
+        delegated_backend_kind: TaskBackendKind,
     ) -> Result<(), String> {
         append_session_run_event_with_pool(
             db,
@@ -263,6 +279,7 @@ impl TaskEngine {
                     delegated_task_identity,
                     delegated_task_kind,
                     delegated_surface_kind,
+                    delegated_backend_kind,
                 ),
             },
         )
@@ -371,11 +388,13 @@ impl TaskEngine {
                 delegated_task_identity,
                 delegated_task_kind,
                 delegated_surface_kind,
+                delegated_backend_kind,
             }
             | TaskTransition::DelegateToEmployee {
                 delegated_task_identity,
                 delegated_task_kind,
                 delegated_surface_kind,
+                delegated_backend_kind,
             } => {
                 Self::project_task_delegation(
                     db,
@@ -385,6 +404,7 @@ impl TaskEngine {
                     delegated_task_identity,
                     *delegated_task_kind,
                     *delegated_surface_kind,
+                    *delegated_backend_kind,
                 )
                 .await?;
                 Ok(active_task_record.clone())
@@ -605,19 +625,45 @@ impl TaskEngine {
         let active_task_record = Self::begin_task_run(db, journal, &task_state, None)
             .await
             .map_err(SessionEngineError::Generic)?;
-        let execution_outcome = match SessionEngine::run_local_turn(
-            app,
-            agent_executor,
-            db,
-            journal,
-            session_id,
-            run_id,
-            user_message_id,
-            user_message,
-            user_message_parts,
-            max_iterations_override,
-            cancel_flag,
-            tool_confirm_responder,
+        let prepared_surface = match prepare_task_backend(
+            TaskBackendPreparationRequest::InteractiveChat(
+                InteractiveChatTaskBackendPreparationRequest {
+                    app,
+                    agent_executor,
+                    db,
+                    session_id,
+                    user_message,
+                    user_message_parts,
+                    max_iterations_override,
+                },
+            ),
+        )
+        .await
+        {
+            Ok(prepared_surface) => prepared_surface,
+            Err(error) => {
+                let _ =
+                    Self::mark_task_failed(db, journal, session_id, &active_task_record, &error)
+                        .await;
+                return Err(SessionEngineError::Generic(error));
+            }
+        };
+        let execution_outcome = match execute_prepared_task_backend(
+            PreparedTaskBackendExecutionRequest::InteractiveChat(
+                InteractiveChatPreparedTaskBackendExecution {
+                    prepared_surface: &prepared_surface,
+                    app: app.clone(),
+                    agent_executor: Arc::clone(agent_executor),
+                    db,
+                    journal,
+                    session_id,
+                    run_id,
+                    user_message_id,
+                    user_message,
+                    cancel_flag,
+                    tool_confirm_responder,
+                },
+            ),
         )
         .await
         {
@@ -717,6 +763,7 @@ mod tests {
             task_state.task_identity.clone(),
             task_state.task_kind,
             task_state.surface_kind,
+            task_state.backend_kind,
             task_state.session_id.clone(),
             task_state.user_message_id.clone(),
             task_state.run_id.clone(),

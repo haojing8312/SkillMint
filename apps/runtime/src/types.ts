@@ -282,6 +282,7 @@ export interface SessionRunTaskIdentitySnapshot {
   root_task_id: string;
   task_kind: string;
   surface_kind: string;
+  backend_kind?: string | null;
 }
 
 export interface SessionRunTaskRecordProjection {
@@ -290,6 +291,7 @@ export interface SessionRunTaskRecordProjection {
   root_task_id: string;
   task_kind: string;
   surface_kind: string;
+  backend_kind: string;
   status: string;
   created_at: string;
   updated_at: string;

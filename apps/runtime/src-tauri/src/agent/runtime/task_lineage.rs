@@ -8,6 +8,7 @@ pub struct SessionRunTaskGraphNode {
     pub root_task_id: String,
     pub task_kind: String,
     pub surface_kind: String,
+    pub backend_kind: String,
     pub task_path: String,
 }
 
@@ -69,6 +70,7 @@ pub fn project_task_graph_nodes<'a>(
             root_task_id: task_identity.root_task_id.trim().to_string(),
             task_kind: task_identity.task_kind.trim().to_string(),
             surface_kind: task_identity.surface_kind.trim().to_string(),
+            backend_kind: task_identity.backend_kind.trim().to_string(),
             task_path: build_task_path(task_identity).unwrap_or_else(|| task_id.to_string()),
         });
     }
@@ -91,6 +93,7 @@ mod tests {
                 root_task_id: "task-root".to_string(),
                 task_kind: "sub_agent_task".to_string(),
                 surface_kind: "hidden_child_surface".to_string(),
+                backend_kind: "hidden_child_backend".to_string(),
             }),
             session_surface: None,
             execution_lane: None,
@@ -117,6 +120,7 @@ mod tests {
             root_task_id: "task-root".to_string(),
             task_kind: "sub_agent_task".to_string(),
             surface_kind: "hidden_child_surface".to_string(),
+            backend_kind: "hidden_child_backend".to_string(),
         };
 
         let nodes = project_task_graph_nodes([&task_identity, &task_identity]);
@@ -129,6 +133,7 @@ mod tests {
                 root_task_id: "task-root".to_string(),
                 task_kind: "sub_agent_task".to_string(),
                 surface_kind: "hidden_child_surface".to_string(),
+                backend_kind: "hidden_child_backend".to_string(),
                 task_path: build_task_path(&task_identity).expect("task path should be projected"),
             }]
         );

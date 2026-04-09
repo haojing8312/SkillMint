@@ -10,6 +10,7 @@ pub(crate) struct TaskRecordUpsertPayload {
     pub task_identity: crate::agent::runtime::task_state::TaskIdentity,
     pub task_kind: crate::agent::runtime::task_state::TaskKind,
     pub surface_kind: crate::agent::runtime::task_state::TaskSurfaceKind,
+    pub backend_kind: crate::agent::runtime::task_state::TaskBackendKind,
     pub session_id: String,
     pub user_message_id: String,
     pub run_id: String,
@@ -38,6 +39,7 @@ impl TaskRecordUpsertPayload {
             task_identity: record.task_identity.clone(),
             task_kind: record.task_kind,
             surface_kind: record.surface_kind,
+            backend_kind: record.backend_kind,
             session_id: record.session_id.clone(),
             user_message_id: record.user_message_id.clone(),
             run_id: record.run_id.clone(),
@@ -112,7 +114,9 @@ impl TaskRepo {
 #[cfg(test)]
 mod tests {
     use super::{TaskLifecycleStatus, TaskRecord, TaskRepo, TaskStatusChangedPayload};
-    use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskSurfaceKind};
+    use crate::agent::runtime::task_state::{
+        TaskBackendKind, TaskIdentity, TaskKind, TaskSurfaceKind,
+    };
 
     #[test]
     fn build_task_record_upsert_payload_preserves_task_identity_and_snapshot_fields() {
@@ -120,6 +124,7 @@ mod tests {
             TaskIdentity::new("task-child", Some("task-parent"), Some("task-root")),
             TaskKind::EmployeeStepTask,
             TaskSurfaceKind::EmployeeStepSurface,
+            TaskBackendKind::EmployeeStepBackend,
             "session-1",
             "user-1",
             "run-1",
@@ -136,6 +141,7 @@ mod tests {
         assert_eq!(payload.task_identity.root_task_id, "task-root");
         assert_eq!(payload.task_kind, TaskKind::EmployeeStepTask);
         assert_eq!(payload.surface_kind, TaskSurfaceKind::EmployeeStepSurface);
+        assert_eq!(payload.backend_kind, TaskBackendKind::EmployeeStepBackend);
         assert_eq!(payload.session_id, "session-1");
         assert_eq!(payload.user_message_id, "user-1");
         assert_eq!(payload.run_id, "run-1");
@@ -153,6 +159,7 @@ mod tests {
             TaskIdentity::new("task-child", Some("task-parent"), Some("task-root")),
             TaskKind::SubAgentTask,
             TaskSurfaceKind::HiddenChildSurface,
+            TaskBackendKind::HiddenChildBackend,
             "session-1",
             "user-1",
             "run-1",

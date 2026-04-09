@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskSurfaceKind};
+use crate::agent::runtime::task_state::{TaskBackendKind, TaskIdentity, TaskKind, TaskSurfaceKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TaskLifecycleTransitionError {
@@ -39,6 +39,7 @@ pub(crate) struct TaskRecord {
     pub task_identity: TaskIdentity,
     pub task_kind: TaskKind,
     pub surface_kind: TaskSurfaceKind,
+    pub backend_kind: TaskBackendKind,
     pub session_id: String,
     pub user_message_id: String,
     pub run_id: String,
@@ -55,6 +56,7 @@ impl TaskRecord {
         task_identity: TaskIdentity,
         task_kind: TaskKind,
         surface_kind: TaskSurfaceKind,
+        backend_kind: TaskBackendKind,
         session_id: impl Into<String>,
         user_message_id: impl Into<String>,
         run_id: impl Into<String>,
@@ -65,6 +67,7 @@ impl TaskRecord {
             task_identity,
             task_kind,
             surface_kind,
+            backend_kind,
             session_id: session_id.into(),
             user_message_id: user_message_id.into(),
             run_id: run_id.into(),
@@ -161,7 +164,9 @@ impl TaskRecord {
 #[cfg(test)]
 mod tests {
     use super::{TaskLifecycleStatus, TaskLifecycleTransitionError, TaskRecord};
-    use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskSurfaceKind};
+    use crate::agent::runtime::task_state::{
+        TaskBackendKind, TaskIdentity, TaskKind, TaskSurfaceKind,
+    };
 
     #[test]
     fn task_lifecycle_status_serializes_with_stable_snake_case_keys() {
@@ -187,6 +192,7 @@ mod tests {
             identity.clone(),
             TaskKind::EmployeeStepTask,
             TaskSurfaceKind::EmployeeStepSurface,
+            TaskBackendKind::EmployeeStepBackend,
             "session-1",
             "user-1",
             "run-1",
@@ -196,6 +202,7 @@ mod tests {
         assert_eq!(record.task_identity, identity);
         assert_eq!(record.task_kind, TaskKind::EmployeeStepTask);
         assert_eq!(record.surface_kind, TaskSurfaceKind::EmployeeStepSurface);
+        assert_eq!(record.backend_kind, TaskBackendKind::EmployeeStepBackend);
         assert_eq!(record.session_id, "session-1");
         assert_eq!(record.user_message_id, "user-1");
         assert_eq!(record.run_id, "run-1");
@@ -214,6 +221,7 @@ mod tests {
             identity,
             TaskKind::SubAgentTask,
             TaskSurfaceKind::HiddenChildSurface,
+            TaskBackendKind::HiddenChildBackend,
             "session-1",
             "user-1",
             "run-1",
@@ -246,6 +254,7 @@ mod tests {
             identity,
             TaskKind::PrimaryUserTask,
             TaskSurfaceKind::LocalChatSurface,
+            TaskBackendKind::InteractiveChatBackend,
             "session-1",
             "user-1",
             "run-1",
@@ -277,6 +286,7 @@ mod tests {
             identity,
             TaskKind::SubAgentTask,
             TaskSurfaceKind::HiddenChildSurface,
+            TaskBackendKind::HiddenChildBackend,
             "session-1",
             "user-1",
             "run-1",
@@ -301,6 +311,7 @@ mod tests {
             identity,
             TaskKind::PrimaryUserTask,
             TaskSurfaceKind::LocalChatSurface,
+            TaskBackendKind::InteractiveChatBackend,
             "session-1",
             "user-1",
             "run-1",
@@ -328,6 +339,7 @@ mod tests {
             identity,
             TaskKind::SubAgentTask,
             TaskSurfaceKind::HiddenChildSurface,
+            TaskBackendKind::HiddenChildBackend,
             "session-1",
             "user-1",
             "run-1",

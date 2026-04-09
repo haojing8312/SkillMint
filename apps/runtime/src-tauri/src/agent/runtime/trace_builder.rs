@@ -685,6 +685,12 @@ fn summarize_task_identity_detail(
     if let Some(task_path) = build_task_path(task_identity) {
         detail_parts.push(format!("task_path={}", task_path));
     }
+    if !task_identity.backend_kind.trim().is_empty() {
+        detail_parts.push(format!(
+            "backend_kind={}",
+            task_identity.backend_kind.trim()
+        ));
+    }
     detail_parts.join(", ")
 }
 
@@ -1170,6 +1176,7 @@ mod tests {
                     root_task_id: "task-root".to_string(),
                     task_kind: "sub_agent_task".to_string(),
                     surface_kind: "hidden_child_surface".to_string(),
+                    backend_kind: "hidden_child_backend".to_string(),
                 },
             },
         ));
@@ -1178,6 +1185,10 @@ mod tests {
             summary.message.as_deref(),
             Some("task=sub_agent_task surface=hidden_child_surface")
         );
+        assert!(summary
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("backend_kind=hidden_child_backend")));
         assert!(summary
             .detail
             .as_deref()
@@ -1208,6 +1219,7 @@ mod tests {
                         root_task_id: "task-root".to_string(),
                         task_kind: "sub_agent_task".to_string(),
                         surface_kind: "hidden_child_surface".to_string(),
+                        backend_kind: "hidden_child_backend".to_string(),
                     },
                 },
             )],
@@ -1217,7 +1229,8 @@ mod tests {
             .task_graph
             .iter()
             .any(|node| node.task_id == "task-child"
-                && node.parent_task_id.as_deref() == Some("task-parent")));
+                && node.parent_task_id.as_deref() == Some("task-parent")
+                && node.backend_kind == "hidden_child_backend"));
     }
 
     #[test]

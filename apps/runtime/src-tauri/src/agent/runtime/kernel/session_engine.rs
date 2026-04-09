@@ -1,4 +1,6 @@
-use super::execution_plan::{ExecutionLane, ExecutionOutcome, SessionEngineError};
+use super::execution_plan::{
+    ExecutionContext, ExecutionLane, ExecutionOutcome, SessionEngineError, TurnContext,
+};
 use super::session_profile::SessionSurfaceKind;
 use crate::agent::run_guard::parse_run_stop_reason;
 use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
@@ -22,6 +24,30 @@ use tauri::AppHandle;
 pub(crate) struct SessionEngine;
 
 impl SessionEngine {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_local_turn_context(
+        app: &AppHandle,
+        agent_executor: &Arc<AgentExecutor>,
+        db: &sqlx::SqlitePool,
+        session_id: &str,
+        user_message: &str,
+        user_message_parts: &[Value],
+        max_iterations_override: Option<usize>,
+    ) -> Result<(TurnContext, ExecutionContext), SessionEngineError> {
+        prepare_local_turn(PrepareLocalTurnParams {
+            app,
+            db,
+            agent_executor,
+            session_id,
+            user_message,
+            user_message_parts,
+            max_iterations_override,
+        })
+        .await
+        .map_err(SessionEngineError::Generic)
+    }
+
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) async fn run_local_turn(
         app: &AppHandle,
         agent_executor: &Arc<AgentExecutor>,
@@ -36,18 +62,49 @@ impl SessionEngine {
         cancel_flag: Arc<AtomicBool>,
         tool_confirm_responder: ToolConfirmResponder,
     ) -> Result<ExecutionOutcome, SessionEngineError> {
-        let prepared_context = prepare_local_turn(PrepareLocalTurnParams {
+        let (turn_context, execution_context) = Self::prepare_local_turn_context(
             app,
-            db,
             agent_executor,
+            db,
             session_id,
             user_message,
             user_message_parts,
             max_iterations_override,
-        })
+        )
+        .await?;
+
+        Self::execute_prepared_local_turn(
+            app,
+            agent_executor,
+            db,
+            journal,
+            session_id,
+            run_id,
+            user_message_id,
+            user_message,
+            &turn_context,
+            &execution_context,
+            cancel_flag,
+            tool_confirm_responder,
+        )
         .await
-        .map_err(SessionEngineError::Generic)?;
-        let (turn_context, execution_context) = &prepared_context;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_prepared_local_turn(
+        app: &AppHandle,
+        agent_executor: &Arc<AgentExecutor>,
+        db: &sqlx::SqlitePool,
+        journal: &crate::session_journal::SessionJournalStore,
+        session_id: &str,
+        run_id: &str,
+        user_message_id: &str,
+        user_message: &str,
+        turn_context: &TurnContext,
+        execution_context: &ExecutionContext,
+        cancel_flag: Arc<AtomicBool>,
+        tool_confirm_responder: ToolConfirmResponder,
+    ) -> Result<ExecutionOutcome, SessionEngineError> {
         debug_assert_eq!(
             execution_context.session_profile.surface,
             SessionSurfaceKind::LocalChat

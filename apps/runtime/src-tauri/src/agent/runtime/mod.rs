@@ -16,6 +16,7 @@ pub mod runtime_io;
 pub(crate) mod session_runs;
 pub mod session_runtime;
 pub(crate) mod skill_routing;
+pub(crate) mod task_backend;
 pub(crate) mod task_engine;
 pub(crate) mod task_lineage;
 pub(crate) mod task_record;

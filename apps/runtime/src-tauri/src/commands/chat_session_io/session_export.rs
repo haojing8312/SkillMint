@@ -655,6 +655,12 @@ fn render_recovered_task_identity_lines(
             task_identity.surface_kind.trim()
         ));
     }
+    if !task_identity.backend_kind.trim().is_empty() {
+        lines.push(format!(
+            "- backend_kind: {}",
+            task_identity.backend_kind.trim()
+        ));
+    }
     lines
 }
 
@@ -717,6 +723,12 @@ fn render_recovered_task_record_lines(task_record: &SessionTaskRecordSnapshot) -
         if !terminal_reason.is_empty() {
             lines.push(format!("- task_terminal_reason: {}", terminal_reason));
         }
+    }
+    if !task_record.task_identity.backend_kind.trim().is_empty() {
+        lines.push(format!(
+            "- task_backend_kind: {}",
+            task_record.task_identity.backend_kind.trim()
+        ));
     }
     lines
 }
@@ -788,6 +800,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     }),
                     turn_state: None,
                 }],
@@ -801,6 +814,7 @@ mod tests {
         assert!(output.contains("task_id: task-1"));
         assert!(output.contains("task_kind: primary_user_task"));
         assert!(output.contains("surface_kind: local_chat_surface"));
+        assert!(output.contains("backend_kind: interactive_chat_backend"));
         assert!(output.contains("task_path: task-1"));
     }
 
@@ -826,6 +840,7 @@ mod tests {
                             root_task_id: "task-root".to_string(),
                             task_kind: "sub_agent_task".to_string(),
                             surface_kind: "hidden_child_surface".to_string(),
+                            backend_kind: "hidden_child_backend".to_string(),
                         }),
                         session_surface: None,
                         execution_lane: None,
@@ -849,6 +864,7 @@ mod tests {
 
         assert!(output.contains("task_id: task-child"));
         assert!(output.contains("parent_task_id: task-parent"));
+        assert!(output.contains("backend_kind: hidden_child_backend"));
         assert!(output.contains("task_path: task-root -> task-parent -> task-child"));
     }
 
@@ -873,6 +889,7 @@ mod tests {
                             root_task_id: "task-root".to_string(),
                             task_kind: "primary_user_task".to_string(),
                             surface_kind: "local_chat_surface".to_string(),
+                            backend_kind: "interactive_chat_backend".to_string(),
                         }),
                         turn_state: None,
                     },
@@ -891,6 +908,7 @@ mod tests {
                                 root_task_id: "task-root".to_string(),
                                 task_kind: "sub_agent_task".to_string(),
                                 surface_kind: "hidden_child_surface".to_string(),
+                                backend_kind: "hidden_child_backend".to_string(),
                             }),
                             session_surface: None,
                             execution_lane: None,
@@ -938,6 +956,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     }),
                     turn_state: None,
                 }],
@@ -948,6 +967,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                     session_id: "session-1".to_string(),
                     user_message_id: "user-1".to_string(),
@@ -966,6 +986,7 @@ mod tests {
         );
 
         assert!(output.contains("task_status: failed"));
+        assert!(output.contains("task_backend_kind: interactive_chat_backend"));
         assert!(output.contains("task_started_at: 2026-04-09T00:00:01Z"));
         assert!(output.contains("task_completed_at: 2026-04-09T00:00:02Z"));
         assert!(output.contains("task_terminal_reason: max_turns"));

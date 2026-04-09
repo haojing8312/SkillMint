@@ -39,6 +39,23 @@ impl TaskSurfaceKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TaskBackendKind {
+    InteractiveChatBackend,
+    HiddenChildBackend,
+    EmployeeStepBackend,
+}
+
+impl TaskBackendKind {
+    pub(crate) fn journal_key(self) -> &'static str {
+        match self {
+            TaskBackendKind::InteractiveChatBackend => "interactive_chat_backend",
+            TaskBackendKind::HiddenChildBackend => "hidden_child_backend",
+            TaskBackendKind::EmployeeStepBackend => "employee_step_backend",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TaskIdentity {
     pub task_id: String,
@@ -84,6 +101,7 @@ pub(crate) struct TaskState {
     pub task_identity: TaskIdentity,
     pub task_kind: TaskKind,
     pub surface_kind: TaskSurfaceKind,
+    pub backend_kind: TaskBackendKind,
     pub session_id: String,
     pub user_message_id: String,
     pub run_id: String,
@@ -93,6 +111,7 @@ impl TaskState {
     fn new_for_task_kind(
         task_kind: TaskKind,
         surface_kind: TaskSurfaceKind,
+        backend_kind: TaskBackendKind,
         session_id: impl Into<String>,
         user_message_id: impl Into<String>,
         run_id: impl Into<String>,
@@ -104,6 +123,7 @@ impl TaskState {
                 .unwrap_or_else(TaskIdentity::new_root),
             task_kind,
             surface_kind,
+            backend_kind,
             session_id: session_id.into(),
             user_message_id: user_message_id.into(),
             run_id: run_id.into(),
@@ -118,6 +138,7 @@ impl TaskState {
         Self::new_for_task_kind(
             TaskKind::PrimaryUserTask,
             TaskSurfaceKind::LocalChatSurface,
+            TaskBackendKind::InteractiveChatBackend,
             session_id,
             user_message_id,
             run_id,
@@ -134,6 +155,7 @@ impl TaskState {
         Self::new_for_task_kind(
             TaskKind::SubAgentTask,
             TaskSurfaceKind::HiddenChildSurface,
+            TaskBackendKind::HiddenChildBackend,
             session_id,
             user_message_id,
             run_id,
@@ -150,6 +172,7 @@ impl TaskState {
         Self::new_for_task_kind(
             TaskKind::EmployeeStepTask,
             TaskSurfaceKind::EmployeeStepSurface,
+            TaskBackendKind::EmployeeStepBackend,
             session_id,
             user_message_id,
             run_id,
@@ -160,7 +183,7 @@ impl TaskState {
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
+    use super::{TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
 
     #[test]
     fn primary_local_chat_task_uses_primary_user_contract() {
@@ -168,6 +191,10 @@ mod tests {
 
         assert_eq!(task_state.task_kind, TaskKind::PrimaryUserTask);
         assert_eq!(task_state.surface_kind, TaskSurfaceKind::LocalChatSurface);
+        assert_eq!(
+            task_state.backend_kind,
+            TaskBackendKind::InteractiveChatBackend
+        );
         assert_eq!(task_state.session_id, "session-1");
         assert_eq!(task_state.user_message_id, "user-1");
         assert_eq!(task_state.run_id, "run-1");
@@ -219,6 +246,10 @@ mod tests {
         assert_eq!(
             task_state.surface_kind,
             TaskSurfaceKind::EmployeeStepSurface
+        );
+        assert_eq!(
+            task_state.backend_kind,
+            TaskBackendKind::EmployeeStepBackend
         );
         assert_eq!(
             task_state.task_identity.parent_task_id.as_deref(),

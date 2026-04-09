@@ -4,7 +4,9 @@ use crate::agent::runtime::compaction_pipeline::RuntimeCompactionOutcome;
 use crate::agent::runtime::kernel::execution_plan::ExecutionLane;
 use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
 use crate::agent::runtime::skill_routing::observability::ImplicitRouteObservation;
-use crate::agent::runtime::task_state::{TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
+use crate::agent::runtime::task_state::{
+    TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TurnCompactionBoundary {
@@ -30,6 +32,7 @@ pub(crate) struct TurnStateSnapshot {
     pub task_identity: Option<TaskIdentity>,
     pub task_kind: Option<TaskKind>,
     pub task_surface: Option<TaskSurfaceKind>,
+    pub task_backend: Option<TaskBackendKind>,
     pub session_surface: Option<SessionSurfaceKind>,
     pub route_observation: Option<ImplicitRouteObservation>,
     pub execution_lane: Option<ExecutionLane>,
@@ -59,6 +62,7 @@ impl TurnStateSnapshot {
         self.task_identity = Some(task_state.task_identity.clone());
         self.task_kind = Some(task_state.task_kind);
         self.task_surface = Some(task_state.surface_kind);
+        self.task_backend = Some(task_state.backend_kind);
         self
     }
 
@@ -299,6 +303,10 @@ mod tests {
         assert_eq!(
             snapshot.task_surface,
             Some(TaskSurfaceKind::LocalChatSurface)
+        );
+        assert_eq!(
+            snapshot.task_backend,
+            Some(crate::agent::runtime::task_state::TaskBackendKind::InteractiveChatBackend)
         );
     }
 }

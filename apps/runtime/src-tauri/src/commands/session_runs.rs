@@ -46,6 +46,7 @@ pub struct SessionRunTaskRecordProjection {
     pub root_task_id: String,
     pub task_kind: String,
     pub surface_kind: String,
+    pub backend_kind: String,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -65,6 +66,7 @@ impl From<&SessionTaskRecordSnapshot> for SessionRunTaskRecordProjection {
             root_task_id: value.task_identity.root_task_id.clone(),
             task_kind: value.task_identity.task_kind.clone(),
             surface_kind: value.task_identity.surface_kind.clone(),
+            backend_kind: value.task_identity.backend_kind.clone(),
             status: value.status.as_key().to_string(),
             created_at: value.created_at.clone(),
             updated_at: value.updated_at.clone(),
@@ -1156,6 +1158,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                 },
             )
@@ -1180,6 +1183,13 @@ mod tests {
                 .as_ref()
                 .map(|task| task.task_kind.as_str()),
             Some("primary_user_task")
+        );
+        assert_eq!(
+            runs[0]
+                .task_identity
+                .as_ref()
+                .map(|task| task.backend_kind.as_str()),
+            Some("interactive_chat_backend")
         );
         assert_eq!(runs[0].task_path.as_deref(), Some("task-1"));
         assert_eq!(runs[0].task_status, None);
@@ -1222,6 +1232,8 @@ mod tests {
                         task_kind: crate::agent::runtime::task_state::TaskKind::PrimaryUserTask,
                         surface_kind:
                             crate::agent::runtime::task_state::TaskSurfaceKind::LocalChatSurface,
+                        backend_kind:
+                            crate::agent::runtime::task_state::TaskBackendKind::InteractiveChatBackend,
                         session_id: "session-1".to_string(),
                         user_message_id: "user-1".to_string(),
                         run_id: "run-task-status".to_string(),
@@ -1266,6 +1278,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                 },
             )
@@ -1278,6 +1291,13 @@ mod tests {
 
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].task_status.as_deref(), Some("failed"));
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .map(|record| record.backend_kind.as_str()),
+            Some("interactive_chat_backend")
+        );
     }
 
     #[tokio::test]
@@ -1317,6 +1337,8 @@ mod tests {
                         task_kind: crate::agent::runtime::task_state::TaskKind::PrimaryUserTask,
                         surface_kind:
                             crate::agent::runtime::task_state::TaskSurfaceKind::LocalChatSurface,
+                        backend_kind:
+                            crate::agent::runtime::task_state::TaskBackendKind::InteractiveChatBackend,
                         session_id: "session-1".to_string(),
                         user_message_id: "user-1".to_string(),
                         run_id: "run-task-record".to_string(),
@@ -1361,6 +1383,7 @@ mod tests {
                         root_task_id: "task-1".to_string(),
                         task_kind: "primary_user_task".to_string(),
                         surface_kind: "local_chat_surface".to_string(),
+                        backend_kind: "interactive_chat_backend".to_string(),
                     },
                 },
             )
@@ -1386,6 +1409,13 @@ mod tests {
                 .as_ref()
                 .map(|record| record.surface_kind.as_str()),
             Some("local_chat_surface")
+        );
+        assert_eq!(
+            runs[0]
+                .task_record
+                .as_ref()
+                .map(|record| record.backend_kind.as_str()),
+            Some("interactive_chat_backend")
         );
         assert_eq!(
             runs[0]
@@ -1455,6 +1485,7 @@ mod tests {
                                 root_task_id: "task-root".to_string(),
                                 task_kind: "sub_agent_task".to_string(),
                                 surface_kind: "hidden_child_surface".to_string(),
+                                backend_kind: "hidden_child_backend".to_string(),
                             },
                         ),
                         session_surface: Some("hidden_child_session".to_string()),
@@ -1494,6 +1525,13 @@ mod tests {
             Some("task-parent")
         );
         assert_eq!(
+            runs[0]
+                .task_identity
+                .as_ref()
+                .map(|task| task.backend_kind.as_str()),
+            Some("hidden_child_backend")
+        );
+        assert_eq!(
             runs[0].task_path.as_deref(),
             Some("task-root -> task-parent -> task-child")
         );
@@ -1516,6 +1554,7 @@ mod tests {
                     root_task_id: "task-root".to_string(),
                     task_kind: "sub_agent_task".to_string(),
                     surface_kind: "hidden_child_surface".to_string(),
+                    backend_kind: "hidden_child_backend".to_string(),
                 },
             })
             .expect("serialize task_state_projected"),
@@ -1539,6 +1578,7 @@ mod tests {
                         root_task_id: "task-root".to_string(),
                         task_kind: "sub_agent_task".to_string(),
                         surface_kind: "hidden_child_surface".to_string(),
+                        backend_kind: "hidden_child_backend".to_string(),
                     }),
                     session_surface: Some("hidden_child_session".to_string()),
                     execution_lane: Some("open_task".to_string()),
@@ -1564,6 +1604,7 @@ mod tests {
 
         assert_eq!(trace.task_graph.len(), 1);
         assert_eq!(trace.task_graph[0].task_id, "task-child");
+        assert_eq!(trace.task_graph[0].backend_kind, "hidden_child_backend");
         assert_eq!(
             trace.task_graph[0].task_path,
             "task-root -> task-parent -> task-child"
