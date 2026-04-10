@@ -1,21 +1,19 @@
 use super::runtime_io::{finalize_run_success_with_pool, insert_session_message_with_pool};
 use super::RuntimeTranscript;
-use crate::agent::runtime::task_active_run::{
-    DelegatedTaskBackendRunRequest, TaskExecutionOutcome,
-};
 use crate::agent::runtime::task_backend::{
     HiddenChildTaskBackendPreparationRequest, TaskBackendPreparationRequest,
     TaskBackendTokenCallback,
 };
 use crate::agent::runtime::task_entry;
 use crate::agent::runtime::task_entry::{
-    DelegatedTaskBackendRunAndFinalizeRequest, DelegatedTaskTerminalFinalizeEntryRequest,
+    DelegatedTaskBackendRunAndFinalizeRequest, DelegatedTaskEntryOutcome,
+    DelegatedTaskTerminalFinalizeEntryRequest,
 };
+use crate::agent::runtime::task_execution::TaskExecutionOutcome;
 use crate::agent::runtime::task_lifecycle;
 use crate::agent::runtime::task_lifecycle::TaskBeginParentContext;
 use crate::agent::runtime::task_record::TaskRecord;
 use crate::agent::runtime::task_state::TaskState;
-use crate::agent::runtime::task_terminal::DelegatedTaskTerminalOutcome;
 use crate::agent::types::StreamDelta;
 use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::session_journal::SessionJournalStore;
@@ -148,11 +146,11 @@ async fn finalize_hidden_child_session_execution_outcome(
     .await
     .map_err(anyhow::Error::msg)?
     {
-        DelegatedTaskTerminalOutcome::Completed { output } => {
+        DelegatedTaskEntryOutcome::Completed { output } => {
             Ok(ChildSessionRunOutcome { final_text: output })
         }
-        DelegatedTaskTerminalOutcome::Stopped { error, .. }
-        | DelegatedTaskTerminalOutcome::Failed { error } => Err(anyhow::Error::msg(error)),
+        DelegatedTaskEntryOutcome::Stopped { error, .. }
+        | DelegatedTaskEntryOutcome::Failed { error } => Err(anyhow::Error::msg(error)),
     }
 }
 
@@ -198,46 +196,44 @@ pub(crate) async fn run_hidden_child_session(
     });
     let finalized = match task_entry::run_and_finalize_delegated_task_backend(
         DelegatedTaskBackendRunAndFinalizeRequest {
-            backend_request: DelegatedTaskBackendRunRequest {
-                db: params.db,
-                journal: params.journal,
-                task_state: prepared.task_state.clone(),
-                parent_context: prepared.parent_task_record.as_ref().map(|record| {
-                    TaskBeginParentContext {
-                        session_id: params.parent_session_id,
-                        active_task_record: record,
-                    }
-                }),
-                preparation_request: TaskBackendPreparationRequest::HiddenChild(
-                    HiddenChildTaskBackendPreparationRequest {
-                        agent_executor: &executor,
-                        prompt: params.prompt,
-                        agent_type: params.agent_type,
-                        delegate_display_name: params.delegate_display_name,
-                        api_format: params.api_format,
-                        base_url: params.base_url,
-                        api_key: params.api_key,
-                        model: params.model,
-                        allowed_tools: params.allowed_tools.clone(),
-                        max_iterations: params.max_iterations,
-                        work_dir: params.work_dir.clone(),
-                    },
-                ),
-                app_handle: params.app_handle.cloned(),
-                agent_executor: Arc::clone(&executor),
-                on_token: token_callback,
-                prepare_surface: |_| {},
-            },
+            db: params.db,
+            journal: params.journal,
+            task_state: prepared.task_state.clone(),
+            parent_context: prepared.parent_task_record.as_ref().map(|record| {
+                TaskBeginParentContext {
+                    session_id: params.parent_session_id,
+                    active_task_record: record,
+                }
+            }),
+            preparation_request: TaskBackendPreparationRequest::HiddenChild(
+                HiddenChildTaskBackendPreparationRequest {
+                    agent_executor: &executor,
+                    prompt: params.prompt,
+                    agent_type: params.agent_type,
+                    delegate_display_name: params.delegate_display_name,
+                    api_format: params.api_format,
+                    base_url: params.base_url,
+                    api_key: params.api_key,
+                    model: params.model,
+                    allowed_tools: params.allowed_tools.clone(),
+                    max_iterations: params.max_iterations,
+                    work_dir: params.work_dir.clone(),
+                },
+            ),
+            app_handle: params.app_handle.cloned(),
+            agent_executor: Arc::clone(&executor),
+            on_token: token_callback,
+            prepare_surface: |_| {},
         },
     )
     .await
     .map_err(anyhow::Error::msg)?
     {
-        DelegatedTaskTerminalOutcome::Completed { output } => {
+        DelegatedTaskEntryOutcome::Completed { output } => {
             Ok(ChildSessionRunOutcome { final_text: output })
         }
-        DelegatedTaskTerminalOutcome::Stopped { error, .. }
-        | DelegatedTaskTerminalOutcome::Failed { error } => Err(anyhow::Error::msg(error)),
+        DelegatedTaskEntryOutcome::Stopped { error, .. }
+        | DelegatedTaskEntryOutcome::Failed { error } => Err(anyhow::Error::msg(error)),
     };
 
     if let (Some(app), Some(parent_session_id)) =
@@ -295,7 +291,7 @@ mod tests {
     use crate::agent::runtime::kernel::execution_plan::{ExecutionLane, ExecutionOutcome};
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
-    use crate::agent::runtime::task_active_run::TaskExecutionOutcome;
+    use crate::agent::runtime::task_execution::TaskExecutionOutcome;
     use crate::agent::runtime::task_lifecycle;
     use crate::agent::runtime::task_lifecycle::TaskBeginParentContext;
     use crate::agent::runtime::{RunRegistry, RuntimeObservability};

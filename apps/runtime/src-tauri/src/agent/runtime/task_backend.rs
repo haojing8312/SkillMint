@@ -98,32 +98,6 @@ pub(crate) struct PreparedTaskBackendSurface {
     pub execution_context: ExecutionContext,
 }
 
-struct InteractiveChatPreparedTaskBackendExecution<'a> {
-    pub prepared_surface: &'a PreparedTaskBackendSurface,
-    pub app: AppHandle,
-    pub agent_executor: Arc<AgentExecutor>,
-    pub db: &'a sqlx::SqlitePool,
-    pub journal: &'a crate::session_journal::SessionJournalStore,
-    pub session_id: &'a str,
-    pub run_id: &'a str,
-    pub user_message: &'a str,
-    pub cancel_flag: Arc<AtomicBool>,
-    pub tool_confirm_responder: ToolConfirmResponder,
-}
-
-struct DelegatedPreparedTaskBackendExecution<'a> {
-    pub prepared_surface: &'a PreparedTaskBackendSurface,
-    pub app_handle: Option<AppHandle>,
-    pub agent_executor: Arc<AgentExecutor>,
-    pub session_id: &'a str,
-    pub on_token: TaskBackendTokenCallback,
-}
-
-enum PreparedTaskBackendExecutionRequest<'a> {
-    InteractiveChat(InteractiveChatPreparedTaskBackendExecution<'a>),
-    Delegated(DelegatedPreparedTaskBackendExecution<'a>),
-}
-
 pub(crate) enum TaskBackendExecutionContext<'a> {
     InteractiveChat {
         app: AppHandle,
@@ -509,52 +483,74 @@ async fn run_delegated_surface_backend(
     })
 }
 
-async fn execute_prepared_task_backend(
-    request: PreparedTaskBackendExecutionRequest<'_>,
+pub(crate) async fn execute_prepared_task_backend_with_context(
+    prepared_surface: &PreparedTaskBackendSurface,
+    context: TaskBackendExecutionContext<'_>,
 ) -> Result<ExecutionOutcome, String> {
-    match request {
-        PreparedTaskBackendExecutionRequest::InteractiveChat(request) => {
-            debug_assert_eq!(
-                request.prepared_surface.contract,
-                TaskBackendContract::InteractiveChat
-            );
+    match context {
+        TaskBackendExecutionContext::InteractiveChat {
+            app,
+            agent_executor,
+            db,
+            journal,
+            session_id,
+            run_id,
+            user_message,
+            cancel_flag,
+            tool_confirm_responder,
+        } => {
+            if prepared_surface.contract != TaskBackendContract::InteractiveChat {
+                return Err(
+                    "interactive chat backend requires interactive prepared surface".to_string(),
+                );
+            }
             run_task_backend(TaskBackendRunRequest::InteractiveChat(
                 InteractiveChatTaskBackendRequest {
-                    app: request.app,
-                    agent_executor: request.agent_executor,
-                    db: request.db,
-                    journal: request.journal,
-                    session_id: request.session_id,
-                    run_id: request.run_id,
-                    user_message: request.user_message,
-                    turn_context: &request.prepared_surface.turn_context,
-                    execution_context: &request.prepared_surface.execution_context,
-                    cancel_flag: request.cancel_flag,
-                    tool_confirm_responder: request.tool_confirm_responder,
+                    app,
+                    agent_executor,
+                    db,
+                    journal,
+                    session_id,
+                    run_id,
+                    user_message,
+                    turn_context: &prepared_surface.turn_context,
+                    execution_context: &prepared_surface.execution_context,
+                    cancel_flag,
+                    tool_confirm_responder,
                 },
             ))
             .await
         }
-        PreparedTaskBackendExecutionRequest::Delegated(request) => {
-            let run_request = match request.prepared_surface.contract {
+        TaskBackendExecutionContext::Delegated {
+            app_handle,
+            agent_executor,
+            session_id,
+            on_token,
+        } => {
+            if prepared_surface.contract == TaskBackendContract::InteractiveChat {
+                return Err(
+                    "interactive chat backend requires interactive execution params".to_string(),
+                );
+            }
+            let run_request = match prepared_surface.contract {
                 TaskBackendContract::HiddenChild => {
                     TaskBackendRunRequest::HiddenChild(PreparedSurfaceTaskBackendRequest {
-                        app_handle: request.app_handle,
-                        agent_executor: request.agent_executor,
-                        session_id: request.session_id,
-                        turn_context: &request.prepared_surface.turn_context,
-                        execution_context: &request.prepared_surface.execution_context,
-                        on_token: request.on_token,
+                        app_handle,
+                        agent_executor,
+                        session_id,
+                        turn_context: &prepared_surface.turn_context,
+                        execution_context: &prepared_surface.execution_context,
+                        on_token,
                     })
                 }
                 TaskBackendContract::EmployeeStep => {
                     TaskBackendRunRequest::EmployeeStep(PreparedSurfaceTaskBackendRequest {
-                        app_handle: request.app_handle,
-                        agent_executor: request.agent_executor,
-                        session_id: request.session_id,
-                        turn_context: &request.prepared_surface.turn_context,
-                        execution_context: &request.prepared_surface.execution_context,
-                        on_token: request.on_token,
+                        app_handle,
+                        agent_executor,
+                        session_id,
+                        turn_context: &prepared_surface.turn_context,
+                        execution_context: &prepared_surface.execution_context,
+                        on_token,
                     })
                 }
                 TaskBackendContract::InteractiveChat => {
@@ -573,80 +569,12 @@ async fn execute_prepared_task_backend(
     }
 }
 
-pub(crate) async fn execute_prepared_task_backend_with_context(
-    prepared_surface: &PreparedTaskBackendSurface,
-    context: TaskBackendExecutionContext<'_>,
-) -> Result<ExecutionOutcome, String> {
-    let request = build_prepared_task_backend_execution_request(prepared_surface, context)?;
-    execute_prepared_task_backend(request).await
-}
-
-fn build_prepared_task_backend_execution_request<'a>(
-    prepared_surface: &'a PreparedTaskBackendSurface,
-    context: TaskBackendExecutionContext<'a>,
-) -> Result<PreparedTaskBackendExecutionRequest<'a>, String> {
-    match context {
-        TaskBackendExecutionContext::InteractiveChat {
-            app,
-            agent_executor,
-            db,
-            journal,
-            session_id,
-            run_id,
-            user_message,
-            cancel_flag,
-            tool_confirm_responder,
-        } => {
-            if prepared_surface.contract != TaskBackendContract::InteractiveChat {
-                return Err(
-                    "interactive chat backend requires interactive prepared surface".to_string(),
-                );
-            }
-            Ok(PreparedTaskBackendExecutionRequest::InteractiveChat(
-                InteractiveChatPreparedTaskBackendExecution {
-                    prepared_surface,
-                    app,
-                    agent_executor,
-                    db,
-                    journal,
-                    session_id,
-                    run_id,
-                    user_message,
-                    cancel_flag,
-                    tool_confirm_responder,
-                },
-            ))
-        }
-        TaskBackendExecutionContext::Delegated {
-            app_handle,
-            agent_executor,
-            session_id,
-            on_token,
-        } => {
-            if prepared_surface.contract == TaskBackendContract::InteractiveChat {
-                return Err(
-                    "interactive chat backend requires interactive execution params".to_string(),
-                );
-            }
-            Ok(PreparedTaskBackendExecutionRequest::Delegated(
-                DelegatedPreparedTaskBackendExecution {
-                    prepared_surface,
-                    app_handle,
-                    agent_executor,
-                    session_id,
-                    on_token,
-                },
-            ))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_prepared_task_backend, prepare_task_backend, DelegatedPreparedTaskBackendExecution,
+        execute_prepared_task_backend_with_context, prepare_task_backend,
         EmployeeStepTaskBackendPreparationRequest, HiddenChildTaskBackendPreparationRequest,
-        PreparedTaskBackendExecutionRequest, TaskBackendContract, TaskBackendPreparationRequest,
+        TaskBackendContract, TaskBackendExecutionContext, TaskBackendPreparationRequest,
         TaskBackendTokenCallback,
     };
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
@@ -760,14 +688,14 @@ mod tests {
                 crate::agent::runtime::kernel::execution_plan::ExecutionContext::default(),
         };
         let runtime = tokio::runtime::Runtime::new().expect("create tokio runtime");
-        let result = runtime.block_on(execute_prepared_task_backend(
-            PreparedTaskBackendExecutionRequest::Delegated(DelegatedPreparedTaskBackendExecution {
-                prepared_surface: &prepared_surface,
+        let result = runtime.block_on(execute_prepared_task_backend_with_context(
+            &prepared_surface,
+            TaskBackendExecutionContext::Delegated {
                 app_handle: None,
                 agent_executor: Arc::new(AgentExecutor::new(Arc::new(ToolRegistry::new()))),
                 session_id: "session-1",
                 on_token: Arc::new(|_| {}) as TaskBackendTokenCallback,
-            }),
+            },
         ));
 
         assert!(

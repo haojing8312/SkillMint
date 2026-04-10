@@ -10,9 +10,6 @@ use super::{get_employee_group_run_snapshot_by_run_id_with_pool, list_agent_empl
 use crate::agent::run_guard::RunStopReasonKind;
 use crate::agent::runtime::kernel::execution_plan::ExecutionOutcome;
 use crate::agent::runtime::runtime_io::insert_session_message_with_pool;
-use crate::agent::runtime::task_active_run::{
-    DelegatedTaskBackendRunRequest, TaskExecutionOutcome,
-};
 use crate::agent::runtime::task_backend::{
     execute_prepared_task_backend_with_context, prepare_task_backend,
     EmployeeStepTaskBackendPreparationRequest, TaskBackendExecutionContext,
@@ -20,13 +17,14 @@ use crate::agent::runtime::task_backend::{
 };
 use crate::agent::runtime::task_entry;
 use crate::agent::runtime::task_entry::{
-    DelegatedTaskBackendRunAndFinalizeRequest, DelegatedTaskTerminalFinalizeEntryRequest,
+    DelegatedTaskBackendRunAndFinalizeRequest, DelegatedTaskEntryOutcome,
+    DelegatedTaskTerminalFinalizeEntryRequest,
 };
+use crate::agent::runtime::task_execution::TaskExecutionOutcome;
 use crate::agent::runtime::task_lifecycle;
 use crate::agent::runtime::task_lifecycle::TaskBeginParentContext;
 use crate::agent::runtime::task_record::TaskRecord;
 use crate::agent::runtime::task_state::TaskState;
-use crate::agent::runtime::task_terminal::DelegatedTaskTerminalOutcome;
 use crate::agent::tools::{EmployeeManageTool, MemoryTool};
 use crate::agent::{AgentExecutor, ToolRegistry};
 use crate::commands::chat_runtime_io::extract_assistant_text_content;
@@ -77,7 +75,7 @@ async fn finalize_employee_step_execution_outcome(
     journal: &SessionJournalStore,
     _prepared: &PreparedEmployeeStepSessionRun,
     outcome: TaskExecutionOutcome,
-) -> Result<DelegatedTaskTerminalOutcome, String> {
+) -> Result<DelegatedTaskEntryOutcome, String> {
     match task_entry::finalize_delegated_task_execution_outcome_entry(
         DelegatedTaskTerminalFinalizeEntryRequest {
             db: pool,
@@ -173,47 +171,45 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
     {
         match task_entry::run_and_finalize_delegated_task_backend(
             DelegatedTaskBackendRunAndFinalizeRequest {
-                backend_request: DelegatedTaskBackendRunRequest {
-                    db: pool,
-                    journal,
-                    task_state: prepared_run.task_state.clone(),
-                    parent_context: prepared_run.parent_task_record.as_ref().map(|record| {
-                        TaskBeginParentContext {
-                            session_id,
-                            active_task_record: record,
-                        }
-                    }),
-                    preparation_request: TaskBackendPreparationRequest::EmployeeStep(
-                        EmployeeStepTaskBackendPreparationRequest {
-                            agent_executor: &executor,
-                            user_prompt: &user_prompt,
-                            employee_step_system_prompt: &system_prompt,
-                            api_format: &model_row.api_format,
-                            base_url: &model_row.base_url,
-                            api_key: &model_row.api_key,
-                            model: &model_row.model_name,
-                            allowed_tools,
-                            max_iterations,
-                            work_dir: if session_row.work_dir.trim().is_empty() {
-                                None
-                            } else {
-                                Some(session_row.work_dir.clone())
-                            },
+                db: pool,
+                journal,
+                task_state: prepared_run.task_state.clone(),
+                parent_context: prepared_run.parent_task_record.as_ref().map(|record| {
+                    TaskBeginParentContext {
+                        session_id,
+                        active_task_record: record,
+                    }
+                }),
+                preparation_request: TaskBackendPreparationRequest::EmployeeStep(
+                    EmployeeStepTaskBackendPreparationRequest {
+                        agent_executor: &executor,
+                        user_prompt: &user_prompt,
+                        employee_step_system_prompt: &system_prompt,
+                        api_format: &model_row.api_format,
+                        base_url: &model_row.base_url,
+                        api_key: &model_row.api_key,
+                        model: &model_row.model_name,
+                        allowed_tools,
+                        max_iterations,
+                        work_dir: if session_row.work_dir.trim().is_empty() {
+                            None
+                        } else {
+                            Some(session_row.work_dir.clone())
                         },
-                    ),
-                    app_handle: None,
-                    agent_executor: Arc::clone(&executor),
-                    on_token: Arc::new(|_| {}) as TaskBackendTokenCallback,
-                    prepare_surface: move |prepared_surface| {
-                        prepared_surface.turn_context.messages = messages;
                     },
+                ),
+                app_handle: None,
+                agent_executor: Arc::clone(&executor),
+                on_token: Arc::new(|_| {}) as TaskBackendTokenCallback,
+                prepare_surface: move |prepared_surface| {
+                    prepared_surface.turn_context.messages = messages;
                 },
             },
         )
         .await?
         {
-            DelegatedTaskTerminalOutcome::Completed { output } => output,
-            DelegatedTaskTerminalOutcome::Stopped { stop_reason, error } => {
+            DelegatedTaskEntryOutcome::Completed { output } => output,
+            DelegatedTaskEntryOutcome::Stopped { stop_reason, error } => {
                 if stop_reason.kind != RunStopReasonKind::MaxTurns {
                     return Err(error);
                 }
@@ -237,7 +233,7 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
                 .await?;
                 return Ok(fallback_output);
             }
-            DelegatedTaskTerminalOutcome::Failed { error } => return Err(error),
+            DelegatedTaskEntryOutcome::Failed { error } => return Err(error),
         }
     } else {
         let mut prepared_surface =
@@ -626,10 +622,10 @@ mod tests {
     use crate::agent::runtime::kernel::execution_plan::{ExecutionLane, ExecutionOutcome};
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
-    use crate::agent::runtime::task_active_run::TaskExecutionOutcome;
+    use crate::agent::runtime::task_entry::DelegatedTaskEntryOutcome;
+    use crate::agent::runtime::task_execution::TaskExecutionOutcome;
     use crate::agent::runtime::task_lifecycle;
     use crate::agent::runtime::task_lifecycle::TaskBeginParentContext;
-    use crate::agent::runtime::task_terminal::DelegatedTaskTerminalOutcome;
     use crate::session_journal::{
         SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot,
     };
@@ -753,7 +749,7 @@ mod tests {
 
         assert!(matches!(
             finalized,
-            DelegatedTaskTerminalOutcome::Completed { ref output }
+            DelegatedTaskEntryOutcome::Completed { ref output }
                 if output == "已汇总日报，并补充了当前风险项。"
         ));
 

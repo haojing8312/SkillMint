@@ -7,7 +7,7 @@ use crate::agent::runtime::runtime_io::{
     append_partial_assistant_chunk_with_pool, append_run_failed_with_pool,
     append_run_stopped_with_pool, finalize_run_success_with_pool,
 };
-use crate::agent::runtime::task_active_run::TaskExecutionOutcome;
+use crate::agent::runtime::task_execution::TaskExecutionOutcome;
 use crate::agent::runtime::task_lifecycle;
 use crate::agent::runtime::task_record::TaskRecord;
 use crate::agent::runtime::task_state::{TaskBackendKind, TaskState};
@@ -435,7 +435,7 @@ mod tests {
     };
     use crate::agent::runtime::kernel::execution_plan::ExecutionOutcome;
     use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
-    use crate::agent::runtime::task_active_run::TaskExecutionOutcome;
+    use crate::agent::runtime::task_execution::TaskExecutionOutcome;
     use crate::agent::runtime::task_record::TaskRecord;
     use crate::agent::runtime::task_state::{TaskKind, TaskState, TaskSurfaceKind};
 
