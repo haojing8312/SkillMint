@@ -51,6 +51,7 @@ impl RunRegistry {
             SessionRunEvent::TaskContinued { .. }
             | SessionRunEvent::TaskStateProjected { .. }
             | SessionRunEvent::TaskDelegated { .. }
+            | SessionRunEvent::TaskReturned { .. }
             | SessionRunEvent::TaskRecordUpserted { .. }
             | SessionRunEvent::TaskStatusChanged { .. } => {}
             SessionRunEvent::RunStarted { run_id, .. } => {

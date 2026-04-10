@@ -7,8 +7,8 @@ use crate::agent::runtime::task_state::{
     TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
 };
 use crate::agent::runtime::task_transition::{
-    resolve_commit_transition, resolve_initial_transition, resolve_stop_transition,
-    resolve_terminal_transition, TaskContinuationMode, TaskTransition,
+    resolve_commit_transition, resolve_delegated_return_transition, resolve_initial_transition,
+    resolve_stop_transition, resolve_terminal_transition, TaskContinuationMode, TaskTransition,
 };
 use crate::session_journal::{
     SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot, SessionTaskRecordSnapshot,
@@ -134,6 +134,20 @@ pub(crate) async fn resolve_latest_task_record_for_session(
         .map(rebuild_task_record)
 }
 
+pub(crate) async fn resolve_task_record_for_session_task_id(
+    journal: &SessionJournalStore,
+    session_id: &str,
+    task_id: &str,
+) -> Option<TaskRecord> {
+    let state = journal.read_state(session_id).await.ok()?;
+    state
+        .tasks
+        .iter()
+        .rev()
+        .find(|task| task.session_id == session_id && task.task_identity.task_id == task_id)
+        .map(rebuild_task_record)
+}
+
 pub(crate) async fn project_task_state(
     db: &sqlx::SqlitePool,
     journal: &SessionJournalStore,
@@ -246,6 +260,40 @@ async fn project_task_delegation(
     .await
 }
 
+async fn project_task_return(
+    db: &sqlx::SqlitePool,
+    journal: &SessionJournalStore,
+    session_id: &str,
+    active_task_record: &TaskRecord,
+    returned_task_identity: &TaskIdentity,
+    returned_task_kind: TaskKind,
+    returned_surface_kind: TaskSurfaceKind,
+    returned_backend_kind: TaskBackendKind,
+    returned_status: TaskLifecycleStatus,
+    terminal_reason: Option<&str>,
+) -> Result<(), String> {
+    append_session_run_event_with_pool(
+        db,
+        journal,
+        session_id,
+        SessionRunEvent::TaskReturned {
+            run_id: active_task_record.run_id.clone(),
+            to_task_id: active_task_record.task_identity.task_id.clone(),
+            to_task_kind: active_task_record.task_kind.journal_key().to_string(),
+            to_surface_kind: active_task_record.surface_kind.journal_key().to_string(),
+            returned_task: build_task_identity_snapshot_from_parts(
+                returned_task_identity,
+                returned_task_kind,
+                returned_surface_kind,
+                returned_backend_kind,
+            ),
+            returned_status,
+            terminal_reason: terminal_reason.map(str::to_string),
+        },
+    )
+    .await
+}
+
 pub(crate) async fn start_task(
     db: &sqlx::SqlitePool,
     journal: &SessionJournalStore,
@@ -305,6 +353,7 @@ async fn apply_initial_transition(
                 .await?;
             }
         }
+        TaskTransition::ReturnFromDelegatedTask { .. } => {}
     }
     Ok(())
 }
@@ -368,6 +417,29 @@ pub(crate) async fn apply_transition(
                 *delegated_task_kind,
                 *delegated_surface_kind,
                 *delegated_backend_kind,
+            )
+            .await?;
+            Ok(active_task_record.clone())
+        }
+        TaskTransition::ReturnFromDelegatedTask {
+            returned_task_identity,
+            returned_task_kind,
+            returned_surface_kind,
+            returned_backend_kind,
+            returned_status,
+            terminal_reason,
+        } => {
+            project_task_return(
+                db,
+                journal,
+                session_id,
+                active_task_record,
+                returned_task_identity,
+                *returned_task_kind,
+                *returned_surface_kind,
+                *returned_backend_kind,
+                *returned_status,
+                terminal_reason.as_deref(),
             )
             .await?;
             Ok(active_task_record.clone())
@@ -482,6 +554,25 @@ pub(crate) async fn mark_task_failed(
         &TaskTransition::failed(terminal_reason),
     )
     .await
+}
+
+pub(crate) async fn project_delegated_task_return(
+    db: &sqlx::SqlitePool,
+    journal: &SessionJournalStore,
+    parent_session_id: &str,
+    parent_task_record: &TaskRecord,
+    returned_task_record: &TaskRecord,
+) -> Result<(), String> {
+    let transition = resolve_delegated_return_transition(returned_task_record);
+    let _ = apply_transition(
+        db,
+        journal,
+        parent_session_id,
+        parent_task_record,
+        &transition,
+    )
+    .await?;
+    Ok(())
 }
 
 pub(crate) fn attach_task_state(

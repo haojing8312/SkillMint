@@ -215,6 +215,46 @@ fn summarize_event(
             is_error: Some(false),
             parse_warning: None,
         },
+        SessionRunEvent::TaskReturned {
+            to_task_id,
+            to_task_kind,
+            to_surface_kind,
+            returned_task,
+            returned_status,
+            terminal_reason,
+            ..
+        } => SessionRunEventSummary {
+            session_id: record.session_id.clone(),
+            run_id: record.run_id.clone(),
+            event_type: record.event_type.clone(),
+            created_at: record.created_at.clone(),
+            status: Some(returned_status.as_key().to_string()),
+            tool_name: None,
+            call_id: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            message: Some(format!(
+                "task={} surface={} returned {}",
+                to_task_kind, to_surface_kind, returned_task.task_kind
+            )),
+            detail: Some(format!(
+                "to_task_id={}, returned_task_id={}, returned_task_path={}, terminal_reason={}",
+                to_task_id,
+                returned_task.task_id,
+                build_task_path(&returned_task).unwrap_or_else(|| returned_task.task_id.clone()),
+                terminal_reason.as_deref().unwrap_or("-")
+            )),
+            irreversible: None,
+            last_completed_step: None,
+            child_session_id: None,
+            is_error: Some(matches!(
+                returned_status,
+                crate::agent::runtime::task_record::TaskLifecycleStatus::Failed
+                    | crate::agent::runtime::task_record::TaskLifecycleStatus::Cancelled
+            )),
+            parse_warning: None,
+        },
         SessionRunEvent::TaskRecordUpserted { task, .. } => SessionRunEventSummary {
             session_id: record.session_id.clone(),
             run_id: record.run_id.clone(),
@@ -732,6 +772,7 @@ fn extract_task_identity(
         SessionRunEvent::TaskContinued { task_identity, .. }
         | SessionRunEvent::TaskStateProjected { task_identity, .. } => Some(task_identity),
         SessionRunEvent::TaskDelegated { delegated_task, .. } => Some(delegated_task),
+        SessionRunEvent::TaskReturned { returned_task, .. } => Some(returned_task),
         SessionRunEvent::ToolStarted { task_identity, .. }
         | SessionRunEvent::ToolCompleted { task_identity, .. }
         | SessionRunEvent::ApprovalRequested { task_identity, .. } => task_identity.as_ref(),
@@ -1269,6 +1310,48 @@ mod tests {
             .any(|node| node.task_id == "task-child"
                 && node.parent_task_id.as_deref() == Some("task-parent")
                 && node.backend_kind == "hidden_child_backend"));
+    }
+
+    #[test]
+    fn task_returned_events_keep_returned_tasks_visible_in_task_graph() {
+        let trace = build_session_run_trace(
+            "session-1",
+            "run-parent",
+            &[stored_event(
+                "session-1",
+                "run-parent",
+                "task_returned",
+                "2026-04-10T00:00:00Z",
+                SessionRunEvent::TaskReturned {
+                    run_id: "run-parent".to_string(),
+                    to_task_id: "task-parent".to_string(),
+                    to_task_kind: "primary_user_task".to_string(),
+                    to_surface_kind: "local_chat_surface".to_string(),
+                    returned_task: crate::session_journal::SessionRunTaskIdentitySnapshot {
+                        task_id: "task-child".to_string(),
+                        parent_task_id: Some("task-parent".to_string()),
+                        root_task_id: "task-root".to_string(),
+                        task_kind: "sub_agent_task".to_string(),
+                        surface_kind: "hidden_child_surface".to_string(),
+                        backend_kind: "hidden_child_backend".to_string(),
+                    },
+                    returned_status:
+                        crate::agent::runtime::task_record::TaskLifecycleStatus::Completed,
+                    terminal_reason: Some("completed".to_string()),
+                },
+            )],
+        );
+
+        assert!(trace
+            .task_graph
+            .iter()
+            .any(|node| node.task_id == "task-child"
+                && node.parent_task_id.as_deref() == Some("task-parent")
+                && node.backend_kind == "hidden_child_backend"));
+        assert!(trace
+            .events
+            .iter()
+            .any(|event| event.event_type == "task_returned"));
     }
 
     #[test]

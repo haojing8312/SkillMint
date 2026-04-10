@@ -385,6 +385,16 @@ pub enum SessionRunEvent {
         from_surface_kind: String,
         delegated_task: SessionRunTaskIdentitySnapshot,
     },
+    TaskReturned {
+        run_id: String,
+        to_task_id: String,
+        to_task_kind: String,
+        to_surface_kind: String,
+        returned_task: SessionRunTaskIdentitySnapshot,
+        returned_status: TaskLifecycleStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal_reason: Option<String>,
+    },
     TaskRecordUpserted {
         run_id: String,
         task: TaskRecordUpsertPayload,
@@ -487,6 +497,7 @@ fn apply_event(state: &mut SessionJournalState, event: &SessionRunEvent) {
         SessionRunEvent::TaskContinued { run_id, .. }
         | SessionRunEvent::TaskStateProjected { run_id, .. }
         | SessionRunEvent::TaskDelegated { run_id, .. }
+        | SessionRunEvent::TaskReturned { run_id, .. }
         | SessionRunEvent::TaskRecordUpserted { run_id, .. }
         | SessionRunEvent::TaskStatusChanged { run_id, .. }
         | SessionRunEvent::RunStarted { run_id, .. }
@@ -508,7 +519,7 @@ fn apply_event(state: &mut SessionJournalState, event: &SessionRunEvent) {
         | SessionRunEvent::TaskStateProjected { task_identity, .. } => {
             state.runs[run_index].task_identity = Some(task_identity.clone());
         }
-        SessionRunEvent::TaskDelegated { .. } => {}
+        SessionRunEvent::TaskDelegated { .. } | SessionRunEvent::TaskReturned { .. } => {}
         SessionRunEvent::TaskRecordUpserted { task, .. } => {
             project_task_record_upsert(state, task);
         }
@@ -815,6 +826,49 @@ fn build_observed_session_run_event(
                     "delegated_task_kind": delegated_task.task_kind,
                     "delegated_surface_kind": delegated_task.surface_kind,
                     "delegated_backend_kind": delegated_task.backend_kind,
+                })
+                .to_string(),
+            ),
+        },
+        SessionRunEvent::TaskReturned {
+            run_id,
+            to_task_id,
+            to_task_kind,
+            to_surface_kind,
+            returned_task,
+            returned_status,
+            terminal_reason,
+        } => RuntimeObservedRunEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.clone(),
+            event_type: "task_returned".to_string(),
+            created_at: recorded_at.to_string(),
+            status: Some(returned_status.as_key().to_string()),
+            tool_name: None,
+            approval_id: None,
+            warning_kind: None,
+            error_kind: None,
+            child_session_id: None,
+            route_latency_ms: None,
+            candidate_count: None,
+            selected_skill: Some(returned_task.task_kind.clone()),
+            fallback_reason: None,
+            tool_recommendation_summary: None,
+            tool_recommendation_aligned: None,
+            tool_plan_summary: None,
+            message: Some(
+                json!({
+                    "to_task_id": to_task_id,
+                    "to_task_kind": to_task_kind,
+                    "to_surface_kind": to_surface_kind,
+                    "returned_task_id": returned_task.task_id,
+                    "returned_parent_task_id": returned_task.parent_task_id,
+                    "returned_root_task_id": returned_task.root_task_id,
+                    "returned_task_kind": returned_task.task_kind,
+                    "returned_surface_kind": returned_task.surface_kind,
+                    "returned_backend_kind": returned_task.backend_kind,
+                    "returned_status": returned_status,
+                    "terminal_reason": terminal_reason,
                 })
                 .to_string(),
             ),

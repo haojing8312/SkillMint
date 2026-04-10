@@ -89,6 +89,35 @@ pub(crate) async fn prepare_hidden_child_session_run(
     })
 }
 
+async fn project_hidden_child_task_return_to_parent(
+    db: &sqlx::SqlitePool,
+    journal: &SessionJournalStore,
+    parent_session_id: &str,
+    prepared: &PreparedChildSessionRun,
+) {
+    let Some(parent_task_record) = prepared.parent_task_record.as_ref() else {
+        return;
+    };
+    let Some(returned_task_record) = task_lifecycle::resolve_task_record_for_session_task_id(
+        journal,
+        &prepared.child_session_id,
+        &prepared.task_state.task_identity.task_id,
+    )
+    .await
+    else {
+        return;
+    };
+
+    let _ = task_lifecycle::project_delegated_task_return(
+        db,
+        journal,
+        parent_session_id,
+        parent_task_record,
+        &returned_task_record,
+    )
+    .await;
+}
+
 #[cfg(test)]
 pub(crate) async fn finalize_hidden_child_session_success_with_messages(
     db: &sqlx::SqlitePool,
@@ -194,7 +223,7 @@ pub(crate) async fn run_hidden_child_session(
             }
         }
     });
-    let finalized = match task_entry::run_and_finalize_delegated_task_backend(
+    let finalized = task_entry::run_and_finalize_delegated_task_backend(
         DelegatedTaskBackendRunAndFinalizeRequest {
             db: params.db,
             journal: params.journal,
@@ -226,9 +255,17 @@ pub(crate) async fn run_hidden_child_session(
             prepare_surface: |_| {},
         },
     )
-    .await
-    .map_err(anyhow::Error::msg)?
-    {
+    .await;
+
+    project_hidden_child_task_return_to_parent(
+        params.db,
+        params.journal,
+        params.parent_session_id,
+        &prepared,
+    )
+    .await;
+
+    let finalized = match finalized.map_err(anyhow::Error::msg)? {
         DelegatedTaskEntryOutcome::Completed { output } => {
             Ok(ChildSessionRunOutcome { final_text: output })
         }

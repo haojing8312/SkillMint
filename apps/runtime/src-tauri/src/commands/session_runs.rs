@@ -335,6 +335,7 @@ pub async fn append_session_run_event_with_pool(
         SessionRunEvent::TaskContinued { .. }
         | SessionRunEvent::TaskStateProjected { .. }
         | SessionRunEvent::TaskDelegated { .. }
+        | SessionRunEvent::TaskReturned { .. }
         | SessionRunEvent::TaskRecordUpserted { .. }
         | SessionRunEvent::TaskStatusChanged { .. } => {}
         SessionRunEvent::RunStarted {
@@ -570,6 +571,7 @@ fn event_type(event: &SessionRunEvent) -> &'static str {
         SessionRunEvent::TaskContinued { .. } => "task_continued",
         SessionRunEvent::TaskStateProjected { .. } => "task_state_projected",
         SessionRunEvent::TaskDelegated { .. } => "task_delegated",
+        SessionRunEvent::TaskReturned { .. } => "task_returned",
         SessionRunEvent::TaskRecordUpserted { .. } => "task_record_upserted",
         SessionRunEvent::TaskStatusChanged { .. } => "task_status_changed",
         SessionRunEvent::RunStarted { .. } => "run_started",
@@ -591,6 +593,7 @@ fn event_run_id(event: &SessionRunEvent) -> &str {
         SessionRunEvent::TaskContinued { run_id, .. }
         | SessionRunEvent::TaskStateProjected { run_id, .. }
         | SessionRunEvent::TaskDelegated { run_id, .. }
+        | SessionRunEvent::TaskReturned { run_id, .. }
         | SessionRunEvent::TaskRecordUpserted { run_id, .. }
         | SessionRunEvent::TaskStatusChanged { run_id, .. }
         | SessionRunEvent::RunStarted { run_id, .. }

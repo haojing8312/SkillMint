@@ -1,4 +1,5 @@
 use crate::agent::run_guard::RunStopReasonKind;
+use crate::agent::runtime::task_record::{TaskLifecycleStatus, TaskRecord};
 use crate::agent::runtime::task_state::{
     TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
 };
@@ -40,6 +41,14 @@ pub(crate) enum TaskTransition {
         delegated_task_kind: TaskKind,
         delegated_surface_kind: TaskSurfaceKind,
         delegated_backend_kind: TaskBackendKind,
+    },
+    ReturnFromDelegatedTask {
+        returned_task_identity: TaskIdentity,
+        returned_task_kind: TaskKind,
+        returned_surface_kind: TaskSurfaceKind,
+        returned_backend_kind: TaskBackendKind,
+        returned_status: TaskLifecycleStatus,
+        terminal_reason: Option<String>,
     },
     StopCompleted {
         terminal_reason: String,
@@ -164,13 +173,28 @@ pub(crate) fn resolve_initial_transition(task_state: &TaskState) -> TaskTransiti
     })
 }
 
+pub(crate) fn resolve_delegated_return_transition(
+    returned_task_record: &TaskRecord,
+) -> TaskTransition {
+    TaskTransition::ReturnFromDelegatedTask {
+        returned_task_identity: returned_task_record.task_identity.clone(),
+        returned_task_kind: returned_task_record.task_kind,
+        returned_surface_kind: returned_task_record.surface_kind,
+        returned_backend_kind: returned_task_record.backend_kind,
+        returned_status: returned_task_record.status,
+        terminal_reason: returned_task_record.terminal_reason.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_commit_transition, resolve_delegation_transition, resolve_initial_transition,
-        resolve_stop_transition, resolve_terminal_transition, TaskContinuationMode, TaskTransition,
+        resolve_commit_transition, resolve_delegated_return_transition,
+        resolve_delegation_transition, resolve_initial_transition, resolve_stop_transition,
+        resolve_terminal_transition, TaskContinuationMode, TaskTransition,
     };
     use crate::agent::run_guard::RunStopReasonKind;
+    use crate::agent::runtime::task_record::{TaskLifecycleStatus, TaskRecord};
     use crate::agent::runtime::task_state::{
         TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
     };
@@ -320,6 +344,37 @@ mod tests {
             TaskTransition::Continue {
                 mode: TaskContinuationMode::RecoveryResume,
                 reason: "recovery_resume".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_delegated_return_transition_preserves_terminal_task_metadata() {
+        let record = TaskRecord {
+            task_identity: TaskIdentity::new("task-child", Some("task-parent"), Some("task-root")),
+            task_kind: TaskKind::SubAgentTask,
+            surface_kind: TaskSurfaceKind::HiddenChildSurface,
+            backend_kind: TaskBackendKind::HiddenChildBackend,
+            session_id: "session-child".to_string(),
+            user_message_id: "user-1".to_string(),
+            run_id: "run-child".to_string(),
+            status: TaskLifecycleStatus::Failed,
+            created_at: "2026-04-10T10:00:00Z".to_string(),
+            updated_at: "2026-04-10T10:02:00Z".to_string(),
+            started_at: Some("2026-04-10T10:00:30Z".to_string()),
+            completed_at: Some("2026-04-10T10:02:00Z".to_string()),
+            terminal_reason: Some("tool_failure_circuit_breaker".to_string()),
+        };
+
+        assert_eq!(
+            resolve_delegated_return_transition(&record),
+            TaskTransition::ReturnFromDelegatedTask {
+                returned_task_identity: record.task_identity.clone(),
+                returned_task_kind: TaskKind::SubAgentTask,
+                returned_surface_kind: TaskSurfaceKind::HiddenChildSurface,
+                returned_backend_kind: TaskBackendKind::HiddenChildBackend,
+                returned_status: TaskLifecycleStatus::Failed,
+                terminal_reason: Some("tool_failure_circuit_breaker".to_string()),
             }
         );
     }

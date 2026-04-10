@@ -69,6 +69,35 @@ async fn prepare_employee_step_session_run(
     })
 }
 
+async fn project_employee_step_task_return(
+    pool: &SqlitePool,
+    journal: &SessionJournalStore,
+    session_id: &str,
+    prepared: &PreparedEmployeeStepSessionRun,
+) {
+    let Some(parent_task_record) = prepared.parent_task_record.as_ref() else {
+        return;
+    };
+    let Some(returned_task_record) = task_lifecycle::resolve_task_record_for_session_task_id(
+        journal,
+        session_id,
+        &prepared.task_state.task_identity.task_id,
+    )
+    .await
+    else {
+        return;
+    };
+
+    let _ = task_lifecycle::project_delegated_task_return(
+        pool,
+        journal,
+        session_id,
+        parent_task_record,
+        &returned_task_record,
+    )
+    .await;
+}
+
 #[cfg(test)]
 async fn finalize_employee_step_execution_outcome(
     pool: &SqlitePool,
@@ -169,7 +198,7 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
     let assistant_output = if let (Some(journal), Some(prepared_run)) =
         (journal, prepared_run.as_ref())
     {
-        match task_entry::run_and_finalize_delegated_task_backend(
+        let delegated_outcome = task_entry::run_and_finalize_delegated_task_backend(
             DelegatedTaskBackendRunAndFinalizeRequest {
                 db: pool,
                 journal,
@@ -206,8 +235,11 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
                 },
             },
         )
-        .await?
-        {
+        .await;
+
+        project_employee_step_task_return(pool, journal, session_id, prepared_run).await;
+
+        match delegated_outcome? {
             DelegatedTaskEntryOutcome::Completed { output } => output,
             DelegatedTaskEntryOutcome::Stopped { stop_reason, error } => {
                 if stop_reason.kind != RunStopReasonKind::MaxTurns {
