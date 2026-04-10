@@ -18,6 +18,7 @@ pub mod session_runtime;
 pub(crate) mod skill_routing;
 pub(crate) mod task_active_run;
 pub(crate) mod task_backend;
+pub(crate) mod task_continuation;
 pub(crate) mod task_entry;
 pub(crate) mod task_execution;
 pub(crate) mod task_lifecycle;

@@ -1,3 +1,4 @@
+use crate::agent::runtime::task_transition::TaskContinuationMode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -120,6 +121,8 @@ pub(crate) struct TaskState {
     pub task_kind: TaskKind,
     pub surface_kind: TaskSurfaceKind,
     pub backend_kind: TaskBackendKind,
+    pub continuation_mode: Option<TaskContinuationMode>,
+    pub continuation_reason: Option<String>,
     pub session_id: String,
     pub user_message_id: String,
     pub run_id: String,
@@ -142,6 +145,8 @@ impl TaskState {
             task_kind,
             surface_kind,
             backend_kind,
+            continuation_mode: None,
+            continuation_reason: None,
             session_id: session_id.into(),
             user_message_id: user_message_id.into(),
             run_id: run_id.into(),
@@ -162,6 +167,44 @@ impl TaskState {
             run_id,
             None,
         )
+    }
+
+    pub(crate) fn new_recovery_local_chat(
+        session_id: impl Into<String>,
+        user_message_id: impl Into<String>,
+        run_id: impl Into<String>,
+        parent_task_identity: &TaskIdentity,
+    ) -> Self {
+        Self::new_recovery_local_chat_with_contract(
+            session_id,
+            user_message_id,
+            run_id,
+            parent_task_identity,
+            TaskContinuationMode::RecoveryResume,
+            "recovery_resume",
+        )
+    }
+
+    pub(crate) fn new_recovery_local_chat_with_contract(
+        session_id: impl Into<String>,
+        user_message_id: impl Into<String>,
+        run_id: impl Into<String>,
+        parent_task_identity: &TaskIdentity,
+        continuation_mode: TaskContinuationMode,
+        continuation_reason: impl Into<String>,
+    ) -> Self {
+        let mut task_state = Self::new_for_task_kind(
+            TaskKind::RecoveryTask,
+            TaskSurfaceKind::LocalChatSurface,
+            TaskBackendKind::InteractiveChatBackend,
+            session_id,
+            user_message_id,
+            run_id,
+            Some(parent_task_identity),
+        );
+        task_state.continuation_mode = Some(continuation_mode);
+        task_state.continuation_reason = Some(continuation_reason.into());
+        task_state
     }
 
     pub(crate) fn new_sub_agent(
@@ -201,6 +244,8 @@ impl TaskState {
 
 #[cfg(test)]
 mod tests {
+    use crate::agent::runtime::task_transition::TaskContinuationMode;
+
     use super::{TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind};
 
     #[test]
@@ -213,6 +258,8 @@ mod tests {
             task_state.backend_kind,
             TaskBackendKind::InteractiveChatBackend
         );
+        assert_eq!(task_state.continuation_mode, None);
+        assert_eq!(task_state.continuation_reason, None);
         assert_eq!(task_state.session_id, "session-1");
         assert_eq!(task_state.user_message_id, "user-1");
         assert_eq!(task_state.run_id, "run-1");
@@ -268,6 +315,34 @@ mod tests {
         assert_eq!(
             task_state.backend_kind,
             TaskBackendKind::EmployeeStepBackend
+        );
+        assert_eq!(
+            task_state.task_identity.parent_task_id.as_deref(),
+            Some("task-parent")
+        );
+        assert_eq!(task_state.task_identity.root_task_id, "task-root");
+    }
+
+    #[test]
+    fn recovery_local_chat_task_inherits_parent_lineage_and_uses_recovery_contract() {
+        let parent = TaskIdentity::new("task-parent", Option::<String>::None, Some("task-root"));
+
+        let task_state =
+            TaskState::new_recovery_local_chat("session-1", "user-2", "run-2", &parent);
+
+        assert_eq!(task_state.task_kind, TaskKind::RecoveryTask);
+        assert_eq!(task_state.surface_kind, TaskSurfaceKind::LocalChatSurface);
+        assert_eq!(
+            task_state.backend_kind,
+            TaskBackendKind::InteractiveChatBackend
+        );
+        assert_eq!(
+            task_state.continuation_mode,
+            Some(TaskContinuationMode::RecoveryResume)
+        );
+        assert_eq!(
+            task_state.continuation_reason.as_deref(),
+            Some("recovery_resume")
         );
         assert_eq!(
             task_state.task_identity.parent_task_id.as_deref(),

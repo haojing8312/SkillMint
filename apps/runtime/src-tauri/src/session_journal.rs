@@ -371,6 +371,8 @@ pub enum SessionRunEvent {
     TaskContinued {
         run_id: String,
         task_identity: SessionRunTaskIdentitySnapshot,
+        continuation_mode: String,
+        continuation_reason: String,
     },
     TaskStateProjected {
         run_id: String,
@@ -414,12 +416,16 @@ pub enum SessionRunEvent {
         run_id: String,
         tool_name: String,
         call_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_identity: Option<SessionRunTaskIdentitySnapshot>,
         input: Value,
     },
     ToolCompleted {
         run_id: String,
         tool_name: String,
         call_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_identity: Option<SessionRunTaskIdentitySnapshot>,
         input: Value,
         output: String,
         is_error: bool,
@@ -427,6 +433,8 @@ pub enum SessionRunEvent {
     ApprovalRequested {
         run_id: String,
         approval_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_identity: Option<SessionRunTaskIdentitySnapshot>,
         tool_name: String,
         call_id: String,
         input: Value,
@@ -527,17 +535,26 @@ fn apply_event(state: &mut SessionJournalState, event: &SessionRunEvent) {
                 run.status = SessionRunStatus::Thinking;
             }
         }
-        SessionRunEvent::ToolStarted { .. } => {
+        SessionRunEvent::ToolStarted { task_identity, .. } => {
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::ToolCalling;
+            if let Some(task_identity) = task_identity {
+                run.task_identity = Some(task_identity.clone());
+            }
         }
-        SessionRunEvent::ToolCompleted { .. } => {
+        SessionRunEvent::ToolCompleted { task_identity, .. } => {
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::Thinking;
+            if let Some(task_identity) = task_identity {
+                run.task_identity = Some(task_identity.clone());
+            }
         }
-        SessionRunEvent::ApprovalRequested { .. } => {
+        SessionRunEvent::ApprovalRequested { task_identity, .. } => {
             let run = &mut state.runs[run_index];
             run.status = SessionRunStatus::WaitingApproval;
+            if let Some(task_identity) = task_identity {
+                run.task_identity = Some(task_identity.clone());
+            }
         }
         SessionRunEvent::RunCompleted { run_id, turn_state } => {
             state.runs[run_index].status = SessionRunStatus::Completed;
@@ -696,6 +713,8 @@ fn build_observed_session_run_event(
         SessionRunEvent::TaskContinued {
             run_id,
             task_identity,
+            continuation_mode,
+            continuation_reason,
         } => RuntimeObservedRunEvent {
             session_id: session_id.to_string(),
             run_id: run_id.clone(),
@@ -722,6 +741,8 @@ fn build_observed_session_run_event(
                     "task_kind": task_identity.task_kind,
                     "surface_kind": task_identity.surface_kind,
                     "backend_kind": task_identity.backend_kind,
+                    "continuation_mode": continuation_mode,
+                    "continuation_reason": continuation_reason,
                 })
                 .to_string(),
             ),
@@ -1641,6 +1662,8 @@ mod tests {
                         surface_kind: "local_chat_surface".to_string(),
                         backend_kind: "interactive_chat_backend".to_string(),
                     },
+                    continuation_mode: "recovery_resume".to_string(),
+                    continuation_reason: "recovery_resume".to_string(),
                 },
             )
             .await

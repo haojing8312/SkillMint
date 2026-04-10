@@ -399,6 +399,7 @@ pub async fn append_session_run_event_with_pool(
             summary,
             impact,
             irreversible,
+            ..
         } => {
             sqlx::query(
                 "INSERT INTO approvals (
@@ -787,6 +788,7 @@ mod tests {
                 run_id: "run-a".to_string(),
                 tool_name: "shell_command".to_string(),
                 call_id: "call-1".to_string(),
+                task_identity: None,
                 input: json!({ "command": "pwd" }),
             })
             .expect("serialize tool_started"),
@@ -865,6 +867,7 @@ mod tests {
                     run_id: "run-a".to_string(),
                     tool_name: "read_file".to_string(),
                     call_id: "call-1".to_string(),
+                    task_identity: None,
                     input: json!({ "path": "README.md" }),
                 })
                 .expect("serialize run-a tool"),
@@ -945,6 +948,7 @@ mod tests {
                 run_id: "run-a".to_string(),
                 tool_name: "read_file".to_string(),
                 call_id: "call-1".to_string(),
+                task_identity: None,
                 input: json!({ "path": "README.md" }),
             })
             .expect("serialize tool_started"),
@@ -961,6 +965,7 @@ mod tests {
                 run_id: "run-a".to_string(),
                 tool_name: "read_file".to_string(),
                 call_id: "call-1".to_string(),
+                task_identity: None,
                 input: json!({ "path": "README.md" }),
                 output: "README loaded".to_string(),
                 is_error: false,

@@ -129,7 +129,12 @@ fn summarize_event(
     event: SessionRunEvent,
 ) -> SessionRunEventSummary {
     match event {
-        SessionRunEvent::TaskContinued { task_identity, .. } => SessionRunEventSummary {
+        SessionRunEvent::TaskContinued {
+            task_identity,
+            continuation_mode,
+            continuation_reason,
+            ..
+        } => SessionRunEventSummary {
             session_id: record.session_id.clone(),
             run_id: record.run_id.clone(),
             event_type: record.event_type.clone(),
@@ -141,10 +146,14 @@ fn summarize_event(
             warning_kind: None,
             error_kind: None,
             message: Some(format!(
-                "task={} surface={} continued",
-                task_identity.task_kind, task_identity.surface_kind
+                "task={} surface={} continued mode={}",
+                task_identity.task_kind, task_identity.surface_kind, continuation_mode
             )),
-            detail: Some(summarize_task_identity_detail(&task_identity)),
+            detail: Some(format!(
+                "{} continuation_reason={}",
+                summarize_task_identity_detail(&task_identity),
+                continuation_reason
+            )),
             irreversible: None,
             last_completed_step: None,
             child_session_id: None,
@@ -723,6 +732,9 @@ fn extract_task_identity(
         SessionRunEvent::TaskContinued { task_identity, .. }
         | SessionRunEvent::TaskStateProjected { task_identity, .. } => Some(task_identity),
         SessionRunEvent::TaskDelegated { delegated_task, .. } => Some(delegated_task),
+        SessionRunEvent::ToolStarted { task_identity, .. }
+        | SessionRunEvent::ToolCompleted { task_identity, .. }
+        | SessionRunEvent::ApprovalRequested { task_identity, .. } => task_identity.as_ref(),
         SessionRunEvent::RunCompleted { turn_state, .. }
         | SessionRunEvent::RunFailed { turn_state, .. }
         | SessionRunEvent::RunStopped { turn_state, .. } => turn_state
@@ -990,6 +1002,7 @@ mod tests {
                         run_id: "run-success".to_string(),
                         tool_name: "read_file".to_string(),
                         call_id: "call-1".to_string(),
+                        task_identity: None,
                         input: json!({ "path": "README.md" }),
                     },
                 ),
@@ -1002,6 +1015,7 @@ mod tests {
                         run_id: "run-success".to_string(),
                         tool_name: "read_file".to_string(),
                         call_id: "call-1".to_string(),
+                        task_identity: None,
                         input: json!({ "path": "README.md" }),
                         output: "README loaded".to_string(),
                         is_error: false,
@@ -1119,6 +1133,7 @@ mod tests {
                     SessionRunEvent::ApprovalRequested {
                         run_id: "run-approval".to_string(),
                         approval_id: "approval-1".to_string(),
+                        task_identity: None,
                         tool_name: "shell_command".to_string(),
                         call_id: "call-1".to_string(),
                         input: json!({ "command": "git status" }),

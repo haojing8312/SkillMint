@@ -14,7 +14,7 @@ use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::runtime::session_runtime::SessionRuntime;
 use crate::agent::runtime::skill_routing::runner::plan_implicit_route_with_observation;
-use crate::agent::runtime::task_state::TaskBackendKind;
+use crate::agent::runtime::task_state::{TaskBackendKind, TaskState};
 use crate::agent::types::StreamDelta;
 use crate::agent::AgentExecutor;
 use crate::model_transport::resolve_model_transport;
@@ -159,6 +159,16 @@ pub(crate) enum TaskBackendRunRequest<'a> {
     InteractiveChat(InteractiveChatTaskBackendRequest<'a>),
     HiddenChild(PreparedSurfaceTaskBackendRequest<'a>),
     EmployeeStep(PreparedSurfaceTaskBackendRequest<'a>),
+}
+
+pub(crate) fn attach_active_task_state_to_execution_context(
+    execution_context: &mut ExecutionContext,
+    task_state: &TaskState,
+) {
+    execution_context.active_task_identity = Some(task_state.task_identity.clone());
+    execution_context.active_task_kind = Some(task_state.task_kind);
+    execution_context.active_task_surface = Some(task_state.surface_kind);
+    execution_context.active_task_backend = Some(task_state.backend_kind);
 }
 
 impl TaskBackendRunRequest<'_> {

@@ -3,7 +3,9 @@ use crate::approval_bus::{ApprovalDecision, ApprovalManager, CreateApprovalReque
 use crate::commands::chat::{ApprovalManagerState, PendingApprovalBridgeState};
 use crate::commands::feishu_gateway::notify_feishu_approval_requested_with_pool;
 use crate::commands::skills::DbState;
-use crate::session_journal::{SessionJournalStateHandle, SessionJournalStore};
+use crate::session_journal::{
+    SessionJournalStateHandle, SessionJournalStore, SessionRunTaskIdentitySnapshot,
+};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
@@ -67,6 +69,7 @@ pub(super) async fn request_tool_approval_and_wait(
     app_handle: Option<&AppHandle>,
     session_id: &str,
     run_id: Option<&str>,
+    task_identity: Option<SessionRunTaskIdentitySnapshot>,
     tool_name: &str,
     call_id: &str,
     input: &Value,
@@ -89,6 +92,7 @@ pub(super) async fn request_tool_approval_and_wait(
                 approval_id: approval_id.clone(),
                 session_id: session_id.to_string(),
                 run_id: run_id.map(str::to_string),
+                task_identity,
                 call_id: call_id.to_string(),
                 tool_name: tool_name.to_string(),
                 input: input.clone(),

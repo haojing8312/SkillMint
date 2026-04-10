@@ -1,7 +1,9 @@
 use crate::agent::{ToolContext, ToolRegistry};
 use crate::approval_rules::persist_allow_always_rule_with_tx;
 use crate::commands::session_runs::append_session_run_event_with_pool;
-use crate::session_journal::{SessionJournalStore, SessionRunEvent};
+use crate::session_journal::{
+    SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -92,6 +94,7 @@ pub struct CreateApprovalRequest {
     pub approval_id: String,
     pub session_id: String,
     pub run_id: Option<String>,
+    pub task_identity: Option<SessionRunTaskIdentitySnapshot>,
     pub call_id: String,
     pub tool_name: String,
     pub input: Value,
@@ -274,6 +277,7 @@ impl ApprovalManager {
                 SessionRunEvent::ApprovalRequested {
                     run_id: run_id_value,
                     approval_id: request.approval_id.clone(),
+                    task_identity: request.task_identity.clone(),
                     tool_name: request.tool_name.clone(),
                     call_id: request.call_id.clone(),
                     input: request.input.clone(),
@@ -439,6 +443,7 @@ pub async fn recover_approved_pending_work_with_pool(
                     run_id: run_id.clone(),
                     tool_name: payload.tool_name.clone(),
                     call_id: payload.call_id.clone(),
+                    task_identity: None,
                     input: payload.input.clone(),
                     output: tool_result.0.clone(),
                     is_error: tool_result.1,

@@ -7,8 +7,13 @@ use crate::agent::runtime::task_backend::{
     InteractiveChatTaskBackendPreparationRequest, PreparedTaskBackendSurface,
     TaskBackendExecutionContext, TaskBackendPreparationRequest, TaskBackendTokenCallback,
 };
+use crate::agent::runtime::task_continuation::{
+    resolve_local_chat_continuation_contract, should_resume_local_chat_task,
+};
 use crate::agent::runtime::task_execution::TaskExecutionOutcome;
-use crate::agent::runtime::task_lifecycle::TaskBeginParentContext;
+use crate::agent::runtime::task_lifecycle::{
+    resolve_latest_task_record_for_session, TaskBeginParentContext,
+};
 use crate::agent::runtime::task_state::TaskState;
 use crate::agent::runtime::task_terminal::{
     finalize_delegated_task_execution_outcome, finalize_primary_task_execution_outcome,
@@ -89,7 +94,14 @@ pub(crate) async fn run_and_finalize_primary_local_chat_task(
         tool_confirm_responder,
     } = request;
 
-    let task_state = TaskState::new_primary_local_chat(session_id, user_message_id, run_id);
+    let task_state = resolve_primary_local_chat_task_state(
+        journal,
+        session_id,
+        user_message_id,
+        run_id,
+        user_message,
+    )
+    .await;
     let task_execution_outcome = run_task_backend_with_task_state(ActiveTaskBackendRunRequest {
         db,
         journal,
@@ -211,5 +223,163 @@ fn map_delegated_terminal_outcome_to_entry_outcome(
         DelegatedTaskTerminalOutcome::Failed { error } => {
             DelegatedTaskEntryOutcome::Failed { error }
         }
+    }
+}
+
+async fn resolve_primary_local_chat_task_state(
+    journal: &SessionJournalStore,
+    session_id: &str,
+    user_message_id: &str,
+    run_id: &str,
+    user_message: &str,
+) -> TaskState {
+    if let Some(active_task_record) = resolve_latest_task_record_for_session(journal, session_id)
+        .await
+        .filter(|record| should_resume_local_chat_task(record, user_message))
+    {
+        let (continuation_mode, continuation_reason) =
+            resolve_local_chat_continuation_contract(&active_task_record);
+        return TaskState::new_recovery_local_chat_with_contract(
+            session_id,
+            user_message_id,
+            run_id,
+            &active_task_record.task_identity,
+            continuation_mode,
+            continuation_reason,
+        );
+    }
+
+    TaskState::new_primary_local_chat(session_id, user_message_id, run_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_primary_local_chat_task_state;
+    use crate::agent::runtime::task_record::TaskRecord;
+    use crate::agent::runtime::task_repo::TaskRepo;
+    use crate::agent::runtime::task_state::{
+        TaskBackendKind, TaskIdentity, TaskKind, TaskSurfaceKind,
+    };
+    use crate::agent::runtime::task_transition::TaskContinuationMode;
+    use crate::session_journal::{SessionJournalStore, SessionRunEvent};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn resolve_primary_local_chat_task_state_uses_recovery_task_for_continue_requests() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+        let failed_record = TaskRecord {
+            task_identity: TaskIdentity::new(
+                "task-1",
+                Option::<String>::None,
+                Some("task-1".to_string()),
+            ),
+            task_kind: TaskKind::PrimaryUserTask,
+            surface_kind: TaskSurfaceKind::LocalChatSurface,
+            backend_kind: TaskBackendKind::InteractiveChatBackend,
+            session_id: "session-1".to_string(),
+            user_message_id: "user-1".to_string(),
+            run_id: "run-1".to_string(),
+            status: crate::agent::runtime::task_record::TaskLifecycleStatus::Failed,
+            created_at: "2026-04-10T10:00:00Z".to_string(),
+            updated_at: "2026-04-10T10:01:00Z".to_string(),
+            started_at: Some("2026-04-10T10:00:00Z".to_string()),
+            completed_at: Some("2026-04-10T10:01:00Z".to_string()),
+            terminal_reason: Some("max_turns".to_string()),
+        };
+
+        journal
+            .append_event(
+                "session-1",
+                SessionRunEvent::TaskRecordUpserted {
+                    run_id: "run-1".to_string(),
+                    task: TaskRepo::build_task_record_upsert_payload(&failed_record),
+                },
+            )
+            .await
+            .expect("append failed task");
+
+        let task_state =
+            resolve_primary_local_chat_task_state(&journal, "session-1", "user-2", "run-2", "继续")
+                .await;
+
+        assert_eq!(task_state.task_kind, TaskKind::RecoveryTask);
+        assert_eq!(
+            task_state.continuation_mode,
+            Some(TaskContinuationMode::RecoveryResume)
+        );
+        assert_eq!(task_state.continuation_reason.as_deref(), Some("max_turns"));
+        assert_eq!(
+            task_state.task_identity.parent_task_id.as_deref(),
+            Some("task-1")
+        );
+        assert_eq!(task_state.task_identity.root_task_id, "task-1");
+    }
+
+    #[tokio::test]
+    async fn resolve_primary_local_chat_task_state_keeps_new_tasks_for_non_recovery_messages() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+
+        let task_state = resolve_primary_local_chat_task_state(
+            &journal,
+            "session-1",
+            "user-2",
+            "run-2",
+            "帮我继续总结当前项目结构",
+        )
+        .await;
+
+        assert_eq!(task_state.task_kind, TaskKind::PrimaryUserTask);
+        assert_eq!(task_state.task_identity.parent_task_id, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_primary_local_chat_task_state_marks_approval_recovery_tasks() {
+        let journal_root = tempdir().expect("journal tempdir");
+        let journal = SessionJournalStore::new(journal_root.path().to_path_buf());
+        let failed_record = TaskRecord {
+            task_identity: TaskIdentity::new(
+                "task-1",
+                Option::<String>::None,
+                Some("task-1".to_string()),
+            ),
+            task_kind: TaskKind::PrimaryUserTask,
+            surface_kind: TaskSurfaceKind::LocalChatSurface,
+            backend_kind: TaskBackendKind::InteractiveChatBackend,
+            session_id: "session-1".to_string(),
+            user_message_id: "user-1".to_string(),
+            run_id: "run-1".to_string(),
+            status: crate::agent::runtime::task_record::TaskLifecycleStatus::Failed,
+            created_at: "2026-04-10T10:00:00Z".to_string(),
+            updated_at: "2026-04-10T10:01:00Z".to_string(),
+            started_at: Some("2026-04-10T10:00:00Z".to_string()),
+            completed_at: Some("2026-04-10T10:01:00Z".to_string()),
+            terminal_reason: Some("approval_recovery".to_string()),
+        };
+
+        journal
+            .append_event(
+                "session-1",
+                SessionRunEvent::TaskRecordUpserted {
+                    run_id: "run-1".to_string(),
+                    task: TaskRepo::build_task_record_upsert_payload(&failed_record),
+                },
+            )
+            .await
+            .expect("append failed task");
+
+        let task_state =
+            resolve_primary_local_chat_task_state(&journal, "session-1", "user-2", "run-2", "继续")
+                .await;
+
+        assert_eq!(
+            task_state.continuation_mode,
+            Some(TaskContinuationMode::ApprovalResume)
+        );
+        assert_eq!(
+            task_state.continuation_reason.as_deref(),
+            Some("approval_recovery")
+        );
     }
 }

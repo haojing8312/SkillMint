@@ -2,10 +2,33 @@ use crate::agent::run_guard::RunStopReasonKind;
 use crate::agent::runtime::task_state::{
     TaskBackendKind, TaskIdentity, TaskKind, TaskState, TaskSurfaceKind,
 };
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TaskContinuationMode {
+    InitialStart,
+    RecoveryResume,
+    ApprovalResume,
+    PermissionResume,
+}
+
+impl TaskContinuationMode {
+    pub(crate) fn as_key(self) -> &'static str {
+        match self {
+            TaskContinuationMode::InitialStart => "initial_start",
+            TaskContinuationMode::RecoveryResume => "recovery_resume",
+            TaskContinuationMode::ApprovalResume => "approval_resume",
+            TaskContinuationMode::PermissionResume => "permission_resume",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskTransition {
-    Continue,
+    Continue {
+        mode: TaskContinuationMode,
+        reason: String,
+    },
     DelegateToChild {
         delegated_task_identity: TaskIdentity,
         delegated_task_kind: TaskKind,
@@ -30,6 +53,13 @@ pub(crate) enum TaskTransition {
 }
 
 impl TaskTransition {
+    pub(crate) fn continued(mode: TaskContinuationMode, reason: impl Into<String>) -> Self {
+        Self::Continue {
+            mode,
+            reason: reason.into(),
+        }
+    }
+
     pub(crate) fn completed(terminal_reason: impl Into<String>) -> Self {
         Self::StopCompleted {
             terminal_reason: terminal_reason.into(),
@@ -119,14 +149,26 @@ pub(crate) fn resolve_delegation_transition(task_state: &TaskState) -> Option<Ta
 }
 
 pub(crate) fn resolve_initial_transition(task_state: &TaskState) -> TaskTransition {
-    resolve_delegation_transition(task_state).unwrap_or(TaskTransition::Continue)
+    resolve_delegation_transition(task_state).unwrap_or_else(|| {
+        if let Some(mode) = task_state.continuation_mode {
+            return TaskTransition::continued(
+                mode,
+                task_state
+                    .continuation_reason
+                    .clone()
+                    .unwrap_or_else(|| mode.as_key().to_string()),
+            );
+        }
+
+        TaskTransition::continued(TaskContinuationMode::InitialStart, "initial_start")
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         resolve_commit_transition, resolve_delegation_transition, resolve_initial_transition,
-        resolve_stop_transition, resolve_terminal_transition, TaskTransition,
+        resolve_stop_transition, resolve_terminal_transition, TaskContinuationMode, TaskTransition,
     };
     use crate::agent::run_guard::RunStopReasonKind;
     use crate::agent::runtime::task_state::{
@@ -260,7 +302,25 @@ mod tests {
 
         assert_eq!(
             resolve_initial_transition(&task_state),
-            TaskTransition::Continue
+            TaskTransition::Continue {
+                mode: TaskContinuationMode::InitialStart,
+                reason: "initial_start".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_initial_transition_marks_recovery_tasks_as_recovery_resume() {
+        let parent = TaskIdentity::new("task-parent", Option::<String>::None, Some("task-root"));
+        let task_state =
+            TaskState::new_recovery_local_chat("session-1", "user-2", "run-2", &parent);
+
+        assert_eq!(
+            resolve_initial_transition(&task_state),
+            TaskTransition::Continue {
+                mode: TaskContinuationMode::RecoveryResume,
+                reason: "recovery_resume".to_string(),
+            }
         );
     }
 }

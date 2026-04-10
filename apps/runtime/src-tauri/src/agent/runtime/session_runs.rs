@@ -100,6 +100,7 @@ pub(crate) async fn append_session_run_event_with_pool(
             summary,
             impact,
             irreversible,
+            ..
         } => {
             sqlx::query(
                 "INSERT INTO approvals (

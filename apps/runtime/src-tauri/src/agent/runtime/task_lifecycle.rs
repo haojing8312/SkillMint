@@ -8,7 +8,7 @@ use crate::agent::runtime::task_state::{
 };
 use crate::agent::runtime::task_transition::{
     resolve_commit_transition, resolve_initial_transition, resolve_stop_transition,
-    resolve_terminal_transition, TaskTransition,
+    resolve_terminal_transition, TaskContinuationMode, TaskTransition,
 };
 use crate::session_journal::{
     SessionJournalStore, SessionRunEvent, SessionRunTaskIdentitySnapshot, SessionTaskRecordSnapshot,
@@ -157,6 +157,8 @@ async fn project_task_continued(
     journal: &SessionJournalStore,
     session_id: &str,
     record: &TaskRecord,
+    continuation_mode: TaskContinuationMode,
+    continuation_reason: &str,
 ) -> Result<(), String> {
     append_session_run_event_with_pool(
         db,
@@ -165,6 +167,8 @@ async fn project_task_continued(
         SessionRunEvent::TaskContinued {
             run_id: record.run_id.clone(),
             task_identity: build_task_identity_snapshot_from_record(record),
+            continuation_mode: continuation_mode.as_key().to_string(),
+            continuation_reason: continuation_reason.to_string(),
         },
     )
     .await
@@ -276,7 +280,7 @@ async fn apply_initial_transition(
 ) -> Result<(), String> {
     let transition = resolve_initial_transition(task_state);
     match &transition {
-        TaskTransition::Continue
+        TaskTransition::Continue { .. }
         | TaskTransition::StopCompleted { .. }
         | TaskTransition::StopFailed { .. }
         | TaskTransition::StopCancelled { .. } => {
@@ -338,8 +342,9 @@ pub(crate) async fn apply_transition(
     transition: &TaskTransition,
 ) -> Result<TaskRecord, String> {
     match transition {
-        TaskTransition::Continue => {
-            project_task_continued(db, journal, session_id, active_task_record).await?;
+        TaskTransition::Continue { mode, reason } => {
+            project_task_continued(db, journal, session_id, active_task_record, *mode, reason)
+                .await?;
             Ok(active_task_record.clone())
         }
         TaskTransition::DelegateToChild {

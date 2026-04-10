@@ -3,8 +3,9 @@ use crate::agent::runtime::runtime_io::{
     append_run_failed_with_pool, append_run_started_with_pool,
 };
 use crate::agent::runtime::task_backend::{
-    execute_prepared_task_backend_with_context, prepare_task_backend, PreparedTaskBackendSurface,
-    TaskBackendExecutionContext, TaskBackendPreparationRequest,
+    attach_active_task_state_to_execution_context, execute_prepared_task_backend_with_context,
+    prepare_task_backend, PreparedTaskBackendSurface, TaskBackendExecutionContext,
+    TaskBackendPreparationRequest,
 };
 use crate::agent::runtime::task_execution::TaskExecutionOutcome;
 use crate::agent::runtime::task_lifecycle::{self, TaskBeginParentContext};
@@ -91,6 +92,7 @@ async fn execute_prepared_task_backend_for_active_task<'a>(
 }
 
 async fn prepare_and_execute_backend_for_active_task<'a, F>(
+    task_state: &TaskState,
     preparation_request: TaskBackendPreparationRequest<'a>,
     prepare_surface: F,
     execution_context: TaskBackendExecutionContext<'a>,
@@ -101,6 +103,10 @@ where
 {
     let mut prepared_surface =
         prepare_task_backend_for_active_task(preparation_request, failure_context).await?;
+    attach_active_task_state_to_execution_context(
+        &mut prepared_surface.execution_context,
+        task_state,
+    );
     prepare_surface(&mut prepared_surface);
     execute_prepared_task_backend_for_active_task(
         &prepared_surface,
@@ -147,6 +153,7 @@ where
     }
 
     let execution_outcome = prepare_and_execute_backend_for_active_task(
+        &task_state,
         preparation_request,
         prepare_surface,
         execution_context,

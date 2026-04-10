@@ -28,6 +28,8 @@ use tauri::{AppHandle, Emitter};
 use super::effective_tool_set::{
     EffectiveToolPolicyInputSource, EffectiveToolSet, ToolFilterReason,
 };
+use super::task_lifecycle::build_task_identity_snapshot_from_parts;
+use super::task_state::{TaskBackendKind, TaskIdentity, TaskKind, TaskSurfaceKind};
 
 pub(crate) const INTERNAL_SKILL_DISPATCH_INPUT_KEY: &str = "__workclaw_internal_skill_dispatch";
 
@@ -36,6 +38,10 @@ pub(crate) struct ToolDispatchContext<'a> {
     pub app_handle: Option<&'a AppHandle>,
     pub session_id: Option<&'a str>,
     pub persisted_run_id: Option<&'a str>,
+    pub active_task_identity: Option<&'a TaskIdentity>,
+    pub active_task_kind: Option<TaskKind>,
+    pub active_task_surface: Option<TaskSurfaceKind>,
+    pub active_task_backend: Option<TaskBackendKind>,
     pub allowed_tools: Option<&'a [String]>,
     pub effective_tool_plan: Option<&'a EffectiveToolSet>,
     pub permission_mode: PermissionMode,
@@ -61,6 +67,23 @@ pub(crate) struct ToolDispatchState<'a> {
 pub(crate) enum ToolDispatchOutcome {
     Continue,
     Cancelled,
+}
+
+fn active_task_identity_snapshot(
+    ctx: &ToolDispatchContext<'_>,
+) -> Option<crate::session_journal::SessionRunTaskIdentitySnapshot> {
+    let (task_identity, task_kind, task_surface, task_backend) = (
+        ctx.active_task_identity?,
+        ctx.active_task_kind?,
+        ctx.active_task_surface?,
+        ctx.active_task_backend?,
+    );
+    Some(build_task_identity_snapshot_from_parts(
+        task_identity,
+        task_kind,
+        task_surface,
+        task_backend,
+    ))
 }
 
 pub(crate) async fn dispatch_skill_command(
@@ -383,6 +406,7 @@ async fn resolve_approval_outcome(
         ctx.app_handle,
         ctx.session_id,
         ctx.persisted_run_id,
+        active_task_identity_snapshot(ctx),
         call,
         ctx.tool_ctx.work_dir.as_deref(),
         ctx.tool_confirm_tx,
@@ -421,6 +445,7 @@ async fn emit_failed_completion(
                     run_id: run_id.to_string(),
                     tool_name: call.name.clone(),
                     call_id: call.id.clone(),
+                    task_identity: active_task_identity_snapshot(ctx),
                     input: call.input.clone(),
                     output: message.clone(),
                     is_error: true,
@@ -469,6 +494,7 @@ async fn emit_tool_completion(
                     run_id: run_id.to_string(),
                     tool_name: call.name.clone(),
                     call_id: call.id.clone(),
+                    task_identity: active_task_identity_snapshot(ctx),
                     input: call.input.clone(),
                     output: result.to_string(),
                     is_error,
@@ -671,6 +697,7 @@ pub(crate) async fn dispatch_tool_call(
                     run_id: run_id.to_string(),
                     tool_name: call.name.clone(),
                     call_id: call.id.clone(),
+                    task_identity: active_task_identity_snapshot(ctx),
                     input: call.input.clone(),
                 },
             )
@@ -1143,6 +1170,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: None,
             effective_tool_plan: None,
             permission_mode: PermissionMode::Unrestricted,
@@ -1203,6 +1234,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: Some(&["read_file".to_string()]),
             effective_tool_plan: None,
             permission_mode: PermissionMode::Unrestricted,
@@ -1286,6 +1321,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: Some(&["read_file".to_string()]),
             effective_tool_plan: Some(&effective_tool_plan),
             permission_mode: PermissionMode::Unrestricted,
@@ -1354,6 +1393,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: None,
             effective_tool_plan: None,
             permission_mode: PermissionMode::AcceptEdits,
@@ -1401,6 +1444,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: Some(&["exec".to_string()]),
             effective_tool_plan: None,
             permission_mode: PermissionMode::Unrestricted,
@@ -1447,6 +1494,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: Some(allowed.as_slice()),
             effective_tool_plan: None,
             permission_mode: PermissionMode::Unrestricted,
@@ -1516,6 +1567,10 @@ mod tests {
             app_handle: None,
             session_id: None,
             persisted_run_id: None,
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             allowed_tools: Some(&["skill".to_string(), "exec".to_string()]),
             effective_tool_plan: None,
             permission_mode: PermissionMode::Unrestricted,

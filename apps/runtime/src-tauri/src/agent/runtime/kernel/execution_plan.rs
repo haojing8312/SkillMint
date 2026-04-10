@@ -10,6 +10,7 @@ use crate::agent::runtime::kernel::session_profile::SessionExecutionProfile;
 use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
 use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
 use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
+use crate::agent::runtime::task_state::{TaskBackendKind, TaskIdentity, TaskKind, TaskSurfaceKind};
 use runtime_chat_app::ChatExecutionGuidance;
 use serde_json::Value;
 
@@ -49,6 +50,10 @@ pub(crate) struct ExecutionContext {
     pub capability_snapshot: CapabilitySnapshot,
     pub system_prompt: String,
     pub continuation_runtime_notes: Vec<String>,
+    pub active_task_identity: Option<TaskIdentity>,
+    pub active_task_kind: Option<TaskKind>,
+    pub active_task_surface: Option<TaskSurfaceKind>,
+    pub active_task_backend: Option<TaskBackendKind>,
     pub permission_mode: PermissionMode,
     pub runtime_default_tool_policy: EffectiveToolPolicyInput,
     pub executor_work_dir: Option<String>,
@@ -70,6 +75,10 @@ impl Default for ExecutionContext {
             capability_snapshot: CapabilitySnapshot::default(),
             system_prompt: String::new(),
             continuation_runtime_notes: Vec::new(),
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             permission_mode: PermissionMode::AcceptEdits,
             runtime_default_tool_policy: EffectiveToolPolicyInput {
                 source:
@@ -103,6 +112,10 @@ impl Default for ExecutionContext {
 }
 
 impl ExecutionContext {
+    pub(crate) fn active_task_identity(&self) -> Option<&TaskIdentity> {
+        self.active_task_identity.as_ref()
+    }
+
     pub(crate) fn allowed_tools(&self) -> Option<&[String]> {
         self.capability_snapshot.allowed_tools.as_deref()
     }
@@ -257,6 +270,10 @@ mod tests {
             },
             system_prompt: "Prompt".to_string(),
             continuation_runtime_notes: vec!["resume from compacted context".to_string()],
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             permission_mode: PermissionMode::AcceptEdits,
             runtime_default_tool_policy: EffectiveToolPolicyInput {
                 source:

@@ -17,6 +17,7 @@ use crate::agent::runtime::repo::{
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
 use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
+use crate::agent::runtime::task_continuation::is_task_continuation_request;
 use crate::agent::runtime::tool_setup::{prepare_runtime_tools, ToolSetupParams};
 use crate::agent::runtime::RuntimeTranscript;
 use crate::agent::AgentExecutor;
@@ -296,6 +297,10 @@ pub(crate) async fn prepare_local_turn(
         capability_snapshot: prepared_runtime_tools.capability_snapshot,
         system_prompt: prepared_runtime_tools.system_prompt,
         continuation_runtime_notes,
+        active_task_identity: None,
+        active_task_kind: None,
+        active_task_surface: None,
+        active_task_backend: None,
         permission_mode,
         runtime_default_tool_policy,
         executor_work_dir: execution_preparation_service
@@ -371,6 +376,10 @@ pub(crate) fn prepare_hidden_child_turn(
             capability_snapshot,
             system_prompt: build_hidden_child_system_prompt(agent_type, delegate_display_name),
             continuation_runtime_notes: Vec::new(),
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             permission_mode: PermissionMode::Unrestricted,
             runtime_default_tool_policy: ExecutionContext::default().runtime_default_tool_policy,
             executor_work_dir: work_dir,
@@ -446,6 +455,10 @@ pub(crate) fn prepare_employee_step_turn(
             capability_snapshot,
             system_prompt: context_bundle.system_prompt,
             continuation_runtime_notes: Vec::new(),
+            active_task_identity: None,
+            active_task_kind: None,
+            active_task_surface: None,
+            active_task_backend: None,
             permission_mode: PermissionMode::Unrestricted,
             runtime_default_tool_policy: ExecutionContext::default().runtime_default_tool_policy,
             executor_work_dir: work_dir,
@@ -699,38 +712,7 @@ fn apply_continuation_turn_policy(
 }
 
 fn is_compaction_continuation_request(user_message: &str) -> bool {
-    let normalized = canonicalize_continuation_match(user_message);
-    if normalized.is_empty() {
-        return false;
-    }
-
-    const EXACT_CONTINUATION_REQUESTS: &[&str] = &[
-        "continue",
-        "continueplease",
-        "pleasecontinue",
-        "继续",
-        "继续执行",
-        "继续上次",
-        "继续刚才",
-        "继续处理",
-        "接着做",
-        "接着来",
-    ];
-
-    EXACT_CONTINUATION_REQUESTS
-        .iter()
-        .any(|candidate| normalized == canonicalize_continuation_match(candidate))
-        || (normalized.starts_with("继续") && normalized.chars().count() <= 12)
-        || (normalized.starts_with("continue") && normalized.chars().count() <= 24)
-}
-
-fn canonicalize_continuation_match(value: &str) -> String {
-    value
-        .trim()
-        .chars()
-        .filter(|ch| ch.is_alphanumeric() || ('\u{4e00}'..='\u{9fff}').contains(ch))
-        .flat_map(|ch| ch.to_lowercase())
-        .collect()
+    is_task_continuation_request(user_message)
 }
 
 pub(crate) fn parse_user_skill_command(user_message: &str) -> Option<(String, String)> {
