@@ -26,6 +26,11 @@ const ROOT_TEMP_PATTERNS = [
   },
 ];
 
+const ROOT_ARTIFACT_ALLOWLIST = new Set([
+  "tmp-start-app.cmd",
+  "tmp-start-app.vbs",
+]);
+
 export async function collectArtifactsSignals(options = {}) {
   const mode = options.mode ?? "all";
   if (!SUPPORTED_MODES.has(mode)) {
@@ -37,6 +42,7 @@ export async function collectArtifactsSignals(options = {}) {
 
   return entries
     .filter((entry) => entry.isFile())
+    .filter((entry) => !ROOT_ARTIFACT_ALLOWLIST.has(entry.name))
     .map((entry) => {
       const match = ROOT_TEMP_PATTERNS.find(({ pattern }) => pattern.test(entry.name));
       if (!match) {

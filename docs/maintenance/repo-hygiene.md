@@ -38,6 +38,8 @@ WorkClaw uses long-running AI-assisted development across runtime, sidecar, Rust
 5. Use `workclaw-cleanup-execution` only for the reviewed batch.
 6. Run `workclaw-change-verification` when the cleanup changes code, tests, docs, or skill files.
 
+Reports are written to `.artifacts/repo-hygiene/` for local review and should stay untracked.
+
 ## High-Risk Surfaces
 
 - Generated files and generated directories.

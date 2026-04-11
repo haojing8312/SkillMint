@@ -161,6 +161,8 @@ test("collect-artifacts-signals reports deterministic root temporary artifacts",
     await writeFile(path.join(rootDir, "temp-runtime.txt"), "artifact\n", "utf8");
     await writeFile(path.join(rootDir, ".tmp_state"), "artifact\n", "utf8");
     await writeFile(path.join(rootDir, "release.tgz"), "artifact\n", "utf8");
+    await writeFile(path.join(rootDir, "tmp-start-app.cmd"), "keep\n", "utf8");
+    await writeFile(path.join(rootDir, "tmp-start-app.vbs"), "keep\n", "utf8");
     await writeFile(path.join(rootDir, "README.md"), "keep\n", "utf8");
 
     const findings = await collectArtifactsSignals({ rootDir, mode: "artifacts" });

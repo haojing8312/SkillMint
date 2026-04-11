@@ -27,6 +27,7 @@ scripts/sync-codex-skills.mjs
 .pnpm-store/
 .pnpm-store-local/
 .cargo-targets/
+.artifacts/
 *.log
 .claude/
 .worktrees/
