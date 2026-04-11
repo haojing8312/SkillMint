@@ -21,4 +21,8 @@
   - recovered task record rendering
 
 ### Trigger To Split
-- Split on the next feature that adds more task projection or recovered export rendering logic to either file.
+- The trigger has now been reached once more: recovered export rendering is also carrying task-continuation lines.
+- Allow this patch to stay in-place because it is a narrow read-model follow-up paired with integration verification.
+- Treat the next feature on either file as the mandatory extraction point for:
+  - `recovered_task_sections.rs` in `session_export.rs`
+  - `task_projection.rs` in `session_runs.rs`

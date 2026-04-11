@@ -2,9 +2,11 @@ mod helpers;
 
 use runtime_lib::commands::session_runs::{
     append_session_run_event_with_pool, attach_assistant_message_to_run_with_pool,
-    list_session_runs_with_pool,
+    list_session_runs_with_pool, list_session_runs_with_runtime_state,
 };
-use runtime_lib::session_journal::{SessionJournalStore, SessionRunEvent};
+use runtime_lib::session_journal::{
+    SessionJournalStore, SessionRunEvent, SessionRunTaskContinuationSnapshot,
+};
 
 #[tokio::test]
 async fn run_started_is_projected_before_assistant_message_exists() {
@@ -63,6 +65,7 @@ async fn failed_run_remains_visible_without_assistant_message_row() {
             run_id: "run-err".into(),
             error_kind: "insufficient_balance".into(),
             error_message: "insufficient_balance: account balance too low".into(),
+            turn_state: None,
         },
     )
     .await
@@ -127,5 +130,58 @@ async fn assistant_message_binding_is_projected_with_run() {
     assert_eq!(
         runs[0].assistant_message_id.as_deref(),
         Some("assistant-bind")
+    );
+}
+
+#[tokio::test]
+async fn runtime_state_projection_includes_task_continuation_contract() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    let journal_dir = tempfile::tempdir().expect("create journal dir");
+    let journal = SessionJournalStore::new(journal_dir.path().to_path_buf());
+
+    append_session_run_event_with_pool(
+        &pool,
+        &journal,
+        "sess-cont",
+        SessionRunEvent::RunStarted {
+            run_id: "run-cont".into(),
+            user_message_id: "user-cont".into(),
+        },
+    )
+    .await
+    .expect("append run started");
+
+    append_session_run_event_with_pool(
+        &pool,
+        &journal,
+        "sess-cont",
+        SessionRunEvent::ToolStarted {
+            run_id: "run-cont".into(),
+            tool_name: "bash".into(),
+            call_id: "call-cont".into(),
+            input: serde_json::json!({ "command": "echo hi" }),
+            task_identity: None,
+            task_continuation: Some(SessionRunTaskContinuationSnapshot {
+                mode: "parent_rejoin".into(),
+                source: "parent_rejoin".into(),
+                reason: "approval_resume".into(),
+            }),
+        },
+    )
+    .await
+    .expect("append tool started");
+
+    let runs = list_session_runs_with_runtime_state(&pool, "sess-cont", Some(&journal))
+        .await
+        .expect("list session runs with runtime state");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].task_continuation_mode.as_deref(), Some("parent_rejoin"));
+    assert_eq!(
+        runs[0].task_continuation_source.as_deref(),
+        Some("parent_rejoin")
+    );
+    assert_eq!(
+        runs[0].task_continuation_reason.as_deref(),
+        Some("approval_resume")
     );
 }

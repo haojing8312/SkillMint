@@ -75,6 +75,7 @@ async fn completed_event_updates_terminal_status() {
             "sess-2",
             SessionRunEvent::RunCompleted {
                 run_id: "run-9".into(),
+                turn_state: None,
             },
         )
         .await

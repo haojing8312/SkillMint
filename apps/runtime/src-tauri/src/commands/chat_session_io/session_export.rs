@@ -576,6 +576,7 @@ fn render_recovered_run_sections(
         if let Some(task_record) = resolve_recovered_task_record(state, run) {
             sections.extend(render_recovered_task_record_lines(task_record));
         }
+        sections.extend(render_recovered_task_continuation_lines(run));
         if let Some(summary) = run_stop_summaries_by_run.get(&run.run_id) {
             if !summary.title.trim().is_empty() {
                 sections.push(format!("- 停止原因：{}", summary.title.trim()));
@@ -729,6 +730,26 @@ fn render_recovered_task_record_lines(task_record: &SessionTaskRecordSnapshot) -
             "- task_backend_kind: {}",
             task_record.task_identity.backend_kind.trim()
         ));
+    }
+    lines
+}
+
+fn render_recovered_task_continuation_lines(run: &SessionRunSnapshot) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(mode) = run.task_continuation_mode.as_deref().map(str::trim) {
+        if !mode.is_empty() {
+            lines.push(format!("- task_continuation_mode: {}", mode));
+        }
+    }
+    if let Some(source) = run.task_continuation_source.as_deref().map(str::trim) {
+        if !source.is_empty() {
+            lines.push(format!("- task_continuation_source: {}", source));
+        }
+    }
+    if let Some(reason) = run.task_continuation_reason.as_deref().map(str::trim) {
+        if !reason.is_empty() {
+            lines.push(format!("- task_continuation_reason: {}", reason));
+        }
     }
     lines
 }
@@ -1005,5 +1026,37 @@ mod tests {
         assert!(output.contains("task_started_at: 2026-04-09T00:00:01Z"));
         assert!(output.contains("task_completed_at: 2026-04-09T00:00:02Z"));
         assert!(output.contains("task_terminal_reason: max_turns"));
+    }
+
+    #[test]
+    fn recovered_run_sections_include_task_continuation_lines() {
+        let output = render_recovered_run_sections(
+            &[],
+            &SessionJournalState {
+                session_id: "session-1".to_string(),
+                current_run_id: None,
+                runs: vec![SessionRunSnapshot {
+                    run_id: "run-1".to_string(),
+                    user_message_id: "user-1".to_string(),
+                    status: SessionRunStatus::Failed,
+                    buffered_text: "保留输出".to_string(),
+                    last_error_kind: Some("approval".to_string()),
+                    last_error_message: Some("等待恢复".to_string()),
+                    task_identity: None,
+                    task_continuation_mode: Some("parent_rejoin".to_string()),
+                    task_continuation_source: Some("parent_rejoin".to_string()),
+                    task_continuation_reason: Some("approval_resume".to_string()),
+                    turn_state: None,
+                }],
+                tasks: vec![],
+            },
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashSet::new(),
+        );
+
+        assert!(output.contains("task_continuation_mode: parent_rejoin"));
+        assert!(output.contains("task_continuation_source: parent_rejoin"));
+        assert!(output.contains("task_continuation_reason: approval_resume"));
     }
 }

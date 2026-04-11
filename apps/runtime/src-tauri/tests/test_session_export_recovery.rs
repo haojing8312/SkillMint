@@ -4,7 +4,9 @@ use runtime_lib::commands::chat::export_session_markdown_with_pool;
 use runtime_lib::commands::session_runs::{
     append_session_run_event_with_pool, attach_assistant_message_to_run_with_pool,
 };
-use runtime_lib::session_journal::{SessionJournalStore, SessionRunEvent};
+use runtime_lib::session_journal::{
+    SessionJournalStore, SessionRunEvent, SessionRunTaskContinuationSnapshot,
+};
 use serde_json::json;
 
 #[tokio::test]
@@ -70,6 +72,7 @@ async fn export_session_uses_journal_when_sqlite_projection_is_incomplete() {
                 run_id: "run-export-1".into(),
                 error_kind: "billing".into(),
                 error_message: "模型余额不足".into(),
+                turn_state: None,
             },
         )
         .await
@@ -332,6 +335,8 @@ async fn export_session_includes_tool_events_linked_to_assistant_run() {
                 "path": "C:\\Users\\36443\\WorkClaw\\workspace\\brief.md",
                 "content": "# brief"
             }),
+            task_identity: None,
+            task_continuation: None,
         },
     )
     .await
@@ -353,6 +358,8 @@ async fn export_session_includes_tool_events_linked_to_assistant_run() {
                 "工具执行错误：路径 C:\\Users\\36443\\WorkClaw\\workspace\\brief.md 的父目录不存在"
                     .into(),
             is_error: true,
+            task_identity: None,
+            task_continuation: None,
         },
     )
     .await
@@ -372,6 +379,7 @@ async fn export_session_includes_tool_events_linked_to_assistant_run() {
         "sess-tool-events",
         SessionRunEvent::RunCompleted {
             run_id: "run-tool-events".into(),
+            turn_state: None,
         },
     )
     .await
@@ -460,6 +468,7 @@ async fn export_session_does_not_duplicate_failed_run_recovery_when_assistant_me
         SessionRunEvent::RunStopped {
             run_id: "run-max-turns".into(),
             stop_reason: runtime_lib::agent::run_guard::RunStopReason::max_turns(100),
+            turn_state: None,
         },
     )
     .await
@@ -536,6 +545,12 @@ async fn export_session_recovery_includes_tool_events_for_failed_run_without_ass
             input: json!({
                 "path": "C:\\Users\\36443\\WorkClaw\\workspace\\brief.md"
             }),
+            task_identity: None,
+            task_continuation: Some(SessionRunTaskContinuationSnapshot {
+                mode: "parent_rejoin".into(),
+                source: "parent_rejoin".into(),
+                reason: "approval_resume".into(),
+            }),
         },
     )
     .await
@@ -556,6 +571,12 @@ async fn export_session_recovery_includes_tool_events_for_failed_run_without_ass
                 "工具执行错误：路径 C:\\Users\\36443\\WorkClaw\\workspace\\brief.md 的父目录不存在"
                     .into(),
             is_error: true,
+            task_identity: None,
+            task_continuation: Some(SessionRunTaskContinuationSnapshot {
+                mode: "parent_rejoin".into(),
+                source: "parent_rejoin".into(),
+                reason: "approval_resume".into(),
+            }),
         },
     )
     .await
@@ -569,6 +590,7 @@ async fn export_session_recovery_includes_tool_events_for_failed_run_without_ass
             run_id: "run-failed-tool-events".into(),
             error_kind: "tool_error".into(),
             error_message: "write_file 执行失败".into(),
+            turn_state: None,
         },
     )
     .await
@@ -584,6 +606,9 @@ async fn export_session_recovery_includes_tool_events_for_failed_run_without_ass
     assert!(markdown.contains("write_file"));
     assert!(markdown.contains("brief.md"));
     assert!(markdown.contains("工具执行错误"));
+    assert!(markdown.contains("task_continuation_mode: parent_rejoin"));
+    assert!(markdown.contains("task_continuation_source: parent_rejoin"));
+    assert!(markdown.contains("task_continuation_reason: approval_resume"));
 }
 
 #[tokio::test]
@@ -643,6 +668,8 @@ async fn export_session_recovery_renders_structured_tool_event_outputs_readably(
             tool_name: "write_file".into(),
             call_id: "call-1".into(),
             input: json!({}),
+            task_identity: None,
+            task_continuation: None,
         },
     )
     .await
@@ -669,6 +696,8 @@ async fn export_session_recovery_renders_structured_tool_event_outputs_readably(
             })
             .to_string(),
             is_error: true,
+            task_identity: None,
+            task_continuation: None,
         },
     )
     .await
@@ -682,6 +711,7 @@ async fn export_session_recovery_renders_structured_tool_event_outputs_readably(
             run_id: "run-structured-tool-events".into(),
             error_kind: "tool_error".into(),
             error_message: "write_file 执行失败".into(),
+            turn_state: None,
         },
     )
     .await

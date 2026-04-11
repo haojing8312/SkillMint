@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use runtime_lib::agent::evals::{
     evaluate_and_write_report, EvalReportStatus, EvalScenario, LocalEvalConfig, RealAgentEvalRunner,
 };
