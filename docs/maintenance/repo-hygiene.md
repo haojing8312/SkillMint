@@ -46,3 +46,8 @@ WorkClaw uses long-running AI-assisted development across runtime, sidecar, Rust
 - Config-driven outputs and paths.
 - Legacy compatibility surfaces that may still be read by old worktrees or older data.
 - Any candidate that appears unused in only one static signal.
+
+## Repo-Local Skills
+
+- `workclaw-repo-hygiene-review` - review and classify findings only.
+- `workclaw-cleanup-execution` - execute only after a reviewed batch is selected.
