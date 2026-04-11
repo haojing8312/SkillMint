@@ -14,6 +14,15 @@
 - `$workclaw-release-prep`: Use before publishing to recommend the next version and draft bilingual Chinese + English release notes for confirmation.
 - `$workclaw-release-publish`: Use only after version and release notes are confirmed, to update release metadata, push the release tag, and generate local desktop artifacts.
 
+## Repo Hygiene Governance
+
+- Treat orphan files, dead code, stale docs, duplicate implementations, and temporary artifacts as a maintenance surface, not a one-off cleanup task.
+- Prefer repo hygiene review before deletion. Do not remove suspicious files or code only because they appear unused in one static signal.
+- Use `pnpm review:repo-hygiene` for non-blocking repo hygiene reporting when the task is cleanup-focused or when a large feature leaves likely follow-up debris.
+- Forthcoming repo-local workflows `workclaw-repo-hygiene-review` and `workclaw-cleanup-execution` will handle candidate classification and reviewed cleanup execution; until they are added, keep using `pnpm review:repo-hygiene` and this maintenance guide for triage.
+- Cleanup changes still require `workclaw-change-verification` when code, tests, docs, or skill files change.
+- Treat generated, runtime-owned, dynamically discovered, or config-driven files as high-risk cleanup surfaces unless a rule explicitly marks them safe.
+
 ## Current Project Stage
 - WorkClaw is currently an early-stage open source project with a single primary maintainer.
 - Default development may happen directly on `main` when that is the most practical path.
