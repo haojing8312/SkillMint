@@ -43,10 +43,26 @@ export async function collectDriftSignals(options = {}) {
 
   const rootDir = path.resolve(options.rootDir ?? process.cwd());
   const packageJsonPath = path.join(rootDir, "package.json");
+  const agentsPath = path.join(rootDir, "AGENTS.md");
   const repoHygieneDocPath = path.join(rootDir, "docs", "maintenance", "repo-hygiene.md");
+  const repoHygieneReviewSkillPath = path.join(
+    rootDir,
+    ".agents",
+    "skills",
+    "workclaw-repo-hygiene-review",
+    "SKILL.md",
+  );
+  const cleanupExecutionSkillPath = path.join(
+    rootDir,
+    ".agents",
+    "skills",
+    "workclaw-cleanup-execution",
+    "SKILL.md",
+  );
 
-  const [packageJson, repoHygieneDoc] = await Promise.all([
+  const [packageJson, agentsDoc, repoHygieneDoc] = await Promise.all([
     readJson(packageJsonPath),
+    readFile(agentsPath, "utf8").catch(() => ""),
     readFile(repoHygieneDocPath, "utf8").catch(() => ""),
   ]);
 
@@ -76,22 +92,52 @@ export async function collectDriftSignals(options = {}) {
     }
   }
 
-  if (!repoHygieneDoc.includes("pnpm review:repo-hygiene")) {
-    findings.push(
-      buildFinding(
-        "Missing pnpm review:repo-hygiene maintenance doc reference",
-        "docs/maintenance/repo-hygiene.md",
-      ),
-    );
+  const referenceChecks = [
+    {
+      content: agentsDoc,
+      source: "AGENTS.md",
+      rules: [
+        ["pnpm review:repo-hygiene", "Missing pnpm review:repo-hygiene AGENTS reference"],
+        ["workclaw-repo-hygiene-review", "Missing workclaw-repo-hygiene-review AGENTS reference"],
+        ["workclaw-cleanup-execution", "Missing workclaw-cleanup-execution AGENTS reference"],
+      ],
+    },
+    {
+      content: repoHygieneDoc,
+      source: "docs/maintenance/repo-hygiene.md",
+      rules: [
+        ["pnpm review:repo-hygiene", "Missing pnpm review:repo-hygiene maintenance doc reference"],
+        ["workclaw-repo-hygiene-review", "Missing workclaw-repo-hygiene-review maintenance doc reference"],
+        ["workclaw-cleanup-execution", "Missing workclaw-cleanup-execution maintenance doc reference"],
+        [".artifacts/repo-hygiene/", "Missing .artifacts/repo-hygiene/ maintenance doc artifact note"],
+      ],
+    },
+  ];
+
+  for (const { content, source, rules } of referenceChecks) {
+    for (const [needle, detail] of rules) {
+      if (!content.includes(needle)) {
+        findings.push(buildFinding(detail, source));
+      }
+    }
   }
 
-  if (!repoHygieneDoc.includes("workclaw-repo-hygiene-review")) {
-    findings.push(
-      buildFinding(
-        "Missing workclaw-repo-hygiene-review maintenance doc reference",
-        "docs/maintenance/repo-hygiene.md",
-      ),
-    );
+  const referencedSkillFiles = [
+    [repoHygieneReviewSkillPath, "workclaw-repo-hygiene-review"],
+    [cleanupExecutionSkillPath, "workclaw-cleanup-execution"],
+  ];
+
+  for (const [skillPath, skillName] of referencedSkillFiles) {
+    const referencedByAgensOrDoc =
+      agentsDoc.includes(skillName) || repoHygieneDoc.includes(skillName);
+    if (referencedByAgensOrDoc && !(await pathExists(skillPath))) {
+      findings.push(
+        buildFinding(
+          `Missing ${skillName} skill file`,
+          path.relative(rootDir, skillPath).split(path.sep).join("/"),
+        ),
+      );
+    }
   }
 
   return findings;

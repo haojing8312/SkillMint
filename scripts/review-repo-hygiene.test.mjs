@@ -226,18 +226,58 @@ test("collect-deadcode-signals shapes knip findings on success", async () => {
   ]);
 });
 
-test("collect-drift-signals reports missing workflow references deterministically", async () => {
+test("collect-drift-signals reports missing repo hygiene references deterministically", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "repo-hygiene-drift-"));
   try {
     await writeFile(
       path.join(rootDir, "package.json"),
-      JSON.stringify({ name: "fixture", scripts: {} }, null, 2),
+      JSON.stringify(
+        {
+          name: "fixture",
+          scripts: {
+            "review:repo-hygiene": "node scripts/review-repo-hygiene.mjs",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await mkdir(path.join(rootDir, "scripts"), { recursive: true });
+    await writeFile(
+      path.join(rootDir, "scripts", "review-repo-hygiene.mjs"),
+      "export {};\n",
+      "utf8",
+    );
+    await mkdir(
+      path.join(rootDir, ".agents", "skills", "workclaw-repo-hygiene-review"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(rootDir, ".agents", "skills", "workclaw-repo-hygiene-review", "SKILL.md"),
+      "---\nname: workclaw-repo-hygiene-review\n---\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootDir, "AGENTS.md"),
+      [
+        "# AGENTS",
+        "",
+        "Use `pnpm review:repo-hygiene` first.",
+        "Use `workclaw-repo-hygiene-review` before cleanup.",
+      ].join("\n"),
       "utf8",
     );
     await mkdir(path.join(rootDir, "docs", "maintenance"), { recursive: true });
     await writeFile(
       path.join(rootDir, "docs", "maintenance", "repo-hygiene.md"),
-      "# Repo Hygiene\n\nRun `pnpm review:repo-hygiene` first.\n",
+      [
+        "# Repo Hygiene",
+        "",
+        "Run `pnpm review:repo-hygiene` first.",
+        "Use `workclaw-repo-hygiene-review` to classify candidates.",
+        "Reports are written to `.artifacts/repo-hygiene/` for local review.",
+      ].join("\n"),
       "utf8",
     );
 
@@ -248,11 +288,11 @@ test("collect-drift-signals reports missing workflow references deterministicall
       ["stale-doc-or-skill-reference", "stale-doc-or-skill-reference"],
     );
     assert.equal(
-      findings.some((finding) => finding.detail.includes("review:repo-hygiene package script")),
+      findings.some((finding) => finding.detail.includes("workclaw-cleanup-execution AGENTS reference")),
       true,
     );
     assert.equal(
-      findings.some((finding) => finding.detail.includes("workclaw-repo-hygiene-review")),
+      findings.some((finding) => finding.detail.includes("workclaw-cleanup-execution maintenance doc reference")),
       true,
     );
   } finally {
@@ -260,7 +300,7 @@ test("collect-drift-signals reports missing workflow references deterministicall
   }
 });
 
-test("collect-drift-signals validates the review script target exists", async () => {
+test("collect-drift-signals reports missing referenced skill files deterministically", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "repo-hygiene-drift-target-"));
   try {
     await writeFile(
@@ -277,23 +317,131 @@ test("collect-drift-signals validates the review script target exists", async ()
       ),
       "utf8",
     );
+    await mkdir(path.join(rootDir, "scripts"), { recursive: true });
+    await writeFile(
+      path.join(rootDir, "scripts", "review-repo-hygiene.mjs"),
+      "export {};\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootDir, "AGENTS.md"),
+      [
+        "# AGENTS",
+        "",
+        "Use `pnpm review:repo-hygiene` first.",
+        "Use `workclaw-repo-hygiene-review` before cleanup.",
+        "Use `workclaw-cleanup-execution` only after review.",
+      ].join("\n"),
+      "utf8",
+    );
     await mkdir(path.join(rootDir, "docs", "maintenance"), { recursive: true });
     await writeFile(
       path.join(rootDir, "docs", "maintenance", "repo-hygiene.md"),
-      "# Repo Hygiene\n\nRun `pnpm review:repo-hygiene` first.\nUse `workclaw-repo-hygiene-review`.\n",
+      [
+        "# Repo Hygiene",
+        "",
+        "Run `pnpm review:repo-hygiene` first.",
+        "Use `workclaw-repo-hygiene-review` to classify candidates.",
+        "Use `workclaw-cleanup-execution` after review.",
+        "Reports are written to `.artifacts/repo-hygiene/` for local review.",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(
+      path.join(rootDir, ".agents", "skills", "workclaw-repo-hygiene-review"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(rootDir, ".agents", "skills", "workclaw-repo-hygiene-review", "SKILL.md"),
+      "---\nname: workclaw-repo-hygiene-review\n---\n",
       "utf8",
     );
 
     const findings = await collectDriftSignals({ rootDir, mode: "drift" });
 
-    assert.equal(
-      findings.some(
-        (finding) =>
-          finding.detail.includes("review:repo-hygiene script target")
-          && finding.source === "scripts/review-repo-hygiene.mjs",
+    assert.deepEqual(findings, [
+      {
+        category: "stale-doc-or-skill-reference",
+        confidence: "probable",
+        action: "review-first",
+        source: ".agents/skills/workclaw-cleanup-execution/SKILL.md",
+        detail: "Missing workclaw-cleanup-execution skill file",
+      },
+    ]);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("collect-drift-signals stays clean when repo hygiene references and skill files are present", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "repo-hygiene-drift-clean-"));
+  try {
+    await writeFile(
+      path.join(rootDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "fixture",
+          scripts: {
+            "review:repo-hygiene": "node scripts/review-repo-hygiene.mjs",
+          },
+        },
+        null,
+        2,
       ),
-      true,
+      "utf8",
     );
+    await mkdir(path.join(rootDir, "scripts"), { recursive: true });
+    await writeFile(
+      path.join(rootDir, "scripts", "review-repo-hygiene.mjs"),
+      "export {};\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(rootDir, "AGENTS.md"),
+      [
+        "# AGENTS",
+        "",
+        "Use `pnpm review:repo-hygiene` first.",
+        "Use `workclaw-repo-hygiene-review` before cleanup.",
+        "Use `workclaw-cleanup-execution` only after review.",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(path.join(rootDir, "docs", "maintenance"), { recursive: true });
+    await writeFile(
+      path.join(rootDir, "docs", "maintenance", "repo-hygiene.md"),
+      [
+        "# Repo Hygiene",
+        "",
+        "Run `pnpm review:repo-hygiene` first.",
+        "Use `workclaw-repo-hygiene-review` to classify candidates.",
+        "Use `workclaw-cleanup-execution` after review.",
+        "Reports are written to `.artifacts/repo-hygiene/` for local review.",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(
+      path.join(rootDir, ".agents", "skills", "workclaw-repo-hygiene-review"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(rootDir, ".agents", "skills", "workclaw-repo-hygiene-review", "SKILL.md"),
+      "---\nname: workclaw-repo-hygiene-review\n---\n",
+      "utf8",
+    );
+    await mkdir(
+      path.join(rootDir, ".agents", "skills", "workclaw-cleanup-execution"),
+      { recursive: true },
+    );
+    await writeFile(
+      path.join(rootDir, ".agents", "skills", "workclaw-cleanup-execution", "SKILL.md"),
+      "---\nname: workclaw-cleanup-execution\n---\n",
+      "utf8",
+    );
+
+    const findings = await collectDriftSignals({ rootDir, mode: "drift" });
+
+    assert.deepEqual(findings, []);
   } finally {
     await rm(rootDir, { recursive: true, force: true });
   }
