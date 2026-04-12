@@ -25,6 +25,28 @@ When a task does not naturally fit these landing zones, explain the chosen place
 - Use the employee-hub scene extraction design in `docs/plans/2026-03-21-app-employee-hub-scene-design.md` as the first repository example to copy before inventing a new split pattern.
 - Prefer introducing or extending a focused scene boundary before letting `App.tsx`, `SettingsView.tsx`, or `ChatView.tsx` absorb more orchestration.
 
+### Current ChatView Reference Split
+- Treat `ChatView.tsx` as a composition root, not a landing zone for every new concern.
+- Prefer adding new chat UI sections under `components/chat/` when the code primarily owns JSX and local presentation interaction.
+- Prefer adding reusable chat state orchestration under `components/chat/use*.ts` when the code owns subscriptions, scroll/focus behavior, or derived view models without JSX.
+- Prefer adding pure chat projection helpers under `components/chat/*Helpers.ts` when the code formats, groups, labels, or derives display data from existing state.
+- Current reference examples:
+  - `components/chat/useChatViewportController.ts`
+  - `components/chat/useChatDerivedViewModels.ts`
+  - `components/chat/chatGroupRunHelpers.ts`
+  - `components/chat/chatViewHelpers.tsx`
+
+Use this split before creating another giant child component or pushing more orchestration back into `ChatView.tsx`.
+
+### Current Settings Reference Split
+- Treat large settings controllers such as `components/settings/feishu/useFeishuSettingsController.ts` as orchestration roots, not as landing zones for every async action, default object, and derived section prop.
+- Prefer extracting async connector actions into `components/settings/<domain>/*ControllerActions.ts` when the file is accumulating load/save/install/retry/start handlers.
+- Prefer extracting default settings objects into `components/settings/<domain>/*ControllerDefaults.ts` when large literal state shapes start to dominate the controller.
+- Prefer extracting pure section prop assembly into `components/settings/<domain>/*ControllerViewModel.ts` when one controller is mostly deriving labels, flags, and grouped props for child sections.
+- Prefer keeping large settings section files as composition roots and moving stable UI blocks into focused files such as environment panels, authorization panels, connection detail panels, and advanced-settings forms.
+
+Use this split before adding more view-model derivation or backend action code directly into a large settings controller or one giant section component.
+
 ## Responsibility Split
 - `App.tsx` owns app-shell concerns and only the cross-scene dependencies that truly belong at the shell.
 - `scene` modules own page-level or domain-level state, orchestration, and cross-component workflow coordination.
@@ -53,6 +75,9 @@ These thresholds are governance triggers, not blanket failure rules. Do not spli
 - event listener setup and teardown flows
 - pure projection, filtering, grouping, and formatting logic
 - distinct screen sections that can stand alone as a reusable UI block
+- scroll-follow, focus, highlight, virtualization, and viewport synchronization logic
+- side-panel projection and failed-run aggregation logic
+- group-run or delegation display-state derivation
 
 ## What Can Stay Close To JSX
 - final page or scene composition
@@ -64,6 +89,7 @@ These thresholds are governance triggers, not blanket failure rules. Do not spli
 - Create a new file only when it owns a real orchestration concern, reusable UI block, reusable state behavior, backend access concern, or meaningful complexity removal.
 - Do not create one-file-per-helper or one-file-per-render-function directories.
 - Do not move a giant root component into an equally giant child component or hook and call that a successful split.
+- Prefer one hook or helper per meaningful concern cluster. For example, "viewport control" is a good file boundary; "scrollToBottom" alone is not.
 
 ## Stability Rules
 - Preserve existing user-visible behavior unless the task explicitly calls for a behavior change.
@@ -74,3 +100,4 @@ These thresholds are governance triggers, not blanket failure rules. Do not spli
 - If touching a file above 300 lines, explain why the change belongs there instead of a new scene, hook, service, or component.
 - If touching a file above 500 lines for feature work, create or update a split plan in `docs/plans/` first.
 - Prefer scene or service extraction over adding more orchestration directly to large view files.
+- When doing repo hygiene or large-file cleanup on frontend runtime surfaces, run `pnpm report:frontend-large-files` to confirm the next highest-risk files instead of relying only on manual inspection.

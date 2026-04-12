@@ -1,9 +1,15 @@
-import type { Message, StreamItem, ToolCallInfo } from "../../types";
+import type { Message, ToolCallInfo } from "../../types";
+import { getToolResultErrorText, getToolResultSummary } from "../../lib/tool-result";
 import {
-  getToolResultDetailString,
-  getToolResultErrorText,
-  getToolResultSummary,
-} from "../../lib/tool-result";
+  buildRunningToolTitle,
+  classifyDeliverable,
+  flattenToolCalls,
+  getToolDisplayLabel,
+  inferCurrentTaskTitle,
+  normalizeTaskStatus,
+  parseWebSearchResults,
+  readTouchedPath,
+} from "./view-model-helpers";
 
 export interface TaskItemView {
   id: string;
@@ -66,139 +72,6 @@ export interface TaskJourneyViewModel {
   steps: TaskJourneyStepView[];
   deliverables: DeliverableView[];
   warnings: string[];
-}
-
-function getToolDisplayLabel(name: ToolCallInfo["name"]): string {
-  switch (name) {
-    case "write_file":
-      return "写入文件";
-    case "edit":
-      return "编辑文件";
-    case "web_search":
-      return "资料搜索";
-    case "todo_write":
-      return "任务清单";
-    default:
-      return name;
-  }
-}
-
-function flattenToolCalls(messages: Message[]): ToolCallInfo[] {
-  const streamToolCalls = messages.flatMap((message) =>
-    (message.streamItems || [])
-      .filter((item: StreamItem) => item.type === "tool_call" && item.toolCall)
-      .map((item) => item.toolCall!)
-  );
-
-  const legacyToolCalls = messages.flatMap((message) => message.toolCalls || []);
-
-  return [...streamToolCalls, ...legacyToolCalls];
-}
-
-function normalizeTaskStatus(value: unknown): TaskItemView["status"] {
-  if (value === "completed" || value === "in_progress") return value;
-  return "pending";
-}
-
-function readTouchedPath(tc: ToolCallInfo): string {
-  const detailPath = getToolResultDetailString(tc.output, "path");
-  if (detailPath) return detailPath;
-  const input = tc.input || {};
-  const candidate = input.path || input.file_path;
-  return typeof candidate === "string" ? candidate : "";
-}
-
-function classifyDeliverable(path: string): DeliverableView["category"] {
-  const lowerPath = path.toLowerCase();
-  if (
-    lowerPath.endsWith(".docx") ||
-    lowerPath.endsWith(".doc") ||
-    lowerPath.endsWith(".pdf") ||
-    lowerPath.endsWith(".html")
-  ) {
-    return "primary";
-  }
-  return "secondary";
-}
-
-function inferCurrentTaskTitle(toolCalls: ToolCallInfo[]): string {
-  const latestWrite = [...toolCalls]
-    .reverse()
-    .find((tc) => (tc.name === "write_file" || tc.name === "edit") && tc.status === "completed");
-  if (latestWrite) {
-    return "生成交付文件";
-  }
-  const latestSearch = [...toolCalls].reverse().find((tc) => tc.name === "web_search");
-  if (latestSearch) {
-    return "搜索资料";
-  }
-  return "";
-}
-
-function buildRunningToolTitle(toolCall: ToolCallInfo | undefined): string {
-  if (!toolCall) return "";
-  if (toolCall.name === "bash") {
-    const command = String(toolCall.input?.command || "").trim();
-    if (!command) return "执行命令：bash";
-    const compact = command.length > 48 ? `${command.slice(0, 48)}...` : command;
-    return `执行命令：${compact}`;
-  }
-  if (toolCall.name === "web_search") {
-    return "搜索资料";
-  }
-  if (toolCall.name === "write_file" || toolCall.name === "edit") {
-    return "生成交付文件";
-  }
-  if (toolCall.name === "todo_write") {
-    return "更新任务清单";
-  }
-  return `执行工具：${toolCall.name}`;
-}
-
-function extractDomain(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return "";
-  }
-}
-
-function parseWebSearchResults(output?: string): WebSearchResultView[] {
-  if (!output) return [];
-
-  try {
-    const parsed = JSON.parse(output);
-    const results = Array.isArray(parsed?.results)
-      ? parsed.results
-      : Array.isArray(parsed?.items)
-      ? parsed.items
-      : [];
-    return results
-      .map((item: any) => ({
-        title: String(item?.title || ""),
-        url: String(item?.url || item?.link || ""),
-        snippet: String(item?.snippet || item?.summary || ""),
-        domain: extractDomain(String(item?.url || item?.link || "")),
-      }))
-      .filter((item: WebSearchResultView) => item.title || item.url);
-  } catch {
-    return output
-      .split(/\n+/)
-      .map((line: string) => line.trim())
-      .filter(Boolean)
-      .reduce<WebSearchResultView[]>((acc, line: string) => {
-        const match = line.match(/^(\d+)\.\s+(.*)$/);
-        if (match) {
-          acc.push({ title: match[2], url: "", snippet: "", domain: "" });
-        } else if (acc.length > 0 && !acc[acc.length - 1].url && /^https?:\/\//.test(line)) {
-          acc[acc.length - 1].url = line;
-          acc[acc.length - 1].domain = extractDomain(line);
-        } else if (acc.length > 0 && !acc[acc.length - 1].snippet) {
-          acc[acc.length - 1].snippet = line;
-        }
-        return acc;
-      }, []);
-  }
 }
 
 export function extractSessionTouchedFiles(messages: Message[]): SessionTouchedFile[] {
@@ -280,7 +153,7 @@ export function buildTaskJourneyViewModel(messages: Message[]): TaskJourneyViewM
         ? {
             path,
             tool: tc.name as "write_file" | "edit",
-            category: classifyDeliverable(path),
+            category: classifyDeliverable(path) as DeliverableView["category"],
           }
         : null;
     })

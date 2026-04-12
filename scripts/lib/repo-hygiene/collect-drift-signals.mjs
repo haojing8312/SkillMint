@@ -98,6 +98,7 @@ export async function collectDriftSignals(options = {}) {
       source: "AGENTS.md",
       rules: [
         ["pnpm review:repo-hygiene", "Missing pnpm review:repo-hygiene AGENTS reference"],
+        ["pnpm report:frontend-large-files", "Missing pnpm report:frontend-large-files AGENTS reference"],
         ["workclaw-repo-hygiene-review", "Missing workclaw-repo-hygiene-review AGENTS reference"],
         ["workclaw-cleanup-execution", "Missing workclaw-cleanup-execution AGENTS reference"],
       ],
@@ -107,6 +108,7 @@ export async function collectDriftSignals(options = {}) {
       source: "docs/maintenance/repo-hygiene.md",
       rules: [
         ["pnpm review:repo-hygiene", "Missing pnpm review:repo-hygiene maintenance doc reference"],
+        ["pnpm report:frontend-large-files", "Missing pnpm report:frontend-large-files maintenance doc reference"],
         ["workclaw-repo-hygiene-review", "Missing workclaw-repo-hygiene-review maintenance doc reference"],
         ["workclaw-cleanup-execution", "Missing workclaw-cleanup-execution maintenance doc reference"],
         [".artifacts/repo-hygiene/", "Missing .artifacts/repo-hygiene/ maintenance doc artifact note"],

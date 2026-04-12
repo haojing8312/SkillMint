@@ -6,9 +6,10 @@ import remarkGfm from "remark-gfm";
 import { ThinkingBlock } from "../ThinkingBlock";
 import { TaskJourneySummary } from "../chat-journey/TaskJourneySummary";
 import type { ChatMessagePart, Message, SessionRunProjection, SessionToolManifestEntry, StreamItem } from "../../types";
+import { ChatAskUserActionCard } from "./ChatAskUserActionCard";
 import { createChatMarkdownComponents } from "./chatMarkdownComponents";
+import { ChatStreamingAssistantBubble } from "./ChatStreamingAssistantBubble";
 import {
-  extractPlainTextFromStreamItems,
   getRunFailureTechnicalToggleLabel,
   renderChatRunFailureCard,
   renderChatStreamItems,
@@ -110,7 +111,6 @@ function ChatMessageRailImpl({
   onOpenExternalLink,
 }: ChatMessageRailProps) {
   const markdownComponents = useMemo(() => createChatMarkdownComponents(onOpenExternalLink), [onOpenExternalLink]);
-  const streamText = useMemo(() => extractPlainTextFromStreamItems(streamItems), [streamItems]);
   return (
     <>
       {topSpacerHeight > 0 && <div aria-hidden="true" style={{ height: topSpacerHeight }} />}
@@ -248,106 +248,30 @@ function ChatMessageRailImpl({
       )}
 
       {showStreamingAssistantBubble && (
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex justify-start">
-          <div
-            data-testid="chat-streaming-bubble"
-            className="w-full max-w-[92%] px-0 py-1 text-sm text-slate-800 sm:max-w-[88%] md:max-w-[48rem] xl:max-w-[52rem]"
-          >
-            {showStreamingThinkingState && (
-              <ThinkingBlock
-                status={streamReasoning?.status || "thinking"}
-                content={streamReasoning?.content || ""}
-                durationMs={streamReasoning?.durationMs}
-                expanded={expandedThinkingKeys.includes("stream")}
-                onToggle={(streamReasoning?.content || "").trim() ? () => onToggleThinkingBlock("stream") : undefined}
-              />
-            )}
-            {streamItems.length > 0 &&
-              renderChatStreamItems({
-                items: streamItems,
-                subAgentBuffer,
-                markdownComponents,
-                toolManifest,
-              })}
-            {subAgentBuffer && (
-              <div
-                data-testid="sub-agent-stream-buffer"
-                className="mt-2 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2"
-              >
-                <div className="mb-1 text-[11px] font-semibold text-slate-600">
-                  {subAgentRoleName ? `子员工 · ${subAgentRoleName}` : "子员工"}
-                </div>
-                <div className="prose prose-xs max-w-none text-slate-700">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {subAgentBuffer}
-                  </ReactMarkdown>
-                  <span className="animate-pulse text-slate-400">|</span>
-                </div>
-              </div>
-            )}
-            {streamItems.length > 0 && <span className="inline-block h-4 w-0.5 animate-[blink_1s_infinite] align-middle bg-blue-400 ml-0.5" />}
-            {streamText.trim() && (
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  data-testid="assistant-copy-action-stream"
-                  aria-label="复制回答"
-                  title={copiedAssistantMessageKey === "stream" ? "已复制" : "复制回答"}
-                  onClick={() => void onCopyAssistantMessage("stream", streamText)}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2"
-                >
-                  <CopyActionIcon copied={copiedAssistantMessageKey === "stream"} />
-                </button>
-              </div>
-            )}
-          </div>
-        </motion.div>
+        <ChatStreamingAssistantBubble
+          showStreamingThinkingState={showStreamingThinkingState}
+          streamReasoning={streamReasoning}
+          expandedThinkingKeys={expandedThinkingKeys}
+          onToggleThinkingBlock={onToggleThinkingBlock}
+          streamItems={streamItems}
+          toolManifest={toolManifest}
+          subAgentBuffer={subAgentBuffer}
+          subAgentRoleName={subAgentRoleName}
+          copiedAssistantMessageKey={copiedAssistantMessageKey}
+          onCopyAssistantMessage={onCopyAssistantMessage}
+          CopyActionIcon={CopyActionIcon}
+          onOpenExternalLink={onOpenExternalLink}
+        />
       )}
 
       {askUserQuestion && (
-        <div className="sticky top-0 z-20 flex justify-start">
-          <div
-            data-testid="ask-user-action-card"
-            className="max-w-[80%] rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm shadow-sm"
-          >
-            <div className="mb-1 font-semibold text-amber-800">需要你的确认</div>
-            <div className="mb-2 font-medium text-amber-700">{askUserQuestion}</div>
-            {askUserOptions.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-2">
-                {askUserOptions.map((option, index) => (
-                  <button
-                    key={index}
-                    onClick={() => onAnswerUser(option)}
-                    className="rounded border border-amber-300 bg-amber-100 px-3 py-1 text-xs text-amber-800 transition-colors hover:bg-amber-200"
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                value={askUserAnswer}
-                onChange={(event) => onAskUserAnswerChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    onAnswerUser(askUserAnswer);
-                  }
-                }}
-                placeholder="输入回答..."
-                className="flex-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-amber-500 focus:outline-none"
-              />
-              <button
-                onClick={() => onAnswerUser(askUserAnswer)}
-                disabled={!askUserAnswer.trim()}
-                className="rounded bg-amber-500 px-3 py-1 text-xs transition-colors hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400"
-              >
-                回答
-              </button>
-            </div>
-          </div>
-        </div>
+        <ChatAskUserActionCard
+          askUserQuestion={askUserQuestion}
+          askUserOptions={askUserOptions}
+          askUserAnswer={askUserAnswer}
+          onAskUserAnswerChange={onAskUserAnswerChange}
+          onAnswerUser={onAnswerUser}
+        />
       )}
     </>
   );
@@ -364,6 +288,8 @@ export const ChatMessageRail = memo(ChatMessageRailImpl, (prev, next) => {
     prev.expandedThinkingKeys === next.expandedThinkingKeys &&
     prev.failedRunsByAssistantMessageId === next.failedRunsByAssistantMessageId &&
     prev.failedRunsByUserMessageId === next.failedRunsByUserMessageId &&
+    prev.renderInstallCandidates === next.renderInstallCandidates &&
+    prev.extractInstallCandidates === next.extractInstallCandidates &&
     prev.copiedAssistantMessageKey === next.copiedAssistantMessageKey &&
     prev.expandedRunDetailIds === next.expandedRunDetailIds &&
     prev.streaming === next.streaming &&

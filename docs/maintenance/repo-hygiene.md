@@ -41,11 +41,12 @@ WorkClaw uses long-running AI-assisted development across runtime, sidecar, Rust
    - `pnpm review:repo-hygiene:dup`
    - `pnpm review:repo-hygiene:loc`
    - `pnpm review:repo-hygiene:cycles`
-3. Review the report and triage candidates by finding category and confidence.
-4. Use `workclaw-repo-hygiene-review` to classify findings before any destructive edit.
-5. Choose the smallest cleanup batch that is still well supported.
-6. Use `workclaw-cleanup-execution` only for the reviewed batch.
-7. Run `workclaw-change-verification` when the cleanup changes code, tests, docs, or skill files.
+3. For frontend large-file governance, run `pnpm report:frontend-large-files` alongside repo hygiene review when a React or TypeScript surface is growing.
+4. Review the report and triage candidates by finding category and confidence.
+5. Use `workclaw-repo-hygiene-review` to classify findings before any destructive edit.
+6. Choose the smallest cleanup batch that is still well supported.
+7. Use `workclaw-cleanup-execution` only for the reviewed batch.
+8. Run `workclaw-change-verification` when the cleanup changes code, tests, docs, or skill files.
 
 Reports are written to `.artifacts/repo-hygiene/` for local review and should stay untracked.
 The GitHub Actions `Repo Hygiene` workflow also runs this command in a non-blocking lane and uploads the generated report as a workflow artifact for review.
@@ -59,6 +60,39 @@ The GitHub Actions `Repo Hygiene` workflow also runs this command in a non-block
 - `temporary-artifacts` and `stale-doc-or-skill-reference`: housekeeping and drift signals for long-running AI-assisted work.
 
 This mirrors the OpenClaw pattern of small named checks under one umbrella command instead of relying on a single general-purpose linter.
+
+## Oversized File Governance
+
+Oversized-file findings are not an instruction to split mechanically. Use them as a trigger to check whether one file is mixing too many responsibilities.
+
+For runtime frontend surfaces, prefer this order:
+
+1. Extract pure display sections into `components/<domain>/...`.
+2. Extract reusable stateful orchestration into `use*.ts` hooks.
+3. Extract pure projections, labels, grouping, and formatting into helper modules.
+4. Leave final page composition and small view-local glue in the root component.
+
+Recent validated runtime pattern:
+
+- Keep `ChatView.tsx` as the composition root.
+- Move viewport and focus behavior to `components/chat/useChatViewportController.ts`.
+- Move derived message windows and side-panel models to `components/chat/useChatDerivedViewModels.ts`.
+- Move group-run and delegation projections to `components/chat/chatGroupRunHelpers.ts`.
+- Move standalone JSX sections such as dialogs, banners, and install panels into focused `components/chat/*` files.
+
+Recent validated settings pattern:
+
+- Keep `useFeishuSettingsController.ts` as the orchestration root that owns effects, polling, and section assembly only.
+- Move async load/save/install/start actions to `components/settings/feishu/feishuSettingsControllerActions.ts`.
+- Move default object shapes to `components/settings/feishu/feishuSettingsControllerDefaults.ts`.
+- Move pure section prop derivation to `components/settings/feishu/feishuSettingsControllerViewModel.ts`.
+- Keep large settings sections as composition roots and split stable UI blocks into focused files such as:
+  - `components/settings/feishu/FeishuEnvironmentPanel.tsx`
+  - `components/settings/feishu/FeishuAuthorizationPanel.tsx`
+  - `components/settings/feishu/FeishuAdvancedSettingsForm.tsx`
+  - `components/settings/feishu/FeishuConnectionDetailsPanel.tsx`
+
+This is the preferred cleanup direction for future oversized runtime frontend files. The goal is stable responsibility boundaries, not line-count gaming.
 
 ## High-Risk Surfaces
 
