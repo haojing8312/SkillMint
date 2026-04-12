@@ -6,9 +6,7 @@ edition = "2021"
 [dependencies]
 aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", features = ["hmac"] }
-hmac = "0.12"
 sha2 = "0.10"
-rand = "0.8"
 zip = "2.1"
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
