@@ -77,6 +77,7 @@ cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --lib host_reply_di
 
 - [appendix-b-risk-and-verification.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/appendix-b-risk-and-verification.md)
 - [08-phase-3-external-verification-result-template.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/08-phase-3-external-verification-result-template.md)
+- [11-phase-3-verification-record-2026-04-19.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/11-phase-3-verification-record-2026-04-19.md)
 
 ### 第三步
 
