@@ -534,6 +534,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn maybe_notify_registered_ask_user_routes_wecom_session_via_unified_host() {
         let pool = setup_interactive_dispatch_pool().await;
@@ -575,6 +576,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn maybe_notify_registered_approval_requested_routes_wecom_session_via_unified_host() {
         let pool = setup_interactive_dispatch_pool().await;

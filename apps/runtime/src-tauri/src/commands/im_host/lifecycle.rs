@@ -619,6 +619,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn host_lifecycle_emit_routes_answer_and_resume_phases_to_wecom_host() {
         let pool = setup_lifecycle_pool().await;
@@ -676,6 +677,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn host_reply_dispatch_routes_wecom_session_via_unified_host() {
         let pool = setup_lifecycle_pool().await;

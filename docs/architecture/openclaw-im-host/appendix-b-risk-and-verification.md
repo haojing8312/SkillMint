@@ -84,7 +84,7 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
 - 即使 Phase 1 已去掉前端 fallback，也不能把“宿主能发出最终回复”等同于“official lifecycle 已完全对齐”；第二阶段仍需用 completion order 测试证明 idle barrier 后才算完成。
 - 由于 contract 与 trace 能力已上提到 `im_host/*`，后续改动若只修 Feishu 分支、不补通用层回归，容易重新引入平台与 adapter 漂移。
 - `ask_user` / `approval` 目前已具备 reply completion 投影与部分 lifecycle 事件，但仍需继续验证 IM 中断、恢复与 completion 的一致性。
-- 当前 Windows 本机环境对部分 `runtime` Rust 单测二进制仍存在 `STATUS_ENTRYPOINT_NOT_FOUND` 风险；因此新增宿主回归需要同时保留 compile-only 证据和 fast-path 证据，避免误把环境问题当成实现失败。
+- 当前 Windows 本机环境对大型 `runtime_lib` Rust 单测二进制仍存在 `STATUS_ENTRYPOINT_NOT_FOUND` 风险；因此新增宿主回归需要同时保留 compile-only 证据、Windows 专用回归入口证据与 fast-path 证据，避免误把环境问题当成实现失败。
 
 ### 2026-04-19 收尾验证记录
 
@@ -98,6 +98,21 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
     - `cargo check -p runtime`
     - `pnpm test:rust-fast`
   - 说明：该模式刻意跳过本机仍受 `STATUS_ENTRYPOINT_NOT_FOUND` 影响的 `runtime` libtest 执行步骤，用于给当前环境提供稳定、可复跑的 compile-level 验证入口。
+- `pnpm test:im-host-windows-regression`
+  - 结果：PASS
+  - 覆盖：在 Windows 上通过独立测试目标一次性验证 WeCom unified-host 的三类关键能力：
+    - waiting-state order
+    - resumed lifecycle routing
+    - final reply dispatch
+  - 说明：该入口专门绕开当前机器上大型 `runtime_lib` libtest binary 的历史启动问题，是本轮新增的 Windows 可执行执行级证据。
+- `pnpm verify:openclaw-im-host:phase3`
+  - 结果：PASS
+  - 覆盖：在当前 Windows 机器上串联执行：
+    - `src/components/__tests__/SettingsView.wecom-connector.test.tsx`
+    - `cargo check -p runtime`
+    - `pnpm test:rust-fast`
+    - `pnpm test:im-host-windows-regression`
+  - 说明：该脚本现已在 Windows 下自动切换到专用 IM host 回归入口，不再把大型 libtest 环境缺陷当作 Phase 3 执行级验证的唯一出口。
 - `pnpm --dir apps/runtime test -- App.im-feishu-bridge.test.tsx`
   - 结果：PASS（17 tests）
   - 覆盖：确认 Feishu follow-up 继续通过宿主侧 `send_message` / `answer_user_question` 路径进入 runtime，UI 层不再承担 `send_feishu_text_message` 最终答复发送责任。
@@ -115,10 +130,10 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
   - 覆盖：确认 interactive lifecycle hook、恢复态宿主路由测试辅助、以及 runtime completion projection 调整在 `runtime` crate 级别可编译通过。
 - `cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml im_host::interactive_dispatch -- --nocapture`
   - 结果：编译通过，但执行受本机 Windows 环境阻塞
-  - 覆盖：新增的 WeCom interactive lifecycle hook 与等待态顺序回归已编入 `runtime_lib` test binary；执行阶段仍落在已知 `STATUS_ENTRYPOINT_NOT_FOUND` 环境问题上。
+  - 覆盖：新增的 WeCom interactive lifecycle hook 与等待态顺序回归已编入 `runtime_lib` test binary；原始 libtest 执行阶段仍落在已知 `STATUS_ENTRYPOINT_NOT_FOUND` 环境问题上。
 - `cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml im_host::lifecycle -- --nocapture`
   - 结果：编译通过，但执行受本机 Windows 环境阻塞
-  - 覆盖：新增的 WeCom 恢复态 lifecycle regression 与 host-level final reply dispatch regression 已编入 `runtime_lib` test binary；执行阶段仍落在已知 `STATUS_ENTRYPOINT_NOT_FOUND` 环境问题上。
+  - 覆盖：新增的 WeCom 恢复态 lifecycle regression 与 host-level final reply dispatch regression 已编入 `runtime_lib` test binary；原始 libtest 执行阶段仍落在已知 `STATUS_ENTRYPOINT_NOT_FOUND` 环境问题上。
 
 ### 本轮验证结论
 
@@ -131,5 +146,6 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
   - WeCom 宿主启停也走统一 channel host command，而不是保留特判入口
 - 本轮实际已拿到的新增证据是：
   - WeCom 设置页统一宿主视图重新全绿，并新增验证“启动宿主”同样走统一 channel host command
-  - WeCom 的等待态顺序、恢复态路由、以及 final reply dispatch 回归都已完成代码落地并通过 `cargo check -p runtime` 编译校验
+  - WeCom 的等待态顺序、恢复态路由、以及 final reply dispatch 回归都已完成代码落地，并已通过 Windows 专用执行入口 `pnpm test:im-host-windows-regression`
+  - `pnpm verify:openclaw-im-host:phase3` 已可在当前 Windows 环境下完整通过，不再只能停留在 compile-only 模式
 - 仍未在本轮声称“official lifecycle 已完全对齐”；`waitForIdle -> markFullyComplete -> markDispatchIdle` 的最终 completion order 仍需在第二阶段继续用更窄、更强的 lifecycle 测试证明。

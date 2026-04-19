@@ -122,6 +122,10 @@ WeCom 当前已经拿到的关键证明包括：
   - PASS
 - `pnpm test:rust-fast`
   - PASS
+- `pnpm test:im-host-windows-regression`
+  - PASS
+- `pnpm verify:openclaw-im-host:phase3`
+  - PASS
 - `pnpm verify:openclaw-im-host:phase3 --compile-only`
   - PASS
 
@@ -130,28 +134,34 @@ WeCom 当前已经拿到的关键证明包括：
 - 新增的 `im_host` / WeCom host lifecycle / dispatch 改动已能编译进入 `runtime`
 - 仓库要求的 Rust fast path 回归仍然保持通过
 - 当前机器已经具备一个可重复执行的 compile-only Phase 3 验证入口，便于后续 handoff 或换机会话继续推进
+- 当前 Windows 机器也已经具备一个可稳定执行的 IM host 专用回归入口，不再只能停留在 compile-level 验证
 
 ### 4.4 环境阻塞说明
 
-本轮尝试执行新增的 `cargo test --lib ...` 定向测试时，仍然命中这台 Windows 机器的已知环境问题：
+本轮已确认两件事同时成立：
+
+- 这台 Windows 机器执行大型 `runtime_lib` libtest binary 时，仍然会命中已知环境问题
+- 但 WeCom unified-host 的关键回归已经迁移到 Windows 可执行的独立测试目标，不再被该问题阻塞
+
+当前仍会命中的历史问题是：
 
 - `STATUS_ENTRYPOINT_NOT_FOUND`
 
 因此当前最准确的说法是：
 
-- 新增 Rust 回归已经完成代码落地
-- 已通过 compile-level 验证
-- 但 test binary 的实际执行仍受本机环境阻塞
+- 原始 `cargo test --lib ...` 路径在当前 Windows 环境下仍不稳定
+- 但 `pnpm test:im-host-windows-regression` 已可在本机稳定执行
+- `pnpm verify:openclaw-im-host:phase3` 在 Windows 下也已切换到该专用回归入口并实际通过
 
 ## 5. 还未完全完成的部分
 
 当前剩余工作已经不是大的架构空白，而是最后的验收收口：
 
-- 在无环境问题的机器上真正执行新增 `im_host` Rust lifecycle / dispatch tests
-- 把 `dispatch_idle` 作为最终完成边界的证据继续收紧成更聚焦的 lifecycle 验收
+- 继续把 `dispatch_idle` 作为最终完成边界的证据收紧成更聚焦的 lifecycle 验收
+- 在非 Windows 或更完整环境上补跑原始 `cargo test --lib ...` 路径，作为附加证据而不是唯一出口
 - 如果要正式宣布第三阶段结束，补一份更偏发布/验收口径的阶段结论
 
-换句话说，现在离“结构上做完”已经很近，离“证据上无争议地宣布结束”还差最后一小段。
+换句话说，现在离“结构上做完”已经很近；当前 Windows 机器上的执行级验证已经可完成，但如果还想把原始 libtest 路径也补齐，仍有最后一小段环境相关收尾工作。
 
 ## 6. 对应设计与计划文档
 
@@ -169,11 +179,12 @@ WeCom 当前已经拿到的关键证明包括：
 
 ### 最优先
 
-- 换一台没有当前 Windows test-binary 环境问题的机器
-- 执行新增的 `im_host` Rust lifecycle / dispatch tests
+- 延续当前做法，把 Windows 专用回归入口作为默认验收路径之一
+- 在非 Windows 或更完整的开发环境上补跑原始 `im_host` Rust lifecycle / dispatch libtests，作为补充证据
 - 把执行结果回填到 `appendix-b-risk-and-verification.md`
 - 按 [07-phase-3-external-verification-runbook.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/07-phase-3-external-verification-runbook.md) 的顺序执行，避免遗漏新增 WeCom host-level 用例
-- 优先使用仓库脚本 `pnpm verify:openclaw-im-host:phase3`；若当前机器只能做 compile-level 验证，可先运行 `pnpm verify:openclaw-im-host:phase3 --compile-only`
+- 优先使用仓库脚本 `pnpm verify:openclaw-im-host:phase3`；在 Windows 下它会自动切换到 `pnpm test:im-host-windows-regression`
+- 若当前机器只能做 compile-level 验证，可先运行 `pnpm verify:openclaw-im-host:phase3 --compile-only`
 - 结果记录可直接复用 [08-phase-3-external-verification-result-template.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/08-phase-3-external-verification-result-template.md)
 
 ### 次优先

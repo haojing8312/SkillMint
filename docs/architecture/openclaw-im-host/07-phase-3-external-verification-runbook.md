@@ -1,6 +1,6 @@
 # OpenClaw IM Host：Phase 3 External Verification Runbook
 
-本文档用于在一台没有当前 Windows 本机环境问题的机器上，完成 Phase 3 最后几条执行级验证。
+本文档用于完成 Phase 3 最后几条执行级验证，并明确区分 Windows 专用回归入口与原始 libtest 入口。
 
 ## 背景
 
@@ -11,11 +11,15 @@
 - `pnpm test:rust-fast` 已通过
 - 新增 `im_host` Rust 回归已完成代码落地并编译进入 `runtime`
 
-但本机执行 `cargo test --lib ...` 时仍受环境问题阻塞：
+但本机执行大型 `cargo test --lib ...` 时仍受环境问题阻塞：
 
 - `STATUS_ENTRYPOINT_NOT_FOUND`
 
-因此还需要在另一台无该问题的机器上完成最终执行级验证。
+为避免把环境缺陷误判成实现失败，仓库已新增 Windows 专用回归入口：
+
+- `pnpm test:im-host-windows-regression`
+
+并且 `pnpm verify:openclaw-im-host:phase3` 在 Windows 下会自动使用该入口。
 
 ## 本次要验证的目标
 
@@ -27,7 +31,11 @@
 
 ## 建议执行环境
 
-- Windows 或其他能稳定执行 `runtime` Rust test binary 的机器
+- Windows：
+  - 可直接使用 `pnpm test:im-host-windows-regression`
+  - 如需执行原始 libtest，需确认该机器不存在 `STATUS_ENTRYPOINT_NOT_FOUND`
+- 非 Windows 或其他能稳定执行 `runtime` Rust test binary 的机器：
+  - 可继续执行原始 `cargo test --lib ...` 路径
 - 与当前仓库代码保持同一提交或同一工作树状态
 - 已完成 `pnpm install`
 - Rust / cargo / MSVC toolchain 正常
@@ -39,6 +47,11 @@
 ```bash
 pnpm verify:openclaw-im-host:phase3
 ```
+
+说明：
+
+- Windows：该脚本会执行 `pnpm test:im-host-windows-regression`
+- 其他环境：该脚本会继续执行原始 `cargo test --lib ...` 定向用例
 
 如果当前机器只能接受 compile-level 验证，可先运行：
 
@@ -59,6 +72,14 @@ pnpm test:rust-fast
 
 ### 2. 执行新增 WeCom interactive waiting-state 回归
 
+Windows 推荐命令：
+
+```bash
+pnpm test:im-host-windows-regression
+```
+
+非 Windows 或可稳定执行原始 libtest 的机器，可使用：
+
 ```bash
 cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --lib maybe_notify_registered_ask_user_routes_wecom_session_via_unified_host -- --nocapture
 
@@ -74,6 +95,14 @@ cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --lib maybe_notify_
 
 ### 3. 执行新增 WeCom 恢复态 lifecycle 回归
 
+Windows 推荐命令：
+
+```bash
+pnpm test:im-host-windows-regression
+```
+
+非 Windows 或可稳定执行原始 libtest 的机器，可使用：
+
 ```bash
 cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --lib host_lifecycle_emit_routes_answer_and_resume_phases_to_wecom_host -- --nocapture
 ```
@@ -86,6 +115,14 @@ cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --lib host_lifecycl
   - `resumed`
 
 ### 4. 执行新增 WeCom final reply dispatch 回归
+
+Windows 推荐命令：
+
+```bash
+pnpm test:im-host-windows-regression
+```
+
+非 Windows 或可稳定执行原始 libtest 的机器，可使用：
 
 ```bash
 cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --lib host_reply_dispatch_routes_wecom_session_via_unified_host -- --nocapture
@@ -141,6 +178,8 @@ pnpm --dir apps/runtime test -- src/components/__tests__/SettingsView.wecom-conn
 - resumed lifecycle routing:
 - final reply dispatch:
 - frontend WeCom registry/settings:
+- Windows 专用回归入口是否通过：
+- 原始 libtest 路径是否执行：
 
 ### 结论
 
@@ -158,6 +197,11 @@ pnpm --dir apps/runtime test -- src/components/__tests__/SettingsView.wecom-conn
 - WeCom settings / channel registry 前端测试继续全绿
 - 没有新增回归导致 Feishu / unified host 基线破坏
 
+其中执行级证据可接受以下任一组合：
+
+- Windows 上 `pnpm test:im-host-windows-regression` 通过
+- 非 Windows 或稳定环境上原始 `cargo test --lib ...` 定向用例通过
+
 ## 一句话说明
 
-这份 runbook 的目标，不是继续设计，而是把当前已经接近完成的 Phase 3，用一台无环境问题的机器补齐最后的执行级证据。
+这份 runbook 的目标，不是继续设计，而是把当前已经接近完成的 Phase 3 验证流程标准化：Windows 默认走专用回归入口，其他稳定环境可继续补跑原始 libtest 作为附加证据。

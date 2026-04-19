@@ -30,6 +30,7 @@
     "test:employee-im-heavy-regression": "cargo run --manifest-path apps/runtime/src-tauri/Cargo.toml --bin employee_im_heavy_regression",
     "test:group-run-regression": "cargo run --manifest-path apps/runtime/src-tauri/Cargo.toml --bin employee_group_run_regression",
     "test:employee-agents-windows": "node scripts/run-employee-agent-windows-regressions.mjs",
+    "test:im-host-windows-regression": "cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml --test test_im_host_windows_regressions -- --nocapture",
     "test:rust-fast": "node scripts/test-rust-fast.mjs",
     "verify:openclaw-im-host:phase3": "node scripts/run-openclaw-im-host-phase3-verification.mjs",
     "cargo:isolated": "node scripts/run-cargo-isolated.mjs",

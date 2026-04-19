@@ -85,6 +85,14 @@ const LIBTEST_COMMANDS = [
   },
 ];
 
+const WINDOWS_REGRESSION_COMMANDS = [
+  {
+    label: "wecom-unified-host-windows-regressions",
+    command: "pnpm",
+    args: ["test:im-host-windows-regression"],
+  },
+];
+
 function hasFlag(flag) {
   return process.argv.includes(flag);
 }
@@ -124,11 +132,17 @@ function runCommand(step) {
 
 function main() {
   const compileOnly = hasFlag("--compile-only");
-  const steps = [...FRONTEND_COMMANDS, ...COMPILE_COMMANDS, ...(compileOnly ? [] : LIBTEST_COMMANDS)];
+  const runtimeCommands =
+    process.platform === "win32" ? WINDOWS_REGRESSION_COMMANDS : LIBTEST_COMMANDS;
+  const steps = [...FRONTEND_COMMANDS, ...COMPILE_COMMANDS, ...(compileOnly ? [] : runtimeCommands)];
 
   console.error(
     `[phase3-verify] mode=${compileOnly ? "compile-only" : "full"} ` +
-      "(full mode expects a machine that can execute runtime libtests)",
+      (compileOnly
+        ? ""
+        : process.platform === "win32"
+          ? "(Windows full mode uses dedicated IM host regression targets)"
+          : "(full mode expects a machine that can execute runtime libtests)"),
   );
 
   for (const step of steps) {

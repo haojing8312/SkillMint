@@ -31,6 +31,9 @@ const DEFAULT_WECOM_CONNECTOR_ID: &str = "wecom-main";
 mod outbound_service;
 #[path = "wecom_gateway/interactive_service.rs"]
 mod interactive_service;
+#[path = "wecom_gateway/test_support.rs"]
+#[doc(hidden)]
+pub mod test_support;
 pub(crate) use outbound_service::{
     execute_registered_wecom_reply_plan_with_pool,
     maybe_emit_registered_wecom_lifecycle_phase_for_session_with_pool,

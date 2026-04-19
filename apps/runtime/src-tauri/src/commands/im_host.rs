@@ -34,6 +34,9 @@ pub(crate) mod runtime_registry;
 pub(crate) mod runtime_router;
 #[path = "im_host/runtime_status.rs"]
 pub(crate) mod runtime_status;
+#[path = "im_host/test_support.rs"]
+#[doc(hidden)]
+pub mod test_support;
 #[path = "im_host/runtime_waiters.rs"]
 pub(crate) mod runtime_waiters;
 #[path = "im_host/sidecar_channel.rs"]

@@ -59,6 +59,10 @@ function runCommand(command, args) {
   };
 }
 
+function uniquePaths(paths) {
+  return [...new Set((paths || []).filter(Boolean))];
+}
+
 export function resolvePnpmVersion({ env = process.env, run = runCommand } = {}) {
   const userAgent = env.npm_config_user_agent || "";
   const match = userAgent.match(/pnpm\/([^\s]+)/i);
@@ -78,7 +82,34 @@ export function resolvePnpmVersion({ env = process.env, run = runCommand } = {})
   return pnpmResult.ok ? pnpmResult.stdout.trim() : "";
 }
 
-function detectVisualStudio(env) {
+function detectVisualStudioInstallations(env, run = runCommand) {
+  const vswherePath = env["ProgramFiles(x86)"]
+    ? path.join(env["ProgramFiles(x86)"], "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    : "";
+  if (!vswherePath || !existsSync(vswherePath)) {
+    return [];
+  }
+
+  const result = run(vswherePath, ["-products", "*", "-format", "json"]);
+  if (!result.ok || !result.stdout.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return uniquePaths(
+      parsed.flatMap((entry) => [entry?.resolvedInstallationPath, entry?.installationPath]),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function detectVisualStudio(env, installations = []) {
   const programFiles = [env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean);
   const stablePaths = [];
   const insidersPaths = [];
@@ -97,11 +128,21 @@ function detectVisualStudio(env) {
     }
   }
 
+  for (const installation of installations) {
+    if (/\\2022\\(?:Preview|Insiders)(?:\\|$)/i.test(installation)) {
+      insidersPaths.push(installation);
+      continue;
+    }
+    if (/\\2022\\(?:BuildTools|Community|Professional|Enterprise)(?:\\|$)/i.test(installation)) {
+      stablePaths.push(installation);
+    }
+  }
+
   return {
-    hasStable: stablePaths.some((candidate) => existsSync(candidate)),
-    hasInsiders: insidersPaths.some((candidate) => existsSync(candidate)),
-    stablePaths,
-    insidersPaths,
+    hasStable: uniquePaths(stablePaths).some((candidate) => existsSync(candidate)),
+    hasInsiders: uniquePaths(insidersPaths).some((candidate) => existsSync(candidate)),
+    stablePaths: uniquePaths(stablePaths),
+    insidersPaths: uniquePaths(insidersPaths),
   };
 }
 
@@ -119,7 +160,7 @@ function detectWindowsSdk(env) {
   };
 }
 
-function detectMsvcTools(env) {
+function detectMsvcTools(env, installations = []) {
   const candidates = [];
 
   for (const base of [env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean)) {
@@ -132,9 +173,13 @@ function detectMsvcTools(env) {
     }
   }
 
+  for (const installation of installations) {
+    candidates.push(path.join(installation, "VC", "Tools", "MSVC"));
+  }
+
   return {
-    present: candidates.some((candidate) => existsSync(candidate)),
-    candidates,
+    present: uniquePaths(candidates).some((candidate) => existsSync(candidate)),
+    candidates: uniquePaths(candidates),
   };
 }
 
@@ -318,6 +363,7 @@ export function collectDoctorInput({ env = process.env, args = process.argv.slic
   const rustcResult = runCommand("rustc", ["-vV"]);
   const rustupResult = runCommand("rustup", ["show"]);
   const linkResult = runCommand("where", ["link"]);
+  const visualStudioInstallations = detectVisualStudioInstallations(env);
 
   let errorText = "";
   if (parsedArgs.errorFile && existsSync(parsedArgs.errorFile)) {
@@ -332,9 +378,9 @@ export function collectDoctorInput({ env = process.env, args = process.argv.slic
     rustupShow: rustupResult.ok ? rustupResult.stdout.trim() : "",
     linkPaths: linkResult.ok ? normalizeLines(linkResult.stdout) : [],
     libEnv: env.LIB || "",
-    visualStudio: detectVisualStudio(env),
+    visualStudio: detectVisualStudio(env, visualStudioInstallations),
     windowsSdk: detectWindowsSdk(env),
-    msvcTools: detectMsvcTools(env),
+    msvcTools: detectMsvcTools(env, visualStudioInstallations),
     errorText,
   };
 }

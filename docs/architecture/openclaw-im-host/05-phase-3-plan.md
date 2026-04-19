@@ -188,11 +188,11 @@
 
 ### 剩余少量工作
 
-- 在没有 Windows 本机测试环境问题的机器上，真正执行新增 `im_host` Rust 单测，而不只是依赖 `cargo check -p runtime`
+- 继续在非 Windows 或更完整的开发环境上执行原始 `runtime_lib` libtest，补齐与 Windows 专用回归入口互补的执行证据
 - 把当前分散在 plan / appendix / lifecycle note 的证据压缩成更适合“阶段验收”阅读的一页式总结
 - 如需正式宣告第三阶段完成，再补一轮更聚焦的 completion-order 回归，继续收紧 `dispatch_idle` 作为最终完成边界的证明
 
 ### 继续推进建议
 
-- 短期最优先：换无环境阻塞机器执行新增 Rust lifecycle tests
+- 短期最优先：把 Windows 专用验证入口 `pnpm test:im-host-windows-regression` 固化进验收文档与外部联调流程
 - 中期最优先：输出一份 Phase 3 acceptance summary，给后续继续做 vendor sync / 新 IM 接入时当基线
