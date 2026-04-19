@@ -173,6 +173,7 @@ WeCom 当前已经拿到的关键证明包括：
 - Phase 1 收尾：[03-phase-1-plan.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/03-phase-1-plan.md)
 - Phase 2 计划：[04-phase-2-plan.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/04-phase-2-plan.md)
 - Phase 3 平台化计划：[05-phase-3-plan.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/05-phase-3-plan.md)
+- Phase 3 收尾清单：[09-phase-3-closeout-checklist.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/09-phase-3-closeout-checklist.md)
 - 风险与验证：[appendix-b-risk-and-verification.md](/D:/code/WorkClaw/docs/architecture/openclaw-im-host/appendix-b-risk-and-verification.md)
 
 ## 7. 建议的继续路径

@@ -122,9 +122,12 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
 - `pnpm --dir apps/runtime test -- src/components/__tests__/SettingsView.wecom-connector.test.tsx`
   - 结果：PASS（47 tests）
   - 覆盖：确认 WeCom channel registry / diagnostics 正常，并新增覆盖 WeCom 宿主详情通过统一 `set_im_channel_host_running` 执行“启动宿主”；同时修复一条已过时的 Feishu 宿主说明文案断言，保证整份统一渠道设置页测试重新全绿。
-- `pnpm --dir apps/runtime exec vitest run ./plugin-host/src/runtime.test.ts --passWithNoTests`
-  - 结果：PASS（13 tests）
-  - 覆盖：确认 `wait_for_idle -> idle_reached -> fully_complete -> dispatch_idle` 的 barrier 顺序成立，且 `dispatch_idle` 不会被重复发射。
+- `pnpm --dir apps/runtime exec vitest run ./plugin-host/src/runtime.test.ts`
+  - 结果：PASS（14 tests）
+  - 覆盖：
+    - 确认 `wait_for_idle -> idle_reached -> fully_complete -> dispatch_idle` 的 barrier 顺序成立，且 `dispatch_idle` 不会被重复发射
+    - 新增 runtime fixture 级窄回归，确认同一轮最终答复会先出现 `final_chunk_queued`，再进入 `wait_for_idle -> idle_reached -> fully_complete -> dispatch_idle`
+    - 确认 `dispatch_idle` 不会早于最终发送完成，且最多只出现一次
 - `cargo check -p runtime`
   - 结果：PASS
   - 覆盖：确认 interactive lifecycle hook、恢复态宿主路由测试辅助、以及 runtime completion projection 调整在 `runtime` crate 级别可编译通过。
@@ -148,4 +151,5 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
   - WeCom 设置页统一宿主视图重新全绿，并新增验证“启动宿主”同样走统一 channel host command
   - WeCom 的等待态顺序、恢复态路由、以及 final reply dispatch 回归都已完成代码落地，并已通过 Windows 专用执行入口 `pnpm test:im-host-windows-regression`
   - `pnpm verify:openclaw-im-host:phase3` 已可在当前 Windows 环境下完整通过，不再只能停留在 compile-only 模式
-- 仍未在本轮声称“official lifecycle 已完全对齐”；`waitForIdle -> markFullyComplete -> markDispatchIdle` 的最终 completion order 仍需在第二阶段继续用更窄、更强的 lifecycle 测试证明。
+  - plugin-host 侧 `waitForIdle -> markFullyComplete -> markDispatchIdle` 的最终 completion order 已补上更窄的 runtime fixture 级测试证明
+- 仍未在本轮声称“official lifecycle 已完全对齐”；当前剩余空白主要在于跨环境、跨通道地把这份 completion-order 证据与 `im_host` Rust 执行级回归收束成同一份最终验收结论。

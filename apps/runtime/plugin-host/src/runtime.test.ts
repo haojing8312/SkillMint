@@ -689,6 +689,138 @@ describe("plugin runtime", () => {
     }
   });
 
+  it("keeps dispatch_idle behind final delivery completion in the runtime fixture", async () => {
+    const pluginRoot = await createTempPluginRoot();
+    await fs.writeFile(
+      path.join(pluginRoot, "package.json"),
+      JSON.stringify({
+        type: "module",
+        openclaw: {
+          extensions: ["./index.js"],
+        },
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(pluginRoot, "index.js"),
+      [
+        "export default {",
+        "  register(api) {",
+        "    api.registerChannel({",
+        "      plugin: {",
+        "        id: 'feishu',",
+        "        config: {",
+        "          resolveAccount() {",
+        "            return { accountId: 'default', enabled: true, configured: true };",
+        "          },",
+        "        },",
+        "        outbound: {",
+        "          async sendText({ to, text, accountId, threadId }) {",
+        "            return {",
+        "              delivered: true,",
+        "              channel: 'feishu',",
+        "              accountId,",
+        "              target: to,",
+        "              text,",
+        "              threadId: threadId ?? null,",
+        "              chatId: `plugin:${to}`,",
+        "              messageId: 'plugin_completion_message_1',",
+        "            };",
+        "          },",
+        "        },",
+        "        gateway: {",
+        "          async startAccount({ runtime, setStatus, abortSignal }) {",
+        "            setStatus({ running: true, completionFixture: true });",
+        "            const reply = runtime.channel.reply.createReplyDispatcherWithTyping();",
+        "            await runtime.channel.reply.dispatchReplyFromConfig({",
+        "              ctx: {",
+        "                AccountId: 'default',",
+        "                SenderId: 'ou_sender_completion',",
+        "                MessageSid: 'om_completion_123',",
+        "                RawBody: '请给出最终结论',",
+        "                ChatType: 'direct',",
+        "                ChatId: 'oc_completion_chat_123',",
+        "                To: 'user:ou_sender_completion',",
+        "                From: 'feishu:ou_sender_completion',",
+        "              },",
+        "              dispatcher: reply.dispatcher,",
+        "            });",
+        "            await runtime.channel.reply.withReplyDispatcher({",
+        "              dispatcher: reply.dispatcher,",
+        "              run: async () => {",
+        "                reply.dispatcher.sendFinalReply({ text: '最终回复已送出' });",
+        "              },",
+        "            });",
+        "            await new Promise((resolve) => abortSignal.addEventListener('abort', resolve, { once: true }));",
+        "          },",
+        "        },",
+        "      },",
+        "    });",
+        "  },",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const child = spawn(
+      process.execPath,
+      [
+        path.join("scripts", "run-feishu-host.mjs"),
+        "--plugin-root",
+        pluginRoot,
+        "--fixture-name",
+        "runtime-dispatch-idle-completion-order",
+        "--account-id",
+        "default",
+      ],
+      {
+        cwd: pluginHostDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+
+    const collector = createEventCollector(child.stdout, child.stderr);
+    try {
+      await collector.waitFor(
+        (event) => event.event === "ready",
+        "expected ready event from completion-order fixture",
+      );
+
+      await collector.waitFor(
+        (event) => event.event === "reply_lifecycle" && event.phase === "dispatch_idle",
+        "expected dispatch_idle lifecycle event from completion-order fixture",
+      );
+
+      const lifecyclePhases = collector.events
+        .filter((event) => event.event === "reply_lifecycle")
+        .map((event) => String(event.phase ?? ""));
+
+      const finalChunkIndex = lifecyclePhases.indexOf("final_chunk_queued");
+      const waitIndex = lifecyclePhases.indexOf("wait_for_idle");
+      const idleReachedIndex = lifecyclePhases.indexOf("idle_reached");
+      const fullyCompleteIndex = lifecyclePhases.indexOf("fully_complete");
+      const dispatchIdleIndex = lifecyclePhases.indexOf("dispatch_idle");
+      const processingStoppedIndex = lifecyclePhases.indexOf("processing_stopped");
+
+      expect(finalChunkIndex).toBeGreaterThanOrEqual(0);
+      expect(waitIndex).toBeGreaterThan(finalChunkIndex);
+      expect(idleReachedIndex).toBeGreaterThan(waitIndex);
+      expect(fullyCompleteIndex).toBeGreaterThan(idleReachedIndex);
+      expect(dispatchIdleIndex).toBeGreaterThan(fullyCompleteIndex);
+      expect(lifecyclePhases.filter((phase) => phase === "dispatch_idle")).toHaveLength(1);
+      expect(dispatchIdleIndex).toBe(lifecyclePhases.length - 1);
+      if (processingStoppedIndex >= 0) {
+        expect(processingStoppedIndex).toBeLessThan(fullyCompleteIndex);
+      }
+
+      child.kill();
+      await once(child, "exit");
+    } finally {
+      collector.close();
+      child.kill();
+    }
+  });
+
   it("emits custom lifecycle phases through the host command bridge", async () => {
     const pluginRoot = await createTempPluginRoot();
     await fs.writeFile(

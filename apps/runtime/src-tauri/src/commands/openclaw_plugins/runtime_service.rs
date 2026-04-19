@@ -1265,6 +1265,52 @@ mod tests {
     }
 
     #[test]
+    fn reply_completion_projection_keeps_dispatch_idle_completed_despite_late_nonterminal_noise() {
+        let events = vec![
+            crate::commands::im_host::ImReplyLifecycleEvent {
+                logical_reply_id: "reply-1".to_string(),
+                phase: ImReplyLifecyclePhase::FullyComplete,
+                channel: "feishu".to_string(),
+                account_id: Some("default".to_string()),
+                thread_id: Some("oc_chat_1".to_string()),
+                chat_id: None,
+                message_id: Some("om_1".to_string()),
+                queued_counts: None,
+            },
+            crate::commands::im_host::ImReplyLifecycleEvent {
+                logical_reply_id: "reply-1".to_string(),
+                phase: ImReplyLifecyclePhase::DispatchIdle,
+                channel: "feishu".to_string(),
+                account_id: Some("default".to_string()),
+                thread_id: Some("oc_chat_1".to_string()),
+                chat_id: None,
+                message_id: Some("om_1".to_string()),
+                queued_counts: None,
+            },
+            crate::commands::im_host::ImReplyLifecycleEvent {
+                logical_reply_id: "reply-1".to_string(),
+                phase: ImReplyLifecyclePhase::ProcessingStopped,
+                channel: "feishu".to_string(),
+                account_id: Some("default".to_string()),
+                thread_id: Some("oc_chat_1".to_string()),
+                chat_id: None,
+                message_id: Some("om_1".to_string()),
+                queued_counts: None,
+            },
+        ];
+
+        let projection =
+            project_latest_reply_completion(&events, Some("2026-04-19T00:00:02Z".to_string()))
+                .expect("projection");
+
+        assert_eq!(projection.phase, ImReplyLifecyclePhase::DispatchIdle);
+        assert_eq!(
+            projection.state,
+            OpenClawPluginFeishuReplyCompletionState::Completed
+        );
+    }
+
+    #[test]
     fn reply_completion_projection_marks_ask_user_as_awaiting_user() {
         let events = vec![crate::commands::im_host::ImReplyLifecycleEvent {
             logical_reply_id: "reply-ask".to_string(),
