@@ -2,6 +2,52 @@
 
 Date: 2026-04-17
 
+## Update 2026-04-19 (Final Session Close-Out)
+
+This handoff is now historical context rather than an active execution baseline.
+
+The attachment-platform line and its follow-on IM host alignment work have been implemented, split, verified, and committed in the main repo history.
+
+### Landed commit sequence
+
+- `e73e311` `feat(attachments): build unified attachment platform`
+- `bb60f0c` `feat(im-host): extract shared IM host runtime platform`
+- `72ffee1` `feat(settings): align IM channels with host registry`
+- `13c9ae8` `feat(employees): align session launch with IM registry`
+- `f27e798` `docs(im-host): add phase 3 acceptance summary`
+- `760d90e` `chore(im-host): add phase 3 verification runner`
+- `749277d` `test(im-host): cover unified WeCom reply dispatch`
+- `d02012e` `test(im-host): add windows-safe phase 3 regressions`
+
+### What is now true
+
+- the unified frontend attachment policy and draft layer are present
+- the backend attachment policy / validation / resolution path is present
+- audio transcription and video fallback handling have landed
+- team-entry / employee-entry session launch now preserves initial attachments
+- settings and runtime status now align to the shared IM host registry
+- WorkClaw now has a Windows-safe Phase 3 IM host regression target:
+  - `pnpm test:im-host-windows-regression`
+- full repo-level Phase 3 verification now runs on the current Windows machine:
+  - `pnpm verify:openclaw-im-host:phase3`
+
+### Most relevant verification that actually passed
+
+- `pnpm --dir apps/runtime exec vitest run src/components/__tests__/NewSessionLanding.test.tsx src/components/__tests__/ChatView.side-panel-redesign.test.tsx src/__tests__/App.session-create-flow.test.tsx`
+- `cargo check -p runtime`
+- `pnpm test:rust-fast`
+- `pnpm test:im-host-windows-regression`
+- `pnpm verify:openclaw-im-host:phase3`
+
+### Remaining truth
+
+- the old `runtime_lib` libtest binary path can still hit Windows `STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)` in this environment
+- that environment issue is no longer the blocker for Phase 3 verification, because the repo now contains and uses a Windows-safe regression path
+- authoritative current status and verification guidance now live in:
+  - `docs/architecture/openclaw-im-host/06-phase-3-acceptance-summary.md`
+  - `docs/architecture/openclaw-im-host/07-phase-3-external-verification-runbook.md`
+  - `docs/architecture/openclaw-im-host/08-phase-3-external-verification-result-template.md`
+
 ## Update 2026-04-19
 
 Correction to the optimistic 2026-04-18 narrative above:
