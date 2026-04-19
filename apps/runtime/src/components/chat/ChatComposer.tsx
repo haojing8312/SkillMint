@@ -1,5 +1,6 @@
 import { memo, type ChangeEvent, type KeyboardEvent, type RefObject } from "react";
 
+import { buildFileInputAccept, DEFAULT_ATTACHMENT_POLICY } from "../../lib/attachmentPolicy";
 import { buildPendingAttachmentMeta } from "../../lib/chatAttachments";
 import type { ModelConfig, PendingAttachment } from "../../types";
 
@@ -75,7 +76,14 @@ function ChatComposerImpl({
             </div>
           )}
 
-          <input type="file" multiple onChange={onFileSelect} className="hidden" id="file-upload" />
+          <input
+            type="file"
+            multiple
+            accept={buildFileInputAccept(DEFAULT_ATTACHMENT_POLICY)}
+            onChange={onFileSelect}
+            className="hidden"
+            id="file-upload"
+          />
 
           {attachedFiles.length > 0 && (
             <div className="space-y-2 pb-2">
@@ -97,7 +105,15 @@ function ChatComposerImpl({
                       />
                     ) : (
                       <div className="flex h-10 w-10 items-center justify-center rounded border border-gray-200 bg-gray-50 text-[11px] text-gray-600">
-                        {file.kind === "pdf-file" ? "PDF" : "TXT"}
+                        {file.kind === "audio"
+                          ? "AUD"
+                          : file.kind === "video"
+                            ? "VID"
+                            : file.kind === "pdf-file"
+                              ? "PDF"
+                              : file.kind === "document-file"
+                                ? "DOC"
+                                : "TXT"}
                       </div>
                     )}
                     <div className="min-w-0 flex-1">

@@ -14,16 +14,21 @@ describe("EmployeeHubView thread binding removal", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\.workclaw\\workspace" });
       }
-      if (command === "get_openclaw_plugin_feishu_runtime_status") {
-        return Promise.resolve({
-          plugin_id: "@larksuite/openclaw-lark",
-          account_id: "default",
-          running: true,
-          started_at: "2026-03-04T00:00:00Z",
-          last_error: null,
-          last_event_at: null,
-          recent_logs: [],
-        });
+      if (command === "list_im_channel_registry") {
+        return Promise.resolve([
+          {
+            channel: "feishu",
+            runtime_status: {
+              plugin_id: "@larksuite/openclaw-lark",
+              account_id: "default",
+              running: true,
+              started_at: "2026-03-04T00:00:00Z",
+              last_error: null,
+              last_event_at: null,
+              recent_logs: [],
+            },
+          },
+        ]);
       }
       if (command === "resolve_default_work_dir") {
         return Promise.resolve("C:\\Users\\test\\.workclaw\\workspace");
@@ -108,10 +113,7 @@ describe("EmployeeHubView thread binding removal", () => {
     );
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("get_openclaw_plugin_feishu_runtime_status", {
-        pluginId: "@larksuite/openclaw-lark",
-        accountId: "default",
-      });
+      expect(invokeMock).toHaveBeenCalledWith("list_im_channel_registry");
     });
 
     const calledCommands = invokeMock.mock.calls.map(([command]) => String(command));

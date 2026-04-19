@@ -37,15 +37,20 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\.workclaw\\workspace" });
       }
-      if (command === "get_openclaw_plugin_feishu_runtime_status") {
-        return Promise.resolve({
-          plugin_id: "@larksuite/openclaw-lark",
-          account_id: "default",
-          running: true,
-          started_at: "2026-03-04T00:00:00Z",
-          last_error: null,
-          recent_logs: [],
-        });
+      if (command === "list_im_channel_registry") {
+        return Promise.resolve([
+          {
+            channel: "feishu",
+            runtime_status: {
+              plugin_id: "@larksuite/openclaw-lark",
+              account_id: "default",
+              running: true,
+              started_at: "2026-03-04T00:00:00Z",
+              last_error: null,
+              recent_logs: [],
+            },
+          },
+        ]);
       }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
       if (command === "list_im_routing_bindings") return Promise.resolve([]);
@@ -86,10 +91,7 @@ describe("EmployeeHubView feishu connection status", () => {
     );
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("get_openclaw_plugin_feishu_runtime_status", {
-        pluginId: "@larksuite/openclaw-lark",
-        accountId: "default",
-      });
+      expect(invokeMock).toHaveBeenCalledWith("list_im_channel_registry");
     });
 
     expect(screen.getByTestId("employee-connection-dot-emp-green")).toHaveClass("bg-emerald-500");
@@ -108,15 +110,20 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\.workclaw\\workspace" });
       }
-      if (command === "get_openclaw_plugin_feishu_runtime_status") {
-        return Promise.resolve({
-          plugin_id: "@larksuite/openclaw-lark",
-          account_id: "default",
-          running: true,
-          started_at: "2026-03-04T00:00:00Z",
-          last_error: null,
-          recent_logs: [],
-        });
+      if (command === "list_im_channel_registry") {
+        return Promise.resolve([
+          {
+            channel: "feishu",
+            runtime_status: {
+              plugin_id: "@larksuite/openclaw-lark",
+              account_id: "default",
+              running: true,
+              started_at: "2026-03-04T00:00:00Z",
+              last_error: null,
+              recent_logs: [],
+            },
+          },
+        ]);
       }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
       if (command === "list_im_routing_bindings") {
@@ -284,15 +291,20 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\.workclaw\\workspace" });
       }
-      if (command === "get_openclaw_plugin_feishu_runtime_status") {
-        return Promise.resolve({
-          plugin_id: "@larksuite/openclaw-lark",
-          account_id: "default",
-          running: true,
-          started_at: "2026-03-04T00:00:00Z",
-          last_error: null,
-          recent_logs: [],
-        });
+      if (command === "list_im_channel_registry") {
+        return Promise.resolve([
+          {
+            channel: "feishu",
+            runtime_status: {
+              plugin_id: "@larksuite/openclaw-lark",
+              account_id: "default",
+              running: true,
+              started_at: "2026-03-04T00:00:00Z",
+              last_error: null,
+              recent_logs: [],
+            },
+          },
+        ]);
       }
       if (command === "get_feishu_employee_connection_statuses") {
         return Promise.resolve({
@@ -371,15 +383,20 @@ describe("EmployeeHubView feishu connection status", () => {
       if (command === "get_runtime_preferences") {
         return Promise.resolve({ default_work_dir: "C:\\Users\\test\\.workclaw\\workspace" });
       }
-      if (command === "get_openclaw_plugin_feishu_runtime_status") {
-        return Promise.resolve({
-          plugin_id: "@larksuite/openclaw-lark",
-          account_id: "default",
-          running: true,
-          started_at: "2026-03-04T00:00:00Z",
-          last_error: null,
-          recent_logs: [],
-        });
+      if (command === "list_im_channel_registry") {
+        return Promise.resolve([
+          {
+            channel: "feishu",
+            runtime_status: {
+              plugin_id: "@larksuite/openclaw-lark",
+              account_id: "default",
+              running: true,
+              started_at: "2026-03-04T00:00:00Z",
+              last_error: null,
+              recent_logs: [],
+            },
+          },
+        ]);
       }
       if (command === "get_feishu_employee_connection_statuses") {
         return Promise.resolve({

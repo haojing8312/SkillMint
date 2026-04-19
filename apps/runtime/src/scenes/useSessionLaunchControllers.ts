@@ -118,6 +118,7 @@ export function useSessionLaunchControllers(options: {
     activateExistingSession: (sessionId) => {
       openSessionInActiveTab(sessionId);
     },
+    setPendingInitialAttachments,
     setPendingInitialMessage,
     setEmployeeAssistantSessionContexts,
   });

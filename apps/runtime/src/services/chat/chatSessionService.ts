@@ -28,8 +28,8 @@ export async function sendMessage(request: SendMessageRequest): Promise<void> {
   await invoke("send_message", { request });
 }
 
-export async function cancelAgent(): Promise<void> {
-  await invoke("cancel_agent");
+export async function cancelAgent(sessionId?: string): Promise<void> {
+  await invoke("cancel_agent", sessionId?.trim() ? { sessionId } : {});
 }
 
 export async function answerUserQuestion(answer: string): Promise<void> {

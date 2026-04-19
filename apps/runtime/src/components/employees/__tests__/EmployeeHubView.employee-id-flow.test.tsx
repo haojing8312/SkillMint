@@ -70,16 +70,21 @@ describe("EmployeeHubView employee creation flow", () => {
       }
       if (command === "set_runtime_preferences") return Promise.resolve(null);
       if (command === "resolve_default_work_dir") return Promise.resolve("C:\\Users\\test\\SkillMint\\workspace");
-      if (command === "get_openclaw_plugin_feishu_runtime_status") {
-        return Promise.resolve({
-          plugin_id: "@larksuite/openclaw-lark",
-          account_id: "default",
-          running: false,
-          started_at: null,
-          last_error: null,
-          last_event_at: null,
-          recent_logs: [],
-        });
+      if (command === "list_im_channel_registry") {
+        return Promise.resolve([
+          {
+            channel: "feishu",
+            runtime_status: {
+              plugin_id: "@larksuite/openclaw-lark",
+              account_id: "default",
+              running: false,
+              started_at: null,
+              last_error: null,
+              last_event_at: null,
+              recent_logs: [],
+            },
+          },
+        ]);
       }
       if (command === "list_im_routing_bindings") return Promise.resolve([]);
       if (command === "get_agent_profile_files" && payload?.employeeDbId === "emp-profile") {

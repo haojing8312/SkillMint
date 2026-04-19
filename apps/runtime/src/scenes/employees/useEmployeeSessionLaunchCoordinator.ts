@@ -5,6 +5,7 @@ import type {
   AgentEmployee,
   EmployeeGroup,
   ModelConfig,
+  PendingAttachment,
   SkillManifest,
 } from "../../types";
 import {
@@ -60,6 +61,15 @@ export function useEmployeeSessionLaunchCoordinator(options: {
   setPendingInitialMessage: Dispatch<
     SetStateAction<{ sessionId: string; message: string } | null>
   >;
+  setPendingInitialAttachments: Dispatch<
+    SetStateAction<
+      | {
+          sessionId: string;
+          attachments: PendingAttachment[];
+        }
+      | null
+    >
+  >;
   setEmployeeAssistantSessionContexts: Dispatch<
     SetStateAction<Record<string, EmployeeAssistantSessionContext>>
   >;
@@ -84,6 +94,7 @@ export function useEmployeeSessionLaunchCoordinator(options: {
     setCreateSessionError,
     setCreatingSession,
     setEmployeeAssistantSessionContexts,
+    setPendingInitialAttachments,
     setPendingInitialMessage,
     setSelectedSkillId,
     skills,
@@ -256,9 +267,14 @@ export function useEmployeeSessionLaunchCoordinator(options: {
   );
 
   const handleCreateTeamEntrySession = useCallback(
-    async (input: { teamId: string; initialMessage?: string }) => {
+    async (input: {
+      teamId: string;
+      initialMessage?: string;
+      attachments?: PendingAttachment[];
+    }) => {
       const teamId = (input.teamId || "").trim();
       const initialMessage = (input.initialMessage || "").trim();
+      const attachments = Array.isArray(input.attachments) ? input.attachments : [];
       const modelId = getDefaultModelId(models);
       if (!teamId || !modelId || creatingSession) return;
 
@@ -333,6 +349,9 @@ export function useEmployeeSessionLaunchCoordinator(options: {
         if (initialMessage) {
           setPendingInitialMessage({ sessionId, message: initialMessage });
         }
+        if (attachments.length > 0) {
+          setPendingInitialAttachments({ sessionId, attachments });
+        }
       } catch (error) {
         console.error("创建团队会话失败:", error);
         setCreateSessionError("创建团队会话失败，请稍后重试");
@@ -356,6 +375,7 @@ export function useEmployeeSessionLaunchCoordinator(options: {
       resolveSessionLaunchWorkDir,
       setCreateSessionError,
       setCreatingSession,
+      setPendingInitialAttachments,
       setPendingInitialMessage,
       setSelectedSkillId,
     ],

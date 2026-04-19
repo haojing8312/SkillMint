@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { OpenClawPluginFeishuRuntimeStatus, RuntimePreferences } from "../../../types";
+import {
+  extractFeishuRegistryEntry,
+  extractFeishuRuntimeStatusFromEntry,
+  loadImChannelRegistry,
+} from "../../settings/channels/channelRegistryService";
+import {
+  OpenClawPluginFeishuRuntimeStatus,
+  RuntimePreferences,
+} from "../../../types";
 
 export interface UseEmployeeHubRuntimeStateArgs {
   setMessage: (message: string) => void;
@@ -27,15 +35,11 @@ export function useEmployeeHubRuntimeState({ setMessage }: UseEmployeeHubRuntime
     let disposed = false;
     const loadStatuses = async () => {
       try {
-        const runtimeStatus = await invoke<OpenClawPluginFeishuRuntimeStatus | null>(
-          "get_openclaw_plugin_feishu_runtime_status",
-          {
-            pluginId: "@larksuite/openclaw-lark",
-            accountId: "default",
-          },
-        ).catch(() => null);
+        const entries = await loadImChannelRegistry().catch(() => []);
         if (!disposed) {
-          setOfficialFeishuRuntimeStatus(runtimeStatus);
+          setOfficialFeishuRuntimeStatus(
+            extractFeishuRuntimeStatusFromEntry(extractFeishuRegistryEntry(entries)),
+          );
         }
       } catch {
         if (!disposed) {
