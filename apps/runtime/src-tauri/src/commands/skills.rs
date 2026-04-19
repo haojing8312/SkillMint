@@ -20,7 +20,8 @@ pub use industry_bundle_service::{
     check_industry_bundle_update_from_pool, install_industry_bundle_to_pool,
 };
 pub use local_skill_service::{
-    ensure_skill_display_name_available, import_local_skill_to_pool, import_local_skills_to_pool,
+    create_local_skill_in_dir, ensure_skill_display_name_available, import_local_skill_to_pool,
+    import_local_skills_to_pool, render_local_skill_preview_in_dir,
 };
 pub use runtime_status_service::get_skill_runtime_environment_status_with_pool;
 pub use types::{

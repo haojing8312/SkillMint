@@ -41,6 +41,8 @@ async fn approval_records_persist_and_project_waiting_status() {
             approval_id: "approval-1".into(),
             tool_name: "file_delete".into(),
             call_id: "call-1".into(),
+            task_identity: None,
+            task_continuation: None,
             input: json!({ "path": "E:\\workspace\\danger.txt", "recursive": true }),
             summary: "将递归删除 E:\\workspace\\danger.txt".into(),
             impact: Some("该操作不可逆，删除后无法自动恢复。".into()),
@@ -383,6 +385,8 @@ async fn approved_pending_work_resumes_after_restart() {
             approval_id: "approval-approved".into(),
             tool_name: "file_delete".into(),
             call_id: "call-approved".into(),
+            task_identity: None,
+            task_continuation: None,
             input: json!({
                 "path": target_dir.to_string_lossy().to_string(),
                 "recursive": true

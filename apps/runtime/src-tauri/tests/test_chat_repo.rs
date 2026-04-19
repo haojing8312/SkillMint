@@ -1,7 +1,7 @@
 mod helpers;
 
 use runtime_chat_app::{ChatSessionContextRepository, ChatSettingsRepository};
-use runtime_lib::commands::chat_repo::PoolChatSettingsRepository;
+use runtime_lib::agent::runtime::PoolChatSettingsRepository;
 
 #[tokio::test]
 async fn chat_repo_loads_routing_settings_and_chat_routing() {

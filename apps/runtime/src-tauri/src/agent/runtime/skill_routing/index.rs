@@ -176,6 +176,10 @@ fn resolve_execution_mode(entry: &WorkspaceSkillRuntimeEntry) -> WorkspaceSkillR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runtime_skill_core::{
+        OpenClawSkillMetadata, SkillCommandArgMode, SkillCommandDispatchKind,
+        SkillCommandDispatchSpec, SkillConfig, SkillInvocationPolicy,
+    };
 
     fn build_entry(
         skill_id: &str,
@@ -307,7 +311,7 @@ mod tests {
 
         let index = SkillRouteIndex::build(&entries);
 
-        assert_eq!(index.len(), 3);
+        assert_eq!(index.entries().count(), 3);
         let corpus_skill_ids = index
             .entries()
             .map(|entry| entry.skill_id.as_str())

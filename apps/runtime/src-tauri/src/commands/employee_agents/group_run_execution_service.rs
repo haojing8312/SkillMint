@@ -19,6 +19,10 @@ use crate::agent::runtime::task_entry;
 use crate::agent::runtime::task_entry::{
     DelegatedTaskBackendRunAndFinalizeRequest, DelegatedTaskEntryOutcome,
 };
+#[cfg(test)]
+use crate::agent::runtime::task_entry::DelegatedTaskTerminalFinalizeEntryRequest;
+#[cfg(test)]
+use crate::agent::runtime::task_execution::TaskExecutionOutcome;
 use crate::agent::runtime::task_lifecycle;
 use crate::agent::runtime::task_lifecycle::TaskBeginParentContext;
 use crate::agent::runtime::task_record::TaskRecord;

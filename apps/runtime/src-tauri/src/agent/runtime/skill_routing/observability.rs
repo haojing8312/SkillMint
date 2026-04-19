@@ -113,6 +113,7 @@ pub(crate) fn route_fallback_reason_key(reason: RouteFallbackReason) -> &'static
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::runtime::kernel::route_lane::RoutedSkillToolSetup;
     use crate::agent::runtime::runtime_io::WorkspaceSkillCommandSpec;
     use crate::agent::runtime::skill_routing::intent::RouteFallbackReason;
 

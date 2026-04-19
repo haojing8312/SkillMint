@@ -329,7 +329,6 @@ mod tests {
         let prepared = PreparedRuntimeTools {
             allowed_tools: capability_snapshot.allowed_tools.clone(),
             full_allowed_tools: capability_snapshot.full_allowed_tools.clone(),
-            tool_manifest: capability_snapshot.tool_manifest.clone(),
             effective_tool_plan: capability_snapshot
                 .effective_tool_plan
                 .clone()
@@ -344,7 +343,7 @@ mod tests {
             Some(vec!["read_file".to_string(), "bash".to_string()])
         );
         assert_eq!(prepared.full_allowed_tools.len(), 2);
-        assert!(prepared.tool_manifest.is_empty());
+        assert!(prepared.capability_snapshot.tool_manifest.is_empty());
         assert_eq!(prepared.effective_tool_plan.tool_names.len(), 2);
         assert_eq!(prepared.system_prompt, "system prompt");
         assert!(prepared.capability_snapshot.skill_command_specs.is_empty());
@@ -370,7 +369,6 @@ mod tests {
         let prepared = PreparedRuntimeTools {
             allowed_tools: capability_snapshot.allowed_tools.clone(),
             full_allowed_tools: capability_snapshot.full_allowed_tools.clone(),
-            tool_manifest: capability_snapshot.tool_manifest.clone(),
             effective_tool_plan: capability_snapshot
                 .effective_tool_plan
                 .clone()

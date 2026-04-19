@@ -51,8 +51,9 @@ pub async fn clear_employee_memory(
 mod tests {
     use super::{
         clear_employee_memory_from_root, collect_employee_memory_stats_from_root,
-        export_employee_memory_from_root, UpsertAgentEmployeeInput,
+        export_employee_memory_from_root,
     };
+    use super::super::UpsertAgentEmployeeInput;
     use std::fs;
     use tempfile::TempDir;
 

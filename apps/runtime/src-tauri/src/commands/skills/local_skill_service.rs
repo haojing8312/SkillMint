@@ -70,12 +70,13 @@ pub async fn render_local_skill_preview(
         Some(dir) => std::path::PathBuf::from(dir),
         None => runtime_paths_from_app(app)?.skills_dir,
     };
-    let save_path = base_dir.join(sanitize_slug(&preview_name));
 
-    Ok(LocalSkillPreview {
-        markdown: render_local_skill_markdown(&preview_name, description.trim(), &preview_when),
-        save_path: save_path.to_string_lossy().to_string(),
-    })
+    Ok(render_local_skill_preview_in_dir(
+        &preview_name,
+        description.trim(),
+        &preview_when,
+        &base_dir,
+    ))
 }
 
 pub async fn create_local_skill(
@@ -94,7 +95,6 @@ pub async fn create_local_skill(
         return Err("使用场景不能为空".to_string());
     }
 
-    let slug = sanitize_slug(clean_name);
     let base_dir = match target_dir
         .as_ref()
         .map(|s| s.trim())
@@ -104,6 +104,30 @@ pub async fn create_local_skill(
         None => runtime_paths_from_app(app)?.skills_dir,
     };
 
+    create_local_skill_in_dir(clean_name, description.trim(), clean_when, &base_dir)
+}
+
+pub fn render_local_skill_preview_in_dir(
+    name: &str,
+    description: &str,
+    when_to_use: &str,
+    base_dir: &Path,
+) -> LocalSkillPreview {
+    let save_path = base_dir.join(sanitize_slug(name));
+
+    LocalSkillPreview {
+        markdown: render_local_skill_markdown(name, description, when_to_use),
+        save_path: save_path.to_string_lossy().to_string(),
+    }
+}
+
+pub fn create_local_skill_in_dir(
+    clean_name: &str,
+    description: &str,
+    clean_when: &str,
+    base_dir: &Path,
+) -> Result<String, String> {
+    let slug = sanitize_slug(clean_name);
     let skill_dir = base_dir.join(&slug);
     if skill_dir.exists() {
         return Err(format!("技能目录已存在: {}", skill_dir.to_string_lossy()));

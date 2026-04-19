@@ -43,13 +43,14 @@ pub use admission_gate::{
     SessionAdmissionConflict, SessionAdmissionGate, SessionAdmissionGateState,
 };
 pub use events::{
-    AskUserState, CancelFlagState, SearchCacheState, SkillRouteEvent, StreamToken,
-    ToolConfirmResponder,
+    AskUserPendingSessionState, AskUserState, CancelFlagState, SearchCacheState, SkillRouteEvent,
+    StreamToken, ToolConfirmResponder,
 };
 pub use observability::{
     RuntimeLatestSkillRouteSnapshot, RuntimeObservability, RuntimeObservabilitySnapshot,
     RuntimeObservabilityState, RuntimeObservedEvent, RuntimeObservedRunEvent,
 };
+pub use repo::PoolChatSettingsRepository;
 pub use run_registry::{RunRegistry, RunRegistryState};
 pub use runtime_io::{
     build_workspace_skill_command_specs, load_workspace_skill_runtime_entries_with_pool,
