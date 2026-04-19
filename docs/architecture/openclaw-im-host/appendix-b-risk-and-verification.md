@@ -77,6 +77,7 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
   - 进入等待时，宿主先停止 processing，再发 `ask_user_requested / approval_requested`
   - 恢复执行时，`ask_user_answered / approval_resolved / resumed` 能继续路由到注册宿主，并在前端展示为“已恢复处理中”
 - 企业微信还应额外证明：即使不走 Feishu plugin runtime，connector host 也能复用同一 `im_host` lifecycle contract 与同一宿主启停命令入口，而不是退回私有桥接路径
+- 企业微信的最终答复也应证明：统一 `im_host` reply dispatch 入口能直接把 final answer 路由到 WeCom host，而不是只验证 ask_user / approval 这类中间态
 
 ### 当前仍需持续盯防的风险
 
@@ -97,8 +98,8 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
   - 结果：PASS（当前已扩展到 6 tests）
   - 覆盖：确认 `latest_reply_completion` 投影、next-step guidance、以及“去员工关联入口 / 打开飞书高级配置”快捷入口行为正常，并新增覆盖 `phase=resumed + state=running` 时显示“已恢复处理中”。
 - `pnpm --dir apps/runtime test -- src/components/__tests__/SettingsView.wecom-connector.test.tsx`
-  - 结果：待本轮执行
-  - 计划覆盖：确认 WeCom channel registry / diagnostics 仍然正常，并新增覆盖 WeCom 宿主详情通过统一 `set_im_channel_host_running` 执行“启动宿主”。
+  - 结果：PASS（47 tests）
+  - 覆盖：确认 WeCom channel registry / diagnostics 正常，并新增覆盖 WeCom 宿主详情通过统一 `set_im_channel_host_running` 执行“启动宿主”；同时修复一条已过时的 Feishu 宿主说明文案断言，保证整份统一渠道设置页测试重新全绿。
 - `pnpm --dir apps/runtime exec vitest run ./plugin-host/src/runtime.test.ts --passWithNoTests`
   - 结果：PASS（13 tests）
   - 覆盖：确认 `wait_for_idle -> idle_reached -> fully_complete -> dispatch_idle` 的 barrier 顺序成立，且 `dispatch_idle` 不会被重复发射。
@@ -106,11 +107,11 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
   - 结果：PASS
   - 覆盖：确认 interactive lifecycle hook、恢复态宿主路由测试辅助、以及 runtime completion projection 调整在 `runtime` crate 级别可编译通过。
 - `cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml im_host::interactive_dispatch -- --nocapture`
-  - 结果：待本轮执行
-  - 计划覆盖：确认 Feishu 与 WeCom 在 `ask_user_requested / approval_requested` 进入等待时，都遵守“先 processing_stop、再 lifecycle_event”的统一顺序。
+  - 结果：编译通过，但执行受本机 Windows 环境阻塞
+  - 覆盖：新增的 WeCom interactive lifecycle hook 与等待态顺序回归已编入 `runtime_lib` test binary；执行阶段仍落在已知 `STATUS_ENTRYPOINT_NOT_FOUND` 环境问题上。
 - `cargo test --manifest-path apps/runtime/src-tauri/Cargo.toml im_host::lifecycle -- --nocapture`
-  - 结果：待本轮执行
-  - 计划覆盖：确认 Feishu 与 WeCom 在 `ask_user_answered / approval_resolved / resumed` 恢复阶段，都能通过统一宿主路由到对应 channel host。
+  - 结果：编译通过，但执行受本机 Windows 环境阻塞
+  - 覆盖：新增的 WeCom 恢复态 lifecycle regression 与 host-level final reply dispatch regression 已编入 `runtime_lib` test binary；执行阶段仍落在已知 `STATUS_ENTRYPOINT_NOT_FOUND` 环境问题上。
 
 ### 本轮验证结论
 
@@ -121,4 +122,7 @@ direct chat、thread、reply-to、pairing chat_id 等规则若继续分散，飞
 - 如果本轮新增 WeCom lifecycle 与统一启停命令验证通过，则第三阶段关于“不是 Feishu 特例”的证据链会进一步完整：
   - 等待态顺序与恢复态路由都可在 WeCom 上直接回归
   - WeCom 宿主启停也走统一 channel host command，而不是保留特判入口
+- 本轮实际已拿到的新增证据是：
+  - WeCom 设置页统一宿主视图重新全绿，并新增验证“启动宿主”同样走统一 channel host command
+  - WeCom 的等待态顺序、恢复态路由、以及 final reply dispatch 回归都已完成代码落地并通过 `cargo check -p runtime` 编译校验
 - 仍未在本轮声称“official lifecycle 已完全对齐”；`waitForIdle -> markFullyComplete -> markDispatchIdle` 的最终 completion order 仍需在第二阶段继续用更窄、更强的 lifecycle 测试证明。

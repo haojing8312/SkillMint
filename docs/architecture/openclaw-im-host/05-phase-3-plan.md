@@ -167,6 +167,32 @@
 - `openclaw_gateway` 的通用 IM 入站也开始复用 `inbound_bridge`，逐步收敛到“统一宿主桥 + 渠道入口差异化”的结构
 - Feishu `pairing_request / dispatch_request` 已拆成独立 adapter handler，stdout 主入口开始收敛为“router + handler wiring”
 - WeCom 侧已补上 host-level lifecycle regression 证据：`ask_user_requested / approval_requested` 进入等待时会先停止 processing，再通过统一 `im_host` contract 发出等待态；`ask_user_answered / approval_resolved / resumed` 也能继续经由统一宿主路由到 WeCom host，不再只在 Feishu 上可验证
+- WeCom 侧也已补上 host-level final reply dispatch 证据：`maybe_dispatch_registered_im_session_reply_with_pool(...)` 会把最终回复继续路由到 WeCom connector host，而不是要求业务层绕过统一宿主直接调用 WeCom 私有发送入口
 - 前端设置页也已补上 WeCom 宿主的统一启停命令证明：和 Feishu 一样通过 `set_im_channel_host_running` 走同一条 channel host control 命令，而不是保留 WeCom 专属开关路径
 
 这意味着 WorkClaw 已经从“仅在 Feishu 内部对齐 OpenClaw”，进入“开始把对齐结果抽成平台能力”的阶段。
+
+## 阶段状态总结
+
+按 2026-04-19 当前证据判断，第三阶段大约已完成 `93%-95%`。
+
+### 已基本完成
+
+- `im_host` 已从概念层进入实际平台层，Feishu 与 WeCom 都已开始通过它承接 lifecycle / reply dispatch / runtime registry / restore / diagnostics
+- “不是 Feishu 特例”这条核心证明链已基本形成：
+  - WeCom 等待态顺序可证明
+  - WeCom 恢复态 lifecycle 路由可证明
+  - WeCom final reply 可经由 unified host 分发
+  - WeCom 宿主启停与 Feishu 一样走统一 command
+- 前端设置页已经具备统一 channel registry 视图，不再承担渠道 reply orchestration
+
+### 剩余少量工作
+
+- 在没有 Windows 本机测试环境问题的机器上，真正执行新增 `im_host` Rust 单测，而不只是依赖 `cargo check -p runtime`
+- 把当前分散在 plan / appendix / lifecycle note 的证据压缩成更适合“阶段验收”阅读的一页式总结
+- 如需正式宣告第三阶段完成，再补一轮更聚焦的 completion-order 回归，继续收紧 `dispatch_idle` 作为最终完成边界的证明
+
+### 继续推进建议
+
+- 短期最优先：换无环境阻塞机器执行新增 Rust lifecycle tests
+- 中期最优先：输出一份 Phase 3 acceptance summary，给后续继续做 vendor sync / 新 IM 接入时当基线

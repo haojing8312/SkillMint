@@ -88,9 +88,9 @@ OpenClaw 官方飞书链路强调以下顺序：
 
 以下能力还需要下一步继续补：
 
-- 让 ask_user / approval / interrupt 拥有更细粒度的独立 lifecycle phase，而不只是复用 `processing_stopped`
-- 让 reply lifecycle 不只存在于 plugin-host 内部事件，还能驱动统一 IM host state machine
-- 将同一套 contract 扩展到企业微信等 IM 渠道
+- 在无环境阻塞的机器上真正执行新增的 `im_host` Rust lifecycle 回归，而不只是完成 compile-level 证明
+- 继续把 completion / delivery / diagnostics 的统一证据沉淀为更接近阶段验收的总结，而不是分散在多份计划与附录里
+- 如果要宣告“完全对齐”，仍需要对 `waitForIdle -> markFullyComplete -> markDispatchIdle` 的最终完成语义做更窄、更强的持续回归
 
 ## 新增对齐进展
 
@@ -107,10 +107,21 @@ OpenClaw 官方飞书链路强调以下顺序：
 - Feishu interactive 闭环现在已有更硬的宿主级顺序保证：
   - 进入等待时，先 `processing_stopped`，再发 `ask_user_requested / approval_requested`
   - 恢复执行时，`ask_user_answered / approval_resolved / resumed` 会继续路由到注册宿主，而不是只停留在桌面本地状态
+- 同一套 `im_host` contract 已进一步在企业微信上获得结构性证明：
+  - WeCom `ask_user_requested / approval_requested` 进入等待时，也遵守“先停止 processing、再发 waiting lifecycle”的统一顺序
+  - WeCom `ask_user_answered / approval_resolved / resumed` 也能继续经由统一宿主路由到 connector host
+  - WeCom final reply 也已具备 `maybe_dispatch_registered_im_session_reply_with_pool(...)` 的 host-level 统一分发路径
 - 设置页已经能把恢复态展示为“已恢复处理中”，不再把 `ask_user_answered / approval_resolved / resumed` 压扁成和普通 `running` 完全相同的可见状态
+- 前端统一渠道设置页现在也能直接证明：Feishu 与 WeCom 的宿主启停都走同一条 `set_im_channel_host_running` channel host command，而不是保留 WeCom 私有入口
 
-这意味着 WorkClaw 在 Feishu 上已经不只是 final answer 对齐 OpenClaw，而是开始把 `final / ask_user / approval` 三类关键出站路径收束到宿主层。
+这意味着 WorkClaw 已不只是“Feishu 上 final answer 对齐 OpenClaw”，而是已经开始把 `final / ask_user / approval` 三类关键出站路径收束到统一宿主层，并把这套 contract 向 WeCom 证明为可复用平台能力。
 
 ## 当前结论
 
-WorkClaw 现在已经从“只有 send_result 的单点返回模型”，走到“具备官方 lifecycle 语义和 idle barrier 的宿主基础层”。这还不是最终完成态，但已经和 OpenClaw 官方架构进入同一条演进路线。
+WorkClaw 现在已经从“只有 send_result 的单点返回模型”，走到“具备官方 lifecycle 语义、idle barrier 与多渠道宿主抽象的基础层”。
+
+按当前证据可把状态概括为：
+
+- Feishu 主线已经基本完成从前端 reply orchestration 向宿主层的迁移
+- WeCom 已不再只是概念性接入，而是拿到了 unified `im_host` contract 的等待态、恢复态、final reply 与统一宿主控制证据
+- 剩余工作主要是把新增 Rust 回归在无环境问题的机器上真正执行完，并形成更正式的阶段验收结论
