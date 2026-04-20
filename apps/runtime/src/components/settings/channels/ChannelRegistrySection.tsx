@@ -10,6 +10,7 @@ import {
 } from "./channelRegistryHelpers";
 import { FeishuHostDetailsPanel } from "./FeishuHostDetailsPanel";
 import { WecomHostDetailsPanel } from "./WecomHostDetailsPanel";
+import type { OpenClawPluginFeishuRuntimeStatus } from "../../../types";
 
 interface ChannelRegistrySectionProps {
   entries: ImChannelRegistryEntry[];
@@ -118,77 +119,90 @@ export function ChannelRegistrySection({
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         {entries.map((entry) => (
-          <div
-            key={entry.channel}
-            className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3"
-            data-testid={`channel-registry-card-${entry.channel}`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <div className="text-sm font-medium text-gray-900">{entry.display_name}</div>
-                <div className="text-xs text-gray-500">{entry.summary}</div>
-              </div>
-              <span className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-600 border border-gray-200">
-                {hostKindLabel(entry.host_kind)}
-              </span>
-            </div>
+          (() => {
+            const feishuRuntimeStatus =
+              entry.channel === "feishu"
+                ? ((entry.runtime_status as OpenClawPluginFeishuRuntimeStatus | null | undefined) ??
+                  null)
+                : null;
+            const feishuShortcutTargets = feishuRuntimeStatus
+              ? resolveFeishuReplyCompletionShortcutTargets(feishuRuntimeStatus)
+              : [];
 
-            <div className="flex flex-wrap gap-2">
-              <span className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-700 border border-gray-200">
-                {describeRegistryStatus(entry.status)}
-              </span>
-              {entry.capabilities.map((capability) => (
-                <span
-                  key={capability}
-                  className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-600 border border-gray-200"
-                >
-                  {capability}
-                </span>
-              ))}
-            </div>
+            return (
+              <div
+                key={entry.channel}
+                className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3"
+                data-testid={`channel-registry-card-${entry.channel}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-gray-900">{entry.display_name}</div>
+                    <div className="text-xs text-gray-500">{entry.summary}</div>
+                  </div>
+                  <span className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-600 border border-gray-200">
+                    {hostKindLabel(entry.host_kind)}
+                  </span>
+                </div>
 
-            <div className="text-xs text-gray-600">{entry.detail}</div>
-            {entry.channel === "feishu" ? (
-              <div className="space-y-2">
-                <div className="rounded border border-blue-100 bg-blue-50 px-2 py-2 text-xs text-blue-800">
-                  {describeFeishuReplyCompletionSummary(entry.runtime_status)}
-                </div>
-                <div className="rounded border border-slate-200 bg-white px-2 py-2 text-xs text-slate-600">
-                  {describeFeishuReplyCompletionHint(entry.runtime_status)}
-                </div>
                 <div className="flex flex-wrap gap-2">
-                  {resolveFeishuReplyCompletionShortcutTargets(entry.runtime_status).includes("employees") ? (
-                    <button
-                      type="button"
-                      onClick={() => void onOpenEmployees?.()}
-                      className="h-7 rounded border border-blue-200 bg-white px-3 text-xs text-blue-700 hover:bg-blue-50"
+                  <span className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-700 border border-gray-200">
+                    {describeRegistryStatus(entry.status)}
+                  </span>
+                  {entry.capabilities.map((capability) => (
+                    <span
+                      key={capability}
+                      className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-600 border border-gray-200"
                     >
-                      去员工关联入口
-                    </button>
-                  ) : null}
-                  {resolveFeishuReplyCompletionShortcutTargets(entry.runtime_status).includes("advanced") ? (
-                    <button
-                      type="button"
-                      onClick={() => void onOpenFeishuAdvancedSettings?.()}
-                      className="h-7 rounded border border-blue-200 bg-white px-3 text-xs text-blue-700 hover:bg-blue-50"
-                    >
-                      打开飞书高级配置
-                    </button>
-                  ) : null}
+                      {capability}
+                    </span>
+                  ))}
                 </div>
+
+                <div className="text-xs text-gray-600">{entry.detail}</div>
+                {entry.channel === "feishu" ? (
+                  <div className="space-y-2">
+                    <div className="rounded border border-blue-100 bg-blue-50 px-2 py-2 text-xs text-blue-800">
+                      {describeFeishuReplyCompletionSummary(feishuRuntimeStatus)}
+                    </div>
+                    <div className="rounded border border-slate-200 bg-white px-2 py-2 text-xs text-slate-600">
+                      {describeFeishuReplyCompletionHint(feishuRuntimeStatus)}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {feishuShortcutTargets.includes("employees") ? (
+                        <button
+                          type="button"
+                          onClick={() => void onOpenEmployees?.()}
+                          className="h-7 rounded border border-blue-200 bg-white px-3 text-xs text-blue-700 hover:bg-blue-50"
+                        >
+                          去员工关联入口
+                        </button>
+                      ) : null}
+                      {feishuShortcutTargets.includes("advanced") ? (
+                        <button
+                          type="button"
+                          onClick={() => void onOpenFeishuAdvancedSettings?.()}
+                          className="h-7 rounded border border-blue-200 bg-white px-3 text-xs text-blue-700 hover:bg-blue-50"
+                        >
+                          打开飞书高级配置
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {entry.last_error ? (
+                  <div className="rounded border border-red-100 bg-red-50 px-2 py-2 text-xs text-red-700">
+                    {entry.last_error}
+                  </div>
+                ) : null}
+                {entry.monitor_status?.running ? (
+                  <div className="rounded border border-emerald-100 bg-emerald-50 px-2 py-2 text-xs text-emerald-800">
+                    {`后台同步运行中：累计 ${entry.monitor_status.total_synced} 条，轮询 ${entry.monitor_status.interval_ms}ms / ${entry.monitor_status.limit} 条。`}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-            {entry.last_error ? (
-              <div className="rounded border border-red-100 bg-red-50 px-2 py-2 text-xs text-red-700">
-                {entry.last_error}
-              </div>
-            ) : null}
-            {entry.monitor_status?.running ? (
-              <div className="rounded border border-emerald-100 bg-emerald-50 px-2 py-2 text-xs text-emerald-800">
-                {`后台同步运行中：累计 ${entry.monitor_status.total_synced} 条，轮询 ${entry.monitor_status.interval_ms}ms / ${entry.monitor_status.limit} 条。`}
-              </div>
-            ) : null}
-          </div>
+            );
+          })()
         ))}
       </div>
 
