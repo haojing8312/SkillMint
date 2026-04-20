@@ -231,6 +231,7 @@ impl RealAgentEvalRunner {
             base_url,
             model_name: profile.model.clone(),
             is_default: true,
+            supports_vision: false,
         };
 
         save_model_config_with_pool(&self.pool, model_config, api_key).await?;

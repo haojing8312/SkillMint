@@ -155,6 +155,13 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 ## Project Docs Index
 - Windows contributor prerequisites, local Tauri startup, and GitHub Windows release: [windows-contributor-guide.md](/e:/code/yzpd/workclaw/docs/development/windows-contributor-guide.md)
 
+## Local Reference Mapping
+- `close code` means the local repo at `F:\code\yzpd\close-code`.
+- Treat `close code` as the open-source version of Claude Code for local reference and comparison.
+- When the user mentions `close code`, assume they may want WorkClaw to reference its implementations or UX patterns.
+- Priority reference areas from `close code`: core agent capabilities, especially context compaction, tool calling, and React-side interaction patterns.
+- Other areas in `close code` may also be used as reference when the user explicitly asks or when the task clearly benefits from comparison.
+
 ## Real Agent Eval Harness
 - Real agent evals are local-only, manually triggered runtime regressions for validating real model + real skill execution without checking secrets into git.
 - Keep scenario definitions in `agent-evals/scenarios/*.yaml` with anonymous `capability_id` values only. Do not store real skill paths, real API keys, or sensitive prompt internals in those tracked files.
