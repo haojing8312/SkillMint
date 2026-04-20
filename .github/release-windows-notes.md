@@ -1,36 +1,36 @@
 ## WorkClaw Windows Release
 
-- Release scope: changes from `v0.5.9` to the current `v0.5.10` tag target.
+- Release scope: changes from `v0.5.10` to the current `v0.6.0` tag target.
 
 ## Highlights
 
 - 中文:
-  - 对齐了新一代核心智能体运行时。WorkClaw 现在把本地对话、子会话、员工步骤和团队执行统一到同一套任务引擎与运行链路，减少多智能体流程中的状态分叉。
-  - 完善了智能体员工与团队协作体验。员工中心、团队执行、人格与 workspace 适配层已收口到新的核心能力模型，后续扩展会更稳定。
-  - 改进了长任务连续性与恢复能力。继续执行、恢复执行、任务回流和会话导出现在能携带更完整的 continuation 上下文，长链路任务更不容易“断片”。
-  - 修复了 Windows 下真实评测与桌面构建链路中的一批历史问题，包括 `agent_eval` 启动方式、前端类型漂移和发布打包阻塞。
-  - 清理了运行时与品牌生成链路中的冗余 warning 与重复包装层，让本地构建、回归和发布过程更稳定。
+  - 新增统一附件平台，聊天场景下的附件处理与扩展能力更完整。
+  - 抽取共享 `im_host` 运行时，统一了飞书与企业微信消息收发相关的主机能力与回复链路。
+  - 对齐渠道注册表与会话启动流程，设置页中的 IM 渠道配置与运行时行为保持一致。
+  - 修复 Windows 桌面发布链路中的关键构建问题，恢复主分支本地打包与安装包生成能力。
+  - 补强 IM host 回归验证与发布校验，提升桌面版本发布稳定性。
 
 - English:
-  - Aligned WorkClaw with the new core agent runtime. Local chat, child sessions, employee steps, and team execution now flow through the same task engine and runtime path, reducing state drift in multi-agent workflows.
-  - Improved employee and team collaboration flows. The employee hub, team execution, persona handling, and workspace adapter layers now sit on the new core capability model, making future expansion more stable.
-  - Strengthened long-running task continuity and recovery. Continue, resume, task return, and session export flows now preserve richer continuation context, which makes longer task chains more reliable.
-  - Fixed several long-standing Windows real-eval and desktop build issues, including the `agent_eval` startup path, frontend type drift, and release packaging blockers.
-  - Removed redundant runtime wrappers and warning-heavy build noise so local builds, regressions, and release flows are more stable.
+  - Added a unified attachment platform to make chat attachment handling and extension flows more complete.
+  - Extracted a shared `im_host` runtime to align the host capabilities and reply flow used by Feishu and WeCom messaging.
+  - Aligned the channel registry with session launch flows so IM channel settings now match runtime behavior more consistently.
+  - Fixed the key Windows desktop release build issues and restored local packaging and installer generation on `main`.
+  - Strengthened IM host regressions and release verification to improve desktop release stability.
 
 ## Notable Changes
 
-- Core runtime alignment:
-  - Unified local chat, delegated task, employee step, and team execution paths under the task engine.
-  - Added close-code style agent catalog, spawn policy, and employee runtime adapter layers.
+- Messaging and channel alignment:
+  - Unified the shared IM host runtime used by Feishu and WeCom flows.
+  - Brought channel registry and session launch behavior onto the same runtime contract.
 
-- Continuity and recovery:
-  - Carried continuation state through control-plane, recovery, parent rejoin, and export flows.
-  - Hardened OpenAI-compatible tool calling and long-session responsiveness.
+- Attachment platform:
+  - Shipped the unified attachment platform for chat workflows.
+  - Reduced drift between attachment handling branches and follow-up release verification.
 
 - Desktop and release hardening:
-  - Fixed Windows-specific real regression startup issues for `agent_eval`.
-  - Restored full frontend build compatibility and desktop packaging on `main`.
+  - Restored frontend build compatibility and desktop packaging on `main`.
+  - Added stronger IM host regression coverage for the Windows release path.
 
 - Recommended download: `*-setup.exe` for direct install.
 - Enterprise deployment: `*.msi` for IT-managed installation and manual upgrades.
@@ -42,7 +42,7 @@
 
 ## Verification Checklist
 
-- Core runtime, frontend build, and Windows desktop packaging were verified on the release branch.
-- Release version files and release notes validated against the `v0.5.10` tag target.
+- Frontend build and Windows desktop packaging were verified for the `v0.6.0` release target.
+- Release version files and release notes were validated against the `v0.6.0` tag target.
 - Local Windows packaging is re-run as part of this release flow.
 - Release tag matches desktop app version.
