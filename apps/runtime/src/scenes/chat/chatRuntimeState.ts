@@ -46,6 +46,7 @@ export function clonePersistedChatRuntimeState(
     toolManifest: state?.toolManifest ? state.toolManifest.map((item) => ({ ...item })) : [],
     streamReasoning: state?.streamReasoning ? { ...state.streamReasoning } : null,
     agentState: state?.agentState ? { ...state.agentState } : null,
+    compactionStatus: state?.compactionStatus ? { ...state.compactionStatus } : null,
     subAgentBuffer: state?.subAgentBuffer ?? "",
     subAgentRoleName: state?.subAgentRoleName ?? "",
     mainRoleName: state?.mainRoleName ?? "",
@@ -97,6 +98,7 @@ export function arePersistedChatRuntimeStatesEqual(
     areComparableValuesEqual(left.toolManifest, right.toolManifest) &&
     areComparableValuesEqual(left.streamReasoning, right.streamReasoning) &&
     areComparableValuesEqual(left.agentState, right.agentState) &&
+    areComparableValuesEqual(left.compactionStatus, right.compactionStatus) &&
     left.subAgentBuffer === right.subAgentBuffer &&
     left.subAgentRoleName === right.subAgentRoleName &&
     left.mainRoleName === right.mainRoleName &&

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  ChatRuntimeCompactionStatus,
   ChatRuntimeAgentState,
   PersistedChatRuntimeState,
   SessionToolManifestEntry,
@@ -14,6 +15,7 @@ import {
   type AssistantReasoningDeltaEvent,
   type AssistantReasoningInterruptedEvent,
   type AssistantReasoningStartedEvent,
+  type ContextCompactionEvent,
   type SessionToolManifestEvent,
   type StreamTokenEvent,
   type ToolCallEvent,
@@ -105,6 +107,9 @@ export function useChatStreamController({
   const [askUserOptions, setAskUserOptions] = useState<string[]>([]);
   const [askUserAnswer, setAskUserAnswer] = useState("");
   const [agentState, setAgentState] = useState<ChatRuntimeAgentState | null>(initialRuntimeState.agentState);
+  const [compactionStatus, setCompactionStatus] = useState<ChatRuntimeCompactionStatus | null>(
+    initialRuntimeState.compactionStatus ?? null,
+  );
   const [subAgentBuffer, setSubAgentBuffer] = useState(initialRuntimeState.subAgentBuffer);
   const [subAgentRoleName, setSubAgentRoleName] = useState(initialRuntimeState.subAgentRoleName);
   const subAgentBufferRef = useRef(initialRuntimeState.subAgentBuffer);
@@ -136,6 +141,7 @@ export function useChatStreamController({
       toolManifest: state?.toolManifest ? state.toolManifest.map((item) => ({ ...item })) : [],
       streamReasoning: state?.streamReasoning ? { ...state.streamReasoning } : null,
       agentState: state?.agentState ? { ...state.agentState } : null,
+      compactionStatus: state?.compactionStatus ? { ...state.compactionStatus } : null,
       subAgentBuffer: state?.subAgentBuffer ?? "",
       subAgentRoleName: state?.subAgentRoleName ?? "",
       mainRoleName: state?.mainRoleName ?? "",
@@ -149,6 +155,7 @@ export function useChatStreamController({
     setStreamReasoning(next.streamReasoning ?? null);
     streamReasoningRef.current = next.streamReasoning ?? null;
     setAgentState(next.agentState ?? null);
+    setCompactionStatus(next.compactionStatus ?? null);
     setSubAgentBuffer(next.subAgentBuffer);
     subAgentBufferRef.current = next.subAgentBuffer;
     setSubAgentRoleName(next.subAgentRoleName);
@@ -160,6 +167,7 @@ export function useChatStreamController({
     setStreamItems([]);
     setStreamReasoning(null);
     streamReasoningRef.current = null;
+    setCompactionStatus(null);
     subAgentBufferRef.current = "";
     setSubAgentBuffer("");
     setSubAgentRoleName("");
@@ -202,6 +210,7 @@ export function useChatStreamController({
         subAgentBufferRef.current = "";
         setSubAgentBuffer("");
         setSubAgentRoleName("");
+        setCompactionStatus(null);
         setStreaming(false);
         if (currentSessionId) {
           void Promise.all([loadMessages(currentSessionId), loadSessionRuns(currentSessionId)]);
@@ -217,6 +226,7 @@ export function useChatStreamController({
         setSubAgentBuffer(subAgentBufferRef.current);
         return;
       }
+      setCompactionStatus(null);
       const items = [...streamItemsRef.current];
       const last = items[items.length - 1];
       if (last && last.type === "text") {
@@ -387,6 +397,7 @@ export function useChatStreamController({
     const unsubscribe = subscribeChatStreamEvent("tool-call-event", (payload: ToolCallEvent) => {
       if (payload.session_id !== sessionId) return;
       if (payload.status === "started") {
+        setCompactionStatus(null);
         const items = streamItemsRef.current;
         items.push({
           type: "tool_call",
@@ -422,6 +433,22 @@ export function useChatStreamController({
     };
   }, [sessionId]);
 
+  useEffect(() => {
+    const unsubscribe = subscribeChatStreamEvent("context-compaction-event", (payload: ContextCompactionEvent) => {
+      if (payload.session_id !== sessionId) return;
+      setCompactionStatus({
+        phase: payload.phase,
+        detail: payload.detail,
+        originalTokens: payload.original_tokens,
+        compactedTokens: payload.compacted_tokens,
+        summary: payload.summary,
+      });
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [sessionId]);
+
   return {
     streaming,
     streamItems,
@@ -432,6 +459,7 @@ export function useChatStreamController({
     askUserAnswer,
     setAskUserAnswer,
     agentState,
+    compactionStatus,
     subAgentBuffer,
     subAgentRoleName,
     applyPersistedRuntimeState,

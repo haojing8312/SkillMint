@@ -51,6 +51,15 @@ export type SessionToolManifestEvent = {
   }>;
 };
 
+export type ContextCompactionEvent = {
+  session_id: string;
+  phase: "started" | "completed" | "failed";
+  detail?: string;
+  original_tokens?: number;
+  compacted_tokens?: number;
+  summary?: string;
+};
+
 type EventMap = {
   "stream-token": StreamTokenEvent;
   "assistant-reasoning-started": AssistantReasoningStartedEvent;
@@ -59,6 +68,7 @@ type EventMap = {
   "assistant-reasoning-interrupted": AssistantReasoningInterruptedEvent;
   "tool-call-event": ToolCallEvent;
   "session-tool-manifest": SessionToolManifestEvent;
+  "context-compaction-event": ContextCompactionEvent;
 };
 
 type EventName = keyof EventMap;
@@ -88,6 +98,7 @@ const registry: { [K in EventName]: RegistryEntry<EventMap[K]> } = {
   "assistant-reasoning-interrupted": createEntry<AssistantReasoningInterruptedEvent>(),
   "tool-call-event": createEntry<ToolCallEvent>(),
   "session-tool-manifest": createEntry<SessionToolManifestEvent>(),
+  "context-compaction-event": createEntry<ContextCompactionEvent>(),
 };
 
 function ensureRawListener<K extends EventName>(eventName: K) {

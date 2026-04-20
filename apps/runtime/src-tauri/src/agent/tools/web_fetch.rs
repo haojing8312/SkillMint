@@ -59,6 +59,26 @@ impl Tool for WebFetchTool {
             return Err(anyhow!("HTTP 请求失败: {}", status));
         }
 
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        if !content_type_is_text_like(&content_type) {
+            let normalized_content_type = if content_type.trim().is_empty() {
+                "application/octet-stream"
+            } else {
+                content_type.trim()
+            };
+            return Ok(truncate_tool_output(
+                &format!(
+                    "该 URL 返回的是非文本资源（content-type: {normalized_content_type}），无法按网页正文读取。请改用支持图片/二进制资源的工具。"
+                ),
+                30_000,
+            ));
+        }
+
         let body = resp.text()?;
         // 清洗 HTML 标签，提取纯文本内容
         let cleaned = strip_html_tags(&body);
@@ -89,4 +109,50 @@ pub fn strip_html_tags(html: &str) -> String {
     let text = re_tags.replace_all(&no_style, "");
 
     re_lines.replace_all(&text, "\n\n").trim().to_string()
+}
+
+fn content_type_is_text_like(content_type: &str) -> bool {
+    let normalized = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if normalized.is_empty() {
+        return true;
+    }
+
+    normalized.starts_with("text/")
+        || matches!(
+            normalized.as_str(),
+            "application/json"
+                | "application/xml"
+                | "application/xhtml+xml"
+                | "application/javascript"
+                | "application/x-javascript"
+                | "application/ld+json"
+                | "image/svg+xml"
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{content_type_is_text_like, strip_html_tags};
+
+    #[test]
+    fn strip_html_tags_removes_markup_and_script_blocks() {
+        let cleaned = strip_html_tags(
+            r#"<html><body><script>alert('x')</script><style>.x{}</style><h1>标题</h1><p>正文</p></body></html>"#,
+        );
+
+        assert_eq!(cleaned, "标题正文");
+    }
+
+    #[test]
+    fn content_type_is_text_like_rejects_binary_images() {
+        assert!(content_type_is_text_like("text/html; charset=utf-8"));
+        assert!(content_type_is_text_like("application/json"));
+        assert!(!content_type_is_text_like("image/jpeg"));
+        assert!(!content_type_is_text_like("application/pdf"));
+    }
 }

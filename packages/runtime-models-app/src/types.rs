@@ -22,6 +22,8 @@ pub struct ModelConfig {
     pub base_url: String,
     pub model_name: String,
     pub is_default: bool,
+    #[serde(default)]
+    pub supports_vision: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

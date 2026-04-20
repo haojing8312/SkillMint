@@ -11,6 +11,11 @@ pub(super) async fn apply_legacy_migrations(pool: &SqlitePool) -> Result<()> {
     let _ = sqlx::query("ALTER TABLE model_configs ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
         .execute(pool)
         .await;
+    let _ = sqlx::query(
+        "ALTER TABLE model_configs ADD COLUMN supports_vision INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(pool)
+    .await;
 
     let _ = sqlx::query(
         "ALTER TABLE sessions ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'accept_edits'",

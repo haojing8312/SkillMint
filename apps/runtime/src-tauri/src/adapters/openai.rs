@@ -1,5 +1,5 @@
-use crate::agent::types::{LLMResponse, StreamDelta, ToolCall};
 use crate::adapters::attachment_support::openai_responses_attachment_support;
+use crate::agent::types::{LLMResponse, StreamDelta, ToolCall};
 use crate::model_transport::{ModelTransportKind, ResolvedModelTransport};
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
@@ -152,8 +152,10 @@ fn content_to_responses_parts(content: &Value) -> Vec<Value> {
                     Some("input_image") => Some(part.clone()),
                     Some("attachment") => {
                         let attachment = part.get("attachment")?;
-                        let kind =
-                            attachment.get("kind").and_then(Value::as_str).unwrap_or_default();
+                        let kind = attachment
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
                         match kind {
                             "image" if support.native_image => {
                                 let data = attachment
@@ -530,6 +532,142 @@ fn validate_test_connection_response(body: &str) -> Result<bool> {
     Err(anyhow!(
         "OpenAI 连接测试返回了非标准响应，缺少 choices/output 字段"
     ))
+}
+
+fn extract_openai_text_content(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| match part.get("type").and_then(Value::as_str) {
+                Some("text") | Some("output_text") | Some("input_text") => {
+                    part.get("text").and_then(Value::as_str)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    }
+}
+
+fn parse_openai_nonstream_response(body: &str) -> Result<LLMResponse> {
+    let parsed: Value = serde_json::from_str(body).map_err(|_| {
+        let preview: String = body.chars().take(200).collect();
+        anyhow!("OpenAI 非流式响应解析失败，返回了非 JSON 内容: {}", preview)
+    })?;
+
+    if let Some(choice) = parsed["choices"].get(0) {
+        let message = &choice["message"];
+        let text = extract_openai_text_content(&message["content"]);
+        let tool_calls = message["tool_calls"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|tool_call| {
+                let id = tool_call["id"].as_str()?.trim();
+                let name = tool_call["function"]["name"].as_str()?.trim();
+                let arguments = tool_call["function"]["arguments"].as_str().unwrap_or("{}");
+                if id.is_empty() || name.is_empty() {
+                    return None;
+                }
+                let input = parse_tool_call_arguments(arguments).ok()?;
+                Some(ToolCall {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    input,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        return Ok(match (text.is_empty(), tool_calls.is_empty()) {
+            (false, true) => LLMResponse::Text(text),
+            (false, false) => LLMResponse::TextWithToolCalls(text, tool_calls),
+            (true, false) => LLMResponse::ToolCalls(tool_calls),
+            (true, true) => LLMResponse::Text(String::new()),
+        });
+    }
+
+    if let Some(output) = parsed["output"].as_array() {
+        let text = output
+            .iter()
+            .filter(|item| item["type"].as_str() == Some("message"))
+            .map(|item| extract_openai_text_content(&item["content"]))
+            .collect::<Vec<_>>()
+            .join("");
+
+        return Ok(LLMResponse::Text(text));
+    }
+
+    if let Some(error_message) = parsed
+        .get("error")
+        .and_then(|error| error.get("message").or(Some(error)))
+        .and_then(Value::as_str)
+    {
+        return Err(anyhow!("OpenAI API error: {}", error_message));
+    }
+
+    Err(anyhow!(
+        "OpenAI 非流式响应缺少 choices/output 字段，无法提取结果"
+    ))
+}
+
+fn llm_response_has_visible_output(response: &LLMResponse) -> bool {
+    match response {
+        LLMResponse::Text(text) => !text.trim().is_empty(),
+        LLMResponse::TextWithToolCalls(text, tool_calls) => {
+            !text.trim().is_empty() || !tool_calls.is_empty()
+        }
+        LLMResponse::ToolCalls(tool_calls) => !tool_calls.is_empty(),
+    }
+}
+
+fn should_retry_openai_without_stream(
+    transport: &ResolvedModelTransport,
+    response: &LLMResponse,
+) -> bool {
+    matches!(transport.kind, ModelTransportKind::OpenAiCompletions)
+        && matches!(response, LLMResponse::Text(text) if text.trim().is_empty())
+}
+
+async fn retry_openai_without_stream(
+    client: &Client,
+    url: &str,
+    api_key: &str,
+    request_body: &Value,
+    on_token: &mut impl FnMut(StreamDelta),
+) -> Result<LLMResponse> {
+    let mut fallback_body = request_body.clone();
+    if let Some(object) = fallback_body.as_object_mut() {
+        object.insert("stream".to_string(), Value::Bool(false));
+        object.remove("stream_options");
+    }
+
+    let resp = client
+        .post(url)
+        .bearer_auth(api_key)
+        .header("content-type", "application/json")
+        .json(&fallback_body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let text = resp.text().await?;
+        return Err(anyhow!("OpenAI API error: {}", text));
+    }
+
+    let text = resp.text().await?;
+    let response = parse_openai_nonstream_response(&text)?;
+    match &response {
+        LLMResponse::Text(content) if !content.trim().is_empty() => {
+            on_token(StreamDelta::Text(content.clone()));
+        }
+        LLMResponse::TextWithToolCalls(content, _) if !content.trim().is_empty() => {
+            on_token(StreamDelta::Text(content.clone()));
+        }
+        _ => {}
+    }
+    Ok(response)
 }
 
 fn openai_responses_url(base_url: &str) -> String {
@@ -939,6 +1077,17 @@ fn process_openai_sse_text(
                         if let Some(choice) = v["choices"].get(0) {
                             let delta = &choice["delta"];
 
+                            if delta["reasoning"]
+                                .as_str()
+                                .map(|s| !s.is_empty())
+                                .unwrap_or(false)
+                            {
+                                on_token(StreamDelta::Reasoning(
+                                    delta["reasoning"].as_str().unwrap_or_default().to_string(),
+                                ));
+                                continue;
+                            }
+
                             if delta["reasoning_content"]
                                 .as_str()
                                 .map(|s| !s.is_empty())
@@ -1200,6 +1349,7 @@ pub async fn chat_stream_with_tools(
             return Err(anyhow!("OpenAI adapter 不支持 Anthropic transport"));
         }
     };
+    let request_body = body.clone();
     let resp = client
         .post(&url)
         .bearer_auth(api_key)
@@ -1225,7 +1375,19 @@ pub async fn chat_stream_with_tools(
         }
     }
 
-    Ok(finish_openai_stream(state))
+    let mut response = finish_openai_stream(state);
+    if should_retry_openai_without_stream(transport, &response) {
+        eprintln!("[openai] streamed response had no visible text; retrying once without stream");
+        response =
+            retry_openai_without_stream(&client, &url, api_key, &request_body, &mut on_token)
+                .await?;
+    }
+
+    if !llm_response_has_visible_output(&response) {
+        return Err(anyhow!("OpenAI API 返回了空响应，未生成可展示内容"));
+    }
+
+    Ok(response)
 }
 
 pub async fn test_connection(
@@ -1378,8 +1540,8 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_adapter_falls_back_document_attachment_to_input_text_without_companion_text()
-    {
+    fn openai_responses_adapter_falls_back_document_attachment_to_input_text_without_companion_text(
+    ) {
         let parts = content_to_responses_parts(&json!([
             {
                 "type": "attachment",
@@ -1401,7 +1563,8 @@ mod tests {
     }
 
     #[test]
-    fn openai_responses_adapter_does_not_duplicate_attachment_fallback_when_companion_text_exists() {
+    fn openai_responses_adapter_does_not_duplicate_attachment_fallback_when_companion_text_exists()
+    {
         let parts = content_to_responses_parts(&json!([
             {
                 "type": "text",
@@ -1745,6 +1908,38 @@ mod tests {
 
         match finish_openai_stream(state) {
             LLMResponse::Text(text) => assert_eq!(text, "最终答案"),
+            other => panic!("expected text response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reasoning_delta_field_is_emitted_to_reasoning_stream() {
+        let mut state = OpenAiStreamState::default();
+        let mut deltas = Vec::new();
+
+        process_openai_sse_text(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"先观察图片\"},\"finish_reason\":null}]}\n\
+             data: [DONE]\n",
+            &mut state,
+            &mut |delta| deltas.push(delta),
+        )
+        .expect("parse chunk");
+
+        assert_eq!(
+            deltas,
+            vec![StreamDelta::Reasoning("先观察图片".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_nonstream_chat_completion_returns_visible_text() {
+        let response = parse_openai_nonstream_response(
+            r#"{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"最终图片描述"},"finish_reason":"stop"}]}"#,
+        )
+        .expect("parse response");
+
+        match response {
+            LLMResponse::Text(text) => assert_eq!(text, "最终图片描述"),
             other => panic!("expected text response, got {other:?}"),
         }
     }

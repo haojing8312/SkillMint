@@ -302,6 +302,7 @@ export function ChatView({
     askUserAnswer,
     setAskUserAnswer,
     agentState,
+    compactionStatus,
     subAgentBuffer,
     subAgentRoleName,
     applyPersistedRuntimeState: applyStreamRuntimeState,
@@ -344,6 +345,7 @@ export function ChatView({
       toolManifest: toolManifest.map((item) => ({ ...item })),
       streamReasoning: streamReasoning ? { ...streamReasoning } : null,
       agentState: agentState ? { ...agentState } : null,
+      compactionStatus: compactionStatus ? { ...compactionStatus } : null,
       subAgentBuffer,
       subAgentRoleName,
       mainRoleName,
@@ -352,6 +354,7 @@ export function ChatView({
     }),
     [
       agentState,
+      compactionStatus,
       delegationCards,
       mainRoleName,
       mainSummaryDelivered,
@@ -869,11 +872,22 @@ export function ChatView({
     if (agentState?.state === "tool_calling") {
       return "tool_calling";
     }
+    if (compactionStatus?.phase === "started" || compactionStatus?.phase === "completed") {
+      return "thinking";
+    }
     if (streaming || streamItems.length > 0 || subAgentBuffer.trim()) {
       return "running";
     }
     return null;
-  }, [agentState?.state, pendingApprovals.length, streamItems.length, streamReasoning?.status, streaming, subAgentBuffer]);
+  }, [
+    agentState?.state,
+    compactionStatus?.phase,
+    pendingApprovals.length,
+    streamItems.length,
+    streamReasoning?.status,
+    streaming,
+    subAgentBuffer,
+  ]);
   const shouldShowTeamEntryEmptyState =
     isTeamEntrySession &&
     !initialMessage?.trim() &&
@@ -1049,6 +1063,49 @@ export function ChatView({
     return agentState.detail || agentState.state;
   }
 
+  function getCompactionBannerLabel() {
+    if (!compactionStatus) return "";
+    if (compactionStatus.phase === "started") {
+      return compactionStatus.detail || "正在压缩上下文";
+    }
+    if (compactionStatus.phase === "completed") {
+      if (
+        typeof compactionStatus.originalTokens === "number" &&
+        typeof compactionStatus.compactedTokens === "number"
+      ) {
+        return `上下文压缩完成：${compactionStatus.originalTokens} -> ${compactionStatus.compactedTokens}，继续执行中`;
+      }
+      return compactionStatus.detail || "上下文压缩完成，继续执行中";
+    }
+    return compactionStatus.detail || "上下文压缩失败，已继续使用原始上下文";
+  }
+
+  function renderCompactionBannerSecondary() {
+    if (!compactionStatus) return null;
+    const lines: string[] = [];
+    if (compactionStatus.phase === "started") {
+      lines.push("为保留任务连续性，系统会先压缩历史上下文，再继续当前执行。");
+    } else if (compactionStatus.phase === "completed") {
+      if ((compactionStatus.summary || "").trim()) {
+        lines.push(`压缩摘要：${compactionStatus.summary?.trim()}`);
+      }
+      lines.push("系统会基于压缩后的上下文继续当前任务。");
+    } else if ((compactionStatus.detail || "").trim()) {
+      lines.push(compactionStatus.detail!.trim());
+    }
+    if (lines.length === 0) return null;
+
+    return (
+      <div className="flex min-w-0 flex-col gap-0.5 text-[11px] text-blue-700">
+        {lines.map((line) => (
+          <span key={line} className="whitespace-pre-wrap">
+            {line}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   function handleViewFilesFromDelivery() {
     setSidePanelOpen(true);
     setSidePanelTab("files");
@@ -1079,6 +1136,19 @@ export function ChatView({
       const errorMessage = (run.error_message || "").trim();
       return errorMessage ? inferModelErrorKindFromMessage(errorMessage) !== null : false;
     })
+  );
+  const activeBannerState = compactionStatus
+    ? {
+        state: compactionStatus.phase === "failed" ? "error" : "retrying",
+      }
+    : agentState;
+  const activeBannerLabel = compactionStatus ? getCompactionBannerLabel() : getAgentStateLabel();
+  const activeBannerSecondary = compactionStatus
+    ? renderCompactionBannerSecondary()
+    : renderAgentStateSecondaryText(agentState);
+  const shouldShowCompactionBanner = Boolean(compactionStatus);
+  const shouldShowRuntimeAgentStateBanner = Boolean(
+    agentState && agentState.state !== "thinking" && shouldShowAgentStateBanner,
   );
   return (
     <ChatShell
@@ -1114,11 +1184,11 @@ export function ChatView({
         <div data-testid="chat-content-rail" className="mx-auto flex w-full max-w-[76rem] flex-col gap-5">
         <ChatEmployeeAssistantContext employeeAssistantContext={employeeAssistantContext} />
         <ChatAgentStateBanner
-          visible={Boolean(agentState && agentState.state !== "thinking" && shouldShowAgentStateBanner)}
-          state={agentState?.state}
-          label={getAgentStateLabel()}
-          indicator={renderAgentStateIndicator(agentState)}
-          secondary={renderAgentStateSecondaryText(agentState)}
+          visible={shouldShowCompactionBanner || shouldShowRuntimeAgentStateBanner}
+          state={activeBannerState?.state}
+          label={activeBannerLabel}
+          indicator={renderAgentStateIndicator(activeBannerState)}
+          secondary={activeBannerSecondary}
         />
         <ChatCollaborationStatusPanel
           mainRoleName={mainRoleName}

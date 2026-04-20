@@ -140,6 +140,15 @@ impl AgentExecutor {
                 if super::compactor::needs_auto_compact(tokens) {
                     eprintln!("[agent] Token 数 {} 超过阈值，触发自动压缩", tokens);
                     if let (Some(app), Some(sid)) = (app_handle, session_id) {
+                        let _ = app.emit(
+                            "context-compaction-event",
+                            json!({
+                                "session_id": sid,
+                                "phase": "started",
+                                "detail": format!("正在压缩上下文（约 {} tokens）", tokens),
+                                "original_tokens": tokens,
+                            }),
+                        );
                         let transcript_dir = runtime_paths_from_app(app)
                             .map(|paths| paths.transcripts_dir)
                             .unwrap_or_else(|_| {
@@ -171,11 +180,32 @@ impl AgentExecutor {
                                     messages.len(),
                                     outcome.compacted_messages.len()
                                 );
+                                let _ = app.emit(
+                                    "context-compaction-event",
+                                    json!({
+                                        "session_id": sid,
+                                        "phase": "completed",
+                                        "detail": "上下文压缩完成，准备继续执行",
+                                        "original_tokens": outcome.original_tokens,
+                                        "compacted_tokens": outcome.new_tokens,
+                                        "summary": outcome.summary,
+                                    }),
+                                );
                                 compaction_outcome = Some(outcome.clone());
                                 messages = outcome.compacted_messages;
                             }
                             Ok(None) => {}
-                            Err(e) => eprintln!("[agent] 自动压缩失败: {}", e),
+                            Err(e) => {
+                                let _ = app.emit(
+                                    "context-compaction-event",
+                                    json!({
+                                        "session_id": sid,
+                                        "phase": "failed",
+                                        "detail": format!("上下文压缩失败：{}，已继续使用原始上下文", e),
+                                    }),
+                                );
+                                eprintln!("[agent] 自动压缩失败: {}", e)
+                            }
                         }
                     }
                 }

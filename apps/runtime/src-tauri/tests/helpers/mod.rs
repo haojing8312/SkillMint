@@ -149,7 +149,8 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             base_url TEXT NOT NULL,
             model_name TEXT NOT NULL,
             is_default INTEGER DEFAULT 0,
-            api_key TEXT NOT NULL DEFAULT ''
+            api_key TEXT NOT NULL DEFAULT '',
+            supports_vision INTEGER NOT NULL DEFAULT 0
         )",
     )
     .execute(&pool)

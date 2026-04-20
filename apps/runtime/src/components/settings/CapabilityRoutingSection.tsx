@@ -64,9 +64,18 @@ export function CapabilityRoutingSection({
   onToggleEnabled,
   onUpdateFallbackRow,
 }: CapabilityRoutingSectionProps) {
+  const selectedCapabilityLabel =
+    capabilities.find((capability) => capability.value === selectedCapability)?.label ?? selectedCapability;
+  const isVisionCapability = selectedCapability === "vision";
+
   return (
     <div className="bg-white rounded-lg p-4 space-y-3">
       <div className="text-xs font-medium text-gray-500 mb-2">能力路由</div>
+      {isVisionCapability && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-700">
+          上传图片、截图或其他需要识图的请求，会走这里配置的“图片理解 Vision”主模型和回退链。
+        </div>
+      )}
       <div>
         <label className={labelCls}>能力类型</label>
         <select
@@ -82,7 +91,7 @@ export function CapabilityRoutingSection({
         </select>
       </div>
       <div>
-        <label className={labelCls}>主连接</label>
+        <label className={labelCls}>{isVisionCapability ? "图片理解主连接" : "主连接"}</label>
         <select
           className={inputCls}
           value={chatRoutingPolicy.primary_provider_id}
@@ -97,13 +106,17 @@ export function CapabilityRoutingSection({
         </select>
       </div>
       <div>
-        <label className={labelCls}>主模型</label>
+        <label className={labelCls}>{isVisionCapability ? "图片理解主模型" : "主模型"}</label>
         <input
           className={inputCls}
           list="chat-primary-models"
           value={chatRoutingPolicy.primary_model}
           onChange={(e) => onPrimaryModelChange(e.target.value)}
-          placeholder="例如: deepseek-chat / qwen3.5-plus / kimi-k2"
+          placeholder={
+            isVisionCapability
+              ? "例如: qwen-vl-max / MiniMax-VL-01 / glm-4.6v"
+              : "例如: deepseek-chat / qwen3.5-plus / kimi-k2"
+          }
         />
         {chatPrimaryModels.length > 0 && (
           <datalist id="chat-primary-models">
@@ -213,7 +226,7 @@ export function CapabilityRoutingSection({
         disabled={policySaveState === "saving"}
         className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-sm py-1.5 rounded-lg transition-all active:scale-[0.97]"
       >
-        {policySaveState === "saving" ? "保存中..." : "保存能力路由策略"}
+        {policySaveState === "saving" ? "保存中..." : `保存${selectedCapabilityLabel}路由策略`}
       </button>
     </div>
   );

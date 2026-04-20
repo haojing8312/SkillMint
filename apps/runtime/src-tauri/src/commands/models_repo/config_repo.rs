@@ -153,7 +153,7 @@ impl ModelsConfigRepository for PoolModelsRepository<'_> {
             config.id.clone()
         };
         sqlx::query(
-            "INSERT OR REPLACE INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key, supports_vision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&config.name)
@@ -162,6 +162,7 @@ impl ModelsConfigRepository for PoolModelsRepository<'_> {
         .bind(&config.model_name)
         .bind(config.is_default)
         .bind(&api_key)
+        .bind(config.supports_vision)
         .execute(self.db)
         .await
         .map_err(|e| format!("保存模型配置失败: {e}"))?;

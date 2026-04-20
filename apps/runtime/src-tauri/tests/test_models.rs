@@ -61,6 +61,7 @@ async fn save_model_config_returns_generated_id() {
             base_url: "https://new.example.com/v1".to_string(),
             model_name: "gpt-4.1-mini".to_string(),
             is_default: false,
+            supports_vision: true,
         },
         "sk-new".to_string(),
     )
@@ -76,6 +77,36 @@ async fn save_model_config_returns_generated_id() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, saved_id);
     assert_eq!(rows[0].1, "New Model");
+}
+
+#[tokio::test]
+async fn save_model_config_persists_supports_vision_flag() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+
+    let saved_id = save_model_config_with_pool(
+        &pool,
+        ModelConfig {
+            id: String::new(),
+            name: "Vision Model".to_string(),
+            api_format: "openai".to_string(),
+            base_url: "https://vision.example.com/v1".to_string(),
+            model_name: "qwen-vl-max".to_string(),
+            is_default: false,
+            supports_vision: true,
+        },
+        "sk-vision".to_string(),
+    )
+    .await
+    .expect("save model config");
+
+    let row: (bool,) =
+        sqlx::query_as("SELECT CAST(supports_vision AS BOOLEAN) FROM model_configs WHERE id = ?")
+            .bind(saved_id)
+            .fetch_one(&pool)
+            .await
+            .expect("query supports_vision");
+
+    assert!(row.0);
 }
 
 #[tokio::test]

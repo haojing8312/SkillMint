@@ -123,7 +123,8 @@ async fn wecom_unified_host_regressions_run_in_windows_safe_target() {
     let approval_sent_text = approval_sent.lock().expect("lock approval sent");
     assert_eq!(approval_sent_text.len(), 1);
     assert!(approval_sent_text[0].contains("待审批 #approval-wecom-1"));
-    assert!(approval_sent_text[0].contains("/approve approval-wecom-1 allow_once | allow_always | deny"));
+    assert!(approval_sent_text[0]
+        .contains("/approve approval-wecom-1 allow_once | allow_always | deny"));
     assert_eq!(
         approval_lifecycle
             .lock()

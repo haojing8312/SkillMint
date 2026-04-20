@@ -124,6 +124,7 @@ fn sample_model(id: &str, is_default: bool) -> ModelConfig {
         base_url: format!("https://{id}.example.com/v1"),
         model_name: "gpt-test".to_string(),
         is_default,
+        supports_vision: false,
     }
 }
 

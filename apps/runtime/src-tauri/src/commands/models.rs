@@ -327,8 +327,8 @@ pub async fn resolve_default_usable_model_id_with_pool(
 pub async fn list_model_configs(db: State<'_, DbState>) -> Result<Vec<ModelConfig>, String> {
     resolve_default_model_id_with_pool(&db.0).await?;
 
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, bool)>(
-        "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN) FROM model_configs WHERE api_format NOT LIKE 'search_%'"
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, bool, bool)>(
+        "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN), CAST(supports_vision AS BOOLEAN) FROM model_configs WHERE api_format NOT LIKE 'search_%'"
     )
     .fetch_all(&db.0)
     .await
@@ -337,13 +337,14 @@ pub async fn list_model_configs(db: State<'_, DbState>) -> Result<Vec<ModelConfi
     Ok(rows
         .into_iter()
         .map(
-            |(id, name, api_format, base_url, model_name, is_default)| ModelConfig {
+            |(id, name, api_format, base_url, model_name, is_default, supports_vision)| ModelConfig {
                 id,
                 name,
                 api_format,
                 base_url,
                 model_name,
                 is_default,
+                supports_vision,
             },
         )
         .collect())
@@ -406,8 +407,8 @@ pub async fn test_connection_cmd(
 /// 列出所有搜索 Provider 配置
 #[tauri::command]
 pub async fn list_search_configs(db: State<'_, DbState>) -> Result<Vec<ModelConfig>, String> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, String, bool)>(
-        "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN) FROM model_configs WHERE api_format LIKE 'search_%'"
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, bool, bool)>(
+        "SELECT id, name, api_format, base_url, model_name, CAST(is_default AS BOOLEAN), CAST(supports_vision AS BOOLEAN) FROM model_configs WHERE api_format LIKE 'search_%'"
     )
     .fetch_all(&db.0)
     .await
@@ -416,13 +417,14 @@ pub async fn list_search_configs(db: State<'_, DbState>) -> Result<Vec<ModelConf
     Ok(rows
         .into_iter()
         .map(
-            |(id, name, api_format, base_url, model_name, is_default)| ModelConfig {
+            |(id, name, api_format, base_url, model_name, is_default, supports_vision)| ModelConfig {
                 id,
                 name,
                 api_format,
                 base_url,
                 model_name,
                 is_default,
+                supports_vision,
             },
         )
         .collect())
@@ -512,6 +514,7 @@ mod tests {
                 base_url: "http://mock".to_string(),
                 model_name: "gpt-4o-mini".to_string(),
                 is_default: false,
+                supports_vision: false,
             },
             "sk-test".to_string(),
         )
@@ -532,6 +535,7 @@ mod tests {
                 base_url: "http://127.0.0.1:9/v1".to_string(),
                 model_name: "gpt-4o-mini".to_string(),
                 is_default: false,
+                supports_vision: false,
             },
             "sk-test".to_string(),
         )

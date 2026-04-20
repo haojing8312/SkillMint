@@ -82,6 +82,7 @@ export interface ModelConfig {
   base_url: string;
   model_name: string;
   is_default: boolean;
+  supports_vision?: boolean;
 }
 
 export interface ProviderConfig {
@@ -233,6 +234,14 @@ export interface ChatRuntimeAgentState {
   stopReasonLastCompletedStep?: string;
 }
 
+export interface ChatRuntimeCompactionStatus {
+  phase: "started" | "completed" | "failed";
+  detail?: string;
+  originalTokens?: number;
+  compactedTokens?: number;
+  summary?: string;
+}
+
 export interface ChatDelegationCardState {
   id: string;
   fromRole: string;
@@ -251,6 +260,7 @@ export interface PersistedChatRuntimeState {
     durationMs?: number;
   } | null;
   agentState: ChatRuntimeAgentState | null;
+  compactionStatus?: ChatRuntimeCompactionStatus | null;
   subAgentBuffer: string;
   subAgentRoleName: string;
   mainRoleName: string;

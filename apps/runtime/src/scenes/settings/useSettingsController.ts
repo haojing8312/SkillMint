@@ -117,10 +117,10 @@ export function useSettingsController() {
     };
   }, []);
 
-  async function loadChatPrimaryModels(providerId: string, capability: string) {
+  async function loadChatPrimaryModels(providerId: string, capability: string): Promise<string[]> {
     if (!providerId) {
       setChatPrimaryModels([]);
-      return;
+      return [];
     }
     try {
       const models = await invoke<string[]>("list_provider_models", {
@@ -128,8 +128,10 @@ export function useSettingsController() {
         capability,
       });
       setChatPrimaryModels(models);
+      return models;
     } catch {
       setChatPrimaryModels([]);
+      return [];
     }
   }
 

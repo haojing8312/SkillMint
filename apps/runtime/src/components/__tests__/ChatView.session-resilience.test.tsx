@@ -32,6 +32,16 @@ function emit(name: string, payload: any) {
   arr.forEach((fn) => fn({ payload }));
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("ChatView session resilience", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -577,6 +587,155 @@ describe("ChatView session resilience", () => {
 
     await waitFor(() => {
       expect(onPersistRuntimeState.mock.calls.length).toBeGreaterThan(initialPersistCallCount);
+    });
+  });
+
+  test("keeps the newest assistant reply when an older get_messages response resolves later", async () => {
+    const initialMessages = createDeferred<any[]>();
+    const refreshedMessages = createDeferred<any[]>();
+    let getMessagesCallCount = 0;
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        getMessagesCallCount += 1;
+        if (getMessagesCallCount === 1) return initialMessages.promise;
+        if (getMessagesCallCount === 2) return refreshedMessages.promise;
+        return Promise.resolve([]);
+      }
+      if (command === "list_session_runs") return Promise.resolve([]);
+      if (command === "list_sessions") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="sess-stale-load"
+      />,
+    );
+
+    act(() => {
+      emit("stream-token", {
+        session_id: "sess-stale-load",
+        token: "",
+        done: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(getMessagesCallCount).toBe(2);
+    });
+
+    refreshedMessages.resolve([
+      {
+        id: "assistant-new",
+        role: "assistant",
+        content: "合并后的 PPT 已生成",
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
+    expect(await screen.findByText("合并后的 PPT 已生成")).toBeInTheDocument();
+
+    initialMessages.resolve([]);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("合并后的 PPT 已生成")).toBeInTheDocument();
+  });
+
+  test("shows explicit compaction progress and clears it once streaming resumes", async () => {
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "General",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "m1",
+            name: "model",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model",
+            is_default: true,
+          },
+        ]}
+        sessionId="sess-compaction-banner"
+      />,
+    );
+
+    act(() => {
+      emit("context-compaction-event", {
+        session_id: "sess-compaction-banner",
+        phase: "started",
+        detail: "正在压缩上下文（约 62000 tokens）",
+        original_tokens: 62000,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("正在压缩上下文（约 62000 tokens）")).toBeInTheDocument();
+      expect(
+        screen.getByText("为保留任务连续性，系统会先压缩历史上下文，再继续当前执行。"),
+      ).toBeInTheDocument();
+    });
+
+    act(() => {
+      emit("context-compaction-event", {
+        session_id: "sess-compaction-banner",
+        phase: "completed",
+        detail: "上下文压缩完成，准备继续执行",
+        original_tokens: 62000,
+        compacted_tokens: 4800,
+        summary: "保留最近的文件修改计划和工具结果",
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("上下文压缩完成：62000 -> 4800，继续执行中")).toBeInTheDocument();
+      expect(screen.getByText("压缩摘要：保留最近的文件修改计划和工具结果")).toBeInTheDocument();
+    });
+
+    act(() => {
+      emit("stream-token", {
+        session_id: "sess-compaction-banner",
+        token: "我继续处理合并后的文档。",
+        done: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("我继续处理合并后的文档。")).toBeInTheDocument();
+      expect(screen.queryByText("上下文压缩完成：62000 -> 4800，继续执行中")).not.toBeInTheDocument();
     });
   });
 

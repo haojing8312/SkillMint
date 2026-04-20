@@ -1,4 +1,4 @@
-use crate::preparation::{infer_capability_from_message_parts, infer_capability_from_user_message};
+use crate::preparation::infer_capability_from_message_parts;
 use crate::traits::ChatSettingsRepository;
 use crate::types::{
     ChatExecutionPreparationRequest, ChatPreparationRequest, ModelRouteErrorKind,
@@ -52,15 +52,22 @@ pub(crate) async fn prepare_route_decisions<R: ChatSettingsRepository>(
         .requested_capability
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| infer_capability_from_user_message(&request.user_message));
+        .unwrap_or_else(|| {
+            infer_capability_from_message_parts(
+                request.user_message_parts.as_deref().unwrap_or(&[]),
+                &request.user_message,
+            )
+        });
+    let requires_explicit_vision_route = requested_capability == "vision"
+        && has_image_message_parts(request.user_message_parts.as_deref());
     build_route_candidates(
         repo,
         model_id,
         requested_capability,
-        None,
+        request.user_message_parts.as_deref(),
         false,
         true,
-        true,
+        !requires_explicit_vision_route,
     )
     .await
 }

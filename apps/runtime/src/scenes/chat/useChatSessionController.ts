@@ -65,6 +65,10 @@ export function useChatSessionController({
   const [workspace, setWorkspace] = useState<string>((workDir || "").trim());
   const pendingApprovalsRef = useRef<PendingApprovalView[]>([]);
   const resolvingApprovalIdRef = useRef<string | null>(null);
+  const messagesLoadRequestIdRef = useRef(0);
+  const sessionRunsLoadRequestIdRef = useRef(0);
+  const pendingApprovalsLoadRequestIdRef = useRef(0);
+  const workspaceLoadRequestIdRef = useRef(0);
   const lastPersistedRuntimeSnapshotRef = useRef<PersistedChatRuntimeState>(
     clonePersistedChatRuntimeState(persistedRuntimeState),
   );
@@ -73,8 +77,12 @@ export function useChatSessionController({
   const draftPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadWorkspace = async (sid: string) => {
+    const requestId = ++workspaceLoadRequestIdRef.current;
     try {
       const sessions = await listSessions();
+      if (requestId !== workspaceLoadRequestIdRef.current) {
+        return;
+      }
       const current = sessions.find((session) => session.id === sid);
       if (current) {
         setWorkspace(current.work_dir || "");
@@ -94,8 +102,12 @@ export function useChatSessionController({
   };
 
   const loadMessages = async (sid: string) => {
+    const requestId = ++messagesLoadRequestIdRef.current;
     try {
       const nextMessages = await getMessages(sid);
+      if (requestId !== messagesLoadRequestIdRef.current) {
+        return;
+      }
       setMessages(nextMessages);
     } catch (error) {
       console.error("加载历史消息失败:", error);
@@ -103,12 +115,18 @@ export function useChatSessionController({
   };
 
   const loadSessionRuns = async (sid: string) => {
+    const requestId = ++sessionRunsLoadRequestIdRef.current;
     if (!sid) {
-      setSessionRuns([]);
+      if (requestId === sessionRunsLoadRequestIdRef.current) {
+        setSessionRuns([]);
+      }
       return;
     }
     try {
       const runs = await listSessionRuns(sid);
+      if (requestId !== sessionRunsLoadRequestIdRef.current) {
+        return;
+      }
       setSessionRuns(runs);
     } catch (error) {
       console.error("加载会话运行记录失败:", error);
@@ -116,12 +134,18 @@ export function useChatSessionController({
   };
 
   const loadPendingApprovals = async (sid: string) => {
+    const requestId = ++pendingApprovalsLoadRequestIdRef.current;
     if (!sid) {
-      setPendingApprovals([]);
+      if (requestId === pendingApprovalsLoadRequestIdRef.current) {
+        setPendingApprovals([]);
+      }
       return;
     }
     try {
       const approvals = await listPendingApprovalRecords(sid);
+      if (requestId !== pendingApprovalsLoadRequestIdRef.current) {
+        return;
+      }
       const fetchedApprovals = approvals.map(mapPendingApprovalRecord);
       setPendingApprovals((prev) => {
         const merged = [...fetchedApprovals];

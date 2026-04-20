@@ -238,6 +238,16 @@ pub(crate) async fn prepare_local_turn(
         chat_preparation.retry_count,
         continuation_preference.as_ref(),
     );
+    let disable_runtime_tools_for_native_vision_turn =
+        should_disable_runtime_tools_for_native_vision_turn(
+            &requested_capability,
+            params.user_message_parts,
+        );
+    if disable_runtime_tools_for_native_vision_turn {
+        eprintln!(
+            "[tooling] native vision turn detected; disabling runtime tools for current request"
+        );
+    }
 
     let prepared_runtime_tools = prepare_runtime_tools(ToolSetupParams {
         app: params.app,
@@ -255,17 +265,23 @@ pub(crate) async fn prepare_local_turn(
         permission_mode,
         runtime_default_tool_policy: runtime_default_tool_policy.clone(),
         skill_system_prompt: &effective_skill_system_prompt,
-        skill_allowed_tools: effective_skill_allowed_tools.clone(),
+        skill_allowed_tools: if disable_runtime_tools_for_native_vision_turn {
+            Some(Vec::new())
+        } else {
+            effective_skill_allowed_tools.clone()
+        },
         skill_denied_tools: effective_skill_denied_tools,
         skill_allowed_tool_sources: effective_skill_allowed_tool_sources,
         skill_denied_tool_sources: effective_skill_denied_tool_sources,
         skill_allowed_tool_categories: effective_skill_allowed_tool_categories,
         skill_denied_tool_categories: effective_skill_denied_tool_categories,
         skill_allowed_mcp_servers: effective_skill_allowed_mcp_servers,
-        tool_discovery_query: Some(params.user_message),
+        tool_discovery_query: (!disable_runtime_tools_for_native_vision_turn)
+            .then_some(params.user_message),
         max_iter,
         max_call_depth: chat_preparation.max_call_depth,
-        suppress_workspace_skills_prompt: explicit_skill_selection.is_some(),
+        suppress_workspace_skills_prompt: explicit_skill_selection.is_some()
+            || disable_runtime_tools_for_native_vision_turn,
         execution_preparation_service: &execution_preparation_service,
         execution_guidance: &execution_guidance,
         memory_bucket_employee_id: execution_preparation_service
@@ -275,21 +291,23 @@ pub(crate) async fn prepare_local_turn(
     })
     .await?;
 
-    if let Some(rewritten_body) = rewrite_user_skill_command_for_model(
-        params.user_message,
-        &prepared_runtime_tools
-            .capability_snapshot
-            .skill_command_specs,
-    ) {
-        let rewritten_parts = vec![serde_json::json!({
-            "type": "text",
-            "text": rewritten_body,
-        })];
-        if let Some(current_turn) =
-            RuntimeTranscript::build_current_turn_message(&api_format, &rewritten_parts)
-        {
-            let _ = messages.pop();
-            append_current_turn_message(&mut messages, current_turn);
+    if !disable_runtime_tools_for_native_vision_turn {
+        if let Some(rewritten_body) = rewrite_user_skill_command_for_model(
+            params.user_message,
+            &prepared_runtime_tools
+                .capability_snapshot
+                .skill_command_specs,
+        ) {
+            let rewritten_parts = vec![serde_json::json!({
+                "type": "text",
+                "text": rewritten_body,
+            })];
+            if let Some(current_turn) =
+                RuntimeTranscript::build_current_turn_message(&api_format, &rewritten_parts)
+            {
+                let _ = messages.pop();
+                append_current_turn_message(&mut messages, current_turn);
+            }
         }
     }
 
@@ -333,6 +351,18 @@ pub(crate) async fn prepare_local_turn(
         },
         execution_context,
     ))
+}
+
+fn should_disable_runtime_tools_for_native_vision_turn(
+    requested_capability: &str,
+    user_message_parts: &[Value],
+) -> bool {
+    requested_capability.trim().eq_ignore_ascii_case("vision")
+        && user_message_parts.iter().any(|part| {
+            part.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|part_type| part_type.eq_ignore_ascii_case("image"))
+        })
 }
 
 pub(crate) fn prepare_hidden_child_turn(
@@ -984,7 +1014,7 @@ mod tests {
         prepare_hidden_child_turn, resolve_compaction_continuation_preference,
         resolve_explicit_prompt_following_skill, resolve_recent_compaction_runtime_notes,
         resolve_recent_continuation_runtime_notes, resolve_session_continuation_preference,
-        rewrite_user_skill_command_for_model,
+        rewrite_user_skill_command_for_model, should_disable_runtime_tools_for_native_vision_turn,
     };
     use crate::agent::registry::ToolRegistry;
     use crate::agent::runtime::kernel::execution_plan::{
@@ -1654,5 +1684,42 @@ mod tests {
 
         assert_eq!(per_candidate_retry_count, 0);
         assert_eq!(route_retry_count, 0);
+    }
+
+    #[test]
+    fn native_vision_turns_disable_runtime_tools() {
+        let message_parts = vec![
+            json!({ "type": "text", "text": "告诉我图片里是什么" }),
+            json!({
+                "type": "image",
+                "name": "screen.png",
+                "mimeType": "image/png",
+                "data": "data:image/png;base64,AAA"
+            }),
+        ];
+
+        assert!(should_disable_runtime_tools_for_native_vision_turn(
+            "vision",
+            &message_parts,
+        ));
+    }
+
+    #[test]
+    fn non_vision_or_text_only_turns_keep_runtime_tools_available() {
+        let image_parts = vec![json!({
+            "type": "image",
+            "name": "screen.png",
+            "mimeType": "image/png",
+            "data": "data:image/png;base64,AAA"
+        })];
+
+        assert!(!should_disable_runtime_tools_for_native_vision_turn(
+            "chat",
+            &image_parts,
+        ));
+        assert!(!should_disable_runtime_tools_for_native_vision_turn(
+            "vision",
+            &[json!({ "type": "text", "text": "只有文本，没有图片" })],
+        ));
     }
 }
