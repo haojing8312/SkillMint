@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { SkillManifest, ModelConfig, StreamItem, PendingAttachment, ChatMessagePart, SendMessageRequest, EmployeeGroupRunSnapshot, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
+import { SkillManifest, ModelConfig, PendingAttachment, ChatMessagePart, SendMessageRequest, EmployeeGroupRunSnapshot, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
 import { ChatWorkspaceSidePanel } from "./chat-side-panel/ChatWorkspaceSidePanel";
 import { ChatActionDialogs } from "./chat/ChatActionDialogs";
 import { ChatExecutionContextBar } from "./chat/ChatExecutionContextBar";
@@ -58,10 +58,7 @@ import {
   getAttachmentPhaseOneDisplayKind,
   useChatSendController,
 } from "../scenes/chat/useChatSendController";
-import {
-  normalizeClawhubCommandLookupKey,
-  parseClawhubInstallCommand,
-} from "../scenes/chat/localChatCommands";
+import { useLocalChatCommandRunner } from "../scenes/chat/useLocalChatCommandRunner";
 import {
   getModelErrorDisplay,
   inferModelErrorKindFromMessage,
@@ -185,44 +182,6 @@ export function ChatView({
     const prefix = "DUPLICATE_SKILL_NAME:";
     if (!message.includes(prefix)) return null;
     return message.split(prefix)[1]?.trim() || null;
-  };
-  const buildClawhubToolStreamItem = (
-    toolName: "clawhub_search" | "clawhub_recommend",
-    query: string,
-    items: Array<{
-      name: string;
-      slug: string;
-      description: string;
-      stars: number;
-      github_url?: string | null;
-      source_url?: string | null;
-    }>,
-  ): StreamItem => ({
-    type: "tool_call",
-    toolCall: {
-      id: `local-${toolName}-${Date.now()}`,
-      name: toolName,
-      input: { query },
-      output: JSON.stringify({
-        source: "clawhub",
-        query,
-        items,
-      }),
-      status: "completed",
-    },
-  });
-  const isExactClawhubCandidateMatch = (
-    query: string,
-    candidate: { name: string; slug: string },
-  ) => {
-    const normalizedQuery = normalizeClawhubCommandLookupKey(query);
-    if (!normalizedQuery) {
-      return false;
-    }
-    return (
-      normalizeClawhubCommandLookupKey(candidate.slug) === normalizedQuery ||
-      normalizeClawhubCommandLookupKey(candidate.name) === normalizedQuery
-    );
   };
   const initialRuntimeState = clonePersistedChatRuntimeState(persistedRuntimeState);
   const [expandedRunDetailIds, setExpandedRunDetailIds] = useState<string[]>([]);
@@ -675,161 +634,6 @@ export function ChatView({
     },
   });
 
-  const handleLocalSendRequest = async (request: SendMessageRequest) => {
-    if (
-      request.parts.length !== 1 ||
-      request.parts[0]?.type !== "text" ||
-      attachedFiles.length > 0
-    ) {
-      return false;
-    }
-
-    const rawText = request.parts[0].text;
-    const installCommand = parseClawhubInstallCommand(rawText);
-    if (!installCommand) {
-      return false;
-    }
-
-    setInstallError(null);
-    const createdAt = new Date().toISOString();
-    try {
-      const searchItems = await invoke<Array<{
-        name: string;
-        slug: string;
-        description: string;
-        stars: number;
-        github_url?: string | null;
-        source_url?: string | null;
-      }>>("search_clawhub_skills", {
-        query: installCommand.query,
-        page: 1,
-        limit: 10,
-      });
-
-      let toolName: "clawhub_search" | "clawhub_recommend" = "clawhub_search";
-      let toolItems = Array.isArray(searchItems) ? searchItems : [];
-      if (toolItems.length === 0) {
-        toolName = "clawhub_recommend";
-        const recommendItems = await invoke<Array<{
-          name: string;
-          slug: string;
-          description: string;
-          stars: number;
-          github_url?: string | null;
-          source_url?: string | null;
-        }>>("recommend_clawhub_skills", {
-          query: installCommand.query,
-          limit: 5,
-        });
-        toolItems = Array.isArray(recommendItems) ? recommendItems : [];
-      }
-
-      const exactMatches = toolItems.filter((item) =>
-        isExactClawhubCandidateMatch(installCommand.query, item),
-      );
-      if (exactMatches.length === 1) {
-        const target = exactMatches[0];
-        const result = await invoke<{ manifest?: { id?: string | null } | null }>(
-          "install_clawhub_skill",
-          {
-            slug: target.slug,
-            githubUrl: target.github_url ?? target.source_url ?? null,
-          },
-        );
-        const installedSkillId = result?.manifest?.id?.trim();
-        if (installedSkillId) {
-          await onSkillInstalled?.(installedSkillId);
-        }
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `已安装技能「${target.name}」。`,
-            created_at: createdAt,
-            streamItems: [buildClawhubToolStreamItem(toolName, installCommand.query, toolItems)],
-          },
-        ]);
-        return true;
-      }
-
-      const content =
-        toolItems.length > 0
-          ? `已在 ClawHub 找到与「${installCommand.query}」相关的技能候选，请从下方卡片确认安装。`
-          : `没有在 ClawHub 找到可直接安装的技能「${installCommand.query}」。你可以换个关键词，或先在技能库里搜索更通用的词。`;
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content,
-          created_at: createdAt,
-          streamItems: [buildClawhubToolStreamItem(toolName, installCommand.query, toolItems)],
-        },
-      ]);
-    } catch (error) {
-      const duplicateName = parseDuplicateSkillName(error);
-      const content = duplicateName
-        ? `技能名称冲突：已存在「${duplicateName}」，请先重命名后再安装。`
-        : `执行本地 ClawHub 安装命令失败：${String(error ?? "未知错误")}`;
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content,
-          created_at: createdAt,
-        },
-      ]);
-    }
-
-    return true;
-  };
-
-  const {
-    sendContent,
-    handleSend,
-  } = useChatSendController({
-    sessionId,
-    streaming,
-    input,
-    attachedFiles,
-    clearComposerState,
-    setComposerError,
-    setMessages,
-    loadMessages,
-    loadSessionRuns,
-    prepareForSend,
-    finishStreaming,
-    onSessionUpdate,
-    autoFollowScrollRef,
-    setIsNearBottom,
-    setIsNearTop,
-    animateScrollRegionTo,
-    scrollRegionRef,
-    shouldGrantContinuationBudget,
-    continuationBudgetIncrement: CONTINUE_BUDGET_INCREMENT,
-    handleLocalSendRequest,
-  });
-
-  useEffect(() => {
-    const msg = initialMessage?.trim();
-    if (!msg) return;
-
-    const timer = setTimeout(() => {
-      onInitialMessageConsumed?.();
-      if (initialAttachments.length > 0) {
-        onInitialAttachmentsConsumed?.();
-        void sendContent({
-          sessionId,
-          parts: buildMessageParts(msg, initialAttachments),
-        });
-        return;
-      }
-      void sendContent(msg);
-    }, 0);
-    return () => clearTimeout(timer);
-    // 仅依赖会话与初始消息，避免重复发送
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, initialAttachments, initialMessage]);
-
   async function handleCancel() {
     try {
       await cancelAgent(sessionId);
@@ -914,6 +718,86 @@ export function ChatView({
     (sessionSourceLabel || "").trim() ||
     (normalizedSessionSourceChannel ? `${normalizedSessionSourceChannel} 同步` : "IM 同步");
   const displayWorkDirLabel = (workspace || "").trim() || "选择工作目录";
+  const localStatusSummary = useMemo(() => {
+    const lines = [
+      "当前会话状态：",
+      `- 模型：${currentModel?.name || "未配置"}`,
+      `- 工作目录：${(workspace || "").trim() || "未设置"}`,
+      `- 会话类型：${normalizedSessionMode || "general"}`,
+      `- 来源：${isImSource ? sessionSourceBadgeText : "本地"}`,
+      `- 权限模式：${operationPermissionMode}`,
+    ];
+    if (sessionDisplayTitle.trim()) {
+      lines.push(`- 标题：${sessionDisplayTitle.trim()}`);
+    }
+    if (sessionDisplaySubtitle.trim()) {
+      lines.push(`- 副标题：${sessionDisplaySubtitle.trim()}`);
+    }
+    return lines.join("\n");
+  }, [
+    currentModel?.name,
+    workspace,
+    normalizedSessionMode,
+    isImSource,
+    sessionSourceBadgeText,
+    operationPermissionMode,
+    sessionDisplayTitle,
+    sessionDisplaySubtitle,
+  ]);
+  const handleLocalSendRequest = useLocalChatCommandRunner({
+    hasAttachments: attachedFiles.length > 0,
+    installedSkillIds,
+    onSkillInstalled,
+    setInstallError,
+    setMessages,
+    parseDuplicateSkillName,
+    buildStatusSummary: () => localStatusSummary,
+  });
+  const {
+    sendContent,
+    handleSend,
+  } = useChatSendController({
+    sessionId,
+    streaming,
+    input,
+    attachedFiles,
+    clearComposerState,
+    setComposerError,
+    setMessages,
+    loadMessages,
+    loadSessionRuns,
+    prepareForSend,
+    finishStreaming,
+    onSessionUpdate,
+    autoFollowScrollRef,
+    setIsNearBottom,
+    setIsNearTop,
+    animateScrollRegionTo,
+    scrollRegionRef,
+    shouldGrantContinuationBudget,
+    continuationBudgetIncrement: CONTINUE_BUDGET_INCREMENT,
+    handleLocalSendRequest,
+  });
+  useEffect(() => {
+    const msg = initialMessage?.trim();
+    if (!msg) return;
+
+    const timer = setTimeout(() => {
+      onInitialMessageConsumed?.();
+      if (initialAttachments.length > 0) {
+        onInitialAttachmentsConsumed?.();
+        void sendContent({
+          sessionId,
+          parts: buildMessageParts(msg, initialAttachments),
+        });
+        return;
+      }
+      void sendContent(msg);
+    }, 0);
+    return () => clearTimeout(timer);
+    // 仅依赖会话与初始消息，避免重复发送
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, initialAttachments, initialMessage]);
   const activePendingApproval = pendingApprovals[0] ?? null;
   const queuedApprovalCount = Math.max(0, pendingApprovals.length - 1);
   const activePendingApprovalDialog = useMemo(() => {
@@ -1121,7 +1005,7 @@ export function ChatView({
       } else {
         setInstallError("安装失败，请重试。");
       }
-      console.error("安装 ClawHub 技能失败:", e);
+      console.error("安装技能库技能失败:", e);
     } finally {
       installInFlightRef.current = false;
       setInstallingSlug(null);

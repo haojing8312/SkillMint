@@ -19,7 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 function buildToolOutput() {
   return JSON.stringify({
-    source: "clawhub",
+    source: "skillhub",
     items: [
       {
         slug: "video-maker",

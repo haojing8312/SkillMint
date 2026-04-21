@@ -115,7 +115,8 @@ function parseClawhubCandidatesFromOutput(output?: string): ClawhubInstallCandid
   if (!output) return [];
   try {
     const parsed = JSON.parse(output);
-    if (parsed?.source !== "clawhub" || !Array.isArray(parsed?.items)) return [];
+    const source = typeof parsed?.source === "string" ? parsed.source.trim().toLowerCase() : "";
+    if (!["clawhub", "skillhub"].includes(source) || !Array.isArray(parsed?.items)) return [];
     return parsed.items
       .map((item: any) => {
         const slug = typeof item?.slug === "string" ? item.slug.trim() : "";

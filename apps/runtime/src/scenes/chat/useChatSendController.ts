@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 
 import type { AttachmentInput, ChatMessagePart, PendingAttachment, SendMessageRequest, Message } from "../../types";
+import type { LocalChatCommandResult } from "./localChatCommands";
 import { getModelErrorDisplay, inferModelErrorKindFromMessage } from "../../lib/model-error-display";
 import { sendMessage } from "../../services/chat/chatSessionService";
 
@@ -26,7 +27,7 @@ type UseChatSendControllerArgs = {
   scrollRegionRef: RefObject<HTMLDivElement>;
   shouldGrantContinuationBudget: (request: SendMessageRequest) => boolean;
   continuationBudgetIncrement: number;
-  handleLocalSendRequest?: (request: SendMessageRequest) => Promise<boolean>;
+  handleLocalSendRequest?: (request: SendMessageRequest) => Promise<LocalChatCommandResult>;
 };
 
 export function buildDefaultAttachmentPrompt(attachments: PendingAttachment[]): string {
@@ -308,7 +309,8 @@ export function useChatSendController({
           created_at: new Date().toISOString(),
         },
       ]);
-      if (handleLocalSendRequest && (await handleLocalSendRequest(continuationRequest))) {
+      const localResult = handleLocalSendRequest ? await handleLocalSendRequest(continuationRequest) : null;
+      if (localResult?.kind === "handled") {
         return;
       }
       prepareForSend();

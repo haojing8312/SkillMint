@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 function buildToolOutput() {
   return JSON.stringify({
-    source: "clawhub",
+    source: "skillhub",
     items: [
       {
         slug: "video-maker",
@@ -106,9 +106,136 @@ describe("ChatView find-skills install flow", () => {
     });
 
     expect(
-      invokeMock.mock.calls.some(([command]: [string]) => command === "send_message"),
+      invokeMock.mock.calls.some(([command]) => command === "send_message"),
     ).toBe(false);
     expect(screen.getByTestId("tool-island-summary")).toBeInTheDocument();
+  });
+
+  test("handles skillhub install commands locally before sending them to the model", async () => {
+    const onSkillInstalled = vi.fn();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "search_clawhub_skills") {
+        return Promise.resolve([
+          {
+            slug: "ai-recruiting-engine",
+            name: "AI Recruiting Engine",
+            description: "Automates recruiting workflows",
+            stars: 42,
+            github_url: "https://github.com/example/ai-recruiting-engine",
+          },
+        ]);
+      }
+      if (command === "install_clawhub_skill") {
+        return Promise.resolve({ manifest: { id: "clawhub-ai-recruiting-engine" } });
+      }
+      if (command === "send_message") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "通用助手",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "model-a",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-local-skillhub-install"
+        installedSkillIds={[]}
+        onSkillInstalled={onSkillInstalled}
+      />,
+    );
+
+    const composer = await screen.findByPlaceholderText("输入消息，Shift+Enter 换行...");
+    fireEvent.change(composer, { target: { value: "帮我安装skill：skillhub install AI Recruiting Engine" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("search_clawhub_skills", {
+        query: "AI Recruiting Engine",
+        page: 1,
+        limit: 10,
+      });
+      expect(invokeMock).toHaveBeenCalledWith("install_clawhub_skill", {
+        slug: "ai-recruiting-engine",
+        githubUrl: "https://github.com/example/ai-recruiting-engine",
+      });
+      expect(onSkillInstalled).toHaveBeenCalledWith("clawhub-ai-recruiting-engine");
+    });
+
+    expect(
+      invokeMock.mock.calls.some(([command]) => command === "send_message"),
+    ).toBe(false);
+    expect(screen.getByTestId("tool-island-summary")).toBeInTheDocument();
+  });
+
+  test("handles /status locally before sending to the model", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") return Promise.resolve([]);
+      if (command === "get_sessions") return Promise.resolve([]);
+      if (command === "send_message") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    render(
+      <ChatView
+        skill={{
+          id: "builtin-general",
+          name: "通用助手",
+          description: "desc",
+          version: "1.0.0",
+          author: "test",
+          recommended_model: "model-a",
+          tags: [],
+          created_at: new Date().toISOString(),
+        }}
+        models={[
+          {
+            id: "model-a",
+            name: "Model A",
+            api_format: "openai",
+            base_url: "https://example.com",
+            model_name: "model-a",
+            is_default: true,
+          },
+        ]}
+        sessionId="session-local-status"
+        sessionModelId="model-a"
+        workDir="E:\\workspace"
+        sessionMode="general"
+        sessionTitle="状态测试"
+      />,
+    );
+
+    const composer = await screen.findByPlaceholderText("输入消息，Shift+Enter 换行...");
+    fireEvent.change(composer, { target: { value: "/status" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-message-1")).toBeInTheDocument();
+    });
+
+    expect(
+      invokeMock.mock.calls.some(([command]) => command === "send_message"),
+    ).toBe(false);
   });
 
   test("renders clawhub install candidates and installs after confirm", async () => {

@@ -17,6 +17,9 @@ interface Props {
 }
 
 export function InstallDialog({ onInstalled, onClose }: Props) {
+  const marketplaceTabLabel = "技能库";
+  const marketplaceSearchPlaceholder = "输入关键词搜索 SkillHub / ClawHub 技能";
+  const marketplaceEmptyHint = "通过关键字搜索 SkillHub / ClawHub 公共技能后可直接安装。";
   const [mode, setMode] = useState<InstallMode>("skillpack");
   const [packPath, setPackPath] = useState("");
   const [username, setUsername] = useState("");
@@ -145,7 +148,7 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
       } else if (mode === "clawhub") {
         const skill = clawhubResults.find((item) => item.slug === selectedClawhubSlug);
         if (!skill) {
-          setError("请先搜索并选择要安装的 ClawHub Skill");
+          setError("请先搜索并选择要安装的技能库 Skill");
           setLoading(false);
           return;
         }
@@ -209,14 +212,14 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
     : mode === "local"
     ? "确认导入该本地技能目录吗？"
     : mode === "clawhub"
-    ? `确认安装「${selectedClawhubSkill?.name ?? "所选 ClawHub 技能"}」吗？`
+    ? `确认安装「${selectedClawhubSkill?.name ?? "所选技能库技能"}」吗？`
     : "确认安装该行业包吗？";
   const installRiskImpact = mode === "skillpack"
     ? (packPath ? `文件: ${packPath}` : "请先选择 .skillpack 文件并填写用户名。")
     : mode === "local"
     ? (localDir ? `目录: ${localDir}` : "请先选择本地 Skill 目录或 skills 根目录。")
     : mode === "clawhub"
-    ? (selectedClawhubSkill ? `slug: ${selectedClawhubSkill.slug}` : "请先搜索并选择要安装的 ClawHub 技能。")
+    ? (selectedClawhubSkill ? `slug: ${selectedClawhubSkill.slug}` : "请先搜索并选择要安装的技能库技能。")
     : (industryPath ? `文件: ${industryPath}` : "请先选择 .industrypack 文件。");
 
   const tabBase = "flex-1 py-1.5 text-sm rounded transition-colors text-center";
@@ -245,7 +248,7 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
             className={`${tabBase} ${mode === "clawhub" ? tabActive : tabInactive}`}
             onClick={() => switchMode("clawhub")}
           >
-            ClawHub
+            {marketplaceTabLabel}
           </button>
           <button
             className={`${tabBase} ${mode === "industry" ? tabActive : tabInactive}`}
@@ -306,7 +309,7 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
                 className="flex-1 bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
                 value={clawhubQuery}
                 onChange={(e) => setClawhubQuery(e.target.value)}
-                placeholder="输入关键词搜索 ClawHub 技能"
+                placeholder={marketplaceSearchPlaceholder}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     void searchClawhub();
@@ -343,7 +346,7 @@ export function InstallDialog({ onInstalled, onClose }: Props) {
                 ))}
               </div>
             ) : (
-              <div className="text-xs text-gray-400">通过关键字搜索 ClawHub 公共技能后可直接安装。</div>
+              <div className="text-xs text-gray-400">{marketplaceEmptyHint}</div>
             )}
           </div>
         )}
