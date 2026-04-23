@@ -1,7 +1,8 @@
 use crate::helpers;
 use runtime_lib::commands::employee_agents::test_support::create_employee_team_with_pool;
 use runtime_lib::commands::employee_agents::{
-    ensure_employee_sessions_for_event_with_pool, link_inbound_event_to_session_with_pool,
+    bridge_inbound_event_to_employee_sessions_with_pool, ensure_agent_sessions_for_event_with_pool,
+    ensure_employee_sessions_for_event_with_pool, link_inbound_event_to_agent_session_with_pool,
     list_agent_employees_with_pool, resolve_target_employees_for_event,
     save_feishu_employee_association_with_pool, upsert_agent_employee_with_pool,
     CreateEmployeeTeamInput, SaveFeishuEmployeeAssociationInput, UpsertAgentEmployeeInput,
@@ -11,6 +12,38 @@ use runtime_lib::commands::im_routing::{
     UpsertImRoutingBindingInput,
 };
 use runtime_lib::im::types::{ImEvent, ImEventType};
+
+fn feishu_peer_event(
+    thread_id: &str,
+    event_id: &str,
+    message_id: &str,
+    text: &str,
+    tenant_id: Option<&str>,
+    role_id: Option<&str>,
+) -> ImEvent {
+    let tenant_id = tenant_id.map(str::to_string);
+    let conversation_id = tenant_id
+        .as_deref()
+        .map(|tenant| format!("feishu:{tenant}:group:{thread_id}"));
+
+    ImEvent {
+        channel: "feishu".to_string(),
+        event_type: ImEventType::MessageCreated,
+        thread_id: thread_id.to_string(),
+        event_id: Some(event_id.to_string()),
+        message_id: Some(message_id.to_string()),
+        text: Some(text.to_string()),
+        role_id: role_id.map(str::to_string),
+        account_id: None,
+        tenant_id,
+        sender_id: None,
+        chat_type: Some("group".to_string()),
+        conversation_id: conversation_id.clone(),
+        base_conversation_id: conversation_id,
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
+    }
+}
 
 #[tokio::test]
 async fn employee_config_and_im_session_mapping_work() {
@@ -54,25 +87,20 @@ async fn employee_config_and_im_session_mapping_work() {
     assert_eq!(employees.len(), 1);
     assert_eq!(employees[0].skill_ids, vec!["builtin-general".to_string()]);
 
-    let event = ImEvent {
-        channel: "feishu".to_string(),
-        event_type: ImEventType::MessageCreated,
-        thread_id: "chat_001".to_string(),
-        event_id: Some("evt_001".to_string()),
-        message_id: Some("msg_001".to_string()),
-        text: Some("请评估这个商机".to_string()),
-        role_id: None,
-        account_id: None,
-        tenant_id: Some("tenant-a".to_string()),
-        sender_id: None,
-        chat_type: None,
-    };
+    let event = feishu_peer_event(
+        "chat_001",
+        "evt_001",
+        "msg_001",
+        "请评估这个商机",
+        Some("tenant-a"),
+        None,
+    );
 
-    let sessions = ensure_employee_sessions_for_event_with_pool(&pool, &event)
+    let sessions = ensure_agent_sessions_for_event_with_pool(&pool, &event)
         .await
-        .expect("ensure employee sessions");
+        .expect("ensure agent sessions");
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].employee_id, employee_id);
+    assert_eq!(sessions[0].agent_id, employee_id);
 
     let (skill_id, work_dir, permission_mode): (String, String, String) =
         sqlx::query_as("SELECT skill_id, work_dir, permission_mode FROM sessions WHERE id = ?")
@@ -84,10 +112,10 @@ async fn employee_config_and_im_session_mapping_work() {
     assert_eq!(work_dir, "E:/workspace/pm");
     assert_eq!(permission_mode, "standard");
 
-    link_inbound_event_to_session_with_pool(
+    link_inbound_event_to_agent_session_with_pool(
         &pool,
         &event,
-        &sessions[0].employee_id,
+        &sessions[0].agent_id,
         &sessions[0].session_id,
     )
     .await
@@ -164,19 +192,14 @@ async fn group_message_without_mention_routes_to_main_employee() {
 
     let targets = resolve_target_employees_for_event(
         &pool,
-        &ImEvent {
-            channel: "feishu".to_string(),
-            event_type: ImEventType::MessageCreated,
-            thread_id: "chat_group_1".to_string(),
-            event_id: Some("evt_001".to_string()),
-            message_id: Some("msg_001".to_string()),
-            text: Some("大家讨论一下这个商机".to_string()),
-            role_id: None,
-            account_id: None,
-            tenant_id: None,
-            sender_id: None,
-            chat_type: None,
-        },
+        &feishu_peer_event(
+            "chat_group_1",
+            "evt_001",
+            "msg_001",
+            "大家讨论一下这个商机",
+            None,
+            None,
+        ),
     )
     .await
     .expect("resolve target employees");
@@ -246,19 +269,14 @@ async fn group_message_with_mention_routes_to_target_employee() {
 
     let targets = resolve_target_employees_for_event(
         &pool,
-        &ImEvent {
-            channel: "feishu".to_string(),
-            event_type: ImEventType::MessageCreated,
-            thread_id: "chat_group_mention".to_string(),
-            event_id: Some("evt_mention_001".to_string()),
-            message_id: Some("msg_mention_001".to_string()),
-            text: Some("@开发团队 请开始处理".to_string()),
-            role_id: Some("ou_dev_team".to_string()),
-            account_id: None,
-            tenant_id: None,
-            sender_id: None,
-            chat_type: None,
-        },
+        &feishu_peer_event(
+            "chat_group_mention",
+            "evt_mention_001",
+            "msg_mention_001",
+            "@开发团队 请开始处理",
+            None,
+            Some("ou_dev_team"),
+        ),
     )
     .await
     .expect("resolve target employees");
@@ -384,19 +402,14 @@ async fn save_feishu_employee_association_replaces_default_binding_and_updates_s
 
     let targets = resolve_target_employees_for_event(
         &pool,
-        &ImEvent {
-            channel: "feishu".to_string(),
-            event_type: ImEventType::MessageCreated,
-            thread_id: "chat-default".to_string(),
-            event_id: Some("evt_default_001".to_string()),
-            message_id: Some("msg_default_001".to_string()),
-            text: Some("请处理今天的项目进展".to_string()),
-            role_id: None,
-            account_id: None,
-            tenant_id: None,
-            sender_id: None,
-            chat_type: None,
-        },
+        &feishu_peer_event(
+            "chat-default",
+            "evt_default_001",
+            "msg_default_001",
+            "请处理今天的项目进展",
+            None,
+            None,
+        ),
     )
     .await
     .expect("resolve targets after default replacement");
@@ -543,7 +556,11 @@ async fn wecom_event_prefers_wecom_scoped_employee_and_creates_session() {
         account_id: Some("corp-123".to_string()),
         tenant_id: Some("corp-123".to_string()),
         sender_id: None,
-        chat_type: None,
+        chat_type: Some("group".to_string()),
+        conversation_id: Some("wecom:corp-123:group:wecom_chat_001".to_string()),
+        base_conversation_id: Some("wecom:corp-123:group:wecom_chat_001".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
 
     let targets = resolve_target_employees_for_event(&pool, &event)
@@ -627,19 +644,14 @@ async fn group_message_with_text_mention_routes_to_target_employee_when_role_id_
 
     let targets = resolve_target_employees_for_event(
         &pool,
-        &ImEvent {
-            channel: "feishu".to_string(),
-            event_type: ImEventType::MessageCreated,
-            thread_id: "chat_group_text_mention".to_string(),
-            event_id: Some("evt_text_mention_001".to_string()),
-            message_id: Some("msg_text_mention_001".to_string()),
-            text: Some("@开发团队 请开始处理".to_string()),
-            role_id: None,
-            account_id: None,
-            tenant_id: None,
-            sender_id: None,
-            chat_type: None,
-        },
+        &feishu_peer_event(
+            "chat_group_text_mention",
+            "evt_text_mention_001",
+            "msg_text_mention_001",
+            "@开发团队 请开始处理",
+            None,
+            None,
+        ),
     )
     .await
     .expect("resolve target employees");
@@ -746,27 +758,22 @@ async fn ensure_employee_sessions_for_event_prefers_team_entry_employee_when_bin
     .await
     .expect("seed routing binding");
 
-    let event = ImEvent {
-        channel: "feishu".to_string(),
-        event_type: ImEventType::MessageCreated,
-        thread_id: "chat_team_001".to_string(),
-        event_id: Some("evt_team_001".to_string()),
-        message_id: Some("msg_team_001".to_string()),
-        text: Some("请团队开始处理".to_string()),
-        role_id: None,
-        account_id: None,
-        tenant_id: Some("tenant-a".to_string()),
-        sender_id: None,
-        chat_type: None,
-    };
+    let event = feishu_peer_event(
+        "chat_team_001",
+        "evt_team_001",
+        "msg_team_001",
+        "请团队开始处理",
+        Some("tenant-a"),
+        None,
+    );
 
-    let sessions = ensure_employee_sessions_for_event_with_pool(&pool, &event)
+    let sessions = ensure_agent_sessions_for_event_with_pool(&pool, &event)
         .await
-        .expect("ensure employee sessions");
+        .expect("ensure agent sessions");
 
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].employee_id, taizi_id);
-    assert_ne!(sessions[0].employee_id, main_id);
+    assert_eq!(sessions[0].agent_id, taizi_id);
+    assert_ne!(sessions[0].agent_id, main_id);
 
     let (session_employee_id,): (String,) =
         sqlx::query_as("SELECT employee_id FROM sessions WHERE id = ?")
@@ -775,4 +782,96 @@ async fn ensure_employee_sessions_for_event_prefers_team_entry_employee_when_bin
             .await
             .expect("load ensured session");
     assert_eq!(session_employee_id, "taizi");
+}
+
+#[tokio::test]
+async fn employee_wrapper_bridge_follows_agent_first_dispatch_authority() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed model config");
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "main".to_string(),
+            name: "主员工".to_string(),
+            role_id: "main".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "ou_main".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "".to_string(),
+            openclaw_agent_id: "agent-main".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: true,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("upsert main");
+
+    upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "dev_team".to_string(),
+            name: "开发团队".to_string(),
+            role_id: "dev_team".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "ou_dev_team".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: "".to_string(),
+            openclaw_agent_id: "agent-dev".to_string(),
+            routing_priority: 90,
+            enabled_scopes: vec!["feishu".to_string()],
+            enabled: true,
+            is_default: false,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("upsert dev");
+
+    let event = feishu_peer_event(
+        "chat_wrapper_authority",
+        "evt_wrapper_authority",
+        "msg_wrapper_authority",
+        "@开发团队 请先看一下",
+        Some("tenant-a"),
+        Some("ou_dev_team"),
+    );
+
+    let dispatches = bridge_inbound_event_to_employee_sessions_with_pool(
+        &pool,
+        &event,
+        Some(&serde_json::json!({
+            "agentId": "agent-main",
+            "sessionKey": "feishu:tenant-a:agent-main",
+            "matchedBy": "openclaw",
+        })),
+    )
+    .await
+    .expect("bridge employee dispatches");
+
+    assert_eq!(dispatches.len(), 1);
+    assert_eq!(dispatches[0].employee_id, "agent-main");
+    assert_eq!(dispatches[0].route_agent_id, "agent-main");
+    assert_eq!(dispatches[0].matched_by, "openclaw");
+
+    let ensured = ensure_employee_sessions_for_event_with_pool(&pool, &event)
+        .await
+        .expect("ensure employee sessions without route override");
+    assert_eq!(ensured.len(), 1);
+    assert_eq!(ensured[0].employee_id, "agent-dev");
 }
