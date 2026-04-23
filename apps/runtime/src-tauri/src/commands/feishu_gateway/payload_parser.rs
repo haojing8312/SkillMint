@@ -123,6 +123,12 @@ fn parse_message_text(raw: &str, mention_keys: &[String]) -> Option<String> {
     }
 }
 
+fn normalized_non_empty_owned(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn parse_feishu_payload(payload: &str) -> Result<ParsedFeishuPayload, String> {
     if let Ok(event) = serde_json::from_str::<ImEvent>(payload) {
         return Ok(ParsedFeishuPayload::Event(
@@ -175,15 +181,18 @@ pub fn parse_feishu_payload(payload: &str) -> Result<ParsedFeishuPayload, String
         .chat_id
         .clone()
         .ok_or_else(|| "feishu payload missing chat_id".to_string())?;
-    let tenant_key = header.tenant_key.clone();
+    let tenant_key = normalized_non_empty_owned(header.tenant_key.clone());
     let sender_id = event
         .sender
         .as_ref()
         .and_then(|sender| sender.sender_id.as_ref())
-        .and_then(|id| id.open_id.clone());
+        .and_then(|id| id.open_id.clone())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let metadata_tenant_id = tenant_key.clone().or_else(|| sender_id.clone());
     let metadata = build_feishu_conversation_metadata(&FeishuConversationInput {
         account_id: tenant_key.as_deref(),
-        tenant_id: tenant_key.as_deref(),
+        tenant_id: metadata_tenant_id.as_deref(),
         chat_id: &chat_id,
         chat_type: message.chat_type.as_deref(),
         sender_id: sender_id.as_deref(),
@@ -203,11 +212,7 @@ pub fn parse_feishu_payload(payload: &str) -> Result<ParsedFeishuPayload, String
         account_id: tenant_key.clone(),
         sender_id,
         chat_type: message.chat_type,
-        tenant_id: tenant_key.or_else(|| {
-            event
-                .sender
-                .and_then(|s| s.sender_id.and_then(|id| id.open_id))
-        }),
+        tenant_id: metadata_tenant_id,
         conversation_id: Some(metadata.conversation_id),
         base_conversation_id: Some(metadata.base_conversation_id),
         parent_conversation_candidates: metadata.parent_conversation_candidates,

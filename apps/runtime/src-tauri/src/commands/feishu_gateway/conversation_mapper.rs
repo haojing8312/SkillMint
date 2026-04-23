@@ -39,6 +39,12 @@ fn normalized_required(value: &str, fallback: &str) -> String {
     }
 }
 
+fn resolved_account_id(input: &FeishuConversationInput<'_>) -> String {
+    normalized_non_empty(input.account_id)
+        .or_else(|| normalized_non_empty(input.tenant_id))
+        .unwrap_or_else(|| "default".to_string())
+}
+
 fn peer_kind_from_chat_type(chat_type: Option<&str>) -> ImPeerKind {
     match chat_type.map(str::trim) {
         Some("p2p") | Some("direct") => ImPeerKind::Direct,
@@ -47,8 +53,7 @@ fn peer_kind_from_chat_type(chat_type: Option<&str>) -> ImPeerKind {
 }
 
 fn topic_id_from_input(input: &FeishuConversationInput<'_>) -> Option<String> {
-    normalized_non_empty(input.root_id)
-        .or_else(|| normalized_non_empty(input.thread_id))
+    normalized_non_empty(input.root_id).or_else(|| normalized_non_empty(input.thread_id))
 }
 
 fn scope_from_input(input: &FeishuConversationInput<'_>) -> ImConversationScope {
@@ -80,7 +85,7 @@ pub(crate) fn build_feishu_conversation_surface(
 ) -> ImConversationSurface {
     ImConversationSurface {
         channel: "feishu".to_string(),
-        account_id: normalized_required(input.account_id.or(input.tenant_id).unwrap_or("default"), "default"),
+        account_id: resolved_account_id(input),
         tenant_id: normalized_non_empty(input.tenant_id),
         peer_kind: peer_kind_from_chat_type(input.chat_type),
         peer_id: normalized_required(input.chat_id, "unknown"),
@@ -137,7 +142,10 @@ mod tests {
             metadata.conversation_id,
             "feishu:default:group:oc_group_1:topic:om_root_1"
         );
-        assert_eq!(metadata.base_conversation_id, "feishu:default:group:oc_group_1");
+        assert_eq!(
+            metadata.base_conversation_id,
+            "feishu:default:group:oc_group_1"
+        );
         assert_eq!(
             metadata.parent_conversation_candidates,
             vec!["feishu:default:group:oc_group_1".to_string()]
@@ -158,7 +166,10 @@ mod tests {
         });
 
         assert_eq!(metadata.conversation_id, "feishu:default:direct:ou_user_1");
-        assert_eq!(metadata.base_conversation_id, "feishu:default:direct:ou_user_1");
+        assert_eq!(
+            metadata.base_conversation_id,
+            "feishu:default:direct:ou_user_1"
+        );
         assert!(metadata.parent_conversation_candidates.is_empty());
         assert_eq!(metadata.conversation_scope, "peer");
     }
@@ -180,11 +191,31 @@ mod tests {
             metadata.conversation_id,
             "feishu:default:group:oc_group_2:topic:omt_topic_fallback"
         );
-        assert_eq!(metadata.base_conversation_id, "feishu:default:group:oc_group_2");
+        assert_eq!(
+            metadata.base_conversation_id,
+            "feishu:default:group:oc_group_2"
+        );
         assert_eq!(
             metadata.parent_conversation_candidates,
             vec!["feishu:default:group:oc_group_2".to_string()]
         );
         assert_eq!(metadata.conversation_scope, "topic");
+    }
+
+    #[test]
+    fn blank_account_id_falls_back_to_non_empty_tenant_id() {
+        let surface = build_feishu_conversation_surface(&FeishuConversationInput {
+            account_id: Some("   "),
+            tenant_id: Some("tenant-fallback"),
+            chat_id: "oc_group_3",
+            chat_type: Some("group"),
+            sender_id: Some("ou_sender"),
+            message_id: Some("om_msg_4"),
+            root_id: None,
+            thread_id: None,
+        });
+
+        assert_eq!(surface.account_id, "tenant-fallback");
+        assert_eq!(surface.tenant_id.as_deref(), Some("tenant-fallback"));
     }
 }
