@@ -522,6 +522,38 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     .unwrap();
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS im_conversation_sessions (
+            conversation_id TEXT NOT NULL,
+            employee_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL,
+            route_session_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            channel TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            base_conversation_id TEXT NOT NULL DEFAULT '',
+            parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+            scope TEXT NOT NULL DEFAULT '',
+            peer_kind TEXT NOT NULL DEFAULT '',
+            peer_id TEXT NOT NULL DEFAULT '',
+            topic_id TEXT NOT NULL DEFAULT '',
+            sender_id TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (conversation_id, employee_id)
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_conversation_sessions_session_id ON im_conversation_sessions(session_id)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS im_thread_sessions (
             thread_id TEXT NOT NULL,
             employee_id TEXT NOT NULL,
@@ -529,6 +561,16 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             route_session_key TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            channel TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            conversation_id TEXT NOT NULL DEFAULT '',
+            base_conversation_id TEXT NOT NULL DEFAULT '',
+            parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+            scope TEXT NOT NULL DEFAULT '',
+            peer_kind TEXT NOT NULL DEFAULT '',
+            peer_id TEXT NOT NULL DEFAULT '',
+            topic_id TEXT NOT NULL DEFAULT '',
+            sender_id TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (thread_id, employee_id)
         )",
     )
@@ -632,6 +674,45 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             downloads INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT,
             synced_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    (pool, tmp)
+}
+
+pub async fn seed_default_model_config(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
+         VALUES ('m1', 'default', 'openai', 'https://example.com', 'gpt-4o-mini', 1, 'k')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+pub async fn setup_legacy_thread_only_db() -> (SqlitePool, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("legacy-thread-only.db");
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_url)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE im_thread_sessions (
+            thread_id TEXT NOT NULL,
+            employee_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            route_session_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (thread_id, employee_id)
         )",
     )
     .execute(&pool)

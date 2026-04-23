@@ -524,6 +524,115 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS agent_conversation_bindings (
+            conversation_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '',
+            agent_id TEXT NOT NULL,
+            session_key TEXT NOT NULL,
+            session_id TEXT NOT NULL DEFAULT '',
+            base_conversation_id TEXT NOT NULL DEFAULT '',
+            parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+            scope TEXT NOT NULL DEFAULT '',
+            peer_kind TEXT NOT NULL DEFAULT '',
+            peer_id TEXT NOT NULL DEFAULT '',
+            topic_id TEXT NOT NULL DEFAULT '',
+            sender_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (conversation_id, agent_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_agent_conversation_bindings_session_key
+         ON agent_conversation_bindings(session_key)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_agent_conversation_bindings_channel_account
+         ON agent_conversation_bindings(channel, account_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS channel_delivery_routes (
+            session_key TEXT NOT NULL PRIMARY KEY,
+            channel TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '',
+            conversation_id TEXT NOT NULL,
+            reply_target TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_channel_delivery_routes_conversation
+         ON channel_delivery_routes(conversation_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_channel_delivery_routes_channel_account
+         ON channel_delivery_routes(channel, account_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS im_conversation_sessions (
+            conversation_id TEXT NOT NULL,
+            employee_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL,
+            route_session_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            channel TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            base_conversation_id TEXT NOT NULL DEFAULT '',
+            parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+            scope TEXT NOT NULL DEFAULT '',
+            peer_kind TEXT NOT NULL DEFAULT '',
+            peer_id TEXT NOT NULL DEFAULT '',
+            topic_id TEXT NOT NULL DEFAULT '',
+            sender_id TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (conversation_id, employee_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_conversation_sessions_session_id
+         ON im_conversation_sessions(session_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_conversation_sessions_thread_id
+         ON im_conversation_sessions(thread_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_conversation_sessions_channel_account
+         ON im_conversation_sessions(channel, account_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS im_thread_sessions (
             thread_id TEXT NOT NULL,
             employee_id TEXT NOT NULL,
@@ -531,8 +640,39 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
             route_session_key TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            channel TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL DEFAULT '',
+            conversation_id TEXT NOT NULL DEFAULT '',
+            base_conversation_id TEXT NOT NULL DEFAULT '',
+            parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+            scope TEXT NOT NULL DEFAULT '',
+            peer_kind TEXT NOT NULL DEFAULT '',
+            peer_id TEXT NOT NULL DEFAULT '',
+            topic_id TEXT NOT NULL DEFAULT '',
+            sender_id TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (thread_id, employee_id)
         )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_thread_sessions_route_key
+         ON im_thread_sessions(route_session_key)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_thread_sessions_conversation_id
+         ON im_thread_sessions(conversation_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_im_thread_sessions_channel_account_conversation
+         ON im_thread_sessions(channel, account_id, conversation_id)",
     )
     .execute(pool)
     .await?;
@@ -600,4 +740,34 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_current_schema;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn current_schema_creates_openclaw_binding_tables() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        apply_current_schema(&pool)
+            .await
+            .expect("apply current schema");
+
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+             AND name IN ('agent_conversation_bindings', 'channel_delivery_routes')",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("query openclaw binding tables");
+
+        assert_eq!(tables.len(), 2, "expected openclaw binding tables");
+    }
 }
