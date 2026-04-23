@@ -9,6 +9,7 @@ use super::{
     FeishuWsEventRecord, ParsedFeishuPayload,
 };
 use crate::commands::employee_agents::AgentEmployee;
+use crate::commands::im_host::parse_normalized_im_event_value;
 use crate::commands::openclaw_plugins::{
     OpenClawPluginFeishuOutboundDeliveryResult, OpenClawPluginFeishuRuntimeState,
     OpenClawPluginFeishuRuntimeStatus,
@@ -139,6 +140,15 @@ fn parse_feishu_payload_extracts_mention_role_and_cleans_text() {
             assert_eq!(event.sender_id.as_deref(), Some("ou_sender"));
             assert_eq!(event.chat_type.as_deref(), Some("group"));
             assert_eq!(event.tenant_id.as_deref(), Some("tenant_1"));
+            assert_eq!(
+                event.conversation_id.as_deref(),
+                Some("feishu:tenant_1:group:oc_1")
+            );
+            assert_eq!(
+                event.base_conversation_id.as_deref(),
+                Some("feishu:tenant_1:group:oc_1")
+            );
+            assert_eq!(event.conversation_scope.as_deref(), Some("peer"));
         }
         ParsedFeishuPayload::Challenge(_) => panic!("should parse as event"),
     }
@@ -165,9 +175,156 @@ fn parse_feishu_payload_keeps_plain_text_when_no_mentions() {
         ParsedFeishuPayload::Event(event) => {
             assert_eq!(event.role_id, None);
             assert_eq!(event.text.as_deref(), Some("请给出实施方案"));
+            assert_eq!(
+                event.conversation_id.as_deref(),
+                Some("feishu:default:group:oc_2")
+            );
         }
         ParsedFeishuPayload::Challenge(_) => panic!("should parse as event"),
     }
+}
+
+#[test]
+fn parse_feishu_payload_uses_root_id_for_topic_conversation() {
+    let payload = serde_json::json!({
+        "header": {
+            "event_id": "evt_topic",
+            "event_type": "im.message.receive_v1",
+            "tenant_key": "tenant_topic"
+        },
+        "event": {
+            "message": {
+                "message_id": "om_topic_reply",
+                "chat_id": "oc_topic_group",
+                "chat_type": "group",
+                "root_id": "om_topic_root",
+                "thread_id": "omt_topic_1",
+                "content": "{\"text\":\"继续这个话题\"}"
+            },
+            "sender": {
+                "sender_id": {
+                    "open_id": "ou_topic_sender"
+                }
+            }
+        }
+    });
+
+    let parsed = parse_feishu_payload(&payload.to_string()).expect("payload should parse");
+    match parsed {
+        ParsedFeishuPayload::Event(event) => {
+            assert_eq!(
+                event.conversation_id.as_deref(),
+                Some("feishu:tenant_topic:group:oc_topic_group:topic:om_topic_root")
+            );
+            assert_eq!(
+                event.base_conversation_id.as_deref(),
+                Some("feishu:tenant_topic:group:oc_topic_group")
+            );
+            assert_eq!(
+                event.parent_conversation_candidates,
+                vec!["feishu:tenant_topic:group:oc_topic_group".to_string()]
+            );
+            assert_eq!(event.conversation_scope.as_deref(), Some("topic"));
+        }
+        ParsedFeishuPayload::Challenge(_) => panic!("should parse as event"),
+    }
+}
+
+#[test]
+fn parse_feishu_payload_backfills_topic_projection_for_normalized_event_contract() {
+    let payload = serde_json::json!({
+        "channel": "feishu",
+        "event_type": "message.created",
+        "thread_id": "oc_topic_bridge",
+        "event_id": "evt_topic_bridge",
+        "message_id": "om_topic_bridge_reply",
+        "text": "继续这个桥接话题",
+        "account_id": "tenant_bridge",
+        "tenant_id": "tenant_bridge",
+        "sender_id": "ou_topic_sender",
+        "chat_type": "group",
+        "conversation_id": "feishu:tenant_bridge:group:oc_topic_bridge:topic:om_topic_bridge_root"
+    });
+
+    let parsed = parse_feishu_payload(&payload.to_string()).expect("payload should parse");
+    match parsed {
+        ParsedFeishuPayload::Event(event) => {
+            assert_eq!(
+                event.conversation_id.as_deref(),
+                Some("feishu:tenant_bridge:group:oc_topic_bridge:topic:om_topic_bridge_root")
+            );
+            assert_eq!(
+                event.base_conversation_id.as_deref(),
+                Some("feishu:tenant_bridge:group:oc_topic_bridge")
+            );
+            assert_eq!(
+                event.parent_conversation_candidates,
+                vec!["feishu:tenant_bridge:group:oc_topic_bridge".to_string()]
+            );
+            assert_eq!(event.conversation_scope.as_deref(), Some("topic"));
+        }
+        ParsedFeishuPayload::Challenge(_) => panic!("should parse as event"),
+    }
+}
+
+#[test]
+fn feishu_payload_contract_matches_normalized_topic_contract() {
+    let feishu_payload = serde_json::json!({
+        "header": {
+            "event_id": "evt_contract",
+            "event_type": "im.message.receive_v1",
+            "tenant_key": "tenant_contract"
+        },
+        "event": {
+            "message": {
+                "message_id": "om_contract_reply",
+                "chat_id": "oc_contract_group",
+                "chat_type": "group",
+                "root_id": "om_contract_root",
+                "content": "{\"text\":\"继续这个话题\"}"
+            },
+            "sender": {
+                "sender_id": {
+                    "open_id": "ou_contract_sender"
+                }
+            }
+        }
+    });
+
+    let feishu_event =
+        match parse_feishu_payload(&feishu_payload.to_string()).expect("parse feishu payload") {
+            ParsedFeishuPayload::Event(event) => event,
+            ParsedFeishuPayload::Challenge(_) => panic!("expected event"),
+        };
+    let normalized_event = parse_normalized_im_event_value(&serde_json::json!({
+        "channel": "feishu",
+        "workspace_id": "tenant_contract",
+        "account_id": "tenant_contract",
+        "thread_id": "oc_contract_group",
+        "message_id": "om_contract_reply",
+        "sender_id": "ou_contract_sender",
+        "chat_type": "group",
+        "root_id": "om_contract_root",
+        "text": "继续这个话题"
+    }))
+    .expect("parse normalized contract payload");
+
+    assert_eq!(
+        feishu_event.conversation_id,
+        normalized_event.conversation_id
+    );
+    assert_eq!(
+        feishu_event.base_conversation_id,
+        normalized_event.base_conversation_id
+    );
+    assert_eq!(
+        feishu_event.parent_conversation_candidates,
+        normalized_event.parent_conversation_candidates
+    );
+    assert_eq!(
+        feishu_event.conversation_scope,
+        normalized_event.conversation_scope
+    );
 }
 
 #[test]
@@ -330,6 +487,10 @@ fn apply_default_feishu_account_id_only_fills_missing_values() {
         tenant_id: Some("tenant_1".to_string()),
         sender_id: Some("ou_sender".to_string()),
         chat_type: Some("group".to_string()),
+        conversation_id: Some("feishu:tenant_1:group:oc_1".to_string()),
+        base_conversation_id: Some("feishu:tenant_1:group:oc_1".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
     apply_default_feishu_account_id(&mut event, Some("default"));
     assert_eq!(event.account_id.as_deref(), Some("default"));
@@ -360,6 +521,10 @@ fn resolve_feishu_pairing_account_id_prefers_selected_snapshot_account() {
         sender_id: Some("ou_sender".to_string()),
         chat_type: Some("p2p".to_string()),
         tenant_id: Some("tenant_key".to_string()),
+        conversation_id: Some("feishu:tenant_key:direct:oc_chat".to_string()),
+        base_conversation_id: Some("feishu:tenant_key:direct:oc_chat".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
 
     let resolved = resolve_feishu_pairing_account_id(&event, Some(&metadata));
@@ -387,6 +552,10 @@ fn evaluate_openclaw_feishu_gate_allows_allowlisted_direct_sender() {
         tenant_id: Some("tenant_1".to_string()),
         sender_id: Some("ou_allowed".to_string()),
         chat_type: Some("p2p".to_string()),
+        conversation_id: Some("feishu:default:direct:ou_allowed".to_string()),
+        base_conversation_id: Some("feishu:default:direct:ou_allowed".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
 
     assert_eq!(
@@ -416,6 +585,10 @@ fn evaluate_openclaw_feishu_gate_rejects_unpaired_direct_sender() {
         tenant_id: Some("tenant_1".to_string()),
         sender_id: Some("ou_stranger".to_string()),
         chat_type: Some("p2p".to_string()),
+        conversation_id: Some("feishu:default:direct:ou_stranger".to_string()),
+        base_conversation_id: Some("feishu:default:direct:ou_stranger".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
 
     assert_eq!(
@@ -448,6 +621,10 @@ fn evaluate_openclaw_feishu_gate_rejects_group_without_required_mention() {
         tenant_id: Some("tenant_1".to_string()),
         sender_id: Some("ou_sender".to_string()),
         chat_type: Some("group".to_string()),
+        conversation_id: Some("feishu:default:group:oc_group_1".to_string()),
+        base_conversation_id: Some("feishu:default:group:oc_group_1".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
 
     assert_eq!(
@@ -484,6 +661,10 @@ fn evaluate_openclaw_feishu_gate_rejects_group_outside_allowlist() {
         tenant_id: Some("tenant_1".to_string()),
         sender_id: Some("ou_sender".to_string()),
         chat_type: Some("group".to_string()),
+        conversation_id: Some("feishu:default:group:oc_denied".to_string()),
+        base_conversation_id: Some("feishu:default:group:oc_denied".to_string()),
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: Some("peer".to_string()),
     };
 
     assert_eq!(
@@ -881,7 +1062,8 @@ async fn send_feishu_reply_plan_sends_all_chunks() {
         status
             .recent_logs
             .iter()
-            .any(|entry: &String| entry.contains("[reply_trace]") && entry.contains("state=Completed"))
+            .any(|entry: &String| entry.contains("[reply_trace]")
+                && entry.contains("state=Completed"))
     );
 }
 
@@ -939,10 +1121,9 @@ async fn send_feishu_reply_plan_reports_partial_failure_after_first_chunk() {
             || error.contains("\"final_state\":\"FailedPartial\"")
     );
     let status = crate::commands::openclaw_plugins::current_feishu_runtime_status(&runtime_state);
-    assert!(
-        status
-            .recent_logs
-            .iter()
-            .any(|entry: &String| entry.contains("[reply_trace]") && entry.contains("state=FailedPartial"))
-    );
+    assert!(status
+        .recent_logs
+        .iter()
+        .any(|entry: &String| entry.contains("[reply_trace]")
+            && entry.contains("state=FailedPartial")));
 }

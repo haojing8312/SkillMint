@@ -1,11 +1,10 @@
 use super::{
     emit_registered_lifecycle_phase_for_session_with_pool,
-    load_approval_resolution_notification_with_pool, lookup_channel_source_for_session_with_pool,
-    lookup_channel_thread_for_session_with_pool,
+    load_approval_resolution_notification_with_pool, resolve_session_delivery_route_with_pool,
     stop_registered_processing_for_session_with_pool,
 };
-use crate::commands::im_host::interactive_messages::ApprovalResolutionNotificationRow;
 use crate::approval_bus::PendingApprovalRecord;
+use crate::commands::im_host::interactive_messages::ApprovalResolutionNotificationRow;
 use crate::commands::openclaw_plugins::im_host_contract::ImReplyLifecyclePhase;
 use sqlx::SqlitePool;
 
@@ -16,7 +15,10 @@ pub(crate) async fn prepare_channel_interactive_session_thread_with_pool(
     final_state: Option<&str>,
     phase: ImReplyLifecyclePhase,
 ) -> Result<Option<String>, String> {
-    let Some(thread_id) = lookup_channel_thread_for_session_with_pool(pool, source, session_id).await? else {
+    let Some(thread_id) = resolve_session_delivery_route_with_pool(pool, session_id, Some(source))
+        .await?
+        .map(|route| route.thread_id)
+    else {
         return Ok(None);
     };
 
@@ -98,10 +100,11 @@ pub(crate) async fn maybe_notify_registered_ask_user_requested_with_pool(
     options: &[String],
     sidecar_base_url: Option<String>,
 ) -> Result<bool, String> {
-    match lookup_channel_source_for_session_with_pool(pool, session_id)
+    let source = resolve_session_delivery_route_with_pool(pool, session_id, None::<&str>)
         .await?
-        .as_deref()
-    {
+        .map(|route| route.channel);
+
+    match source.as_deref() {
         Some("feishu") => {
             crate::commands::feishu_gateway::notify_feishu_ask_user_requested_with_pool(
                 pool,
@@ -134,10 +137,11 @@ pub(crate) async fn maybe_notify_registered_approval_requested_with_pool(
     record: &PendingApprovalRecord,
     sidecar_base_url: Option<String>,
 ) -> Result<bool, String> {
-    match lookup_channel_source_for_session_with_pool(pool, session_id)
+    let source = resolve_session_delivery_route_with_pool(pool, session_id, None::<&str>)
         .await?
-        .as_deref()
-    {
+        .map(|route| route.channel);
+
+    match source.as_deref() {
         Some("feishu") => {
             crate::commands::feishu_gateway::notify_feishu_approval_requested_with_pool(
                 pool,
@@ -167,14 +171,16 @@ pub(crate) async fn maybe_notify_registered_approval_resolved_with_pool(
     approval_id: &str,
     sidecar_base_url: Option<String>,
 ) -> Result<bool, String> {
-    let Some(row) = load_approval_resolution_notification_with_pool(pool, approval_id).await? else {
+    let Some(row) = load_approval_resolution_notification_with_pool(pool, approval_id).await?
+    else {
         return Ok(false);
     };
 
-    match lookup_channel_source_for_session_with_pool(pool, &row.session_id)
+    let source = resolve_session_delivery_route_with_pool(pool, &row.session_id, None::<&str>)
         .await?
-        .as_deref()
-    {
+        .map(|route| route.channel);
+
+    match source.as_deref() {
         Some("feishu") => {
             crate::commands::feishu_gateway::notify_feishu_approval_resolved_with_pool(
                 pool,
@@ -210,12 +216,12 @@ mod tests {
         set_feishu_official_runtime_outbound_send_hook_for_tests,
     };
     use crate::commands::openclaw_plugins::{
-        OpenClawPluginFeishuOutboundDeliveryResult, OpenClawPluginFeishuRuntimeState,
-        OpenClawPluginFeishuLifecycleEventRequest, OpenClawPluginFeishuProcessingStopRequest,
-    };
-    use crate::commands::openclaw_plugins::{
         set_feishu_runtime_lifecycle_event_hook_for_tests,
         set_feishu_runtime_processing_stop_hook_for_tests,
+    };
+    use crate::commands::openclaw_plugins::{
+        OpenClawPluginFeishuLifecycleEventRequest, OpenClawPluginFeishuOutboundDeliveryResult,
+        OpenClawPluginFeishuProcessingStopRequest, OpenClawPluginFeishuRuntimeState,
     };
     use crate::commands::wecom_gateway::{
         set_wecom_lifecycle_event_hook_for_tests, set_wecom_outbound_send_hook_for_tests,
@@ -277,6 +283,83 @@ mod tests {
         pool
     }
 
+    async fn seed_authority_route(
+        pool: &SqlitePool,
+        session_id: &str,
+        thread_id: &str,
+        source: &str,
+        conversation_id: &str,
+    ) {
+        sqlx::query(
+            "CREATE TABLE agent_conversation_bindings (
+                conversation_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                agent_id TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                base_conversation_id TEXT NOT NULL DEFAULT '',
+                parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+                scope TEXT NOT NULL DEFAULT '',
+                peer_kind TEXT NOT NULL DEFAULT '',
+                peer_id TEXT NOT NULL DEFAULT '',
+                topic_id TEXT NOT NULL DEFAULT '',
+                sender_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (conversation_id, agent_id)
+            )",
+        )
+        .execute(pool)
+        .await
+        .expect("create agent_conversation_bindings");
+
+        sqlx::query(
+            "CREATE TABLE channel_delivery_routes (
+                session_key TEXT NOT NULL PRIMARY KEY,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                conversation_id TEXT NOT NULL,
+                reply_target TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(pool)
+        .await
+        .expect("create channel_delivery_routes");
+
+        let session_key = format!("sk-{session_id}");
+        sqlx::query(
+            "INSERT INTO agent_conversation_bindings (
+                conversation_id, channel, account_id, agent_id, session_key, session_id,
+                base_conversation_id, parent_conversation_candidates_json, scope, peer_kind,
+                peer_id, topic_id, sender_id, created_at, updated_at
+             )
+             VALUES (?, ?, 'default', 'main-agent', ?, ?, ?, '[]', 'topic', 'group', ?, 'topic-1', '', '2026-04-19T00:00:00Z', '2026-04-19T00:00:01Z')",
+        )
+        .bind(conversation_id)
+        .bind(source)
+        .bind(&session_key)
+        .bind(session_id)
+        .bind("feishu:default:group:oc_chat_topic")
+        .bind(thread_id)
+        .execute(pool)
+        .await
+        .expect("seed authority binding");
+
+        sqlx::query(
+            "INSERT INTO channel_delivery_routes (session_key, channel, account_id, conversation_id, reply_target, updated_at)
+             VALUES (?, ?, 'default', ?, ?, '2026-04-19T00:00:01Z')",
+        )
+        .bind(&session_key)
+        .bind(source)
+        .bind(conversation_id)
+        .bind(thread_id)
+        .execute(pool)
+        .await
+        .expect("seed authority route");
+    }
+
     async fn seed_session_channel(
         pool: &SqlitePool,
         session_id: &str,
@@ -314,29 +397,27 @@ mod tests {
 
         let sent_texts = Arc::new(Mutex::new(Vec::<String>::new()));
         let sent_texts_for_hook = sent_texts.clone();
-        set_feishu_official_runtime_outbound_send_hook_for_tests(Some(Arc::new(
-            move |request| {
-                sent_texts_for_hook
-                    .lock()
-                    .expect("lock sent texts")
-                    .push(request.text.clone());
-                Ok(OpenClawPluginFeishuOutboundDeliveryResult {
-                    delivered: true,
-                    channel: "feishu".to_string(),
-                    account_id: request.account_id.clone(),
-                    target: request.target.clone(),
-                    thread_id: request.thread_id.clone(),
-                    text: request.text.clone(),
-                    mode: request.mode.clone(),
-                    message_id: format!("om_{}", request.request_id),
-                    chat_id: request
-                        .thread_id
-                        .clone()
-                        .unwrap_or_else(|| "oc_chat_test".to_string()),
-                    sequence: 1,
-                })
-            },
-        )));
+        set_feishu_official_runtime_outbound_send_hook_for_tests(Some(Arc::new(move |request| {
+            sent_texts_for_hook
+                .lock()
+                .expect("lock sent texts")
+                .push(request.text.clone());
+            Ok(OpenClawPluginFeishuOutboundDeliveryResult {
+                delivered: true,
+                channel: "feishu".to_string(),
+                account_id: request.account_id.clone(),
+                target: request.target.clone(),
+                thread_id: request.thread_id.clone(),
+                text: request.text.clone(),
+                mode: request.mode.clone(),
+                message_id: format!("om_{}", request.request_id),
+                chat_id: request
+                    .thread_id
+                    .clone()
+                    .unwrap_or_else(|| "oc_chat_test".to_string()),
+                sequence: 1,
+            })
+        })));
 
         sent_texts
     }
@@ -374,11 +455,9 @@ mod tests {
                     .expect("lock feishu lifecycle records")
                     .push(format!(
                         "lifecycle:{}:{}",
-                        request
-                            .message_id
-                            .as_deref()
-                            .unwrap_or(""),
-                        serde_json::to_string(&request.phase).unwrap_or_else(|_| "\"unknown\"".to_string())
+                        request.message_id.as_deref().unwrap_or(""),
+                        serde_json::to_string(&request.phase)
+                            .unwrap_or_else(|_| "\"unknown\"".to_string())
                     ));
                 Ok(())
             },
@@ -433,7 +512,8 @@ mod tests {
                 .push(format!(
                     "lifecycle:{}:{}",
                     request.message_id.as_deref().unwrap_or(""),
-                    serde_json::to_string(&request.phase).unwrap_or_else(|_| "\"unknown\"".to_string())
+                    serde_json::to_string(&request.phase)
+                        .unwrap_or_else(|_| "\"unknown\"".to_string())
                 ));
             Ok(())
         })));
@@ -566,7 +646,9 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert!(sent[0].contains("请确认企微方案"));
         assert!(sent[0].contains("可选项：方案一 / 方案二"));
-        let lifecycle = lifecycle_records.lock().expect("lock wecom lifecycle records");
+        let lifecycle = lifecycle_records
+            .lock()
+            .expect("lock wecom lifecycle records");
         assert_eq!(
             lifecycle.as_slice(),
             [
@@ -619,7 +701,9 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert!(sent[0].contains("待审批 #approval-wecom-1"));
         assert!(sent[0].contains("/approve approval-wecom-1 allow_once | allow_always | deny"));
-        let lifecycle = lifecycle_records.lock().expect("lock wecom lifecycle records");
+        let lifecycle = lifecycle_records
+            .lock()
+            .expect("lock wecom lifecycle records");
         assert_eq!(
             lifecycle.as_slice(),
             [
@@ -649,10 +733,9 @@ mod tests {
         .expect("seed approval row");
         let sent_texts = install_feishu_send_hook();
 
-        let result =
-            maybe_notify_registered_approval_resolved_with_pool(&pool, "approval-2", None)
-                .await
-                .expect("notify approval resolved");
+        let result = maybe_notify_registered_approval_resolved_with_pool(&pool, "approval-2", None)
+            .await
+            .expect("notify approval resolved");
 
         cleanup_feishu_send_hook();
 
@@ -683,13 +766,10 @@ mod tests {
         .expect("seed wecom approval row");
         let sent_texts = install_wecom_send_hook();
 
-        let result = maybe_notify_registered_approval_resolved_with_pool(
-            &pool,
-            "approval-wecom-2",
-            None,
-        )
-        .await
-        .expect("notify wecom approval resolved");
+        let result =
+            maybe_notify_registered_approval_resolved_with_pool(&pool, "approval-wecom-2", None)
+                .await
+                .expect("notify wecom approval resolved");
 
         cleanup_wecom_send_hook();
 
@@ -723,5 +803,30 @@ mod tests {
         .expect("notify unknown channel");
 
         assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn prepare_channel_interactive_thread_uses_authority_topic_projection() {
+        let pool = setup_interactive_dispatch_pool().await;
+        seed_authority_route(
+            &pool,
+            "session-authority-topic",
+            "oc_chat_topic",
+            "feishu",
+            "feishu:default:group:oc_chat_topic:topic:topic-1",
+        )
+        .await;
+
+        let thread_id = super::prepare_channel_interactive_session_thread_with_pool(
+            &pool,
+            "feishu",
+            "session-authority-topic",
+            Some("ask_user"),
+            crate::commands::openclaw_plugins::im_host_contract::ImReplyLifecyclePhase::AskUserRequested,
+        )
+        .await
+        .expect("prepare authority topic thread");
+
+        assert_eq!(thread_id.as_deref(), Some("oc_chat_topic"));
     }
 }

@@ -1,4 +1,6 @@
+use super::conversation_mapper::{build_feishu_conversation_metadata, FeishuConversationInput};
 use super::types::ParsedFeishuPayload;
+use crate::commands::im_host::project_im_event_conversation_metadata;
 use crate::im::types::{ImEvent, ImEventType};
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -27,6 +29,8 @@ struct FeishuMessage {
     message_id: Option<String>,
     chat_id: Option<String>,
     chat_type: Option<String>,
+    root_id: Option<String>,
+    thread_id: Option<String>,
     content: Option<String>,
 }
 
@@ -121,7 +125,9 @@ fn parse_message_text(raw: &str, mention_keys: &[String]) -> Option<String> {
 
 pub fn parse_feishu_payload(payload: &str) -> Result<ParsedFeishuPayload, String> {
     if let Ok(event) = serde_json::from_str::<ImEvent>(payload) {
-        return Ok(ParsedFeishuPayload::Event(event));
+        return Ok(ParsedFeishuPayload::Event(
+            project_im_event_conversation_metadata(&event),
+        ));
     }
 
     let env: FeishuEnvelope =
@@ -165,27 +171,46 @@ pub fn parse_feishu_payload(payload: &str) -> Result<ParsedFeishuPayload, String
         }
     };
 
+    let chat_id = message
+        .chat_id
+        .clone()
+        .ok_or_else(|| "feishu payload missing chat_id".to_string())?;
+    let tenant_key = header.tenant_key.clone();
+    let sender_id = event
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.sender_id.as_ref())
+        .and_then(|id| id.open_id.clone());
+    let metadata = build_feishu_conversation_metadata(&FeishuConversationInput {
+        account_id: tenant_key.as_deref(),
+        tenant_id: tenant_key.as_deref(),
+        chat_id: &chat_id,
+        chat_type: message.chat_type.as_deref(),
+        sender_id: sender_id.as_deref(),
+        message_id: message.message_id.as_deref(),
+        root_id: message.root_id.as_deref(),
+        thread_id: message.thread_id.as_deref(),
+    });
+
     Ok(ParsedFeishuPayload::Event(ImEvent {
         channel: "feishu".to_string(),
         event_type,
-        thread_id: message
-            .chat_id
-            .ok_or_else(|| "feishu payload missing chat_id".to_string())?,
+        thread_id: chat_id,
         event_id: header.event_id,
         message_id: message.message_id,
         text: content_text,
         role_id,
-        account_id: header.tenant_key.clone(),
-        sender_id: event
-            .sender
-            .as_ref()
-            .and_then(|sender| sender.sender_id.as_ref())
-            .and_then(|id| id.open_id.clone()),
+        account_id: tenant_key.clone(),
+        sender_id,
         chat_type: message.chat_type,
-        tenant_id: header.tenant_key.or_else(|| {
+        tenant_id: tenant_key.or_else(|| {
             event
                 .sender
                 .and_then(|s| s.sender_id.and_then(|id| id.open_id))
         }),
+        conversation_id: Some(metadata.conversation_id),
+        base_conversation_id: Some(metadata.base_conversation_id),
+        parent_conversation_candidates: metadata.parent_conversation_candidates,
+        conversation_scope: Some(metadata.conversation_scope),
     }))
 }

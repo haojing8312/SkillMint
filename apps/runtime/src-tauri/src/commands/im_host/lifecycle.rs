@@ -1,6 +1,15 @@
 use super::contract::{ImReplyDeliveryPlan, ImReplyLifecyclePhase};
+use crate::im::find_channel_delivery_route_by_session_id;
 use sqlx::SqlitePool;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionChannelDeliveryRoute {
+    pub channel: String,
+    pub account_id: String,
+    pub thread_id: String,
+    pub conversation_id: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionLifecycleDispatch {
@@ -90,51 +99,146 @@ pub(crate) fn build_session_processing_stop_dispatch(
     })
 }
 
+pub(crate) async fn lookup_session_delivery_route_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+    channel: Option<&str>,
+) -> Result<Option<SessionChannelDeliveryRoute>, String> {
+    let authority_route =
+        match find_channel_delivery_route_by_session_id(pool, session_id, channel).await {
+            Ok(route) => route,
+            Err(error) if error.contains("no such table") => None,
+            Err(error) => return Err(error),
+        };
+
+    if let Some(route) = authority_route {
+        let channel = route.channel.trim();
+        let thread_id = route.reply_target.trim();
+        if !channel.is_empty() && !thread_id.is_empty() {
+            return Ok(Some(SessionChannelDeliveryRoute {
+                channel: channel.to_string(),
+                account_id: route.account_id.trim().to_string(),
+                thread_id: thread_id.to_string(),
+                conversation_id: route.conversation_id.trim().to_string(),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+pub(crate) async fn resolve_session_delivery_route_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+    channel: Option<&str>,
+) -> Result<Option<SessionChannelDeliveryRoute>, String> {
+    if let Some(route) = lookup_session_delivery_route_with_pool(pool, session_id, channel).await? {
+        return Ok(Some(route));
+    }
+
+    lookup_legacy_session_delivery_route_with_pool(pool, session_id, channel).await
+}
+
+async fn legacy_session_bindings_include_conversation_table(
+    pool: &SqlitePool,
+) -> Result<bool, String> {
+    Ok(!sqlx::query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'im_conversation_sessions'",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("查询 legacy 会话映射表失败: {e}"))?
+    .is_empty())
+}
+
+async fn lookup_legacy_session_delivery_route_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+    channel: Option<&str>,
+) -> Result<Option<SessionChannelDeliveryRoute>, String> {
+    let normalized_session_id = session_id.trim();
+    let normalized_channel = channel
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    if normalized_session_id.is_empty() {
+        return Ok(None);
+    }
+
+    let has_conversation_table = legacy_session_bindings_include_conversation_table(pool).await?;
+    let row = if has_conversation_table {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT bindings.thread_id, e.source
+             FROM (
+               SELECT cs.thread_id AS thread_id, cs.updated_at AS updated_at, cs.created_at AS created_at
+               FROM im_conversation_sessions cs
+               WHERE cs.session_id = ?
+               UNION ALL
+               SELECT ts.thread_id AS thread_id, ts.updated_at AS updated_at, ts.created_at AS created_at
+               FROM im_thread_sessions ts
+               WHERE ts.session_id = ?
+             ) bindings
+             JOIN im_inbox_events e ON e.thread_id = bindings.thread_id
+             WHERE e.source <> ''
+               AND (? = '' OR e.source = ?)
+             ORDER BY bindings.updated_at DESC, bindings.created_at DESC, e.created_at DESC, e.id DESC
+             LIMIT 1",
+        )
+        .bind(normalized_session_id)
+        .bind(normalized_session_id)
+        .bind(normalized_channel)
+        .bind(normalized_channel)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("查询 legacy 会话路由失败: {e}"))?
+    } else {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT ts.thread_id, e.source
+             FROM im_thread_sessions ts
+             JOIN im_inbox_events e ON e.thread_id = ts.thread_id
+             WHERE ts.session_id = ?
+               AND e.source <> ''
+               AND (? = '' OR e.source = ?)
+             ORDER BY ts.updated_at DESC, ts.created_at DESC, e.created_at DESC, e.id DESC
+             LIMIT 1",
+        )
+        .bind(normalized_session_id)
+        .bind(normalized_channel)
+        .bind(normalized_channel)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("查询 legacy 会话路由失败: {e}"))?
+    };
+
+    Ok(row.map(|(thread_id, source)| SessionChannelDeliveryRoute {
+        channel: source,
+        account_id: String::new(),
+        thread_id,
+        conversation_id: String::new(),
+    }))
+}
+
 pub(crate) async fn lookup_channel_thread_for_session_with_pool(
     pool: &SqlitePool,
     source: &str,
     session_id: &str,
 ) -> Result<Option<String>, String> {
-    let row = sqlx::query_as::<_, (String,)>(
-        "SELECT ts.thread_id
-         FROM im_thread_sessions ts
-         WHERE ts.session_id = ?
-           AND EXISTS (
-             SELECT 1
-             FROM im_inbox_events e
-             WHERE e.thread_id = ts.thread_id AND e.source = ?
-           )
-         ORDER BY ts.updated_at DESC, ts.created_at DESC
-         LIMIT 1",
+    Ok(
+        resolve_session_delivery_route_with_pool(pool, session_id, Some(source))
+            .await?
+            .map(|route| route.thread_id),
     )
-    .bind(session_id.trim())
-    .bind(source.trim())
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("查询 {source} 线程映射失败: {e}"))?;
-
-    Ok(row.map(|(thread_id,)| thread_id))
 }
 
 pub(crate) async fn lookup_channel_source_for_session_with_pool(
     pool: &SqlitePool,
     session_id: &str,
 ) -> Result<Option<String>, String> {
-    let row = sqlx::query_as::<_, (String,)>(
-        "SELECT e.source
-         FROM im_thread_sessions ts
-         JOIN im_inbox_events e ON e.thread_id = ts.thread_id
-         WHERE ts.session_id = ?
-           AND e.source <> ''
-         ORDER BY ts.updated_at DESC, ts.created_at DESC, e.created_at DESC, e.id DESC
-         LIMIT 1",
+    Ok(
+        resolve_session_delivery_route_with_pool(pool, session_id, None)
+            .await?
+            .map(|route| route.channel),
     )
-    .bind(session_id.trim())
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| format!("查询会话来源渠道失败: {e}"))?;
-
-    Ok(row.map(|(source,)| source))
 }
 
 pub(crate) async fn maybe_emit_registered_host_lifecycle_phase_for_session_with_pool(
@@ -227,20 +331,19 @@ pub(crate) async fn maybe_dispatch_registered_im_session_reply_with_pool(
     };
 
     match source.trim() {
-        "feishu" => Ok(crate::commands::feishu_gateway::maybe_dispatch_feishu_session_reply_with_pool(
-            pool,
-            normalized_session_id,
-            normalized_text,
-        )
-        .await?
-        .is_some()),
-        "wecom" => {
-            let Some(thread_id) = lookup_channel_thread_for_session_with_pool(
+        "feishu" => Ok(
+            crate::commands::feishu_gateway::maybe_dispatch_feishu_session_reply_with_pool(
                 pool,
-                "wecom",
                 normalized_session_id,
+                normalized_text,
             )
             .await?
+            .is_some(),
+        ),
+        "wecom" => {
+            let Some(thread_id) =
+                lookup_channel_thread_for_session_with_pool(pool, "wecom", normalized_session_id)
+                    .await?
             else {
                 return Ok(false);
             };
@@ -358,15 +461,16 @@ where
 mod tests {
     use super::{
         build_session_lifecycle_dispatch, build_session_processing_stop_dispatch,
-        maybe_dispatch_registered_im_session_reply_with_pool,
-        maybe_emit_registered_host_lifecycle_phase_for_session_with_pool, ImReplyLifecyclePhase,
+        lookup_channel_source_for_session_with_pool, lookup_channel_thread_for_session_with_pool,
+        maybe_emit_registered_host_lifecycle_phase_for_session_with_pool,
+        resolve_session_delivery_route_with_pool, ImReplyLifecyclePhase,
     };
     use crate::commands::feishu_gateway::{
         clear_feishu_runtime_state_for_outbound, remember_feishu_runtime_state_for_outbound,
     };
     use crate::commands::openclaw_plugins::{
-        set_feishu_runtime_lifecycle_event_hook_for_tests, OpenClawPluginFeishuLifecycleEventRequest,
-        OpenClawPluginFeishuRuntimeState,
+        set_feishu_runtime_lifecycle_event_hook_for_tests,
+        OpenClawPluginFeishuLifecycleEventRequest, OpenClawPluginFeishuRuntimeState,
     };
     use crate::commands::wecom_gateway::{
         set_wecom_lifecycle_event_hook_for_tests, set_wecom_outbound_send_hook_for_tests,
@@ -429,6 +533,44 @@ mod tests {
             .expect("create sqlite memory pool");
 
         sqlx::query(
+            "CREATE TABLE agent_conversation_bindings (
+                conversation_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                agent_id TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                base_conversation_id TEXT NOT NULL DEFAULT '',
+                parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+                scope TEXT NOT NULL DEFAULT '',
+                peer_kind TEXT NOT NULL DEFAULT '',
+                peer_id TEXT NOT NULL DEFAULT '',
+                topic_id TEXT NOT NULL DEFAULT '',
+                sender_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (conversation_id, agent_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create agent_conversation_bindings");
+
+        sqlx::query(
+            "CREATE TABLE channel_delivery_routes (
+                session_key TEXT NOT NULL PRIMARY KEY,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                conversation_id TEXT NOT NULL,
+                reply_target TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create channel_delivery_routes");
+
+        sqlx::query(
             "CREATE TABLE im_thread_sessions (
                 thread_id TEXT NOT NULL,
                 employee_id TEXT NOT NULL DEFAULT '',
@@ -460,6 +602,52 @@ mod tests {
         pool
     }
 
+    async fn setup_authority_only_lifecycle_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE agent_conversation_bindings (
+                conversation_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                agent_id TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                base_conversation_id TEXT NOT NULL DEFAULT '',
+                parent_conversation_candidates_json TEXT NOT NULL DEFAULT '[]',
+                scope TEXT NOT NULL DEFAULT '',
+                peer_kind TEXT NOT NULL DEFAULT '',
+                peer_id TEXT NOT NULL DEFAULT '',
+                topic_id TEXT NOT NULL DEFAULT '',
+                sender_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (conversation_id, agent_id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create agent_conversation_bindings");
+
+        sqlx::query(
+            "CREATE TABLE channel_delivery_routes (
+                session_key TEXT NOT NULL PRIMARY KEY,
+                channel TEXT NOT NULL,
+                account_id TEXT NOT NULL DEFAULT '',
+                conversation_id TEXT NOT NULL,
+                reply_target TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create channel_delivery_routes");
+
+        pool
+    }
+
     async fn seed_session_channel(
         pool: &SqlitePool,
         session_id: &str,
@@ -467,6 +655,7 @@ mod tests {
         source: &str,
         message_id: &str,
     ) {
+        let session_key = format!("sk-{session_id}");
         sqlx::query(
             "INSERT INTO im_thread_sessions (thread_id, employee_id, session_id, route_session_key, created_at, updated_at)
              VALUES (?, '', ?, '', '2026-04-19T00:00:00Z', '2026-04-19T00:00:01Z')",
@@ -476,6 +665,36 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed im_thread_sessions");
+
+        sqlx::query(
+            "INSERT INTO agent_conversation_bindings (
+                conversation_id, channel, account_id, agent_id, session_key, session_id,
+                base_conversation_id, parent_conversation_candidates_json, scope, peer_kind,
+                peer_id, topic_id, sender_id, created_at, updated_at
+             )
+             VALUES (?, ?, 'default', 'main-agent', ?, ?, ?, '[]', 'peer', 'group', ?, '', '', '2026-04-19T00:00:00Z', '2026-04-19T00:00:01Z')",
+        )
+        .bind(thread_id)
+        .bind(source)
+        .bind(&session_key)
+        .bind(session_id)
+        .bind(thread_id)
+        .bind(thread_id)
+        .execute(pool)
+        .await
+        .expect("seed agent_conversation_bindings");
+
+        sqlx::query(
+            "INSERT INTO channel_delivery_routes (session_key, channel, account_id, conversation_id, reply_target, updated_at)
+             VALUES (?, ?, 'default', ?, ?, '2026-04-19T00:00:01Z')",
+        )
+        .bind(&session_key)
+        .bind(source)
+        .bind(thread_id)
+        .bind(thread_id)
+        .execute(pool)
+        .await
+        .expect("seed channel_delivery_routes");
 
         sqlx::query(
             "INSERT INTO im_inbox_events (id, event_id, thread_id, message_id, text_preview, source, created_at)
@@ -489,6 +708,45 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed im_inbox_events");
+    }
+
+    async fn seed_authority_only_session_channel(
+        pool: &SqlitePool,
+        session_id: &str,
+        thread_id: &str,
+        source: &str,
+        conversation_id: &str,
+    ) {
+        let session_key = format!("sk-{session_id}");
+        sqlx::query(
+            "INSERT INTO agent_conversation_bindings (
+                conversation_id, channel, account_id, agent_id, session_key, session_id,
+                base_conversation_id, parent_conversation_candidates_json, scope, peer_kind,
+                peer_id, topic_id, sender_id, created_at, updated_at
+             )
+             VALUES (?, ?, 'default', 'main-agent', ?, ?, ?, '[]', 'peer', 'group', ?, '', '', '2026-04-19T00:00:00Z', '2026-04-19T00:00:01Z')",
+        )
+        .bind(conversation_id)
+        .bind(source)
+        .bind(&session_key)
+        .bind(session_id)
+        .bind(conversation_id)
+        .bind(thread_id)
+        .execute(pool)
+        .await
+        .expect("seed authority-only agent_conversation_bindings");
+
+        sqlx::query(
+            "INSERT INTO channel_delivery_routes (session_key, channel, account_id, conversation_id, reply_target, updated_at)
+             VALUES (?, ?, 'default', ?, ?, '2026-04-19T00:00:01Z')",
+        )
+        .bind(&session_key)
+        .bind(source)
+        .bind(conversation_id)
+        .bind(thread_id)
+        .execute(pool)
+        .await
+        .expect("seed authority-only channel_delivery_routes");
     }
 
     fn install_feishu_lifecycle_hook() -> Arc<Mutex<Vec<String>>> {
@@ -617,6 +875,58 @@ mod tests {
                 "om_parent_lifecycle:\"resumed\"",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_lookup_prefers_authority_store_without_legacy_tables() {
+        let pool = setup_authority_only_lifecycle_pool().await;
+        seed_authority_only_session_channel(
+            &pool,
+            "session-authority-only",
+            "oc_chat_authority_only",
+            "feishu",
+            "feishu:default:group:oc_chat_authority_only",
+        )
+        .await;
+
+        let source = lookup_channel_source_for_session_with_pool(&pool, "session-authority-only")
+            .await
+            .expect("lookup source");
+        let thread =
+            lookup_channel_thread_for_session_with_pool(&pool, "feishu", "session-authority-only")
+                .await
+                .expect("lookup thread");
+
+        assert_eq!(source.as_deref(), Some("feishu"));
+        assert_eq!(thread.as_deref(), Some("oc_chat_authority_only"));
+    }
+
+    #[tokio::test]
+    async fn authority_lookup_preserves_topic_conversation_projection() {
+        let pool = setup_authority_only_lifecycle_pool().await;
+        seed_authority_only_session_channel(
+            &pool,
+            "session-authority-topic",
+            "oc_chat_topic",
+            "feishu",
+            "feishu:default:group:oc_chat_topic:topic:om_root_topic",
+        )
+        .await;
+
+        let route = resolve_session_delivery_route_with_pool(
+            &pool,
+            "session-authority-topic",
+            Some("feishu"),
+        )
+        .await
+        .expect("resolve authority route")
+        .expect("authority route exists");
+
+        assert_eq!(
+            route.conversation_id,
+            "feishu:default:group:oc_chat_topic:topic:om_root_topic"
+        );
+        assert_eq!(route.thread_id, "oc_chat_topic");
     }
 
     #[cfg(not(target_os = "windows"))]
