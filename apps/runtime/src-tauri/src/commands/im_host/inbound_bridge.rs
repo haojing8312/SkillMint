@@ -29,6 +29,13 @@ fn optional_non_empty_string(value: Option<&serde_json::Value>) -> Option<String
         .map(str::to_string)
 }
 
+fn normalized_non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn optional_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
     value
         .and_then(serde_json::Value::as_array)
@@ -124,16 +131,10 @@ fn build_event_conversation_metadata(
     let peer_kind = infer_peer_kind(chat_type);
     let surface = ImConversationSurface {
         channel: channel.trim().to_string(),
-        account_id: account_id
-            .or(tenant_id)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("default")
-            .to_string(),
-        tenant_id: tenant_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
+        account_id: normalized_non_empty(account_id)
+            .or_else(|| normalized_non_empty(tenant_id))
+            .unwrap_or_else(|| "default".to_string()),
+        tenant_id: normalized_non_empty(tenant_id),
         peer_kind,
         peer_id: thread_id.trim().to_string(),
         topic_id: topic_id
@@ -568,6 +569,7 @@ pub(crate) async fn dispatch_im_inbound_to_workclaw_with_pool_and_app(
 #[cfg(test)]
 mod tests {
     use super::{parse_normalized_im_event_value, record_openclaw_binding_projection_with_pool};
+    use crate::im::types::ImEvent;
     use crate::im::types::ImEventType;
     use crate::im::{
         find_agent_conversation_binding, find_channel_delivery_route_by_session_id,
@@ -687,6 +689,38 @@ mod tests {
             vec!["wecom:agent-1:group:room-1".to_string()]
         );
         assert_eq!(event.conversation_scope.as_deref(), Some("topic"));
+    }
+
+    #[test]
+    fn project_im_event_conversation_metadata_falls_back_from_blank_account_id_to_tenant_id() {
+        let event = super::project_im_event_conversation_metadata(&ImEvent {
+            channel: "feishu".to_string(),
+            event_type: ImEventType::MessageCreated,
+            thread_id: "oc_blank_account_fast_path".to_string(),
+            event_id: Some("evt_blank_account_fast_path".to_string()),
+            message_id: Some("om_blank_account_fast_path".to_string()),
+            text: Some("继续这个桥接边界情况".to_string()),
+            role_id: None,
+            account_id: Some("   ".to_string()),
+            tenant_id: Some("tenant-fast-path".to_string()),
+            sender_id: Some("ou_sender_fast_path".to_string()),
+            chat_type: Some("group".to_string()),
+            conversation_id: None,
+            base_conversation_id: None,
+            parent_conversation_candidates: Vec::new(),
+            conversation_scope: None,
+        });
+
+        assert_eq!(
+            event.conversation_id.as_deref(),
+            Some("feishu:tenant-fast-path:group:oc_blank_account_fast_path")
+        );
+        assert_eq!(
+            event.base_conversation_id.as_deref(),
+            Some("feishu:tenant-fast-path:group:oc_blank_account_fast_path")
+        );
+        assert!(event.parent_conversation_candidates.is_empty());
+        assert_eq!(event.conversation_scope.as_deref(), Some("peer"));
     }
 
     async fn setup_projection_pool() -> SqlitePool {
