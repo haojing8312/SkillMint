@@ -1,6 +1,4 @@
 use runtime_lib::commands::feishu_gateway::{parse_feishu_payload, ParsedFeishuPayload};
-use runtime_lib::im::{ImConversationScope, ImPeerKind};
-
 #[test]
 fn parse_feishu_payload_assigns_peer_conversation_metadata() {
     let payload = serde_json::json!({
@@ -86,19 +84,4 @@ fn parse_feishu_payload_assigns_topic_conversation_metadata() {
         }
         ParsedFeishuPayload::Challenge(_) => panic!("should parse event"),
     }
-}
-
-#[test]
-fn feishu_identity_labels_remain_stable_for_group_peer_and_topic_scopes() {
-    assert_eq!(ImPeerKind::Group.as_str(), "group");
-    assert_eq!(ImPeerKind::Direct.as_str(), "direct");
-    assert_eq!(ImConversationScope::Peer.as_str(), "peer");
-    assert_eq!(ImConversationScope::Topic.as_str(), "topic");
-    assert!(ImConversationScope::Peer.is_peer_scope());
-    assert!(ImConversationScope::Topic.is_topic_scope());
-    assert!(ImConversationScope::Topic.has_parent_scope());
-    assert_eq!(
-        ImConversationScope::Topic.parent_scope(),
-        Some(ImConversationScope::Peer)
-    );
 }

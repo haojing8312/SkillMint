@@ -14,14 +14,6 @@ impl ImPeerKind {
             Self::Group => "group",
         }
     }
-
-    pub fn is_direct(self) -> bool {
-        matches!(self, Self::Direct)
-    }
-
-    pub fn is_group(self) -> bool {
-        matches!(self, Self::Group)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,10 +55,6 @@ impl ImConversationScope {
             Self::TopicSender => Some(Self::Topic),
         }
     }
-
-    pub fn has_parent_scope(self) -> bool {
-        self.parent_scope().is_some()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,7 +79,7 @@ pub struct ImConversationSurface {
 }
 
 impl ImConversationSurface {
-    pub fn with_scope(&self, scope: ImConversationScope) -> Self {
+    pub(crate) fn with_scope(&self, scope: ImConversationScope) -> Self {
         Self {
             channel: self.channel.clone(),
             account_id: self.account_id.clone(),
@@ -113,10 +101,6 @@ impl ImConversationSurface {
             raw_thread_id: self.raw_thread_id.clone(),
             raw_root_id: self.raw_root_id.clone(),
         }
-    }
-
-    pub fn peer_surface(&self) -> Self {
-        self.with_scope(ImConversationScope::Peer)
     }
 }
 

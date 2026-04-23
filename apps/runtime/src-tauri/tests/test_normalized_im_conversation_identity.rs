@@ -1,6 +1,7 @@
 use runtime_lib::commands::im_host::parse_normalized_im_event_value;
 use runtime_lib::im::{
-    build_conversation_identity, ImConversationScope, ImConversationSurface, ImPeerKind,
+    build_conversation_id, build_parent_conversation_candidates, ImConversationScope,
+    ImConversationSurface, ImPeerKind,
 };
 
 #[test]
@@ -84,34 +85,45 @@ fn normalized_wecom_event_derives_topic_from_routing_context_topic() {
 }
 
 #[test]
-fn shared_identity_builder_prefers_root_topic_and_derives_parent_candidates() {
-    let identity = build_conversation_identity(&ImConversationSurface {
+fn shared_identity_core_degrades_incomplete_surfaces_to_narrower_stable_scopes() {
+    let mut surface = ImConversationSurface {
         channel: "wecom".to_string(),
         account_id: "agent-1".to_string(),
         tenant_id: Some("corp-1".to_string()),
         peer_kind: ImPeerKind::Group,
         peer_id: "room-1".to_string(),
-        topic_id: Some("topic-root-42".to_string()),
+        topic_id: None,
         sender_id: Some("user-1".to_string()),
         scope: ImConversationScope::TopicSender,
         message_id: Some("msg-3".to_string()),
         raw_thread_id: Some("room-1".to_string()),
-        raw_root_id: Some("topic-root-42".to_string()),
-    });
+        raw_root_id: None,
+    };
 
     assert_eq!(
-        identity.conversation_id,
-        "wecom:agent-1:group:room-1:topic:topic-root-42:sender:user-1"
+        build_conversation_id(&surface),
+        "wecom:agent-1:group:room-1:sender:user-1"
     );
-    assert_eq!(identity.base_conversation_id, "wecom:agent-1:group:room-1");
     assert_eq!(
-        identity.parent_conversation_candidates,
-        vec![
-            "wecom:agent-1:group:room-1:topic:topic-root-42".to_string(),
-            "wecom:agent-1:group:room-1".to_string(),
-        ]
+        build_parent_conversation_candidates(&surface),
+        vec!["wecom:agent-1:group:room-1".to_string()]
     );
-    assert_eq!(identity.scope, ImConversationScope::TopicSender);
-    assert_eq!(identity.scope_label, "topic_sender");
-    assert_eq!(identity.peer_kind_label, "group");
+
+    surface.sender_id = None;
+    assert_eq!(
+        build_conversation_id(&surface),
+        "wecom:agent-1:group:room-1"
+    );
+    assert!(build_parent_conversation_candidates(&surface).is_empty());
+
+    surface.topic_id = Some("topic-42".to_string());
+    surface.scope = ImConversationScope::TopicSender;
+    assert_eq!(
+        build_conversation_id(&surface),
+        "wecom:agent-1:group:room-1:topic:topic-42"
+    );
+    assert_eq!(
+        build_parent_conversation_candidates(&surface),
+        vec!["wecom:agent-1:group:room-1".to_string()]
+    );
 }

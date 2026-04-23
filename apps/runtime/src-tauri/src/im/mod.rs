@@ -29,8 +29,5 @@ pub use conversation_binding_store::{
     find_channel_delivery_route, find_channel_delivery_route_by_session_id,
     upsert_agent_conversation_binding, upsert_channel_delivery_route,
 };
-pub use conversation_id::{
-    build_base_conversation_id, build_conversation_id, build_conversation_identity,
-    build_parent_conversation_candidates, ImConversationIdentity,
-};
+pub use conversation_id::{build_conversation_id, build_parent_conversation_candidates};
 pub use conversation_surface::{ImConversationScope, ImConversationSurface, ImPeerKind};

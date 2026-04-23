@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::im::conversation_surface::ImConversationScope;
-
 fn default_im_channel() -> String {
     "feishu".to_string()
 }
@@ -50,30 +48,4 @@ pub enum ImEventType {
     CommandResume,
     #[serde(rename = "human.override")]
     HumanOverride,
-}
-
-impl ImEvent {
-    pub fn conversation_id_or_thread_id(&self) -> &str {
-        self.conversation_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| self.thread_id.trim())
-    }
-
-    pub fn base_conversation_id_or_current(&self) -> &str {
-        self.base_conversation_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| self.conversation_id_or_thread_id())
-    }
-
-    pub fn conversation_scope_label(&self) -> &str {
-        self.conversation_scope
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(ImConversationScope::Peer.as_str())
-    }
 }
