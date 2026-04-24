@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "BifClaw",
+  "productName": "WorkClaw",
   "version": "0.6.1",
-  "identifier": "dev.bifclaw.runtime",
+  "identifier": "dev.workclaw.runtime",
   "build": {
     "beforeDevCommand": "node scripts/run-tauri-hook.mjs dev",
     "beforeBuildCommand": "node scripts/run-tauri-hook.mjs build",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "BifClaw",
+        "title": "WorkClaw",
         "center": true,
         "width": 1200,
         "height": 750,
