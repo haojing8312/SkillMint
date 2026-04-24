@@ -10,6 +10,9 @@ use super::{
     OpenClawPluginFeishuProcessingStopRequest, OpenClawPluginFeishuRuntimeState,
     OpenClawPluginFeishuRuntimeStatus,
 };
+use crate::commands::feishu_gateway::conversation_mapper::{
+    build_feishu_conversation_metadata, FeishuConversationInput,
+};
 use crate::commands::feishu_gateway::upsert_feishu_pairing_request_with_pool;
 use crate::commands::im_host::{
     build_runtime_lifecycle_event_command_payload, build_runtime_processing_stop_command_payload,
@@ -857,6 +860,16 @@ pub(crate) async fn parse_feishu_runtime_dispatch_event_with_pool(
         Some(mapped_thread_id.as_str()),
     )?
     .thread_id;
+    let metadata = build_feishu_conversation_metadata(&FeishuConversationInput {
+        account_id: account_id.as_deref(),
+        tenant_id: account_id.as_deref(),
+        chat_id: &thread_id,
+        chat_type: chat_type.as_deref(),
+        sender_id: sender_id.as_deref(),
+        message_id: message_id.as_deref(),
+        root_id: value.get("rootId").and_then(|entry| entry.as_str()),
+        thread_id: Some(raw_thread_id),
+    });
 
     Ok(ImEvent {
         channel: "feishu".to_string(),
@@ -874,6 +887,10 @@ pub(crate) async fn parse_feishu_runtime_dispatch_event_with_pool(
         tenant_id: account_id,
         sender_id,
         chat_type,
+        conversation_id: Some(metadata.conversation_id),
+        base_conversation_id: Some(metadata.base_conversation_id),
+        parent_conversation_candidates: metadata.parent_conversation_candidates,
+        conversation_scope: Some(metadata.conversation_scope),
     })
 }
 

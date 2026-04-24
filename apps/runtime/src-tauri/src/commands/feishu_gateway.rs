@@ -15,6 +15,8 @@ mod ask_user_service;
 #[cfg(test)]
 #[path = "feishu_gateway/chunk_planner.rs"]
 mod chunk_planner;
+#[path = "feishu_gateway/conversation_mapper.rs"]
+pub(crate) mod conversation_mapper;
 #[cfg(test)]
 #[path = "feishu_gateway/delivery_trace.rs"]
 mod delivery_trace;
@@ -81,7 +83,8 @@ pub use outbound_service::{
     send_feishu_text_message_with_pool, set_feishu_official_runtime_outbound_send_hook_for_tests,
 };
 pub(crate) use outbound_service::{
-    execute_registered_feishu_reply_plan_with_pool, lookup_feishu_thread_for_session_with_pool,
+    execute_registered_feishu_reply_plan_with_pool,
+    lookup_feishu_delivery_route_for_session_with_pool,
     maybe_emit_registered_feishu_lifecycle_phase_for_session_with_pool,
     maybe_stop_registered_feishu_processing_for_session_with_pool,
     send_feishu_text_message_via_official_runtime_with_pool,

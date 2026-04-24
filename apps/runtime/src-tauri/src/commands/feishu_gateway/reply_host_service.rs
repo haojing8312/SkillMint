@@ -1,6 +1,6 @@
 use crate::commands::feishu_gateway::outbound_service::FeishuReplyPlanExecutionResult;
 use crate::commands::feishu_gateway::{
-    execute_registered_feishu_reply_plan_with_pool, lookup_feishu_thread_for_session_with_pool,
+    execute_registered_feishu_reply_plan_with_pool, lookup_feishu_delivery_route_for_session_with_pool,
 };
 use crate::commands::im_host::{plan_text_chunks, ImReplyDeliveryPlan};
 use uuid::Uuid;
@@ -59,8 +59,8 @@ pub(crate) async fn maybe_dispatch_feishu_session_reply_with_pool(
         return Ok(None);
     }
 
-    let Some(thread_id) =
-        lookup_feishu_thread_for_session_with_pool(pool, normalized_session_id).await?
+    let Some((thread_id, account_id)) =
+        lookup_feishu_delivery_route_for_session_with_pool(pool, normalized_session_id).await?
     else {
         return Ok(None);
     };
@@ -72,7 +72,7 @@ pub(crate) async fn maybe_dispatch_feishu_session_reply_with_pool(
         normalized_text,
     );
 
-    execute_registered_feishu_reply_plan_with_pool(pool, &plan, None)
+    execute_registered_feishu_reply_plan_with_pool(pool, &plan, account_id)
         .await
         .map(Some)
 }

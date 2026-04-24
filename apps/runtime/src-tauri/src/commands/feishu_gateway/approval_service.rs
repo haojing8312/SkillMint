@@ -9,6 +9,7 @@ use crate::commands::im_host::{
     prepare_channel_interactive_approval_notice_with_pool,
     prepare_channel_interactive_session_thread_with_pool,
     build_im_approval_request_text, build_im_approval_resolution_text,
+    lookup_session_delivery_route_with_pool,
 };
 use crate::commands::openclaw_plugins::im_host_contract::ImReplyLifecyclePhase;
 use crate::im::types::ImEvent;
@@ -103,12 +104,11 @@ pub(crate) async fn notify_feishu_approval_resolved_with_pool(
     else {
         return Ok(());
     };
-    let Some(thread_id) = crate::commands::im_host::lookup_channel_thread_for_session_with_pool(
-        pool,
-        "feishu",
-        &row.session_id,
-    )
-    .await? else {
+    let Some(thread_id) =
+        lookup_session_delivery_route_with_pool(pool, &row.session_id, Some("feishu"))
+            .await?
+            .map(|route| route.thread_id)
+    else {
         return Ok(());
     };
     let text = crate::commands::im_host::build_im_approval_resolved_notice_text(&row);

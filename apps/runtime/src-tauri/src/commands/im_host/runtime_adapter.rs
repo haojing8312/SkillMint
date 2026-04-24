@@ -57,7 +57,7 @@ pub(crate) fn handle_runtime_stdout_line_with_adapter<A: ImRuntimeStdoutAdapter>
 mod tests {
     use super::{
         dispatch_runtime_stdout_with_adapter, handle_runtime_stdout_line_with_adapter,
-        ImRuntimeStdoutAdapter, ImRuntimeEventRoute,
+        ImRuntimeEventRoute, ImRuntimeStdoutAdapter,
     };
 
     #[derive(Default)]

@@ -124,6 +124,10 @@ fn map_raw_event(raw: OpenClawRawEvent) -> Result<ImEvent, String> {
             .or_else(|| raw.sender.as_ref().and_then(|s| s.id.clone())),
         sender_id: raw.sender.and_then(|s| s.id),
         chat_type: raw.chat_type.or_else(|| chat.and_then(|c| c.chat_type)),
+        conversation_id: None,
+        base_conversation_id: None,
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: None,
     })
 }
 
@@ -427,6 +431,10 @@ mod tests {
             tenant_id: Some("tenant-1".to_string()),
             sender_id: Some("ou_sender".to_string()),
             chat_type: Some("p2p".to_string()),
+            conversation_id: Some("feishu:default:direct:ou_user_1".to_string()),
+            base_conversation_id: Some("feishu:default:direct:ou_user_1".to_string()),
+            parent_conversation_candidates: Vec::new(),
+            conversation_scope: Some("peer".to_string()),
         };
 
         assert_eq!(peer_kind_for_event(&event), "direct");

@@ -9,7 +9,9 @@ fn parse_lifecycle_phase(phase: &str) -> Result<super::ImReplyLifecyclePhase, St
         "approval_requested" => Ok(super::ImReplyLifecyclePhase::ApprovalRequested),
         "approval_resolved" => Ok(super::ImReplyLifecyclePhase::ApprovalResolved),
         "resumed" => Ok(super::ImReplyLifecyclePhase::Resumed),
-        other => Err(format!("unsupported lifecycle phase for test support: {other}")),
+        other => Err(format!(
+            "unsupported lifecycle phase for test support: {other}"
+        )),
     }
 }
 

@@ -1,13 +1,13 @@
 use super::payload_parser::strip_placeholder_mentions;
 use super::{
+    conversation_mapper::{build_feishu_conversation_metadata, FeishuConversationInput},
     evaluate_openclaw_feishu_gate_with_pool, list_enabled_employee_feishu_connections_with_pool,
     resolve_default_feishu_account_id_with_pool, resolve_feishu_app_credentials,
     resolve_feishu_sidecar_base_url,
 };
 use crate::commands::chat::ApprovalManagerState;
 use crate::commands::employee_agents::{
-    bridge_inbound_event_to_employee_sessions_with_pool, list_agent_employees_with_pool,
-    AgentEmployee,
+    list_agent_employees_with_pool, AgentEmployee,
 };
 use crate::commands::im_host::emit_inbound_dispatch_sessions;
 use crate::commands::im_host::maybe_handle_registered_approval_command_with_pool_and_app;
@@ -19,6 +19,7 @@ use crate::commands::skills::DbState;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::im::feishu_adapter::build_feishu_markdown_message;
 use crate::im::feishu_formatter::format_role_message;
+use crate::im::resolve_agent_session_dispatches_with_pool;
 use crate::im::types::{ImEvent, ImEventType};
 use reqwest::Client;
 use sqlx::SqlitePool;
@@ -444,6 +445,16 @@ pub(crate) async fn sync_feishu_ws_events_core(
         if source_employee_ids.is_empty() && !e.employee_id.trim().is_empty() {
             source_employee_ids.push(e.employee_id.trim().to_string());
         }
+        let metadata = build_feishu_conversation_metadata(&FeishuConversationInput {
+            account_id: default_account_id.as_deref(),
+            tenant_id: default_account_id.as_deref(),
+            chat_id: &e.chat_id,
+            chat_type: Some(e.chat_type.as_str()),
+            sender_id: Some(e.sender_open_id.as_str()),
+            message_id: Some(e.message_id.as_str()),
+            root_id: None,
+            thread_id: None,
+        });
         let inbound = ImEvent {
             channel: "feishu".to_string(),
             event_type: ImEventType::MessageCreated,
@@ -477,6 +488,10 @@ pub(crate) async fn sync_feishu_ws_events_core(
             } else {
                 Some(e.chat_type.trim().to_string())
             },
+            conversation_id: Some(metadata.conversation_id),
+            base_conversation_id: Some(metadata.base_conversation_id),
+            parent_conversation_candidates: metadata.parent_conversation_candidates,
+            conversation_scope: Some(metadata.conversation_scope),
         };
         match evaluate_openclaw_feishu_gate_with_pool(pool, &inbound).await? {
             FeishuInboundGateDecision::Allow => {}
@@ -501,7 +516,7 @@ pub(crate) async fn sync_feishu_ws_events_core(
                 }
             }
             let route_decision = resolve_openclaw_route_with_pool(pool, &inbound).await.ok();
-            if let Ok(dispatches) = bridge_inbound_event_to_employee_sessions_with_pool(
+            if let Ok(dispatches) = resolve_agent_session_dispatches_with_pool(
                 pool,
                 &inbound,
                 route_decision.as_ref(),

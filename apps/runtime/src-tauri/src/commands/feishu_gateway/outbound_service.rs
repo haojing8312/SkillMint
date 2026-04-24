@@ -2,7 +2,7 @@ use super::build_feishu_reply_plan;
 use crate::commands::im_host::{
     build_direct_reply_route_target, emit_registered_lifecycle_phase_for_session_with_pool,
     execute_reply_plan_with_transport,
-    lookup_channel_thread_for_session_with_pool,
+    lookup_channel_thread_for_session_with_pool, lookup_session_delivery_route_with_pool,
     lookup_latest_inbox_message_id_for_thread_with_pool,
     stop_registered_processing_for_session_with_pool, ImDirectRouteTargetOptions,
     ImReplyDeliveryPlan, ImReplyDeliveryState, ImReplyLifecyclePhase, ImReplyPlanTransport,
@@ -169,6 +169,23 @@ pub(crate) async fn lookup_feishu_thread_for_session_with_pool(
     session_id: &str,
 ) -> Result<Option<String>, String> {
     lookup_channel_thread_for_session_with_pool(pool, "feishu", session_id).await
+}
+
+pub(crate) async fn lookup_feishu_delivery_route_for_session_with_pool(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
+    if let Some(route) = lookup_session_delivery_route_with_pool(pool, session_id, Some("feishu")).await? {
+        let account_id = route.account_id.trim();
+        return Ok(Some((
+            route.thread_id,
+            (!account_id.is_empty()).then(|| account_id.to_string()),
+        )));
+    }
+
+    Ok(lookup_feishu_thread_for_session_with_pool(pool, session_id)
+        .await?
+        .map(|thread_id| (thread_id, None)))
 }
 
 pub(crate) async fn lookup_latest_feishu_inbox_message_id_for_thread_with_pool(
