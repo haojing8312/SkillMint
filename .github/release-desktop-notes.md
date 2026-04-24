@@ -1,6 +1,6 @@
 ## BifClaw Desktop Release
 
-- Release scope: changes from `v0.6.0` to the current `v0.6.1` tag target.
+- Release scope: changes from `v0.6.1` to the current `v0.6.2` tag target.
 
 ## Highlights
 
@@ -40,7 +40,7 @@
 
 ## Verification Checklist
 
-- Frontend build and desktop packaging were verified for the `v0.6.1` release target.
+- Frontend build and desktop packaging were verified for the `v0.6.2` release target.
 - Windows `setup.exe`, Linux `amd64.deb`, and Linux `arm64.deb` packages are built by the release workflow.
-- Release version files and release notes were validated against the `v0.6.1` tag target.
+- Release version files and release notes were validated against the `v0.6.2` tag target.
 - Release tag matches desktop app version.
