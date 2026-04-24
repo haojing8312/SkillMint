@@ -1,4 +1,4 @@
-name: Release Windows
+name: Release Desktop
 
 on:
   push:
@@ -10,7 +10,21 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            platform: windows-latest
+            tauri_args: --bundles nsis
+          - name: linux-x64-deb
+            platform: ubuntu-22.04
+            tauri_args: --bundles deb
+          - name: linux-arm64-deb
+            platform: ubuntu-22.04-arm
+            tauri_args: --bundles deb
 
     steps:
       - name: Checkout
@@ -30,6 +44,12 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -40,14 +60,15 @@ jobs:
 
       - name: Load release notes template
         id: release_notes
-        shell: pwsh
+        shell: bash
         run: |
-          $body = Get-Content .github/release-windows-notes.md -Raw
-          "body<<EOF" >> $env:GITHUB_OUTPUT
-          $body >> $env:GITHUB_OUTPUT
-          "EOF" >> $env:GITHUB_OUTPUT
+          {
+            echo "body<<EOF"
+            cat .github/release-desktop-notes.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Build and publish Windows release
+      - name: Build and publish desktop release
         uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,3 +79,4 @@ jobs:
           releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.tauri_args }}

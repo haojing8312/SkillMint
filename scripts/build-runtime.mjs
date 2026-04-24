@@ -21,6 +21,24 @@ function parseBrandArg(argv) {
   return brandKey.trim();
 }
 
+function parseTauriBuildArgs(argv) {
+  const args = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+    if (current === "--brand") {
+      index += 1;
+      continue;
+    }
+    if (current.startsWith("--brand=")) {
+      continue;
+    }
+    args.push(current);
+  }
+
+  return args;
+}
+
 function resolvePnpmRunner(env = process.env, platform = process.platform) {
   if (env.npm_execpath) {
     return {
@@ -51,7 +69,9 @@ function runOrThrow(command, args, { cwd, env }) {
 
 function main() {
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const explicitBrandKey = parseBrandArg(process.argv.slice(2));
+  const cliArgs = process.argv.slice(2);
+  const explicitBrandKey = parseBrandArg(cliArgs);
+  const tauriBuildArgs = parseTauriBuildArgs(cliArgs);
   const env = { ...process.env };
 
   if (explicitBrandKey) {
@@ -69,10 +89,14 @@ function main() {
     cwd: projectRoot,
     env,
   });
-  runOrThrow(runner.command, [...runner.args, "--filter", "runtime", "tauri", "build", "--no-sign"], {
-    cwd: projectRoot,
-    env,
-  });
+  runOrThrow(
+    runner.command,
+    [...runner.args, "--filter", "runtime", "tauri", "build", "--no-sign", ...tauriBuildArgs],
+    {
+      cwd: projectRoot,
+      env,
+    },
+  );
 }
 
 main();

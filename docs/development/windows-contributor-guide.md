@@ -62,13 +62,13 @@ tasklist | findstr /I runtime.exe
 taskkill /PID <RUNTIME_PID> /F
 ```
 
-## 3. Windows 自动 Release（GitHub）
+## 3. 桌面自动 Release（GitHub）
 
-已支持 `tag` 自动发布 Windows 安装包到 GitHub Release。
+已支持 `tag` 自动发布桌面安装包到 GitHub Release，包括 Windows x64 `setup.exe`、Linux x64 `amd64.deb` 和 Linux arm64 `arm64.deb`。
 
 ```bash
 # 1) 确保版本与 tag 一致（apps/runtime/src-tauri/tauri.conf.json -> version）
-# 2) 推送语义化 tag（触发 .github/workflows/release-windows.yml）
+# 2) 推送语义化 tag（触发 .github/workflows/release-desktop.yml）
 git tag v0.1.0
 git push origin v0.1.0
 ```
@@ -77,10 +77,11 @@ git push origin v0.1.0
 
 发布产物使用建议：
 
-- `*-setup.exe`：推荐普通用户下载，适合直接安装使用。
-- `*.msi`：适合企业 IT、批量部署和手动升级。
+- `*-setup.exe`：推荐 Windows 用户下载，适合直接安装使用。
+- `*_amd64.deb`：适合 Linux x64 用户。
+- `*_arm64.deb`：适合 Linux arm64 用户。
 
-如果你只是想安装并直接使用 WorkClaw，请优先选择 `.exe` 安装包。
+如果你在 Windows 上只是想安装并直接使用 WorkClaw，请优先选择 `.exe` 安装包。
 
 ## 4. 本地构建缓存治理
 
@@ -139,7 +140,7 @@ pnpm test:employee-agents-windows
 
 ## 6. English Summary
 
-This document covers the Windows-specific contributor path for source builds and the GitHub-based Windows release flow.
+This document covers the Windows-specific contributor path for source builds and the GitHub-based desktop release flow.
 
 ### Prerequisites
 
@@ -166,7 +167,7 @@ Quick verification:
 
 ### Auto Release
 
-Windows release is tag-driven through `.github/workflows/release-windows.yml`.
+Desktop release is tag-driven through `.github/workflows/release-desktop.yml` and builds Windows x64 `setup.exe`, Linux x64 `amd64.deb`, and Linux arm64 `arm64.deb` packages.
 
 ```bash
 git tag v0.1.0

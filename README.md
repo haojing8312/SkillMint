@@ -284,14 +284,16 @@ workclaw/
 - Node.js 20+
 - pnpm
 
-### Windows 源码运行与发布
+### 桌面源码运行与发布
 
-- 贡献者前置要求、Tauri 本地启动流程、GitHub 自动 Release 见：[docs/development/windows-contributor-guide.md](docs/development/windows-contributor-guide.md)
+- Windows 贡献者前置要求、Tauri 本地启动流程见：[docs/development/windows-contributor-guide.md](docs/development/windows-contributor-guide.md)
+- GitHub 自动 Release 会同时构建 Windows x64 `setup.exe`、Linux x64 `amd64.deb` 和 Linux arm64 `arm64.deb`。
 
-### Windows 下载说明
+### 桌面下载说明
 
-- 普通用户推荐下载 `*-setup.exe`，适合直接安装使用。
-- 企业或 IT 统一部署推荐使用 `*.msi`，便于企业环境分发和手工升级。
+- Windows 普通用户推荐下载 `*-setup.exe`，适合直接安装使用。
+- Linux x64 用户下载 `*_amd64.deb`。
+- Linux arm64 用户下载 `*_arm64.deb`。
 - 所有公开安装包都发布在 [Releases](https://github.com/haojing8312/WorkClaw/releases) 页面。
 
 ### 开发

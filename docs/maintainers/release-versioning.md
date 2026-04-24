@@ -6,7 +6,7 @@ This project uses SemVer release tags (`vX.Y.Z`) and enforces version consistenc
 - `apps/runtime/src-tauri/tauri.conf.json`
 - `apps/runtime/src-tauri/Cargo.toml`
 
-CI will fail release builds if these versions do not match the pushed tag.
+CI will fail release builds if these versions do not match the pushed tag. Tag pushes trigger `.github/workflows/release-desktop.yml`, which builds Windows x64 `setup.exe`, Linux x64 `amd64.deb`, and Linux arm64 `arm64.deb` packages.
 
 ## Recommended Workflow
 

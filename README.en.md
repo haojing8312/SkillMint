@@ -285,14 +285,16 @@ workclaw/
 - Node.js 20+
 - pnpm
 
-### Windows Source Build and Release
+### Desktop Source Build and Release
 
-- For contributor prerequisites, local Tauri startup, and GitHub-based Windows release, see [docs/development/windows-contributor-guide.md](docs/development/windows-contributor-guide.md).
+- For Windows contributor prerequisites and local Tauri startup, see [docs/development/windows-contributor-guide.md](docs/development/windows-contributor-guide.md).
+- GitHub Releases build Windows x64 `setup.exe`, Linux x64 `amd64.deb`, and Linux arm64 `arm64.deb` packages.
 
-### Windows Download Guide
+### Desktop Download Guide
 
-- The recommended download for most users is `*-setup.exe` for direct installation.
-- For enterprise or IT-managed deployment, use `*.msi` for managed rollout and manual upgrades.
+- The recommended Windows download for most users is `*-setup.exe` for direct installation.
+- Linux x64 users should download `*_amd64.deb`.
+- Linux arm64 users should download `*_arm64.deb`.
 - All public installers are published on the [Releases](https://github.com/haojing8312/WorkClaw/releases) page.
 
 ### Development
