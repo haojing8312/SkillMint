@@ -31,3 +31,25 @@ For any SQLite schema evolution that affects runtime reads, do both:
 - **Notes**: Promoted the durable workflow rule to `AGENTS.md` and fixed the runtime migration plus legacy-schema query fallback.
 
 ---
+## [LRN-20260422-001] correction
+
+**Logged**: 2026-04-22T00:00:00+08:00
+**Priority**: high
+**Status**: pending
+**Area**: docs
+
+### Summary
+When a user points to a specific local reference repo, inspect that exact repo instead of substituting a similarly named external/local clone.
+
+### Details
+The user asked for analysis of the OpenClaw Feishu session chain under `D:\code\WorkClaw\references\openclaw`, but the investigation initially pivoted to a different local reference repo (`F:\code\yzpd\close-code`). That produced partially relevant findings about compaction, but it missed the actual requested codepath and delayed the real analysis. For repo-comparison tasks, the explicitly provided path is the source of truth.
+
+### Suggested Action
+If the user gives a concrete local repo path, inspect that path first and keep the analysis scoped there unless the user explicitly broadens the reference set.
+
+### Metadata
+- Source: user_feedback
+- Related Files: .learnings/LEARNINGS.md
+- Tags: correction, repo-selection, local-reference, analysis-scope
+
+---
