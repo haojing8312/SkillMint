@@ -42,7 +42,10 @@ pub(crate) async fn get_employee_group_run_snapshot_with_pool(
         .into_iter()
         .map(map_group_run_event_snapshot)
         .collect::<Vec<_>>();
-    let completed = steps.iter().filter(|step| step.status == "completed").count();
+    let completed = steps
+        .iter()
+        .filter(|step| step.status == "completed")
+        .count();
     let final_report = find_latest_assistant_message_content(pool, &run_row.session_id)
         .await?
         .filter(|content| !content.trim().is_empty())
@@ -73,9 +76,7 @@ pub(crate) async fn get_employee_group_run_snapshot_with_pool(
     }))
 }
 
-fn map_group_run_step_snapshot(
-    row: GroupRunStepSnapshotRow,
-) -> super::super::EmployeeGroupRunStep {
+fn map_group_run_step_snapshot(row: GroupRunStepSnapshotRow) -> super::super::EmployeeGroupRunStep {
     super::super::EmployeeGroupRunStep {
         id: row.id,
         round_no: row.round_no,

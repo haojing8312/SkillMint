@@ -75,12 +75,18 @@ pub(crate) async fn list_agent_employee_rows(
         .into_iter()
         .map(|row| AgentEmployeeRow {
             id: row.try_get("id").expect("employee row id"),
-            employee_id: row.try_get("employee_id").expect("employee row employee_id"),
+            employee_id: row
+                .try_get("employee_id")
+                .expect("employee row employee_id"),
             name: row.try_get("name").expect("employee row name"),
             role_id: row.try_get("role_id").expect("employee row role_id"),
             persona: row.try_get("persona").expect("employee row persona"),
-            feishu_open_id: row.try_get("feishu_open_id").expect("employee row feishu_open_id"),
-            feishu_app_id: row.try_get("feishu_app_id").expect("employee row feishu_app_id"),
+            feishu_open_id: row
+                .try_get("feishu_open_id")
+                .expect("employee row feishu_open_id"),
+            feishu_app_id: row
+                .try_get("feishu_app_id")
+                .expect("employee row feishu_app_id"),
             feishu_app_secret: row
                 .try_get("feishu_app_secret")
                 .expect("employee row feishu_app_secret"),
@@ -99,8 +105,14 @@ pub(crate) async fn list_agent_employee_rows(
             enabled_scopes_json: row
                 .try_get("enabled_scopes_json")
                 .expect("employee row enabled_scopes_json"),
-            enabled: row.try_get::<i64, _>("enabled").expect("employee row enabled") != 0,
-            is_default: row.try_get::<i64, _>("is_default").expect("employee row is_default") != 0,
+            enabled: row
+                .try_get::<i64, _>("enabled")
+                .expect("employee row enabled")
+                != 0,
+            is_default: row
+                .try_get::<i64, _>("is_default")
+                .expect("employee row is_default")
+                != 0,
             created_at: row.try_get("created_at").expect("employee row created_at"),
             updated_at: row.try_get("updated_at").expect("employee row updated_at"),
         })

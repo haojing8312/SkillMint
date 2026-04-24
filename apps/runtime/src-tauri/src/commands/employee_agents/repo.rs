@@ -12,10 +12,11 @@ mod session_repo;
 #[path = "feishu_binding_repo.rs"]
 mod feishu_binding_repo;
 
-pub(crate) use profile_repo::{
-    clear_default_employee_flag, delete_agent_employee_record, find_employee_db_id_by_employee_id,
-    list_agent_employee_rows, list_skill_ids_for_employee, replace_employee_skill_bindings,
-    upsert_agent_employee_record, AgentEmployeeRow, UpsertAgentEmployeeRecordInput,
+pub(super) use feishu_binding_repo::{
+    count_feishu_bindings_for_agent, delete_displaced_default_feishu_bindings,
+    delete_displaced_scoped_feishu_bindings, delete_feishu_bindings_for_agent,
+    find_displaced_default_feishu_agent_ids, find_displaced_scoped_feishu_agent_ids,
+    insert_feishu_binding, list_agent_scope_rows, InsertFeishuBindingInput,
 };
 pub(super) use group_run_repo::{
     cancel_group_run, clear_group_run_execute_waiting_state, complete_failed_group_run_step,
@@ -39,16 +40,16 @@ pub(super) use group_run_repo::{
     update_group_run_after_reassignment, GroupRunEventSnapshotRow, GroupRunStepSnapshotRow,
     PlanRevisionSeedRow,
 };
-pub(super) use session_repo::{
-    find_latest_thread_session_id, find_recent_route_session_id, find_thread_session_record,
-    insert_inbound_event_link, insert_session_seed, update_session_employee_id,
-    upsert_thread_session_link, InboundEventLinkInput, SessionSeedInput, ThreadSessionLinkInput,
+pub(crate) use profile_repo::{
+    clear_default_employee_flag, delete_agent_employee_record, find_employee_db_id_by_employee_id,
+    list_agent_employee_rows, list_skill_ids_for_employee, replace_employee_skill_bindings,
+    upsert_agent_employee_record, AgentEmployeeRow, UpsertAgentEmployeeRecordInput,
 };
-pub(super) use feishu_binding_repo::{
-    count_feishu_bindings_for_agent, delete_displaced_default_feishu_bindings,
-    delete_displaced_scoped_feishu_bindings, delete_feishu_bindings_for_agent,
-    find_displaced_default_feishu_agent_ids, find_displaced_scoped_feishu_agent_ids,
-    insert_feishu_binding, list_agent_scope_rows, InsertFeishuBindingInput,
+pub(crate) use session_repo::{
+    find_conversation_session_record, find_thread_session_record, insert_inbound_event_link,
+    insert_session_seed, update_session_employee_id, upsert_conversation_session_link,
+    upsert_thread_session_link, ConversationSessionLinkInput, InboundEventLinkInput,
+    SessionSeedInput, ThreadSessionLinkInput,
 };
 
 pub(super) struct EmployeeAssociationRow {
@@ -80,7 +81,9 @@ pub(super) async fn get_employee_association_row(
     .map_err(|e| e.to_string())?;
 
     Ok(row.map(|record| EmployeeAssociationRow {
-        employee_id: record.try_get("employee_id").expect("association employee_id"),
+        employee_id: record
+            .try_get("employee_id")
+            .expect("association employee_id"),
         role_id: record.try_get("role_id").expect("association role_id"),
         openclaw_agent_id: record
             .try_get("openclaw_agent_id")
@@ -106,7 +109,9 @@ pub(super) async fn get_employee_group_entry_row(
     .map_err(|e| e.to_string())?;
 
     Ok(row.map(|record| EmployeeGroupEntryRow {
-        entry_employee_id: record.try_get(0).expect("group entry row entry_employee_id"),
+        entry_employee_id: record
+            .try_get(0)
+            .expect("group entry row entry_employee_id"),
         coordinator_employee_id: record
             .try_get(1)
             .expect("group entry row coordinator_employee_id"),
@@ -247,81 +252,6 @@ mod tests {
 
         assert_eq!(row.state, "planning");
         assert_eq!(row.current_phase, "plan");
-    }
-
-    #[tokio::test]
-    async fn session_repo_find_recent_route_session_id_prefers_latest_update() {
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .expect("in-memory sqlite pool");
-
-        sqlx::query(
-            r#"
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY NOT NULL
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("create sessions table");
-
-        sqlx::query(
-            r#"
-            CREATE TABLE im_thread_sessions (
-                thread_id TEXT NOT NULL,
-                employee_id TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                route_session_key TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("create im_thread_sessions table");
-
-        for session_id in ["session-old", "session-new"] {
-            sqlx::query("INSERT INTO sessions (id) VALUES (?)")
-                .bind(session_id)
-                .execute(&pool)
-                .await
-                .expect("insert session row");
-        }
-
-        for (session_id, updated_at) in [
-            ("session-old", "2026-03-20T08:00:00Z"),
-            ("session-new", "2026-03-21T08:00:00Z"),
-        ] {
-            sqlx::query(
-                r#"
-                INSERT INTO im_thread_sessions (
-                    thread_id, employee_id, session_id, route_session_key, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind("thread-1")
-            .bind("employee-1")
-            .bind(session_id)
-            .bind("channel:peer-1")
-            .bind(updated_at)
-            .bind(updated_at)
-            .execute(&pool)
-            .await
-            .expect("insert thread session row");
-        }
-
-        let session_id = session_repo::find_recent_route_session_id(
-            &pool,
-            "employee-1",
-            "channel:peer-1",
-        )
-        .await
-        .expect("find recent route session id");
-
-        assert_eq!(session_id.as_deref(), Some("session-new"));
     }
 
     #[tokio::test]

@@ -476,7 +476,9 @@ pub(crate) async fn clone_employee_group_template_with_pool(
         let to_employee_id: String = row.try_get("to_employee_id").map_err(|e| e.to_string())?;
         let relation_type: String = row.try_get("relation_type").map_err(|e| e.to_string())?;
         let phase_scope: String = row.try_get("phase_scope").map_err(|e| e.to_string())?;
-        let required = row.try_get::<i64, _>("required").map_err(|e| e.to_string())?;
+        let required = row
+            .try_get::<i64, _>("required")
+            .map_err(|e| e.to_string())?;
         let priority: i64 = row.try_get("priority").map_err(|e| e.to_string())?;
         sqlx::query(
             "INSERT INTO employee_group_rules (
@@ -631,7 +633,10 @@ pub(crate) async fn list_employee_group_rules_with_pool(
             to_employee_id: row.try_get("to_employee_id").map_err(|e| e.to_string())?,
             relation_type: row.try_get("relation_type").map_err(|e| e.to_string())?,
             phase_scope: row.try_get("phase_scope").map_err(|e| e.to_string())?,
-            required: row.try_get::<i64, _>("required").map_err(|e| e.to_string())? != 0,
+            required: row
+                .try_get::<i64, _>("required")
+                .map_err(|e| e.to_string())?
+                != 0,
             priority: row.try_get("priority").map_err(|e| e.to_string())?,
             created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
         });

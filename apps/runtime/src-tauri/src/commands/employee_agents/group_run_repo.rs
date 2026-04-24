@@ -174,13 +174,12 @@ pub(crate) async fn find_existing_session_skill_id(
     pool: &SqlitePool,
     session_id: &str,
 ) -> Result<Option<String>, String> {
-    let row = sqlx::query_as::<_, (String,)>(
-        "SELECT COALESCE(skill_id, '') FROM sessions WHERE id = ?",
-    )
-    .bind(session_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let row =
+        sqlx::query_as::<_, (String,)>("SELECT COALESCE(skill_id, '') FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
     Ok(row.map(|(skill_id,)| skill_id))
 }
 
@@ -365,15 +364,17 @@ pub(crate) async fn find_group_run_review_state(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(review_step_row.map(|(review_step_id,)| GroupRunReviewStateRow {
-        main_employee_id: run_row
-            .try_get(0)
-            .expect("group run review state main_employee_id"),
-        review_round: run_row
-            .try_get(1)
-            .expect("group run review state review_round"),
-        review_step_id,
-    }))
+    Ok(
+        review_step_row.map(|(review_step_id,)| GroupRunReviewStateRow {
+            main_employee_id: run_row
+                .try_get(0)
+                .expect("group run review state main_employee_id"),
+            review_round: run_row
+                .try_get(1)
+                .expect("group run review state review_round"),
+            review_step_id,
+        }),
+    )
 }
 
 pub(crate) async fn mark_review_step_completed(
@@ -419,10 +420,12 @@ pub(crate) async fn find_plan_revision_seed(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(row.map(|(input, assignee_employee_id)| PlanRevisionSeedRow {
-        input,
-        assignee_employee_id,
-    }))
+    Ok(
+        row.map(|(input, assignee_employee_id)| PlanRevisionSeedRow {
+            input,
+            assignee_employee_id,
+        }),
+    )
 }
 
 pub(crate) async fn insert_plan_revision_step(
@@ -692,11 +695,13 @@ pub(crate) async fn list_failed_group_run_steps(
     pool: &SqlitePool,
     run_id: &str,
 ) -> Result<Vec<FailedGroupRunStepRow>, String> {
-    let rows = sqlx::query("SELECT id, output FROM group_run_steps WHERE run_id = ? AND status = 'failed'")
-        .bind(run_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = sqlx::query(
+        "SELECT id, output FROM group_run_steps WHERE run_id = ? AND status = 'failed'",
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(rows
         .into_iter()
@@ -1281,14 +1286,14 @@ pub(crate) async fn find_group_run_snapshot_row(
         group_id: record.try_get("group_id").expect("snapshot group_id"),
         session_id: record.try_get("session_id").expect("snapshot session_id"),
         state: record.try_get("state").expect("snapshot state"),
-        current_round: record.try_get("current_round").expect("snapshot current_round"),
+        current_round: record
+            .try_get("current_round")
+            .expect("snapshot current_round"),
         user_goal: record.try_get("user_goal").expect("snapshot user_goal"),
         current_phase: record.try_get(6).expect("snapshot current_phase"),
         review_round: record.try_get(7).expect("snapshot review_round"),
         status_reason: record.try_get(8).expect("snapshot status_reason"),
-        waiting_for_employee_id: record
-            .try_get(9)
-            .expect("snapshot waiting_for_employee_id"),
+        waiting_for_employee_id: record.try_get(9).expect("snapshot waiting_for_employee_id"),
         waiting_for_user: record
             .try_get::<i64, _>(10)
             .expect("snapshot waiting_for_user")
@@ -1321,9 +1326,7 @@ pub(crate) async fn list_group_run_step_snapshot_rows(
             assignee_employee_id: row
                 .try_get("assignee_employee_id")
                 .expect("step snapshot assignee"),
-            dispatch_source_employee_id: row
-                .try_get(4)
-                .expect("step snapshot dispatch_source"),
+            dispatch_source_employee_id: row.try_get(4).expect("step snapshot dispatch_source"),
             session_id: row.try_get(5).expect("step snapshot session_id"),
             attempt_no: row.try_get(6).expect("step snapshot attempt_no"),
             status: row.try_get(7).expect("step snapshot status"),
@@ -1352,9 +1355,13 @@ pub(crate) async fn list_group_run_event_snapshot_rows(
         .map(|row| GroupRunEventSnapshotRow {
             id: row.try_get("id").expect("event snapshot id"),
             step_id: row.try_get(1).expect("event snapshot step_id"),
-            event_type: row.try_get("event_type").expect("event snapshot event_type"),
+            event_type: row
+                .try_get("event_type")
+                .expect("event snapshot event_type"),
             payload_json: row.try_get(3).expect("event snapshot payload_json"),
-            created_at: row.try_get("created_at").expect("event snapshot created_at"),
+            created_at: row
+                .try_get("created_at")
+                .expect("event snapshot created_at"),
         })
         .collect())
 }

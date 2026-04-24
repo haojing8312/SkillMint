@@ -41,7 +41,11 @@ pub(super) fn resolve_group_reviewer_employee_id(
     planner_employee_id: &str,
     rules: &[EmployeeGroupRule],
 ) -> Option<String> {
-    resolve_reviewer_employee_id(review_mode, planner_employee_id, &normalize_team_rules(rules))
+    resolve_reviewer_employee_id(
+        review_mode,
+        planner_employee_id,
+        &normalize_team_rules(rules),
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -80,7 +84,8 @@ pub(super) fn select_group_execute_dispatch_targets(
 
 #[cfg_attr(not(test), allow(dead_code))]
 fn normalize_team_rules(rules: &[EmployeeGroupRule]) -> Vec<NormalizedTeamRule> {
-    rules.iter()
+    rules
+        .iter()
         .map(|rule| NormalizedTeamRule {
             from_employee_id: rule.from_employee_id.clone(),
             to_employee_id: rule.to_employee_id.clone(),

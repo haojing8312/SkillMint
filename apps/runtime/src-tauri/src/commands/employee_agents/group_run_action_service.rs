@@ -1,8 +1,8 @@
 use super::super::repo::{
-    complete_failed_group_run_step, employee_exists_for_reassignment,
-    find_group_run_review_state, find_group_run_step_reassign_row, find_plan_revision_seed,
-    insert_group_run_event, insert_plan_revision_step, list_failed_execute_assignees,
-    list_failed_group_run_steps, mark_group_run_done_after_retry, mark_group_run_review_approved,
+    complete_failed_group_run_step, employee_exists_for_reassignment, find_group_run_review_state,
+    find_group_run_step_reassign_row, find_plan_revision_seed, insert_group_run_event,
+    insert_plan_revision_step, list_failed_execute_assignees, list_failed_group_run_steps,
+    mark_group_run_done_after_retry, mark_group_run_review_approved,
     mark_group_run_review_rejected, mark_review_step_completed,
     reset_group_run_step_for_reassignment, update_group_run_after_reassignment,
 };
@@ -57,13 +57,18 @@ pub(crate) async fn reassign_group_run_step_with_pool(
         return Err("target employee not found".to_string());
     }
 
-    let (eligible_targets, has_execute_rules) = super::super::load_execute_reassignment_targets_with_pool(
-        pool,
-        &step_row.run_id,
-        Some(step_row.dispatch_source_employee_id.as_str()),
-    )
-    .await?;
-    if has_execute_rules && !eligible_targets.iter().any(|candidate| candidate == &new_assignee) {
+    let (eligible_targets, has_execute_rules) =
+        super::super::load_execute_reassignment_targets_with_pool(
+            pool,
+            &step_row.run_id,
+            Some(step_row.dispatch_source_employee_id.as_str()),
+        )
+        .await?;
+    if has_execute_rules
+        && !eligible_targets
+            .iter()
+            .any(|candidate| candidate == &new_assignee)
+    {
         return Err("target employee is not eligible for execute reassignment".to_string());
     }
 
@@ -71,7 +76,8 @@ pub(crate) async fn reassign_group_run_step_with_pool(
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     reset_group_run_step_for_reassignment(&mut tx, step_id, &new_assignee).await?;
 
-    let remaining_failed_assignees = list_failed_execute_assignees(&mut tx, &step_row.run_id).await?;
+    let remaining_failed_assignees =
+        list_failed_execute_assignees(&mut tx, &step_row.run_id).await?;
     if remaining_failed_assignees.is_empty() {
         update_group_run_after_reassignment(
             &mut tx,
@@ -97,7 +103,11 @@ pub(crate) async fn reassign_group_run_step_with_pool(
     }
 
     let previous_output_summary = if step_row.previous_output_summary.trim().is_empty() {
-        step_row.previous_output.chars().take(120).collect::<String>()
+        step_row
+            .previous_output
+            .chars()
+            .take(120)
+            .collect::<String>()
     } else {
         step_row.previous_output_summary
     };
@@ -159,7 +169,8 @@ pub(crate) async fn review_group_run_step_with_pool(
                 input: String::new(),
                 assignee_employee_id: review_state.main_employee_id.clone(),
             });
-        let revision_assignee_employee_id = if revision_seed.assignee_employee_id.trim().is_empty() {
+        let revision_assignee_employee_id = if revision_seed.assignee_employee_id.trim().is_empty()
+        {
             review_state.main_employee_id.clone()
         } else {
             revision_seed.assignee_employee_id.trim().to_lowercase()

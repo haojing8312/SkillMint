@@ -28,7 +28,8 @@ pub(crate) async fn maybe_mark_group_run_waiting_review(
         return Ok(None);
     };
 
-    let review_requested_exists = review_requested_event_exists(pool, run_id, &review_row.step_id).await?;
+    let review_requested_exists =
+        review_requested_event_exists(pool, run_id, &review_row.step_id).await?;
     let default_reason = format!("等待{}审议", review_row.assignee_employee_id.trim());
     let now = chrono::Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;

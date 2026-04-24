@@ -12,7 +12,8 @@ pub async fn get_employee_memory_stats(
 ) -> Result<EmployeeMemoryStats, String> {
     let runtime_paths = runtime_paths_from_app(&app)?;
     let normalized_employee_id = normalize_employee_id(&employee_id)?;
-    let skills_root = employee_memory_skills_root(&runtime_paths.memory_dir, &normalized_employee_id);
+    let skills_root =
+        employee_memory_skills_root(&runtime_paths.memory_dir, &normalized_employee_id);
     collect_employee_memory_stats_from_root(
         &normalized_employee_id,
         skill_id.as_deref(),
@@ -27,7 +28,8 @@ pub async fn export_employee_memory(
 ) -> Result<EmployeeMemoryExport, String> {
     let runtime_paths = runtime_paths_from_app(&app)?;
     let normalized_employee_id = normalize_employee_id(&employee_id)?;
-    let skills_root = employee_memory_skills_root(&runtime_paths.memory_dir, &normalized_employee_id);
+    let skills_root =
+        employee_memory_skills_root(&runtime_paths.memory_dir, &normalized_employee_id);
     export_employee_memory_from_root(&normalized_employee_id, skill_id.as_deref(), &skills_root)
 }
 
@@ -38,7 +40,8 @@ pub async fn clear_employee_memory(
 ) -> Result<EmployeeMemoryStats, String> {
     let runtime_paths = runtime_paths_from_app(&app)?;
     let normalized_employee_id = normalize_employee_id(&employee_id)?;
-    let skills_root = employee_memory_skills_root(&runtime_paths.memory_dir, &normalized_employee_id);
+    let skills_root =
+        employee_memory_skills_root(&runtime_paths.memory_dir, &normalized_employee_id);
     clear_employee_memory_from_root(&normalized_employee_id, skill_id.as_deref(), &skills_root)?;
     collect_employee_memory_stats_from_root(
         &normalized_employee_id,
@@ -49,11 +52,11 @@ pub async fn clear_employee_memory(
 
 #[cfg(test)]
 mod tests {
+    use super::super::UpsertAgentEmployeeInput;
     use super::{
         clear_employee_memory_from_root, collect_employee_memory_stats_from_root,
         export_employee_memory_from_root,
     };
-    use super::super::UpsertAgentEmployeeInput;
     use std::fs;
     use tempfile::TempDir;
 

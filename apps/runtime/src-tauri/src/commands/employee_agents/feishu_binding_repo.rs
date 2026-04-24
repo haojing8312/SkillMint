@@ -14,11 +14,13 @@ pub(crate) async fn delete_feishu_bindings_for_agent(
     tx: &mut Transaction<'_, Sqlite>,
     agent_id: &str,
 ) -> Result<(), String> {
-    sqlx::query("DELETE FROM im_routing_bindings WHERE channel = 'feishu' AND lower(agent_id) = lower(?)")
-        .bind(agent_id)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "DELETE FROM im_routing_bindings WHERE channel = 'feishu' AND lower(agent_id) = lower(?)",
+    )
+    .bind(agent_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -180,8 +182,10 @@ pub(crate) async fn list_agent_scope_rows(
                 row.try_get("id").expect("scope row id"),
                 row.try_get("employee_id").expect("scope row employee_id"),
                 row.try_get("role_id").expect("scope row role_id"),
-                row.try_get("openclaw_agent_id").expect("scope row openclaw_agent_id"),
-                row.try_get("enabled_scopes_json").expect("scope row enabled_scopes_json"),
+                row.try_get("openclaw_agent_id")
+                    .expect("scope row openclaw_agent_id"),
+                row.try_get("enabled_scopes_json")
+                    .expect("scope row enabled_scopes_json"),
             )
         })
         .collect())

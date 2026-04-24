@@ -16,11 +16,11 @@ use crate::agent::runtime::task_backend::{
     TaskBackendPreparationRequest, TaskBackendTokenCallback,
 };
 use crate::agent::runtime::task_entry;
+#[cfg(test)]
+use crate::agent::runtime::task_entry::DelegatedTaskTerminalFinalizeEntryRequest;
 use crate::agent::runtime::task_entry::{
     DelegatedTaskBackendRunAndFinalizeRequest, DelegatedTaskEntryOutcome,
 };
-#[cfg(test)]
-use crate::agent::runtime::task_entry::DelegatedTaskTerminalFinalizeEntryRequest;
 #[cfg(test)]
 use crate::agent::runtime::task_execution::TaskExecutionOutcome;
 use crate::agent::runtime::task_lifecycle;

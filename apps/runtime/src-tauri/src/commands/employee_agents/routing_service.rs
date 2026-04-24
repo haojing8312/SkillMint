@@ -20,7 +20,9 @@ pub(crate) async fn resolve_target_employees_for_event(
     let all_enabled = list_agent_employees_with_pool(pool)
         .await?
         .into_iter()
-        .filter(|employee| employee.enabled && super::super::employee_scope_matches_event(employee, event))
+        .filter(|employee| {
+            employee.enabled && super::super::employee_scope_matches_event(employee, event)
+        })
         .collect::<Vec<_>>();
 
     if let Some(role_id) = event
@@ -110,7 +112,9 @@ pub(crate) async fn resolve_team_entry_employee_for_event_with_pool(
                     || employee
                         .role_id
                         .eq_ignore_ascii_case(preferred_employee_id.trim())
-                    || employee.id.eq_ignore_ascii_case(preferred_employee_id.trim()))
+                    || employee
+                        .id
+                        .eq_ignore_ascii_case(preferred_employee_id.trim()))
         }))
 }
 
