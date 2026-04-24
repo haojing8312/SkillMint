@@ -72,6 +72,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKCLAW_USE_COMMITTED_TAURI_ICONS: "1"
         with:
           projectPath: apps/runtime/src-tauri
           tagName: ${{ github.ref_name }}

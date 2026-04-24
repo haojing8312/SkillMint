@@ -5,6 +5,14 @@ import path from "node:path";
 
 const projectRoot = process.cwd();
 const cargoTomlPath = path.join(projectRoot, "apps", "runtime", "src-tauri", "Cargo.toml");
+const tauriConfigPath = path.join(projectRoot, "apps", "runtime", "src-tauri", "tauri.conf.json");
+const tauriConfigTemplatePath = path.join(
+  projectRoot,
+  "apps",
+  "runtime",
+  "src-tauri",
+  "tauri.conf.template.json",
+);
 
 function readCargoToml() {
   return readFileSync(cargoTomlPath, "utf8");
@@ -33,4 +41,12 @@ test("desktop runtime package declares explicit runtime and agent_eval binary ta
     /\[\[bin\]\][\s\S]*?name\s*=\s*"agent_eval"[\s\S]*?path\s*=\s*"src\/bin\/agent_eval\.rs"[\s\S]*?required-features\s*=\s*\["headless-evals"\]/m,
     "Expected Cargo.toml to declare the eval harness binary explicitly without making it the packaged app entrypoint",
   );
+});
+
+test("desktop bundle pins the packaged binary to runtime", () => {
+  const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const tauriConfigTemplate = JSON.parse(readFileSync(tauriConfigTemplatePath, "utf8"));
+
+  assert.equal(tauriConfig.mainBinaryName, "runtime");
+  assert.equal(tauriConfigTemplate.mainBinaryName, "runtime");
 });

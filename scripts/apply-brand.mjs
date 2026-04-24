@@ -185,7 +185,22 @@ function toCliPath(filePath) {
   return process.platform === "win32" ? filePath.replaceAll("\\", "/") : filePath;
 }
 
+function shouldUseCommittedTauriIcons(env = process.env) {
+  return env.WORKCLAW_USE_COMMITTED_TAURI_ICONS === "1";
+}
+
+function validateCommittedTauriIcons(outputDir) {
+  for (const iconName of ["32x32.png", "128x128.png", "128x128@2x.png", "icon.icns", "icon.ico"]) {
+    ensureFileExists(path.join(outputDir, iconName), `Committed Tauri icon ${iconName}`);
+  }
+}
+
 function generateTauriIcons({ projectRoot, sourceIconPath, outputDir }) {
+  if (shouldUseCommittedTauriIcons()) {
+    validateCommittedTauriIcons(outputDir);
+    return;
+  }
+
   const tempWorkspaceDir = mkdtempSync(path.join(os.tmpdir(), "workclaw-brand-icons-"));
   const tempOutputDir = path.join(tempWorkspaceDir, "icons");
 
