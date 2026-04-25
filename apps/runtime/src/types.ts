@@ -1149,6 +1149,7 @@ export interface AttachmentInput {
   sizeBytes?: number;
   sourcePayload?: string;
   sourceUri?: string;
+  mediaRef?: string;
   extractedText?: string;
   transcript?: string;
   summary?: string;
@@ -1189,7 +1190,8 @@ export type PendingAttachment =
       name: string;
       mimeType: string;
       size: number;
-      data: string;
+      data?: string;
+      mediaRef?: string;
     }
   | {
       id: string;

@@ -8,6 +8,7 @@ pub mod chat_attachment_validation;
 pub(crate) mod chat_attachments;
 pub(crate) mod chat_compaction;
 pub mod chat_control;
+pub(crate) mod chat_media_store;
 pub(crate) mod chat_policy;
 pub(crate) mod chat_runtime_io;
 pub mod chat_session_commands;

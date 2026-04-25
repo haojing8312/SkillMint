@@ -1,10 +1,10 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use regex::Regex;
 use reqwest::Client;
 use runtime_chat_app::{
-    parse_fallback_chain_targets, ChatSettingsRepository, PreparedRouteCandidate,
+    ChatSettingsRepository, PreparedRouteCandidate, parse_fallback_chain_targets,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
@@ -12,19 +12,22 @@ use std::process::Command;
 use zip::ZipArchive;
 
 use crate::agent::runtime::repo::PoolChatSettingsRepository;
-use crate::model_transport::{resolve_model_transport, ModelTransportKind};
+use crate::model_transport::{ModelTransportKind, resolve_model_transport};
+use crate::runtime_paths::RuntimePaths;
 
 use super::chat::{AttachmentInput, SendMessagePart};
 use super::chat_attachment_policy::{
-    attachment_is_text_document, default_attachment_policy, PHASE_ONE_MAX_PDF_EXTRACTED_TEXT_CHARS,
+    PHASE_ONE_MAX_PDF_EXTRACTED_TEXT_CHARS, attachment_is_text_document, default_attachment_policy,
 };
-use super::chat_attachment_resolution::{resolve_attachment_input, ResolvedAttachment};
+use super::chat_attachment_resolution::{ResolvedAttachment, resolve_attachment_input};
 use super::chat_attachment_validation::validate_attachment_inputs;
+use super::chat_media_store::{delete_inbound_media_ref, save_inbound_media};
 
 const VIDEO_NO_AUDIO_TRACK: &str = "VIDEO_NO_AUDIO_TRACK";
 const VIDEO_AUDIO_EXTRACTION_UNAVAILABLE: &str = "VIDEO_AUDIO_EXTRACTION_UNAVAILABLE";
 const VIDEO_AUDIO_EXTRACTION_FAILED: &str = "VIDEO_AUDIO_EXTRACTION_FAILED";
 const VIDEO_VISUAL_SUMMARY_PROMPT: &str = "请基于这些视频关键帧，用简洁中文总结视频里正在发生的事情、主要对象和场景。若信息有限，请明确说明。";
+const IMAGE_OFFLOAD_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
 
 pub(crate) fn normalize_message_parts(parts: &[SendMessagePart]) -> Result<Vec<Value>, String> {
     let policy = default_attachment_policy();
@@ -34,6 +37,16 @@ pub(crate) fn normalize_message_parts(parts: &[SendMessagePart]) -> Result<Vec<V
         .iter()
         .map(|part| normalize_message_part(part, &policy))
         .collect()
+}
+
+pub(crate) fn normalize_message_parts_with_runtime_paths(
+    parts: &[SendMessagePart],
+    runtime_paths: &RuntimePaths,
+) -> Result<Vec<Value>, String> {
+    let policy = default_attachment_policy();
+    let attachments = collect_attachment_inputs(parts);
+    validate_attachment_inputs(&policy, &attachments)?;
+    normalize_parts_with_prepared_attachments(parts, &policy, HashMap::new(), Some(runtime_paths))
 }
 
 pub(crate) async fn normalize_message_parts_with_pool(
@@ -49,17 +62,66 @@ pub(crate) async fn normalize_message_parts_with_pool(
         .map(|attachment| (attachment.id.clone(), attachment))
         .collect::<HashMap<_, _>>();
 
-    parts
-        .iter()
-        .map(|part| match part {
+    normalize_parts_with_prepared_attachments(parts, &policy, prepared_by_id, None)
+}
+
+pub(crate) async fn normalize_message_parts_with_pool_and_runtime_paths(
+    parts: &[SendMessagePart],
+    pool: &sqlx::SqlitePool,
+    runtime_paths: &RuntimePaths,
+) -> Result<Vec<Value>, String> {
+    let policy = default_attachment_policy();
+    let attachments = collect_attachment_inputs(parts);
+    validate_attachment_inputs(&policy, &attachments)?;
+    let prepared_attachments = preprocess_attachment_inputs_with_pool(&attachments, pool).await?;
+    let prepared_by_id = prepared_attachments
+        .into_iter()
+        .map(|attachment| (attachment.id.clone(), attachment))
+        .collect::<HashMap<_, _>>();
+
+    normalize_parts_with_prepared_attachments(parts, &policy, prepared_by_id, Some(runtime_paths))
+}
+
+fn normalize_parts_with_prepared_attachments(
+    parts: &[SendMessagePart],
+    policy: &super::chat_attachment_policy::AttachmentPolicy,
+    prepared_by_id: HashMap<String, AttachmentInput>,
+    runtime_paths: Option<&RuntimePaths>,
+) -> Result<Vec<Value>, String> {
+    let mut normalized_parts = Vec::with_capacity(parts.len());
+    let mut saved_media_refs = Vec::new();
+    for part in parts {
+        let result = match part {
             SendMessagePart::Attachment { attachment } => {
                 let normalized_attachment =
                     prepared_by_id.get(&attachment.id).unwrap_or(attachment);
-                normalize_attachment_part(&policy, normalized_attachment)
+                normalize_attachment_part_with_runtime_paths(
+                    policy,
+                    normalized_attachment,
+                    runtime_paths,
+                    &mut saved_media_refs,
+                )
             }
-            _ => normalize_message_part(part, &policy),
-        })
-        .collect()
+            _ => normalize_message_part(part, policy),
+        };
+        match result {
+            Ok(part) => normalized_parts.push(part),
+            Err(error) => {
+                cleanup_saved_media_refs(runtime_paths, &saved_media_refs);
+                return Err(error);
+            }
+        }
+    }
+    Ok(normalized_parts)
+}
+
+fn cleanup_saved_media_refs(runtime_paths: Option<&RuntimePaths>, media_refs: &[String]) {
+    let Some(runtime_paths) = runtime_paths else {
+        return;
+    };
+    for media_ref in media_refs {
+        let _ = delete_inbound_media_ref(runtime_paths, media_ref);
+    }
 }
 
 async fn preprocess_attachment_inputs_with_pool(
@@ -1021,12 +1083,25 @@ fn normalize_attachment_part(
     attachment: &AttachmentInput,
 ) -> Result<Value, String> {
     let resolved = resolve_attachment_input(policy, attachment)?;
-    normalize_resolved_attachment(policy, &resolved)
+    let mut saved_media_refs = Vec::new();
+    normalize_resolved_attachment(policy, &resolved, None, &mut saved_media_refs)
+}
+
+fn normalize_attachment_part_with_runtime_paths(
+    policy: &super::chat_attachment_policy::AttachmentPolicy,
+    attachment: &AttachmentInput,
+    runtime_paths: Option<&RuntimePaths>,
+    saved_media_refs: &mut Vec<String>,
+) -> Result<Value, String> {
+    let resolved = resolve_attachment_input(policy, attachment)?;
+    normalize_resolved_attachment(policy, &resolved, runtime_paths, saved_media_refs)
 }
 
 fn normalize_resolved_attachment(
     policy: &super::chat_attachment_policy::AttachmentPolicy,
     attachment: &ResolvedAttachment,
+    runtime_paths: Option<&RuntimePaths>,
+    saved_media_refs: &mut Vec<String>,
 ) -> Result<Value, String> {
     match attachment.kind.as_str() {
         "image" => {
@@ -1034,6 +1109,26 @@ fn normalize_resolved_attachment(
                 .source_payload
                 .as_deref()
                 .ok_or_else(|| format!("图片附件 {} 缺少 sourcePayload", attachment.name))?;
+            if let Some(runtime_paths) = runtime_paths {
+                let bytes = decode_base64_payload_bytes(data)
+                    .map_err(|err| format!("图片附件 {} 解码失败: {err}", attachment.name))?;
+                if bytes.len() > IMAGE_OFFLOAD_THRESHOLD_BYTES {
+                    let saved = save_inbound_media(
+                        runtime_paths,
+                        &bytes,
+                        &attachment.resolved_mime_type,
+                        &attachment.name,
+                    )?;
+                    saved_media_refs.push(saved.media_ref.clone());
+                    return Ok(json!({
+                        "type": "image",
+                        "name": attachment.name,
+                        "mimeType": attachment.resolved_mime_type,
+                        "size": attachment.size_bytes.unwrap_or(bytes.len()),
+                        "mediaRef": saved.media_ref,
+                    }));
+                }
+            }
             Ok(json!({
                 "type": "image",
                 "name": attachment.name,
@@ -1230,17 +1325,24 @@ fn extract_binary_document_text(
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let bytes = decode_base64_payload_bytes(payload)?;
+    let bytes = decode_base64_payload_bytes(payload)
+        .map_err(|err| format!("文档附件 {name} 解码失败: {err}"))?;
 
     let extracted = if normalized_mime
         == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         || extension == "docx"
     {
-        Some(extract_docx_text_from_bytes(&bytes)?)
+        Some(
+            extract_docx_text_from_bytes(&bytes)
+                .map_err(|err| format!("文档附件 {name} 解析失败: {err}"))?,
+        )
     } else if normalized_mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         || extension == "xlsx"
     {
-        Some(extract_xlsx_text_from_bytes(&bytes)?)
+        Some(
+            extract_xlsx_text_from_bytes(&bytes)
+                .map_err(|err| format!("文档附件 {name} 解析失败: {err}"))?,
+        )
     } else if normalized_mime == "application/msword" || extension == "doc" {
         extract_legacy_office_text_from_bytes(&bytes)
     } else if normalized_mime == "application/vnd.ms-excel" || extension == "xls" {
@@ -1511,7 +1613,7 @@ mod tests {
         resolve_ffmpeg_command_from_env_and_candidates, supports_audio_stt_provider_candidate,
     };
     use crate::commands::chat::SendMessagePart;
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
     use sqlx::SqlitePool;
     use std::fs;
     use std::path::PathBuf;
@@ -1658,10 +1760,12 @@ mod tests {
 
         assert_eq!(parts[0]["type"].as_str(), Some("pdf_file"));
         assert_eq!(parts[0]["name"].as_str(), Some("brief.pdf"));
-        assert!(parts[0]["extractedText"]
-            .as_str()
-            .expect("extracted text")
-            .contains("Hello PDF"));
+        assert!(
+            parts[0]["extractedText"]
+                .as_str()
+                .expect("extracted text")
+                .contains("Hello PDF")
+        );
     }
 
     #[test]
@@ -1740,11 +1844,13 @@ mod tests {
             parts[0]["attachment"]["transcript"].as_str(),
             Some("TRANSCRIPTION_REQUIRED")
         );
-        assert!(parts[0]["attachment"]["warnings"]
-            .as_array()
-            .expect("warnings")
-            .iter()
-            .any(|warning| warning.as_str() == Some("transcription_pending")));
+        assert!(
+            parts[0]["attachment"]["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .any(|warning| warning.as_str() == Some("transcription_pending"))
+        );
     }
 
     #[tokio::test]

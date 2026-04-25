@@ -539,17 +539,25 @@ export function ChatView({
           <div className="space-y-2">
             {attachmentParts.map((part, index) => {
               if (part.type === "image") {
+                const hasInlineData = Boolean(part.data?.trim());
                 return (
                   <div
                     key={`attachment-${part.name}-${index}`}
-                    className="rounded-xl border border-white/20 bg-white/10 p-2"
+                    className="rounded-xl border border-white/20 bg-white/10 p-2 text-xs"
                   >
-                    <img
-                      src={part.data}
-                      alt={part.name}
-                      className="max-h-56 w-full rounded-lg object-cover"
-                    />
-                    <div className="mt-2 text-xs opacity-90">{part.name}</div>
+                    {hasInlineData ? (
+                      <img
+                        src={part.data}
+                        alt={part.name}
+                        className="max-h-56 w-full rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div className="rounded-lg border border-white/15 bg-white/10 p-3">
+                        <div className="font-medium">{part.name}</div>
+                        <div className="mt-1 opacity-80">图片附件 · 已保存</div>
+                      </div>
+                    )}
+                    {hasInlineData && <div className="mt-2 opacity-90">{part.name}</div>}
                   </div>
                 );
               }

@@ -3,16 +3,17 @@ use super::chat_compaction;
 use super::chat_runtime_io as chat_io;
 use super::chat_session_io;
 use super::skills::DbState;
-use crate::agent::runtime::{SessionAdmissionGateState, SessionRuntime};
 use crate::agent::AgentExecutor;
+use crate::agent::runtime::{RuntimeTranscript, SessionAdmissionGateState, SessionRuntime};
 use crate::approval_bus::ApprovalManager;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::runtime_environment::runtime_paths_from_app;
 use crate::session_journal::SessionJournalStateHandle;
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::atomic::Ordering;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub use crate::agent::runtime::AskUserPendingSessionState;
@@ -272,11 +273,46 @@ pub fn normalize_send_message_parts(parts: &[SendMessagePart]) -> Result<Vec<Val
     chat_attachments::normalize_message_parts(parts)
 }
 
+pub fn normalize_send_message_parts_with_runtime_root(
+    parts: &[SendMessagePart],
+    runtime_root: PathBuf,
+) -> Result<Vec<Value>, String> {
+    let runtime_paths = crate::runtime_paths::RuntimePaths::new(runtime_root);
+    chat_attachments::normalize_message_parts_with_runtime_paths(parts, &runtime_paths)
+}
+
+pub fn build_current_turn_message_with_runtime_root(
+    api_format: &str,
+    parts: &[Value],
+    runtime_root: PathBuf,
+) -> Result<Option<Value>, String> {
+    let runtime_paths = crate::runtime_paths::RuntimePaths::new(runtime_root);
+    RuntimeTranscript::build_current_turn_message_with_runtime_paths(
+        api_format,
+        parts,
+        &runtime_paths,
+    )
+}
+
 pub async fn normalize_send_message_parts_with_pool(
     parts: &[SendMessagePart],
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Value>, String> {
     chat_attachments::normalize_message_parts_with_pool(parts, pool).await
+}
+
+pub async fn normalize_send_message_parts_with_pool_and_runtime_root(
+    parts: &[SendMessagePart],
+    pool: &sqlx::SqlitePool,
+    runtime_root: PathBuf,
+) -> Result<Vec<Value>, String> {
+    let runtime_paths = crate::runtime_paths::RuntimePaths::new(runtime_root);
+    chat_attachments::normalize_message_parts_with_pool_and_runtime_paths(
+        parts,
+        pool,
+        &runtime_paths,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -368,7 +404,13 @@ pub async fn send_message(
 ) -> Result<(), String> {
     let session_id = request.session_id.clone();
     let user_message = request.summary_text();
-    let user_message_parts = normalize_send_message_parts_with_pool(&request.parts, &db.0).await?;
+    let runtime_paths = runtime_paths_from_app(&app)?;
+    let user_message_parts = chat_attachments::normalize_message_parts_with_pool_and_runtime_paths(
+        &request.parts,
+        &db.0,
+        &runtime_paths,
+    )
+    .await?;
 
     let admission_gate = app
         .try_state::<SessionAdmissionGateState>()

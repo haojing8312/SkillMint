@@ -6,13 +6,15 @@ use super::route_lane::{
     parse_skill_denied_tool_categories, parse_skill_denied_tool_sources, skill_allowed_mcp_servers,
 };
 use super::session_profile::{SessionExecutionProfile, SessionSurfaceKind};
+use crate::agent::AgentExecutor;
 use crate::agent::permissions::PermissionMode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
+use crate::agent::runtime::RuntimeTranscript;
 use crate::agent::runtime::effective_tool_set::runtime_default_tool_policy_input;
 use crate::agent::runtime::kernel::capability_snapshot::CapabilitySnapshot;
 use crate::agent::runtime::kernel::context_bundle::ContextBundle;
 use crate::agent::runtime::repo::{
-    load_runtime_tool_policy_defaults, PoolChatEmployeeDirectory, PoolChatSettingsRepository,
+    PoolChatEmployeeDirectory, PoolChatSettingsRepository, load_runtime_tool_policy_defaults,
 };
 use crate::agent::runtime::resource_context::resolve_turn_resource_context;
 use crate::agent::runtime::runtime_io as chat_io;
@@ -20,10 +22,9 @@ use crate::agent::runtime::runtime_io::WorkspaceSkillRuntimeEntry;
 use crate::agent::runtime::skill_routing::index::SkillRouteIndex;
 use crate::agent::runtime::task_continuation::is_task_continuation_request;
 use crate::agent::runtime::task_transition::{TaskContinuationMode, TaskContinuationSource};
-use crate::agent::runtime::tool_setup::{prepare_runtime_tools, ToolSetupParams};
-use crate::agent::runtime::RuntimeTranscript;
-use crate::agent::AgentExecutor;
-use crate::model_transport::{resolve_model_transport, ModelTransportKind};
+use crate::agent::runtime::tool_setup::{ToolSetupParams, prepare_runtime_tools};
+use crate::model_transport::{ModelTransportKind, resolve_model_transport};
+use crate::runtime_environment::runtime_paths_from_app;
 use crate::session_journal::{SessionJournalState, SessionJournalStateHandle, SessionRunStatus};
 use runtime_chat_app::{ChatExecutionPreparationRequest, ChatExecutionPreparationService};
 use serde_json::Value;
@@ -150,13 +151,20 @@ pub(crate) async fn prepare_local_turn(
     );
 
     let (_, api_format, base_url, model_name, api_key) = route_candidates[0].clone();
+    let runtime_paths = runtime_paths_from_app(params.app)?;
     let mut messages = RuntimeTranscript::sanitize_reconstructed_messages(
-        RuntimeTranscript::reconstruct_history_messages(&history, &api_format),
+        RuntimeTranscript::reconstruct_history_messages_with_runtime_paths(
+            &history,
+            &api_format,
+            &runtime_paths,
+        )?,
         &api_format,
     );
-    if let Some(current_turn) =
-        RuntimeTranscript::build_current_turn_message(&api_format, params.user_message_parts)
-    {
+    if let Some(current_turn) = RuntimeTranscript::build_current_turn_message_with_runtime_paths(
+        &api_format,
+        params.user_message_parts,
+        &runtime_paths,
+    )? {
         append_current_turn_message(&mut messages, current_turn);
     }
     let skill_config = crate::agent::skill_config::SkillConfig::parse(&raw_prompt);
@@ -1022,6 +1030,7 @@ mod tests {
         resolve_recent_continuation_runtime_notes, resolve_session_continuation_preference,
         rewrite_user_skill_command_for_model, should_disable_runtime_tools_for_native_vision_turn,
     };
+    use crate::agent::AgentExecutor;
     use crate::agent::registry::ToolRegistry;
     use crate::agent::runtime::kernel::execution_plan::{
         ContinuationKind, ContinuationPreference, ContinuationTurnPolicy,
@@ -1030,7 +1039,6 @@ mod tests {
     use crate::agent::runtime::runtime_io as chat_io;
     use crate::agent::runtime::runtime_io::{WorkspaceSkillContent, WorkspaceSkillRuntimeEntry};
     use crate::agent::runtime::task_transition::{TaskContinuationMode, TaskContinuationSource};
-    use crate::agent::AgentExecutor;
     use crate::session_journal::{
         SessionJournalState, SessionRunSnapshot, SessionRunStatus,
         SessionRunTurnStateCompactionBoundary, SessionRunTurnStateSnapshot,
@@ -1354,11 +1362,10 @@ mod tests {
             tasks: vec![],
         };
 
-        assert!(resolve_recent_compaction_runtime_notes(
-            &build_local_chat_session_profile(),
-            &state
-        )
-        .is_empty());
+        assert!(
+            resolve_recent_compaction_runtime_notes(&build_local_chat_session_profile(), &state)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1497,12 +1504,14 @@ mod tests {
             tasks: vec![],
         };
 
-        assert!(resolve_session_continuation_preference(
-            "继续",
-            &state,
-            &build_local_chat_session_profile()
-        )
-        .is_none());
+        assert!(
+            resolve_session_continuation_preference(
+                "继续",
+                &state,
+                &build_local_chat_session_profile()
+            )
+            .is_none()
+        );
 
         let preference = resolve_session_continuation_preference(
             "继续",

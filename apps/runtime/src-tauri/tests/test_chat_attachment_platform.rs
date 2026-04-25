@@ -8,6 +8,7 @@ use runtime_lib::commands::chat_attachment_policy::default_attachment_policy;
 use runtime_lib::commands::chat_attachment_resolution::resolve_attachment_input;
 use runtime_lib::commands::chat_attachment_validation::validate_attachment_input;
 use serde_json::json;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -416,6 +417,222 @@ fn attachment_parts_normalize_image_inputs_to_legacy_image_parts() {
     assert_eq!(parts[0]["type"].as_str(), Some("image"));
     assert_eq!(parts[0]["name"].as_str(), Some("screen.png"));
     assert_eq!(parts[0]["mimeType"].as_str(), Some("image/png"));
+}
+
+#[test]
+fn image_attachments_above_threshold_are_offloaded() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let payload = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(vec![7_u8; 3 * 1024 * 1024])
+    );
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-large-image-1".to_string(),
+                kind: "image".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "screen.png".to_string(),
+                declared_mime_type: Some("image/png".to_string()),
+                size_bytes: Some(3 * 1024 * 1024),
+                source_payload: Some(payload),
+                source_uri: None,
+                extracted_text: None,
+                truncated: None,
+            },
+        }],
+        runtime_root,
+    )
+    .expect("normalize image attachment with media root");
+
+    assert_eq!(parts[0]["type"].as_str(), Some("image"));
+    assert!(parts[0].get("data").is_none());
+    let media_ref = parts[0]["mediaRef"].as_str().expect("media ref");
+    assert!(media_ref.starts_with("media://inbound/"));
+
+    let media_id = media_ref.trim_start_matches("media://inbound/");
+    assert!(temp
+        .path()
+        .join("runtime-root")
+        .join("cache")
+        .join("chat-media")
+        .join("inbound")
+        .join(media_id)
+        .exists());
+}
+
+#[test]
+fn offloaded_image_parts_are_hydrated_for_model_messages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let payload_bytes = vec![9_u8; 3 * 1024 * 1024];
+    let payload = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&payload_bytes)
+    );
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-large-image-2".to_string(),
+                kind: "image".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "diagram.png".to_string(),
+                declared_mime_type: Some("image/png".to_string()),
+                size_bytes: Some(payload_bytes.len()),
+                source_payload: Some(payload),
+                source_uri: None,
+                extracted_text: None,
+                truncated: None,
+            },
+        }],
+        runtime_root.clone(),
+    )
+    .expect("normalize image attachment with media root");
+
+    let message = runtime_lib::commands::chat::build_current_turn_message_with_runtime_root(
+        "openai",
+        &parts,
+        runtime_root,
+    )
+    .expect("build current turn")
+    .expect("message");
+    let content = message["content"].as_array().expect("content array");
+
+    assert_eq!(content[0]["type"].as_str(), Some("image_url"));
+    let image_url = content[0]["image_url"]["url"].as_str().expect("image url");
+    assert!(image_url.starts_with("data:image/png;base64,"));
+    assert!(image_url.contains(&base64::engine::general_purpose::STANDARD.encode(payload_bytes)));
+}
+
+#[test]
+fn offloaded_image_parts_are_hydrated_for_anthropic_model_messages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let payload_bytes = vec![11_u8; 3 * 1024 * 1024];
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&payload_bytes);
+    let payload = format!("data:image/png;base64,{encoded}");
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-large-image-anthropic".to_string(),
+                kind: "image".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "diagram.png".to_string(),
+                declared_mime_type: Some("image/png".to_string()),
+                size_bytes: Some(payload_bytes.len()),
+                source_payload: Some(payload),
+                source_uri: None,
+                extracted_text: None,
+                truncated: None,
+            },
+        }],
+        runtime_root.clone(),
+    )
+    .expect("normalize image attachment with media root");
+
+    let message = runtime_lib::commands::chat::build_current_turn_message_with_runtime_root(
+        "anthropic",
+        &parts,
+        runtime_root,
+    )
+    .expect("build current turn")
+    .expect("message");
+    let content = message["content"].as_array().expect("content array");
+
+    assert_eq!(content[0]["type"].as_str(), Some("image"));
+    assert_eq!(
+        content[0]["source"]["media_type"].as_str(),
+        Some("image/png")
+    );
+    assert_eq!(
+        content[0]["source"]["data"].as_str(),
+        Some(encoded.as_str())
+    );
+}
+
+#[test]
+fn malformed_later_attachment_cleans_up_offloaded_media() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let valid_payload = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(vec![13_u8; 3 * 1024 * 1024])
+    );
+    let error = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[
+            SendMessagePart::Attachment {
+                attachment: runtime_lib::commands::chat::AttachmentInput {
+                    id: "att-large-image-cleanup".to_string(),
+                    kind: "image".to_string(),
+                    source_type: "browser_file".to_string(),
+                    name: "large.png".to_string(),
+                    declared_mime_type: Some("image/png".to_string()),
+                    size_bytes: Some(3 * 1024 * 1024),
+                    source_payload: Some(valid_payload),
+                    source_uri: None,
+                    extracted_text: None,
+                    truncated: None,
+                },
+            },
+            SendMessagePart::Attachment {
+                attachment: runtime_lib::commands::chat::AttachmentInput {
+                    id: "att-bad-docx-cleanup".to_string(),
+                    kind: "document".to_string(),
+                    source_type: "browser_file".to_string(),
+                    name: "bad.docx".to_string(),
+                    declared_mime_type: Some(
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            .to_string(),
+                    ),
+                    size_bytes: Some(12),
+                    source_payload: Some("not-valid-base64!".to_string()),
+                    source_uri: None,
+                    extracted_text: None,
+                    truncated: None,
+                },
+            },
+        ],
+        runtime_root.clone(),
+    )
+    .expect_err("bad later attachment should fail");
+
+    assert!(error.contains("bad.docx"), "unexpected error: {error}");
+    let media_root = runtime_root
+        .join("cache")
+        .join("chat-media")
+        .join("inbound");
+    let remaining = if media_root.exists() {
+        fs::read_dir(&media_root)
+            .expect("read media root")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect media entries")
+            .len()
+    } else {
+        0
+    };
+    assert_eq!(remaining, 0, "offloaded media should be cleaned up");
+}
+
+#[test]
+fn unsafe_media_refs_are_rejected_during_model_message_build() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let error = runtime_lib::commands::chat::build_current_turn_message_with_runtime_root(
+        "openai",
+        &[json!({
+            "type": "image",
+            "name": "unsafe.png",
+            "mimeType": "image/png",
+            "size": 32,
+            "mediaRef": "media://inbound/../unsafe.png",
+        })],
+        runtime_root,
+    )
+    .expect_err("unsafe media ref should fail");
+
+    assert!(error.contains("unsafe.png"));
+    assert!(error.contains("媒体引用"));
 }
 
 #[test]

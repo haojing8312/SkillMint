@@ -1,4 +1,9 @@
-use serde_json::{json, Value};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use serde_json::{Value, json};
+
+use crate::commands::chat_attachment_policy::PHASE_ONE_MAX_IMAGE_BYTES;
+use crate::commands::chat_media_store::read_inbound_media_ref;
+use crate::runtime_paths::RuntimePaths;
 
 use super::transcript_policy;
 
@@ -111,6 +116,18 @@ impl RuntimeTranscript {
         }
     }
 
+    pub(crate) fn build_current_turn_message_with_runtime_paths(
+        api_format: &str,
+        parts: &[Value],
+        runtime_paths: &RuntimePaths,
+    ) -> Result<Option<Value>, String> {
+        let hydrated_parts = Self::hydrate_media_refs_in_parts(parts, runtime_paths)?;
+        Ok(Self::build_current_turn_message(
+            api_format,
+            &hydrated_parts,
+        ))
+    }
+
     pub(crate) fn reconstruct_llm_messages(parsed: &Value, api_format: &str) -> Vec<Value> {
         let final_text = parsed["text"].as_str().unwrap_or("");
         let items = match parsed["items"].as_array() {
@@ -215,41 +232,109 @@ impl RuntimeTranscript {
         result
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reconstruct_history_messages(
         history: &[(String, String, Option<String>)],
         api_format: &str,
     ) -> Vec<Value> {
-        history
-            .iter()
-            .flat_map(|(role, content, content_json)| {
-                if role == "assistant" {
-                    if let Ok(parsed) = serde_json::from_str::<Value>(content) {
-                        if parsed.get("text").is_some() && parsed.get("items").is_some() {
-                            return Self::reconstruct_llm_messages(&parsed, api_format);
-                        }
-                        if let Some(text) = parsed.get("text").and_then(Value::as_str) {
-                            return vec![json!({"role": "assistant", "content": text})];
-                        }
+        Self::reconstruct_history_messages_inner(history, api_format, None)
+            .expect("history reconstruction without runtime paths cannot hydrate media")
+    }
+
+    pub(crate) fn reconstruct_history_messages_with_runtime_paths(
+        history: &[(String, String, Option<String>)],
+        api_format: &str,
+        runtime_paths: &RuntimePaths,
+    ) -> Result<Vec<Value>, String> {
+        Self::reconstruct_history_messages_inner(history, api_format, Some(runtime_paths))
+    }
+
+    fn reconstruct_history_messages_inner(
+        history: &[(String, String, Option<String>)],
+        api_format: &str,
+        _runtime_paths: Option<&RuntimePaths>,
+    ) -> Result<Vec<Value>, String> {
+        let mut messages = Vec::new();
+        for (role, content, content_json) in history {
+            if role == "assistant" {
+                if let Ok(parsed) = serde_json::from_str::<Value>(content) {
+                    if parsed.get("text").is_some() && parsed.get("items").is_some() {
+                        messages.extend(Self::reconstruct_llm_messages(&parsed, api_format));
+                        continue;
+                    }
+                    if let Some(text) = parsed.get("text").and_then(Value::as_str) {
+                        messages.push(json!({"role": "assistant", "content": text}));
+                        continue;
                     }
                 }
-                if role == "user" {
-                    if let Some(content_json) = content_json {
-                        if let Ok(parts) = serde_json::from_str::<Value>(content_json) {
-                            if let Some(parts_array) = parts.as_array() {
-                                if let Some(message) = Self::build_user_message_from_parts(
-                                    api_format,
-                                    parts_array,
-                                    ImagePayloadMode::Placeholder,
-                                ) {
-                                    return vec![message];
-                                }
+            }
+            if role == "user" {
+                if let Some(content_json) = content_json {
+                    if let Ok(parts) = serde_json::from_str::<Value>(content_json) {
+                        if let Some(parts_array) = parts.as_array() {
+                            if let Some(message) = Self::build_user_message_from_parts(
+                                api_format,
+                                parts_array,
+                                ImagePayloadMode::Placeholder,
+                            ) {
+                                messages.push(message);
+                                continue;
                             }
                         }
                     }
                 }
-                vec![json!({"role": role, "content": content})]
-            })
+            }
+            messages.push(json!({"role": role, "content": content}));
+        }
+        Ok(messages)
+    }
+
+    fn hydrate_media_refs_in_parts(
+        parts: &[Value],
+        runtime_paths: &RuntimePaths,
+    ) -> Result<Vec<Value>, String> {
+        parts
+            .iter()
+            .map(|part| Self::hydrate_media_ref_in_part(part, runtime_paths))
             .collect()
+    }
+
+    fn hydrate_media_ref_in_part(
+        part: &Value,
+        runtime_paths: &RuntimePaths,
+    ) -> Result<Value, String> {
+        if part.get("type").and_then(Value::as_str) != Some("image") {
+            return Ok(part.clone());
+        }
+        if part
+            .get("data")
+            .and_then(Value::as_str)
+            .is_some_and(|data| !data.trim().is_empty())
+        {
+            return Ok(part.clone());
+        }
+        let Some(media_ref) = part.get("mediaRef").and_then(Value::as_str) else {
+            return Ok(part.clone());
+        };
+        let name = part
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("image attachment");
+        let mime_type = part
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("image/png");
+        let bytes = read_inbound_media_ref(runtime_paths, media_ref, PHASE_ONE_MAX_IMAGE_BYTES)
+            .map_err(|err| format!("图片附件 {name} 读取媒体缓存失败: {err}"))?;
+        let mut hydrated = part.clone();
+        let Some(object) = hydrated.as_object_mut() else {
+            return Ok(hydrated);
+        };
+        object.insert(
+            "data".to_string(),
+            Value::String(format!("data:{mime_type};base64,{}", BASE64.encode(bytes))),
+        );
+        Ok(hydrated)
     }
 
     pub(crate) fn sanitize_reconstructed_messages(
@@ -602,7 +687,7 @@ impl RuntimeTranscript {
 #[cfg(test)]
 mod tests {
     use super::RuntimeTranscript;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     #[test]
     fn build_current_turn_message_includes_pdf_attachment_context() {
@@ -646,10 +731,12 @@ mod tests {
 
         let content = message["content"].as_array().expect("content array");
         assert_eq!(content[0]["type"].as_str(), Some("text"));
-        assert!(content[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("附件上下文"));
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("附件上下文")
+        );
         assert_eq!(content[1]["type"].as_str(), Some("attachment"));
         assert_eq!(content[1]["attachment"]["kind"].as_str(), Some("document"));
         assert_eq!(
@@ -880,21 +967,29 @@ mod tests {
         assert_eq!(messages[0]["role"].as_str(), Some("user"));
         let content = messages[0]["content"].as_array().expect("content array");
         assert_eq!(content[0]["type"].as_str(), Some("text"));
-        assert!(content[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("请分析这些附件"));
-        assert!(content[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("debug.ts"));
-        assert!(content[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("[历史图片 screen.png 已从模型上下文移除]"));
-        assert!(!content
-            .iter()
-            .any(|block| block["type"].as_str() == Some("image_url")));
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("请分析这些附件")
+        );
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("debug.ts")
+        );
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("[历史图片 screen.png 已从模型上下文移除]")
+        );
+        assert!(
+            !content
+                .iter()
+                .any(|block| block["type"].as_str() == Some("image_url"))
+        );
     }
 
     #[test]
@@ -930,12 +1025,16 @@ mod tests {
         let text = content[0]["text"].as_str().expect("text");
         assert!(text.contains("[历史图片 screen.png 已从模型上下文移除]"));
         assert!(text.contains("[历史图片 图片 已从模型上下文移除]"));
-        assert!(!content
-            .iter()
-            .any(|block| block["type"].as_str() == Some("image_url")));
-        assert!(!content
-            .iter()
-            .any(|block| block["type"].as_str() == Some("image")));
+        assert!(
+            !content
+                .iter()
+                .any(|block| block["type"].as_str() == Some("image_url"))
+        );
+        assert!(
+            !content
+                .iter()
+                .any(|block| block["type"].as_str() == Some("image"))
+        );
     }
 
     #[test]

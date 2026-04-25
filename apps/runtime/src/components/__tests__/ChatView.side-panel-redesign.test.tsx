@@ -983,6 +983,48 @@ describe("ChatView side panel redesign", () => {
     expect(screen.getByText("PDF 附件")).toBeInTheDocument();
   });
 
+  test("renders saved mediaRef image history as an attachment card", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_messages") {
+        return Promise.resolve([
+          {
+            id: "user-media-ref-history",
+            role: "user",
+            content: "请看这张大图",
+            contentParts: [
+              { type: "text", text: "请看这张大图" },
+              {
+                type: "image",
+                name: "large-screen.png",
+                mimeType: "image/png",
+                size: 3145728,
+                mediaRef: "media://inbound/large-screen---fixture.png",
+              },
+            ],
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      if (command === "list_sessions") {
+        return Promise.resolve([
+          {
+            id: "session-side-panel-redesign",
+            work_dir: "E:\\workspace\\session-side-panel-redesign",
+          },
+        ]);
+      }
+      if (command === "get_sessions") return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    renderChat();
+
+    expect(await screen.findByText("请看这张大图")).toBeInTheDocument();
+    expect(await screen.findByText("large-screen.png")).toBeInTheDocument();
+    expect(screen.getByText("图片附件 · 已保存")).toBeInTheDocument();
+    expect(screen.queryByAltText("large-screen.png")).not.toBeInTheDocument();
+  });
+
   test("renders attachment-platform parts from contentParts", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "get_messages") {
