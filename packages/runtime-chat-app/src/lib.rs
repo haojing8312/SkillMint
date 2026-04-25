@@ -1,3 +1,4 @@
+pub mod capabilities;
 pub mod preparation;
 pub mod prompt_assembly;
 pub mod routing;

@@ -34,3 +34,17 @@ fn infers_vision_when_message_parts_contain_image() {
         "vision"
     );
 }
+
+#[test]
+fn infers_vision_from_structured_image_parts_not_workspace_phrases() {
+    let parts = vec![json!({
+        "type": "image",
+        "data": "data:image/png;base64,abc"
+    })];
+
+    assert_eq!(
+        infer_capability_from_message_parts(&parts, "普通聊天"),
+        "vision"
+    );
+    assert_eq!(infer_capability_from_user_message("读取这些图片"), "chat");
+}

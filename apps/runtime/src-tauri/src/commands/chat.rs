@@ -205,7 +205,6 @@ impl SendMessageRequest {
         }
         summary_parts.join(" ")
     }
-
 }
 
 fn attachment_is_pdf(attachment: &AttachmentInput) -> bool {
