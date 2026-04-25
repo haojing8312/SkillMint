@@ -7,6 +7,9 @@ pub enum ModelErrorKind {
     Billing,
     Auth,
     RateLimit,
+    ContextOverflow,
+    InvalidTokenBudget,
+    MediaTooLarge,
     Timeout,
     Network,
     Unknown,
@@ -50,15 +53,14 @@ pub(crate) fn normalize_model_error(raw_message: &str) -> NormalizedModelError {
         || lower.contains("forbidden")
     {
         ModelErrorKind::Auth
-    } else if lower.contains("rate limit")
-        || lower.contains("too many requests")
-        || lower.contains("429")
-        || lower.contains("529")
-        || lower.contains("overloaded_error")
-        || lower.contains("high traffic detected")
-        || lower.contains("quota")
-    {
+    } else if is_rate_limit_error(&lower) {
         ModelErrorKind::RateLimit
+    } else if is_context_overflow_error(&lower) {
+        ModelErrorKind::ContextOverflow
+    } else if is_invalid_token_budget_error(&lower) {
+        ModelErrorKind::InvalidTokenBudget
+    } else if is_media_too_large_error(&lower) {
+        ModelErrorKind::MediaTooLarge
     } else if lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline")
     {
         ModelErrorKind::Timeout
@@ -91,6 +93,9 @@ pub(crate) fn model_error_title(kind: ModelErrorKind) -> &'static str {
         ModelErrorKind::Billing => "模型余额不足",
         ModelErrorKind::Auth => "鉴权失败",
         ModelErrorKind::RateLimit => "请求过于频繁",
+        ModelErrorKind::ContextOverflow => "上下文过长",
+        ModelErrorKind::InvalidTokenBudget => "模型输出空间不足",
+        ModelErrorKind::MediaTooLarge => "附件或图片过大",
         ModelErrorKind::Timeout => "请求超时",
         ModelErrorKind::Network => "网络连接失败",
         ModelErrorKind::Unknown => "连接失败",
@@ -104,6 +109,15 @@ pub(crate) fn model_error_message(kind: ModelErrorKind) -> &'static str {
         }
         ModelErrorKind::Auth => "请检查 API Key、组织权限或接口访问范围是否正确。",
         ModelErrorKind::RateLimit => "模型平台当前触发限流，请稍后重试或降低并发频率。",
+        ModelErrorKind::ContextOverflow => {
+            "当前会话内容超过了模型可处理的上下文。请减少历史内容、开启新会话，或使用更大上下文的模型。"
+        }
+        ModelErrorKind::InvalidTokenBudget => {
+            "模型请求没有剩余空间生成回复。请减少当前会话上下文、压缩图片，或使用更大上下文的模型后重试。"
+        }
+        ModelErrorKind::MediaTooLarge => {
+            "上传的图片或附件超过了当前模型请求限制。请压缩图片、减少附件数量，或移除不必要的附件后重试。"
+        }
         ModelErrorKind::Timeout => "模型平台响应超时，请稍后重试，或检查网络和所选模型是否可用。",
         ModelErrorKind::Network => "无法连接到模型接口，请检查 Base URL、网络环境或代理配置。",
         ModelErrorKind::Unknown => "模型平台返回了未识别错误，可查看详细信息进一步排查。",
@@ -140,6 +154,81 @@ fn normalized_error_search_text(raw_message: &str) -> String {
         }
     }
     raw_message.to_ascii_lowercase()
+}
+
+fn has_tpm_rate_limit_hint(lower: &str) -> bool {
+    lower.contains("tokens per minute") || lower.contains(" tpm") || lower.contains("tpm ")
+}
+
+fn is_rate_limit_error(lower: &str) -> bool {
+    lower.contains("rate limit")
+        || lower.contains("too many requests")
+        || lower.contains("overloaded_error")
+        || lower.contains("high traffic detected")
+        || lower.contains("quota")
+        || has_tpm_rate_limit_hint(lower)
+        || contains_http_status_code(lower, "429")
+        || (contains_numeric_code(lower, "529")
+            && (lower.contains("overloaded") || lower.contains("high traffic")))
+}
+
+fn contains_http_status_code(lower: &str, code: &str) -> bool {
+    lower.contains(&format!("http {code}"))
+        || lower.contains(&format!("http status {code}"))
+        || lower.contains(&format!("status {code}"))
+        || lower.contains(&format!("status_code {code}"))
+        || lower.contains(&format!("status code {code}"))
+}
+
+fn contains_numeric_code(lower: &str, code: &str) -> bool {
+    lower.match_indices(code).any(|(index, _)| {
+        let before = lower[..index].chars().next_back();
+        let after = lower[index + code.len()..].chars().next();
+
+        before.map_or(true, |character| !character.is_ascii_digit())
+            && after.map_or(true, |character| !character.is_ascii_digit())
+    })
+}
+
+fn is_context_overflow_error(lower: &str) -> bool {
+    if has_tpm_rate_limit_hint(lower) {
+        return false;
+    }
+    lower.contains("prompt is too long")
+        || lower.contains("prompt too long")
+        || lower.contains("context length exceeded")
+        || lower.contains("maximum context length")
+        || lower.contains("context window exceeded")
+        || lower.contains("context_window_exceeded")
+        || lower.contains("model_context_window_exceeded")
+        || lower.contains("exceeds model context window")
+        || lower.contains("model token limit")
+        || lower.contains("exceed context limit")
+        || lower.contains("exceeds the model's maximum context")
+        || (lower.contains("input length") && lower.contains("exceed") && lower.contains("context"))
+        || (lower.contains("max_tokens") && lower.contains("exceed") && lower.contains("context"))
+        || lower.contains("上下文过长")
+        || lower.contains("上下文超出")
+        || lower.contains("上下文长度超")
+        || lower.contains("超出最大上下文")
+        || lower.contains("请压缩上下文")
+}
+
+fn is_invalid_token_budget_error(lower: &str) -> bool {
+    lower.contains("max_tokens must be at least 1")
+        || (lower.contains("max_tokens") && lower.contains("got -"))
+}
+
+fn is_media_too_large_error(lower: &str) -> bool {
+    lower.contains("image exceeds")
+        || lower.contains("image dimensions exceed")
+        || lower.contains("media too large")
+        || lower.contains("payload too large")
+        || lower.contains("request too large")
+        || lower.contains("request size exceeds")
+        || lower.contains("request exceeds the maximum size")
+        || lower.contains("附件或图片过大")
+        || lower.contains("图片附件总大小")
 }
 
 fn is_retryable_minimax_gateway_error(lower: &str) -> bool {
@@ -221,6 +310,82 @@ mod tests {
         let raw = r#"{"type":"error","error":{"type":"overloaded_error","message":"High traffic detected. For a more stable experience, upgrade to our Plus plan and use the highspeed model. (2064) (529)"},"request_id":"063620c00704398bce2eaa17b0537c68"}"#;
         let result = normalize_model_error(raw);
         assert_eq!(result.kind, ModelErrorKind::RateLimit);
+    }
+
+    #[test]
+    fn normalize_model_error_context_overflow_wins_over_numeric_429_token_counts() {
+        let result = normalize_model_error("prompt is too long: 429000 tokens > 200000 maximum");
+        assert_eq!(result.kind, ModelErrorKind::ContextOverflow);
+    }
+
+    #[test]
+    fn normalize_model_error_still_detects_http_429_rate_limit() {
+        let result = normalize_model_error("HTTP 429 Too Many Requests");
+        assert_eq!(result.kind, ModelErrorKind::RateLimit);
+    }
+
+    #[test]
+    fn normalize_model_error_context_overflow_wins_when_http_text_contains_token_count_429() {
+        let result =
+            normalize_model_error("HTTP 400: prompt is too long: 429 tokens > 200 maximum");
+        assert_eq!(result.kind, ModelErrorKind::ContextOverflow);
+    }
+
+    #[test]
+    fn normalize_model_error_detects_context_overflow_from_prompt_too_long() {
+        let result = normalize_model_error("prompt is too long: 277403 tokens > 200000 maximum");
+        assert_eq!(
+            serde_json::to_string(&result.kind).unwrap(),
+            r#""context_overflow""#
+        );
+    }
+
+    #[test]
+    fn normalize_model_error_detects_context_overflow_from_max_tokens_context_limit() {
+        let result = normalize_model_error(
+            "input length and `max_tokens` exceed context limit: 188059 + 20000 > 200000",
+        );
+        assert_eq!(
+            serde_json::to_string(&result.kind).unwrap(),
+            r#""context_overflow""#
+        );
+    }
+
+    #[test]
+    fn normalize_model_error_detects_invalid_token_budget_without_claiming_context() {
+        let result = normalize_model_error("max_tokens must be at least 1, got -1024");
+        assert_eq!(
+            serde_json::to_string(&result.kind).unwrap(),
+            r#""invalid_token_budget""#
+        );
+    }
+
+    #[test]
+    fn normalize_model_error_detects_media_size_errors() {
+        let result =
+            normalize_model_error("image exceeds 5 MB maximum: 5316852 bytes > 5242880 bytes");
+        assert_eq!(
+            serde_json::to_string(&result.kind).unwrap(),
+            r#""media_too_large""#
+        );
+    }
+
+    #[test]
+    fn normalize_model_error_keeps_tpm_413_as_rate_limit_not_context_overflow() {
+        let result = normalize_model_error("413 tokens per minute limit exceeded");
+        assert_eq!(result.kind, ModelErrorKind::RateLimit);
+    }
+
+    #[test]
+    fn model_error_copy_includes_invalid_token_budget_action() {
+        let result =
+            build_failed_connection_test_result("max_tokens must be at least 1, got -1024");
+
+        assert_eq!(result.title, "模型输出空间不足");
+        assert_eq!(
+            result.message,
+            "模型请求没有剩余空间生成回复。请减少当前会话上下文、压缩图片，或使用更大上下文的模型后重试。"
+        );
     }
 
     #[test]

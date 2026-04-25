@@ -12,6 +12,9 @@ pub(crate) enum RuntimeFailoverErrorKind {
     RateLimit,
     Timeout,
     Network,
+    ContextOverflow,
+    InvalidTokenBudget,
+    MediaTooLarge,
     DeferredTools,
     PolicyBlocked,
     MaxTurns,
@@ -201,6 +204,9 @@ fn runtime_failover_kind_from_key(key: &str) -> Option<RuntimeFailoverErrorKind>
         "rate_limit" => RuntimeFailoverErrorKind::RateLimit,
         "timeout" => RuntimeFailoverErrorKind::Timeout,
         "network" => RuntimeFailoverErrorKind::Network,
+        "context_overflow" => RuntimeFailoverErrorKind::ContextOverflow,
+        "invalid_token_budget" => RuntimeFailoverErrorKind::InvalidTokenBudget,
+        "media_too_large" => RuntimeFailoverErrorKind::MediaTooLarge,
         "deferred_tools" => RuntimeFailoverErrorKind::DeferredTools,
         "policy_blocked" => RuntimeFailoverErrorKind::PolicyBlocked,
         "max_turns" => RuntimeFailoverErrorKind::MaxTurns,
@@ -253,7 +259,6 @@ pub(crate) fn runtime_failover_error_kind_from_error_text(
     }
     if lower.contains("rate limit")
         || lower.contains("too many requests")
-        || lower.contains("429")
         || lower.contains("quota")
     {
         return RuntimeFailoverErrorKind::RateLimit;
@@ -276,6 +281,15 @@ pub(crate) fn runtime_failover_error_kind_from_error_text(
         crate::model_errors::ModelErrorKind::Billing => RuntimeFailoverErrorKind::Billing,
         crate::model_errors::ModelErrorKind::Auth => RuntimeFailoverErrorKind::Auth,
         crate::model_errors::ModelErrorKind::RateLimit => RuntimeFailoverErrorKind::RateLimit,
+        crate::model_errors::ModelErrorKind::ContextOverflow => {
+            RuntimeFailoverErrorKind::ContextOverflow
+        }
+        crate::model_errors::ModelErrorKind::InvalidTokenBudget => {
+            RuntimeFailoverErrorKind::InvalidTokenBudget
+        }
+        crate::model_errors::ModelErrorKind::MediaTooLarge => {
+            RuntimeFailoverErrorKind::MediaTooLarge
+        }
         crate::model_errors::ModelErrorKind::Timeout => RuntimeFailoverErrorKind::Timeout,
         crate::model_errors::ModelErrorKind::Network => RuntimeFailoverErrorKind::Network,
         crate::model_errors::ModelErrorKind::Unknown => RuntimeFailoverErrorKind::Unknown,
@@ -306,6 +320,9 @@ pub(crate) fn runtime_failover_error_kind_key(kind: RuntimeFailoverErrorKind) ->
         RuntimeFailoverErrorKind::RateLimit => "rate_limit",
         RuntimeFailoverErrorKind::Timeout => "timeout",
         RuntimeFailoverErrorKind::Network => "network",
+        RuntimeFailoverErrorKind::ContextOverflow => "context_overflow",
+        RuntimeFailoverErrorKind::InvalidTokenBudget => "invalid_token_budget",
+        RuntimeFailoverErrorKind::MediaTooLarge => "media_too_large",
         RuntimeFailoverErrorKind::DeferredTools => "deferred_tools",
         RuntimeFailoverErrorKind::PolicyBlocked => "policy_blocked",
         RuntimeFailoverErrorKind::MaxTurns => "max_turns",
@@ -651,5 +668,56 @@ mod tests {
             runtime_failover_error_kind_key(RuntimeFailoverErrorKind::LoopDetected),
             "loop_detected"
         );
+    }
+
+    #[test]
+    fn runtime_failover_error_kind_maps_invalid_token_budget() {
+        let kind =
+            runtime_failover_error_kind_from_error_text("max_tokens must be at least 1, got -1024");
+        assert_eq!(
+            runtime_failover_error_kind_key(kind),
+            "invalid_token_budget"
+        );
+        assert!(!runtime_should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn runtime_failover_error_kind_maps_context_overflow() {
+        let kind = runtime_failover_error_kind_from_error_text("context window exceeded");
+        assert_eq!(runtime_failover_error_kind_key(kind), "context_overflow");
+        assert!(!runtime_should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn runtime_failover_error_kind_context_overflow_wins_over_numeric_429_token_counts() {
+        let kind = runtime_failover_error_kind_from_error_text(
+            "prompt is too long: 429000 tokens > 200000 maximum",
+        );
+        assert_eq!(runtime_failover_error_kind_key(kind), "context_overflow");
+        assert!(!runtime_should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn runtime_failover_error_kind_maps_media_too_large() {
+        let kind = runtime_failover_error_kind_from_error_text("payload too large");
+        assert_eq!(runtime_failover_error_kind_key(kind), "media_too_large");
+        assert!(!runtime_should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn runtime_failover_error_kind_media_too_large_wins_over_numeric_429_byte_counts() {
+        let kind = runtime_failover_error_kind_from_error_text(
+            "image exceeds 5 MB maximum: 4290000 bytes > 5242880 bytes",
+        );
+        assert_eq!(runtime_failover_error_kind_key(kind), "media_too_large");
+        assert!(!runtime_should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn runtime_failover_error_kind_keeps_tpm_413_as_rate_limit() {
+        let kind =
+            runtime_failover_error_kind_from_error_text("413 tokens per minute limit exceeded");
+        assert_eq!(runtime_failover_error_kind_key(kind), "rate_limit");
+        assert!(runtime_should_retry_same_candidate(kind));
     }
 }

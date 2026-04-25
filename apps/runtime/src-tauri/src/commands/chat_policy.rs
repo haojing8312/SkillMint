@@ -101,6 +101,9 @@ pub(crate) enum ModelRouteErrorKind {
     RateLimit,
     Timeout,
     Network,
+    ContextOverflow,
+    InvalidTokenBudget,
+    MediaTooLarge,
     PolicyBlocked,
     MaxTurns,
     LoopDetected,
@@ -167,8 +170,6 @@ pub(crate) fn classify_model_route_error(error_message: &str) -> ModelRouteError
     }
     if lower.contains("rate limit")
         || lower.contains("too many requests")
-        || lower.contains("429")
-        || lower.contains("529")
         || lower.contains("overloaded_error")
         || lower.contains("high traffic detected")
         || lower.contains("quota")
@@ -193,6 +194,13 @@ pub(crate) fn classify_model_route_error(error_message: &str) -> ModelRouteError
         crate::model_errors::ModelErrorKind::Billing => ModelRouteErrorKind::Billing,
         crate::model_errors::ModelErrorKind::Auth => ModelRouteErrorKind::Auth,
         crate::model_errors::ModelErrorKind::RateLimit => ModelRouteErrorKind::RateLimit,
+        crate::model_errors::ModelErrorKind::ContextOverflow => {
+            ModelRouteErrorKind::ContextOverflow
+        }
+        crate::model_errors::ModelErrorKind::InvalidTokenBudget => {
+            ModelRouteErrorKind::InvalidTokenBudget
+        }
+        crate::model_errors::ModelErrorKind::MediaTooLarge => ModelRouteErrorKind::MediaTooLarge,
         crate::model_errors::ModelErrorKind::Timeout => ModelRouteErrorKind::Timeout,
         crate::model_errors::ModelErrorKind::Network => ModelRouteErrorKind::Network,
         crate::model_errors::ModelErrorKind::Unknown => ModelRouteErrorKind::Unknown,
@@ -244,6 +252,9 @@ pub(crate) fn model_route_error_kind_key(kind: ModelRouteErrorKind) -> &'static 
         ModelRouteErrorKind::RateLimit => "rate_limit",
         ModelRouteErrorKind::Timeout => "timeout",
         ModelRouteErrorKind::Network => "network",
+        ModelRouteErrorKind::ContextOverflow => "context_overflow",
+        ModelRouteErrorKind::InvalidTokenBudget => "invalid_token_budget",
+        ModelRouteErrorKind::MediaTooLarge => "media_too_large",
         ModelRouteErrorKind::PolicyBlocked => "policy_blocked",
         ModelRouteErrorKind::MaxTurns => "max_turns",
         ModelRouteErrorKind::LoopDetected => "loop_detected",
@@ -438,6 +449,49 @@ mod tests {
         assert_eq!(kind, ModelRouteErrorKind::Billing);
         assert_eq!(model_route_error_kind_key(kind), "billing");
         assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_uses_invalid_token_budget_key() {
+        let kind = classify_model_route_error("max_tokens must be at least 1, got -1024");
+        assert_eq!(model_route_error_kind_key(kind), "invalid_token_budget");
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_uses_context_overflow_key() {
+        let kind = classify_model_route_error("prompt is too long: 277403 tokens > 200000 maximum");
+        assert_eq!(model_route_error_kind_key(kind), "context_overflow");
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_context_overflow_wins_over_numeric_429_token_counts() {
+        let kind = classify_model_route_error("prompt is too long: 429000 tokens > 200000 maximum");
+        assert_eq!(model_route_error_kind_key(kind), "context_overflow");
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_uses_media_too_large_key() {
+        let kind = classify_model_route_error("image exceeds 5 MB maximum");
+        assert_eq!(model_route_error_kind_key(kind), "media_too_large");
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_media_too_large_wins_over_numeric_429_byte_counts() {
+        let kind =
+            classify_model_route_error("image exceeds 5 MB maximum: 4290000 bytes > 5242880 bytes");
+        assert_eq!(model_route_error_kind_key(kind), "media_too_large");
+        assert!(!should_retry_same_candidate(kind));
+    }
+
+    #[test]
+    fn classify_model_route_error_keeps_tpm_413_as_rate_limit() {
+        let kind = classify_model_route_error("413 tokens per minute limit exceeded");
+        assert_eq!(model_route_error_kind_key(kind), "rate_limit");
+        assert!(should_retry_same_candidate(kind));
     }
 
     #[test]
