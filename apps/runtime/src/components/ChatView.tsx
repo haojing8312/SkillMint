@@ -584,7 +584,13 @@ export function ChatView({
                   ? describeAttachmentCard(part)
                   : {
                       label: part.type === "pdf_file" ? "PDF 附件" : "文本附件",
-                      detail: part.truncated ? "已截断" : undefined,
+                      detail: part.mediaRef
+                        ? part.truncated
+                          ? "已保存 · 已截断"
+                          : "已保存"
+                        : part.truncated
+                          ? "已截断"
+                          : undefined,
                     };
 
               return (

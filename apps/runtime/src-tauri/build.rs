@@ -10,8 +10,10 @@ fn main() {
         // Headless examples and unit-test harnesses still link through Tauri/Wry on Windows.
         // Embed the common-controls v6 activation manifest so imports such as
         // TaskDialogIndirect resolve before the executable reaches main().
-        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        println!("cargo:rustc-link-arg={manifest_arg}");
+        println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg-tests={manifest_arg}");
+        println!("cargo:rustc-link-arg-examples=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg-examples={manifest_arg}");
 
         // Keep headless evals on the main thread for tao compatibility, but give
         // the real-regression examples a larger primary-thread stack for heavy scenarios.

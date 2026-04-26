@@ -1,8 +1,9 @@
 mod helpers;
 
 use base64::Engine;
+use runtime_lib::agent::{DocumentAnalyzeTool, Tool, ToolContext};
 use runtime_lib::commands::chat::{
-    normalize_send_message_parts_with_pool, SendMessagePart, SendMessageRequest,
+    SendMessagePart, SendMessageRequest, normalize_send_message_parts_with_pool,
 };
 use runtime_lib::commands::chat_attachment_policy::default_attachment_policy;
 use runtime_lib::commands::chat_attachment_resolution::resolve_attachment_input;
@@ -452,14 +453,15 @@ fn image_attachments_above_threshold_are_offloaded() {
     assert!(media_ref.starts_with("media://inbound/"));
 
     let media_id = media_ref.trim_start_matches("media://inbound/");
-    assert!(temp
-        .path()
-        .join("runtime-root")
-        .join("cache")
-        .join("chat-media")
-        .join("inbound")
-        .join(media_id)
-        .exists());
+    assert!(
+        temp.path()
+            .join("runtime-root")
+            .join("cache")
+            .join("chat-media")
+            .join("inbound")
+            .join(media_id)
+            .exists()
+    );
 }
 
 #[test]
@@ -686,6 +688,219 @@ fn attachment_parts_truncate_large_text_documents() {
 }
 
 #[test]
+fn large_text_documents_are_offloaded_with_bounded_preview() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let oversized_text = format!("{}TAIL_MARKER", "A".repeat(80_000));
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-doc-large-offload-1".to_string(),
+                kind: "document".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "huge.md".to_string(),
+                declared_mime_type: Some("text/markdown".to_string()),
+                size_bytes: Some(oversized_text.len()),
+                source_payload: Some(oversized_text.clone()),
+                source_uri: None,
+                extracted_text: None,
+                truncated: Some(false),
+            },
+        }],
+        runtime_root,
+    )
+    .expect("normalize oversized text attachment with media root");
+
+    assert_eq!(parts[0]["type"].as_str(), Some("file_text"));
+    assert_eq!(parts[0]["text"].as_str().expect("preview").len(), 16_000);
+    assert_eq!(parts[0]["truncated"].as_bool(), Some(true));
+    assert_eq!(parts[0]["previewChars"].as_u64(), Some(16_000));
+    let media_ref = parts[0]["mediaRef"].as_str().expect("media ref");
+    assert!(media_ref.starts_with("media://inbound/"));
+
+    let media_id = media_ref.trim_start_matches("media://inbound/");
+    let saved_text = fs::read_to_string(
+        temp.path()
+            .join("runtime-root")
+            .join("cache")
+            .join("chat-media")
+            .join("inbound")
+            .join(media_id),
+    )
+    .expect("saved media text");
+    assert_eq!(saved_text, oversized_text);
+}
+
+#[test]
+fn large_text_document_model_message_uses_preview_only() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let oversized_text = format!("{}TAIL_MARKER", "A".repeat(80_000));
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-doc-large-model-1".to_string(),
+                kind: "document".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "huge.md".to_string(),
+                declared_mime_type: Some("text/markdown".to_string()),
+                size_bytes: Some(oversized_text.len()),
+                source_payload: Some(oversized_text),
+                source_uri: None,
+                extracted_text: None,
+                truncated: Some(false),
+            },
+        }],
+        runtime_root.clone(),
+    )
+    .expect("normalize oversized text attachment with media root");
+
+    let message = runtime_lib::commands::chat::build_current_turn_message_with_runtime_root(
+        "openai",
+        &parts,
+        runtime_root,
+    )
+    .expect("build current turn")
+    .expect("message");
+    let content = message["content"].as_array().expect("content array");
+    let text = content[0]["text"].as_str().expect("text block");
+
+    assert!(text.contains("huge.md"));
+    assert!(text.contains("[内容已截断]"));
+    assert!(!text.contains("TAIL_MARKER"));
+    assert!(text.len() < 20_000);
+}
+
+#[test]
+fn large_pdf_extracted_text_is_offloaded_with_bounded_preview() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let extracted_text = format!("{}PDF_TAIL_MARKER", "P".repeat(80_000));
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-pdf-large-offload-1".to_string(),
+                kind: "document".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "brief.pdf".to_string(),
+                declared_mime_type: Some("application/pdf".to_string()),
+                size_bytes: Some(256_000),
+                source_payload: None,
+                source_uri: None,
+                extracted_text: Some(extracted_text.clone()),
+                truncated: Some(false),
+            },
+        }],
+        runtime_root,
+    )
+    .expect("normalize oversized pdf extracted text with media root");
+
+    assert_eq!(parts[0]["type"].as_str(), Some("pdf_file"));
+    assert_eq!(
+        parts[0]["extractedText"].as_str().expect("preview").len(),
+        16_000
+    );
+    assert_eq!(parts[0]["truncated"].as_bool(), Some(true));
+    assert_eq!(parts[0]["previewChars"].as_u64(), Some(16_000));
+    let media_ref = parts[0]["mediaRef"].as_str().expect("media ref");
+    assert!(media_ref.starts_with("media://inbound/"));
+
+    let media_id = media_ref.trim_start_matches("media://inbound/");
+    let saved_text = fs::read_to_string(
+        temp.path()
+            .join("runtime-root")
+            .join("cache")
+            .join("chat-media")
+            .join("inbound")
+            .join(media_id),
+    )
+    .expect("saved pdf extracted text");
+    assert_eq!(saved_text, extracted_text);
+}
+
+#[test]
+fn document_analyze_tool_rejects_unsafe_media_refs() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let tool = DocumentAnalyzeTool::with_runtime_root(temp.path().join("runtime-root"));
+
+    for media_ref in [
+        "media://inbound/../evil.md",
+        "media://other/id",
+        "media://inbound/a/b.md",
+    ] {
+        let error = tool
+            .execute(
+                json!({
+                    "mediaRef": media_ref,
+                    "analysisGoal": "summarize",
+                }),
+                &ToolContext::default(),
+            )
+            .expect_err("unsafe media ref should fail");
+        assert!(
+            error.to_string().contains("媒体引用"),
+            "unexpected error for {media_ref}: {error}"
+        );
+    }
+}
+
+#[test]
+fn document_analyze_tool_reads_saved_large_text_in_bounded_chunks() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let runtime_root = temp.path().join("runtime-root");
+    let full_text = format!(
+        "{}{}{}",
+        "甲".repeat(10_000),
+        "乙".repeat(10_000),
+        "丙".repeat(5_000)
+    );
+    let parts = runtime_lib::commands::chat::normalize_send_message_parts_with_runtime_root(
+        &[SendMessagePart::Attachment {
+            attachment: runtime_lib::commands::chat::AttachmentInput {
+                id: "att-doc-tool-large-1".to_string(),
+                kind: "document".to_string(),
+                source_type: "browser_file".to_string(),
+                name: "whole.md".to_string(),
+                declared_mime_type: Some("text/markdown".to_string()),
+                size_bytes: Some(full_text.len()),
+                source_payload: Some(full_text),
+                source_uri: None,
+                extracted_text: None,
+                truncated: Some(false),
+            },
+        }],
+        runtime_root.clone(),
+    )
+    .expect("normalize large text");
+    let media_ref = parts[0]["mediaRef"].as_str().expect("media ref");
+    let tool = DocumentAnalyzeTool::with_runtime_root(runtime_root);
+    let output = tool
+        .execute(
+            json!({
+                "mediaRef": media_ref,
+                "mimeType": "text/markdown",
+                "analysisGoal": "extract_structure",
+                "chunkChars": 1000,
+            }),
+            &ToolContext::default(),
+        )
+        .expect("document analyze output");
+    let parsed: serde_json::Value = serde_json::from_str(&output).expect("json output");
+    let details = &parsed["details"];
+
+    assert_eq!(details["chunkCount"].as_u64(), Some(25));
+    assert_eq!(details["totalChars"].as_u64(), Some(25_000));
+    assert_eq!(details["chunks"][0]["char_start"].as_u64(), Some(0));
+    assert_eq!(details["chunks"][0]["char_end"].as_u64(), Some(1000));
+    assert_eq!(
+        details["chunks"][0]["text"].as_str().expect("chunk text"),
+        "甲".repeat(1000)
+    );
+    assert_eq!(details["chunks"][24]["char_start"].as_u64(), Some(24_000));
+    assert_eq!(details["chunks"][24]["char_end"].as_u64(), Some(25_000));
+}
+
+#[test]
 fn attachment_parts_normalize_pdf_documents_to_legacy_pdf_parts() {
     let pdf_data =
         base64::engine::general_purpose::STANDARD.encode(build_minimal_pdf_with_text("Hello PDF"));
@@ -708,10 +923,12 @@ fn attachment_parts_normalize_pdf_documents_to_legacy_pdf_parts() {
 
     assert_eq!(parts[0]["type"].as_str(), Some("pdf_file"));
     assert_eq!(parts[0]["name"].as_str(), Some("brief.pdf"));
-    assert!(parts[0]["extractedText"]
-        .as_str()
-        .expect("extracted text")
-        .contains("Hello PDF"));
+    assert!(
+        parts[0]["extractedText"]
+            .as_str()
+            .expect("extracted text")
+            .contains("Hello PDF")
+    );
 }
 
 #[test]
@@ -768,11 +985,13 @@ fn attachment_parts_preserve_binary_document_inputs_as_unified_attachment_parts(
         parts[0]["attachment"]["summary"].as_str(),
         Some("EXTRACTION_REQUIRED")
     );
-    assert!(parts[0]["attachment"]["warnings"]
-        .as_array()
-        .expect("warnings")
-        .iter()
-        .any(|warning| warning.as_str() == Some("document_extraction_pending")));
+    assert!(
+        parts[0]["attachment"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str() == Some("document_extraction_pending"))
+    );
 }
 
 #[test]
@@ -800,10 +1019,12 @@ fn attachment_parts_extract_docx_documents_to_text_parts() {
         .expect("normalize docx attachment");
 
     assert_eq!(parts[0]["type"].as_str(), Some("file_text"));
-    assert!(parts[0]["text"]
-        .as_str()
-        .expect("text")
-        .contains("WorkClaw 文档内容"));
+    assert!(
+        parts[0]["text"]
+            .as_str()
+            .expect("text")
+            .contains("WorkClaw 文档内容")
+    );
 }
 
 #[test]
@@ -1201,10 +1422,12 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
     assert_eq!(audio.kind, "audio");
     assert_eq!(audio.resolved_mime_type, "audio/mpeg");
     assert_eq!(audio.transcript.as_deref(), Some("TRANSCRIPTION_REQUIRED"));
-    assert!(audio
-        .warnings
-        .iter()
-        .any(|warning| warning == "transcription_pending"));
+    assert!(
+        audio
+            .warnings
+            .iter()
+            .any(|warning| warning == "transcription_pending")
+    );
 
     let video = resolve_attachment_input(
         &default_attachment_policy(),
@@ -1222,10 +1445,12 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
     assert_eq!(video.kind, "video");
     assert_eq!(video.resolved_mime_type, "video/mp4");
     assert_eq!(video.summary.as_deref(), Some("SUMMARY_REQUIRED"));
-    assert!(video
-        .warnings
-        .iter()
-        .any(|warning| warning == "summary_pending"));
+    assert!(
+        video
+            .warnings
+            .iter()
+            .any(|warning| warning == "summary_pending")
+    );
 
     let no_audio_video = resolve_attachment_input(
         &default_attachment_policy(),
@@ -1247,10 +1472,12 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
         no_audio_video.summary.as_deref(),
         Some("VIDEO_NO_AUDIO_TRACK")
     );
-    assert!(no_audio_video
-        .warnings
-        .iter()
-        .any(|warning| warning == "video_no_audio_track"));
+    assert!(
+        no_audio_video
+            .warnings
+            .iter()
+            .any(|warning| warning == "video_no_audio_track")
+    );
 
     let binary_document = resolve_attachment_input(
         &default_attachment_policy(),
@@ -1270,10 +1497,12 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
         binary_document.summary.as_deref(),
         Some("EXTRACTION_REQUIRED")
     );
-    assert!(binary_document
-        .warnings
-        .iter()
-        .any(|warning| warning == "document_extraction_pending"));
+    assert!(
+        binary_document
+            .warnings
+            .iter()
+            .any(|warning| warning == "document_extraction_pending")
+    );
 }
 
 #[tokio::test]
@@ -1406,11 +1635,13 @@ async fn async_normalize_send_message_parts_keeps_pending_audio_without_audio_ro
         parts[0]["attachment"]["transcript"].as_str(),
         Some("TRANSCRIPTION_REQUIRED")
     );
-    assert!(parts[0]["attachment"]["warnings"]
-        .as_array()
-        .expect("warnings")
-        .iter()
-        .any(|warning| warning.as_str() == Some("transcription_pending")));
+    assert!(
+        parts[0]["attachment"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str() == Some("transcription_pending"))
+    );
 }
 
 #[tokio::test]
@@ -1515,11 +1746,13 @@ async fn async_normalize_send_message_parts_marks_video_without_audio_track_expl
         parts[0]["attachment"]["summary"].as_str(),
         Some("VIDEO_NO_AUDIO_TRACK")
     );
-    assert!(parts[0]["attachment"]["warnings"]
-        .as_array()
-        .expect("warnings")
-        .iter()
-        .any(|warning| warning.as_str() == Some("video_no_audio_track")));
+    assert!(
+        parts[0]["attachment"]["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str() == Some("video_no_audio_track"))
+    );
 }
 
 #[tokio::test]

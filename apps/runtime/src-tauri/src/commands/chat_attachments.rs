@@ -28,6 +28,7 @@ const VIDEO_AUDIO_EXTRACTION_UNAVAILABLE: &str = "VIDEO_AUDIO_EXTRACTION_UNAVAIL
 const VIDEO_AUDIO_EXTRACTION_FAILED: &str = "VIDEO_AUDIO_EXTRACTION_FAILED";
 const VIDEO_VISUAL_SUMMARY_PROMPT: &str = "请基于这些视频关键帧，用简洁中文总结视频里正在发生的事情、主要对象和场景。若信息有限，请明确说明。";
 const IMAGE_OFFLOAD_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
+const TEXT_ATTACHMENT_MODEL_PREVIEW_CHARS: usize = 16_000;
 
 pub(crate) fn normalize_message_parts(parts: &[SendMessagePart]) -> Result<Vec<Value>, String> {
     let policy = default_attachment_policy();
@@ -1137,7 +1138,12 @@ fn normalize_resolved_attachment(
                 "data": data,
             }))
         }
-        "document" => normalize_resolved_document_attachment(policy, attachment),
+        "document" => normalize_resolved_document_attachment(
+            policy,
+            attachment,
+            runtime_paths,
+            saved_media_refs,
+        ),
         "audio" | "video" => Ok(json!({
             "type": "attachment",
             "attachment": {
@@ -1159,6 +1165,8 @@ fn normalize_resolved_attachment(
 fn normalize_resolved_document_attachment(
     policy: &super::chat_attachment_policy::AttachmentPolicy,
     attachment: &ResolvedAttachment,
+    runtime_paths: Option<&RuntimePaths>,
+    saved_media_refs: &mut Vec<String>,
 ) -> Result<Value, String> {
     if attachment.is_pdf {
         let (extracted_text, truncated) =
@@ -1172,14 +1180,13 @@ fn normalize_resolved_document_attachment(
                 extract_pdf_text(data, policy.document.max_extracted_text_chars)
                     .map_err(|err| format!("PDF 文件 {} 解析失败: {err}", attachment.name))?
             };
-        return Ok(json!({
-            "type": "pdf_file",
-            "name": attachment.name,
-            "mimeType": attachment.resolved_mime_type,
-            "size": attachment.size_bytes.unwrap_or(0),
-            "extractedText": extracted_text,
-            "truncated": truncated,
-        }));
+        return normalize_pdf_file_part(
+            attachment,
+            &extracted_text,
+            attachment.truncated || truncated,
+            runtime_paths,
+            saved_media_refs,
+        );
     }
 
     if !attachment_is_text_document(&AttachmentInput {
@@ -1201,14 +1208,13 @@ fn normalize_resolved_document_attachment(
                 &attachment.name,
                 policy.document.max_extracted_text_chars,
             )? {
-                return Ok(json!({
-                    "type": "file_text",
-                    "name": attachment.name,
-                    "mimeType": attachment.resolved_mime_type,
-                    "size": attachment.size_bytes.unwrap_or(0),
-                    "text": extracted_text,
-                    "truncated": truncated,
-                }));
+                return normalize_file_text_part(
+                    attachment,
+                    &extracted_text,
+                    attachment.truncated || truncated,
+                    runtime_paths,
+                    saved_media_refs,
+                );
             }
         }
         return Ok(json!({
@@ -1238,13 +1244,89 @@ fn normalize_resolved_document_attachment(
         })?;
     let (text, text_truncated) =
         truncate_plain_text_excerpt(text, policy.document.max_extracted_text_chars);
-    let truncated = attachment.truncated || text_truncated;
+    normalize_file_text_part(
+        attachment,
+        &text,
+        attachment.truncated || text_truncated,
+        runtime_paths,
+        saved_media_refs,
+    )
+}
+
+fn normalize_file_text_part(
+    attachment: &ResolvedAttachment,
+    text: &str,
+    truncated: bool,
+    runtime_paths: Option<&RuntimePaths>,
+    saved_media_refs: &mut Vec<String>,
+) -> Result<Value, String> {
+    let (model_text, model_truncated) =
+        truncate_plain_text_excerpt(text, TEXT_ATTACHMENT_MODEL_PREVIEW_CHARS);
+    if let Some(runtime_paths) = runtime_paths.filter(|_| model_truncated) {
+        let saved = save_inbound_media(
+            runtime_paths,
+            text.as_bytes(),
+            &attachment.resolved_mime_type,
+            &attachment.name,
+        )?;
+        saved_media_refs.push(saved.media_ref.clone());
+        return Ok(json!({
+            "type": "file_text",
+            "name": attachment.name,
+            "mimeType": attachment.resolved_mime_type,
+            "size": attachment.size_bytes.unwrap_or(saved.size_bytes),
+            "text": model_text,
+            "truncated": true,
+            "mediaRef": saved.media_ref,
+            "previewChars": model_text.chars().count(),
+        }));
+    }
+
     Ok(json!({
         "type": "file_text",
         "name": attachment.name,
         "mimeType": attachment.resolved_mime_type,
         "size": attachment.size_bytes.unwrap_or(0),
         "text": text,
+        "truncated": truncated,
+    }))
+}
+
+fn normalize_pdf_file_part(
+    attachment: &ResolvedAttachment,
+    extracted_text: &str,
+    truncated: bool,
+    runtime_paths: Option<&RuntimePaths>,
+    saved_media_refs: &mut Vec<String>,
+) -> Result<Value, String> {
+    let (model_text, model_truncated) =
+        truncate_plain_text_excerpt(extracted_text, TEXT_ATTACHMENT_MODEL_PREVIEW_CHARS);
+    if let Some(runtime_paths) = runtime_paths.filter(|_| model_truncated) {
+        let saved = save_inbound_media(
+            runtime_paths,
+            extracted_text.as_bytes(),
+            "text/plain",
+            &format!("{}.txt", attachment.name),
+        )?;
+        saved_media_refs.push(saved.media_ref.clone());
+        return Ok(json!({
+            "type": "pdf_file",
+            "name": attachment.name,
+            "mimeType": attachment.resolved_mime_type,
+            "size": attachment.size_bytes.unwrap_or(0),
+            "extractedText": model_text,
+            "truncated": true,
+            "mediaRef": saved.media_ref,
+            "previewChars": model_text.chars().count(),
+        }));
+    }
+
+    Ok(json!({
+        "type": "pdf_file",
+        "name": attachment.name,
+        "mimeType": attachment.resolved_mime_type,
+        "size": attachment.size_bytes.unwrap_or(0),
+        "extractedText": extracted_text,
         "truncated": truncated,
     }))
 }

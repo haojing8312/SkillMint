@@ -1151,6 +1151,7 @@ export interface AttachmentInput {
   sourceUri?: string;
   mediaRef?: string;
   extractedText?: string;
+  previewChars?: number;
   transcript?: string;
   summary?: string;
   warnings?: string[];
@@ -1228,7 +1229,8 @@ export type ChatMessagePart =
       name: string;
       mimeType: string;
       size: number;
-      data: string;
+      data?: string;
+      mediaRef?: string;
     }
   | {
       type: "file_text";
@@ -1237,6 +1239,8 @@ export type ChatMessagePart =
       size: number;
       text: string;
       truncated?: boolean;
+      mediaRef?: string;
+      previewChars?: number;
     }
   | {
       type: "pdf_file";
@@ -1246,6 +1250,8 @@ export type ChatMessagePart =
       data?: string;
       extractedText?: string;
       truncated?: boolean;
+      mediaRef?: string;
+      previewChars?: number;
     };
 
 export interface SendMessageRequest {

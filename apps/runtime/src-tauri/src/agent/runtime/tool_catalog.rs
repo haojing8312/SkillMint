@@ -1,5 +1,5 @@
-use crate::agent::tool_manifest::{ToolCategory, ToolSource};
 use crate::agent::ToolManifestEntry;
+use crate::agent::tool_manifest::{ToolCategory, ToolSource};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -194,7 +194,7 @@ pub(crate) fn discover_tool_candidates(
     let mut hits = entries
         .iter()
         .filter_map(|entry| {
-            let detail = score_tool_match(entry, &tokens);
+            let detail = score_tool_match(entry, query, &tokens);
             (detail.score > 0).then(|| ToolCatalogSearchHit {
                 name: entry.name.clone(),
                 category: entry.category,
@@ -241,7 +241,7 @@ struct ToolMatchDetail {
     matched_fields: Vec<String>,
 }
 
-fn score_tool_match(entry: &ToolManifestEntry, tokens: &[String]) -> ToolMatchDetail {
+fn score_tool_match(entry: &ToolManifestEntry, query: &str, tokens: &[String]) -> ToolMatchDetail {
     let name = entry.name.to_ascii_lowercase();
     let display_name = entry.display_name.to_ascii_lowercase();
     let description = entry.description.to_ascii_lowercase();
@@ -249,6 +249,12 @@ fn score_tool_match(entry: &ToolManifestEntry, tokens: &[String]) -> ToolMatchDe
     let source = source_label(entry.source).to_ascii_lowercase();
     let mut detail = ToolMatchDetail::default();
     let category_hints = infer_category_hints(tokens);
+
+    if name == "document_analyze" && is_full_document_analysis_query(query) {
+        detail.score += 20_000;
+        push_unique(&mut detail.matched_fields, "document_analysis_intent");
+        push_unique(&mut detail.matched_terms, "full_document_analysis");
+    }
 
     for token in tokens {
         let mut matched = false;
@@ -292,6 +298,48 @@ fn score_tool_match(entry: &ToolManifestEntry, tokens: &[String]) -> ToolMatchDe
     }
 
     detail
+}
+
+fn is_full_document_analysis_query(query: &str) -> bool {
+    let normalized = query.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let mentions_document = [
+        "文档", "文件", "全文", "整篇", "整个", "完整", "markdown", "md", "pdf", "document",
+        "file", "whole", "entire", "full",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let asks_for_analysis = [
+        "分析",
+        "总结",
+        "整理",
+        "提取",
+        "章节",
+        "结构",
+        "问题",
+        "建议",
+        "回答",
+        "analyze",
+        "analyse",
+        "summarize",
+        "summary",
+        "extract",
+        "structure",
+        "sections",
+        "answer",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let asks_for_full_scope = [
+        "完整", "全文", "整篇", "整个", "全部", "所有", "whole", "entire", "full", "all",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+
+    mentions_document && asks_for_analysis && asks_for_full_scope
 }
 
 fn infer_category_hints(tokens: &[String]) -> Vec<ToolCategory> {
@@ -371,12 +419,12 @@ fn source_label(source: ToolSource) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_tool_candidate_records, discover_tool_candidates, format_tool_candidate_hints,
-        format_tool_candidate_record_hints, format_tool_discovery_index, summarize_tool_catalog,
-        ToolDiscoveryCandidateRecord, ToolRecommendationStage,
+        ToolDiscoveryCandidateRecord, ToolRecommendationStage, build_tool_candidate_records,
+        discover_tool_candidates, format_tool_candidate_hints, format_tool_candidate_record_hints,
+        format_tool_discovery_index, summarize_tool_catalog,
     };
-    use crate::agent::tool_manifest::{ToolCategory, ToolMetadata, ToolSource};
     use crate::agent::ToolManifestEntry;
+    use crate::agent::tool_manifest::{ToolCategory, ToolMetadata, ToolSource};
 
     fn entry(
         name: &str,
@@ -456,10 +504,11 @@ mod tests {
             Some("browser_launch")
         );
         assert!(!hits.is_empty());
-        assert!(hits
-            .first()
-            .map(|hit| hit.matched_fields.contains(&"name".to_string()))
-            .unwrap_or(false));
+        assert!(
+            hits.first()
+                .map(|hit| hit.matched_fields.contains(&"name".to_string()))
+                .unwrap_or(false)
+        );
         assert_eq!(
             hits.first().map(|hit| hit.stage),
             Some(ToolRecommendationStage::Primary)
@@ -618,9 +667,49 @@ mod tests {
             hits.first().map(|hit| hit.name.as_str()),
             Some("web_search")
         );
-        assert!(hits[0]
-            .matched_fields
-            .contains(&"intent_category".to_string()));
+        assert!(
+            hits[0]
+                .matched_fields
+                .contains(&"intent_category".to_string())
+        );
+    }
+
+    #[test]
+    fn discover_tool_candidates_prefers_document_analyze_for_full_document_intent() {
+        let entries = vec![
+            entry(
+                "read_file",
+                "Read file",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+            entry(
+                "document_analyze",
+                "Read a claim-checked large document by mediaRef and return bounded chunks",
+                ToolCategory::File,
+                ToolSource::Runtime,
+            ),
+            entry(
+                "vision_analyze",
+                "Analyze workspace images",
+                ToolCategory::Other,
+                ToolSource::Runtime,
+            ),
+        ];
+
+        let hits =
+            discover_tool_candidates(&entries, "请完整分析这个 Markdown 文件并整理章节和建议", 3);
+
+        assert_eq!(
+            hits.first().map(|hit| hit.name.as_str()),
+            Some("document_analyze")
+        );
+        assert!(
+            hits[0]
+                .matched_fields
+                .contains(&"document_analysis_intent".to_string())
+        );
+        assert_eq!(hits[0].stage, ToolRecommendationStage::Primary);
     }
 
     #[test]
@@ -672,9 +761,10 @@ mod tests {
 
         let hits = discover_tool_candidates(&entries, "file read write edit list", 7);
 
-        assert!(hits
-            .iter()
-            .any(|hit| hit.stage == ToolRecommendationStage::Fallback));
+        assert!(
+            hits.iter()
+                .any(|hit| hit.stage == ToolRecommendationStage::Fallback)
+        );
     }
 
     #[test]

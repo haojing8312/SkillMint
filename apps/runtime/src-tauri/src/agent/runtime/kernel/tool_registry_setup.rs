@@ -2,15 +2,17 @@ use crate::agent::runtime::events::{AskUserState, SearchCacheState};
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::tools::search_providers::create_provider;
 use crate::agent::tools::{
-    browser_compat::register_browser_compat_tool, browser_tools::register_browser_tools,
-    register_tool_alias, AskUserTool, BashKillTool, BashOutputTool, BashTool, ClawhubRecommendTool,
-    ClawhubSearchTool, CompactTool, EmployeeManageTool, ExecTool, GithubRepoDownloadTool,
+    AskUserTool, BashKillTool, BashOutputTool, BashTool, ClawhubRecommendTool, ClawhubSearchTool,
+    CompactTool, DocumentAnalyzeTool, EmployeeManageTool, ExecTool, GithubRepoDownloadTool,
     MemoryTool, ProcessManager, SkillInvokeTool, TaskTool, VisionAnalyzeTool, WebSearchTool,
+    browser_compat::register_browser_compat_tool, browser_tools::register_browser_tools,
+    register_tool_alias,
 };
 use crate::agent::{AgentExecutor, Tool, ToolContext, ToolRegistry};
+use crate::runtime_environment::runtime_paths_from_app;
 use crate::session_journal::SessionJournalStateHandle;
 use runtime_chat_app::{ChatExecutionGuidance, ChatExecutionPreparationService};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -340,6 +342,11 @@ pub(crate) async fn setup_runtime_tool_registry(
         .agent_executor
         .registry()
         .register(Arc::new(VisionAnalyzeTool::new(params.db.clone())));
+    let runtime_paths = runtime_paths_from_app(params.app)?;
+    params
+        .agent_executor
+        .registry()
+        .register(Arc::new(DocumentAnalyzeTool::new(runtime_paths)));
 
     let search_cache = params.app.state::<SearchCacheState>().0.clone();
     let mut runtime_notes = Vec::new();
