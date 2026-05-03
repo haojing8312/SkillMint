@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { normalizePendingAttachmentsFromBrowserFiles } from "../../lib/pendingAttachmentIntake";
 import type { PendingAttachment } from "../../types";
@@ -19,8 +19,10 @@ export function useChatDraftState({
   const [input, setInput] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([]);
   const [composerError, setComposerError] = useState<string | null>(null);
+  const [isAddingFiles, setIsAddingFiles] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const seededInitialAttachmentsSessionRef = useRef<string | null>(null);
+  const pendingAttachmentIntakeCountRef = useRef(0);
 
   const syncComposerHeight = () => {
     const el = textareaRef.current;
@@ -53,6 +55,8 @@ export function useChatDraftState({
     if (files.length === 0) {
       return;
     }
+    pendingAttachmentIntakeCountRef.current += 1;
+    setIsAddingFiles(true);
     try {
       const { accepted, rejectionMessage } = await normalizePendingAttachmentsFromBrowserFiles({
         files,
@@ -67,8 +71,15 @@ export function useChatDraftState({
     } catch (error) {
       console.error("处理附件失败:", error);
       setComposerError("附件读取失败，请重试");
+    } finally {
+      pendingAttachmentIntakeCountRef.current = Math.max(0, pendingAttachmentIntakeCountRef.current - 1);
+      if (pendingAttachmentIntakeCountRef.current === 0) {
+        setIsAddingFiles(false);
+      }
     }
   };
+
+  const hasPendingAttachmentIntake = useCallback(() => pendingAttachmentIntakeCountRef.current > 0, []);
 
   const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -97,9 +108,11 @@ export function useChatDraftState({
     attachedFiles,
     composerError,
     setComposerError,
+    isAddingFiles,
     textareaRef,
     handleComposerInputChange,
     addFiles,
+    hasPendingAttachmentIntake,
     handleFileSelect,
     removeAttachedFile,
     clearComposerState,

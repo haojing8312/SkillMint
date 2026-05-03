@@ -10,6 +10,7 @@ type ChatComposerProps = {
   streaming: boolean;
   sendContent: (request: string) => Promise<void> | void;
   attachedFiles: PendingAttachment[];
+  isAddingFiles: boolean;
   onFilesAdd: (files: File[]) => Promise<void> | void;
   onFileSelect: (event: ChangeEvent<HTMLInputElement>) => void;
   composerError: string | null;
@@ -30,6 +31,7 @@ function ChatComposerImpl({
   streaming,
   sendContent,
   attachedFiles,
+  isAddingFiles,
   onFilesAdd,
   onFileSelect,
   composerError,
@@ -251,7 +253,7 @@ function ChatComposerImpl({
               ) : (
                 <button
                   onClick={onSubmit}
-                  disabled={!input.trim() && attachedFiles.length === 0}
+                  disabled={isAddingFiles || (!input.trim() && attachedFiles.length === 0)}
                   className="sm-btn sm-btn-primary h-8 gap-1.5 rounded-lg px-3 text-xs disabled:bg-[var(--sm-surface-muted)] disabled:text-[var(--sm-text-muted)]"
                 >
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -277,6 +279,7 @@ export const ChatComposer = memo(ChatComposerImpl, (prev, next) => {
     prev.displayWorkDirLabel === next.displayWorkDirLabel &&
     prev.currentModel?.id === next.currentModel?.id &&
     prev.quickPrompts === next.quickPrompts &&
-    prev.attachedFiles === next.attachedFiles
+    prev.attachedFiles === next.attachedFiles &&
+    prev.isAddingFiles === next.isAddingFiles
   );
 });

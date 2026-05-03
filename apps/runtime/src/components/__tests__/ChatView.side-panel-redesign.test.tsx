@@ -698,6 +698,70 @@ describe("ChatView side panel redesign", () => {
     expect(screen.getByText("图片")).toBeInTheDocument();
   });
 
+  test("does not send while pasted attachment intake is still pending", async () => {
+    renderEmptyChat();
+
+    const textarea = screen.getByPlaceholderText("输入消息，Shift+Enter 换行...");
+    fireEvent.change(textarea, { target: { value: "请分析附件" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "发送" })).not.toBeDisabled();
+    });
+
+    let resolveText!: (value: string) => void;
+    const pastedFile = new File(["delayed notes"], "delayed.md", { type: "text/markdown" });
+    Object.defineProperty(pastedFile, "text", {
+      configurable: true,
+      value: vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveText = resolve;
+          }),
+      ),
+    });
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [pastedFile],
+        items: [],
+      },
+    });
+
+    const sendButton = screen.getByRole("button", { name: "发送" });
+    expect(sendButton).toBeDisabled();
+    fireEvent.click(sendButton);
+
+    expect(invokeMock).not.toHaveBeenCalledWith("send_message", expect.anything());
+
+    resolveText("delayed notes");
+    expect(await screen.findByText("delayed.md")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "发送" })).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("send_message", {
+        request: {
+          sessionId: "session-side-panel-redesign",
+          parts: [
+            {
+              type: "text",
+              text: "请分析附件",
+            },
+            expect.objectContaining({
+              type: "attachment",
+              attachment: expect.objectContaining({
+                name: "delayed.md",
+                sourcePayload: "delayed notes",
+              }),
+            }),
+          ],
+        },
+      });
+    });
+  });
+
   test("shows pdf attachment previews", async () => {
     renderEmptyChat();
 

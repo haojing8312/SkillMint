@@ -141,6 +141,26 @@ fn decision_asks_for_destructive_bash() {
 }
 
 #[test]
+fn decision_asks_for_exec_tool() {
+    let decision = tool_permission_decision(
+        PermissionMode::AcceptEdits,
+        "exec",
+        &json!({
+            "command": "pwd"
+        }),
+        None,
+    );
+
+    assert_eq!(decision.action, ToolPermissionAction::Ask);
+    assert!(decision
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("exec"));
+    assert!(decision.fingerprint.is_some());
+}
+
+#[test]
 fn decision_asks_for_file_delete() {
     let decision = tool_permission_decision(
         PermissionMode::AcceptEdits,

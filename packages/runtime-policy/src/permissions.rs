@@ -49,6 +49,7 @@ impl Default for PermissionMode {
 pub fn classify_action_risk(tool_name: &str, input: &Value, work_dir: Option<&Path>) -> ActionRisk {
     match normalize_tool_name(tool_name).as_str() {
         "file_delete" => ActionRisk::Critical,
+        "exec" => ActionRisk::Critical,
         "write_file" => classify_write_risk(input, work_dir),
         "edit" => classify_edit_risk(input, work_dir),
         "bash" => classify_bash_risk(input),
@@ -125,6 +126,26 @@ pub fn approval_rule_fingerprint(tool_name: &str, input: &Value) -> Option<Strin
             Some(
                 json!({
                     "tool": "bash",
+                    "command": command,
+                })
+                .to_string(),
+            )
+        }
+        "exec" => {
+            let command = input
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase();
+            if command.is_empty() {
+                return None;
+            }
+            Some(
+                json!({
+                    "tool": "exec",
                     "command": command,
                 })
                 .to_string(),

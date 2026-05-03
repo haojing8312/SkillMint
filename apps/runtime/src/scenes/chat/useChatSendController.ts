@@ -28,6 +28,7 @@ type UseChatSendControllerArgs = {
   shouldGrantContinuationBudget: (request: SendMessageRequest) => boolean;
   continuationBudgetIncrement: number;
   handleLocalSendRequest?: (request: SendMessageRequest) => Promise<LocalChatCommandResult>;
+  hasPendingAttachmentIntake?: () => boolean;
 };
 
 export function buildDefaultAttachmentPrompt(attachments: PendingAttachment[]): string {
@@ -269,10 +270,15 @@ export function useChatSendController({
   shouldGrantContinuationBudget,
   continuationBudgetIncrement,
   handleLocalSendRequest,
+  hasPendingAttachmentIntake,
 }: UseChatSendControllerArgs) {
   const sendContent = useCallback(
     async (request: SendMessageRequest | string) => {
       if (streaming || !sessionId) return;
+      if (hasPendingAttachmentIntake?.()) {
+        setComposerError("附件仍在读取中，请稍后发送");
+        return;
+      }
 
       const normalizedRequest: SendMessageRequest =
         typeof request === "string"
@@ -359,6 +365,7 @@ export function useChatSendController({
       shouldGrantContinuationBudget,
       streaming,
       handleLocalSendRequest,
+      hasPendingAttachmentIntake,
     ],
   );
 

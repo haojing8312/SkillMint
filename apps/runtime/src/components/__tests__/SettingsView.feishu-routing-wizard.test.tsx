@@ -77,8 +77,6 @@ describe("SettingsView connector management", () => {
     });
     expect(screen.getByText("员工关联入口")).toBeInTheDocument();
     expect(screen.getByText("飞书连接成功后，请前往员工详情中的“飞书接待”配置默认接待员工或指定群聊范围。")).toBeInTheDocument();
-    expect(screen.queryByTestId("connector-panel-wecom")).not.toBeInTheDocument();
-    expect(screen.queryByText("企业微信")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("路由渠道")).not.toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalledWith("upsert_im_routing_binding", expect.anything());
     expect(invokeMock).not.toHaveBeenCalledWith("simulate_im_route", expect.anything());

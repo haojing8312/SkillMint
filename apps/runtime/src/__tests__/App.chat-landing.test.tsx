@@ -450,11 +450,13 @@ describe("App chat landing", () => {
       expect(screen.getByTestId("chat-view-session-id")).toHaveTextContent("session-step-gongbu-1");
     });
 
-    expect(chatViewPropsSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        skill: expect.objectContaining({ id: "skill-gongbu" }),
-      }),
-    );
+    await waitFor(() => {
+      expect(chatViewPropsSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          skill: expect.objectContaining({ id: "skill-gongbu" }),
+        }),
+      );
+    });
     expect(screen.queryByTestId("new-session-landing")).not.toBeInTheDocument();
   });
 

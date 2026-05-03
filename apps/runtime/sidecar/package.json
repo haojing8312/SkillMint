@@ -14,10 +14,10 @@
     "sanitize:wecom-captures": "node scripts/sanitize-wecom-captures.mjs"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.0",
-    "@larksuiteoapi/node-sdk": "^1.59.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "hono": "^4.0.0",
+    "@hono/node-server": "^2.0.1",
+    "@larksuiteoapi/node-sdk": "^1.62.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "hono": "^4.12.16",
     "playwright": "^1.40.0"
   },
   "devDependencies": {

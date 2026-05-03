@@ -45,5 +45,11 @@
   },
   "devDependencies": {
     "turbo": "^2.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "path-to-regexp": ">=8.4.0",
+      "protobufjs": ">=7.5.5"
+    }
   }
 }

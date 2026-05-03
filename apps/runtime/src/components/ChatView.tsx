@@ -205,9 +205,11 @@ export function ChatView({
     attachedFiles,
     composerError,
     setComposerError,
+    isAddingFiles,
     textareaRef,
     handleComposerInputChange,
     addFiles,
+    hasPendingAttachmentIntake,
     handleFileSelect,
     removeAttachedFile,
     clearComposerState,
@@ -792,6 +794,7 @@ export function ChatView({
     shouldGrantContinuationBudget,
     continuationBudgetIncrement: CONTINUE_BUDGET_INCREMENT,
     handleLocalSendRequest,
+    hasPendingAttachmentIntake,
   });
   useEffect(() => {
     const msg = initialMessage?.trim();
@@ -1376,6 +1379,7 @@ export function ChatView({
           streaming={streaming}
           sendContent={sendContent}
           attachedFiles={attachedFiles}
+          isAddingFiles={isAddingFiles}
           onFilesAdd={addFiles}
           onFileSelect={handleFileSelect}
           composerError={composerError}

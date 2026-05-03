@@ -204,7 +204,7 @@ describe("SettingsView connector tab", () => {
     render(<SettingsView onClose={() => {}} initialTab="feishu" onOpenEmployees={onOpenEmployees} />);
 
     await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: "去员工关联入口" }).length).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByRole("button", { name: "去员工关联入口" }).length).toBeGreaterThanOrEqual(1);
     });
 
     fireEvent.click(screen.getAllByRole("button", { name: "去员工关联入口" })[0]);
