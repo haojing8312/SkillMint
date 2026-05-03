@@ -247,6 +247,9 @@ export function buildDoctorReport(input) {
         ),
   );
 
+  const hasInstalledMsvc = Boolean(
+    input.visualStudio?.hasStable && input.windowsSdk?.present && input.msvcTools?.present,
+  );
   findings.push(
     (input.linkPaths || []).length > 0
       ? makeFinding("link", "pass", "link.exe is discoverable.", "No action required.")
@@ -254,7 +257,9 @@ export function buildDoctorReport(input) {
           "link",
           "fail",
           "link.exe is not discoverable from the current shell.",
-          "Install Visual Studio 2022 Build Tools with Desktop development with C++ and open a fresh terminal.",
+          hasInstalledMsvc
+            ? "Open an x64 Native Tools Command Prompt for VS 2022, or run VsDevCmd.bat in this shell, then retry."
+            : "Install Visual Studio 2022 Build Tools with Desktop development with C++ and open a fresh terminal.",
         ),
   );
 

@@ -7,6 +7,22 @@ const projectRoot = process.cwd();
 const packageJsonPath = path.join(projectRoot, "package.json");
 const isolatedRunnerPath = path.join(projectRoot, "scripts", "run-cargo-isolated.mjs");
 const rustFastScriptPath = path.join(projectRoot, "scripts", "test-rust-fast.mjs");
+const groupRunRegressionPath = path.join(
+  projectRoot,
+  "apps",
+  "runtime",
+  "src-tauri",
+  "examples",
+  "employee_group_run_regression.rs",
+);
+const employeeImRegressionPath = path.join(
+  projectRoot,
+  "apps",
+  "runtime",
+  "src-tauri",
+  "examples",
+  "employee_im_heavy_regression.rs",
+);
 
 test("root package exposes fast and isolated rust validation entrypoints", () => {
   const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
@@ -75,4 +91,20 @@ test("isolated cargo helper writes targets outside package directories", () => {
     /src-tauri[\\/]+target-/i,
     "Isolated helper must not write temporary target dirs inside the src-tauri package",
   );
+});
+
+test("employee regression examples import src-tauri test helpers from the examples directory", () => {
+  for (const examplePath of [groupRunRegressionPath, employeeImRegressionPath]) {
+    const source = readFileSync(examplePath, "utf8");
+    assert.match(
+      source,
+      /#\[path = "\.\.\/tests\/helpers\/mod\.rs"\]/,
+      `${path.relative(projectRoot, examplePath)} should reference src-tauri/tests/helpers from examples/`,
+    );
+    assert.doesNotMatch(
+      source,
+      /#\[path = "\.\.\/\.\.\/tests\/helpers\/mod\.rs"\]/,
+      `${path.relative(projectRoot, examplePath)} should not point outside src-tauri`,
+    );
+  }
 });

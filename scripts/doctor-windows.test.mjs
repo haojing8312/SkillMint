@@ -42,6 +42,27 @@ test("missing link.exe is a blocking finding", () => {
   assert.ok(report.findings.some((finding) => finding.id === "link" && finding.severity === "fail"));
 });
 
+test("missing link.exe with installed MSVC points to shell initialization", () => {
+  const report = buildDoctorReport({
+    platform: "win32",
+    nodeVersion: "v20.11.0",
+    pnpmVersion: "9.0.0",
+    rustcVersion: "rustc 1.86.0 (dummy)",
+    rustupShow: "installed targets: x86_64-pc-windows-msvc",
+    linkPaths: [],
+    libEnv: "",
+    visualStudio: { hasStable: true, hasInsiders: false },
+    windowsSdk: { present: true },
+    msvcTools: { present: true },
+    errorText: "",
+  });
+
+  const linkFinding = report.findings.find((finding) => finding.id === "link");
+  assert.ok(linkFinding, "Expected a link.exe finding");
+  assert.equal(linkFinding.severity, "fail");
+  assert.match(linkFinding.recommendation, /Developer Command Prompt|VsDevCmd\.bat/i);
+});
+
 test("msvcrt linker error maps to MSVC workload guidance", () => {
   const report = buildDoctorReport({
     platform: "win32",

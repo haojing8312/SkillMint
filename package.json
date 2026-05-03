@@ -40,7 +40,7 @@
     "sync:openclaw-core": "node scripts/sync-openclaw-core.mjs",
     "sync:openclaw-im-core": "node scripts/sync-openclaw-im-core.mjs",
     "sync:codex-skills": "node scripts/sync-codex-skills.mjs",
-    "test:sidecar": "pnpm --dir apps/runtime/sidecar test",
+    "test:sidecar": "node scripts/run-sidecar-tests.mjs",
     "test:browser-automation": "pnpm --dir apps/runtime/sidecar test && cd apps/runtime/src-tauri && cargo test --test test_browser_tools -- --nocapture"
   },
   "devDependencies": {

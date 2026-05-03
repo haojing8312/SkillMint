@@ -6,6 +6,7 @@ import path from "node:path";
 const projectRoot = process.cwd();
 const packageJsonPath = path.join(projectRoot, "package.json");
 const buildRuntimeScriptPath = path.join(projectRoot, "scripts", "build-runtime.mjs");
+const sidecarTestScriptPath = path.join(projectRoot, "scripts", "run-sidecar-tests.mjs");
 const runtimePackageJsonPath = path.join(projectRoot, "apps", "runtime", "package.json");
 const runtimePlaywrightConfigPath = path.join(projectRoot, "apps", "runtime", "playwright.config.ts");
 const tauriConfigPath = path.join(projectRoot, "apps", "runtime", "src-tauri", "tauri.conf.json");
@@ -99,5 +100,26 @@ test("runtime E2E web server uses the local wrapper instead of invoking pnpm dir
     playwrightServerScript,
     /resolvePnpmRunner/,
     "Expected Playwright web server wrapper to resolve pnpm robustly",
+  );
+});
+
+test("root sidecar test script uses a local pnpm wrapper", () => {
+  const rootPkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const sidecarTestScript = readFileSync(sidecarTestScriptPath, "utf8");
+
+  assert.equal(
+    rootPkg.scripts?.["test:sidecar"],
+    "node scripts/run-sidecar-tests.mjs",
+    "Expected root test:sidecar to use a Node wrapper instead of nesting pnpm directly",
+  );
+  assert.match(
+    sidecarTestScript,
+    /resolvePnpmRunner/,
+    "Expected sidecar test wrapper to resolve pnpm through npm_execpath when available",
+  );
+  assert.match(
+    sidecarTestScript,
+    /"--dir",\s*"apps\/runtime\/sidecar",\s*"test"/,
+    "Expected sidecar test wrapper to run the sidecar package tests",
   );
 });

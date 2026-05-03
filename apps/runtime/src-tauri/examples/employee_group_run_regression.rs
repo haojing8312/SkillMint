@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
 use anyhow::{anyhow, Context, Result};
-#[path = "../../tests/helpers/mod.rs"]
+#[path = "../tests/helpers/mod.rs"]
 mod test_helpers;
 
 use runtime_lib::commands::employee_agents::test_support::{
