@@ -4,6 +4,7 @@ import type {
   ChatRuntimeCompactionStatus,
   ModelConfig,
   SessionRunProjection,
+  SessionToolManifestEntry,
   StreamItem,
 } from "../../types";
 import type { PendingApprovalView } from "../../scenes/chat/useChatSessionController";
@@ -65,6 +66,47 @@ export function buildApprovalImpactText(
     return "这类操作通常只读取信息，不会直接修改本地内容。";
   }
   return "这类操作可能修改本地文件、命令环境或会话状态。";
+}
+
+export function buildPendingApprovalDialogViewModel({
+  activeApproval,
+  queuedApprovalCount,
+  toolManifest,
+}: {
+  activeApproval: PendingApprovalView | null;
+  queuedApprovalCount: number;
+  toolManifest: SessionToolManifestEntry[];
+}) {
+  if (!activeApproval) return null;
+  const manifestEntry = toolManifest.find((item) => item.name === activeApproval.toolName) ?? null;
+  const toolLabel =
+    manifestEntry?.display_name ||
+    TOOL_ACTION_LABELS[activeApproval.toolName] ||
+    activeApproval.title ||
+    activeApproval.toolName;
+  const impact = buildApprovalImpactText(
+    activeApproval,
+    manifestEntry?.read_only ?? false,
+    manifestEntry?.destructive ?? false,
+  );
+  const reason = buildApprovalReasonText(
+    activeApproval,
+    toolLabel,
+    manifestEntry?.read_only ?? false,
+    manifestEntry?.destructive ?? false,
+    manifestEntry?.requires_approval ?? false,
+  );
+  const noteParts = [
+    reason,
+    queuedApprovalCount > 0 ? `还有 ${queuedApprovalCount} 条待审批` : undefined,
+  ].filter((item): item is string => Boolean(item && item.trim()));
+  return {
+    title: activeApproval.title || "高危操作确认",
+    summary: activeApproval.summary || `将执行工具 ${activeApproval.toolName}`,
+    impact,
+    note: noteParts.length > 0 ? noteParts.join(" · ") : undefined,
+    irreversible: activeApproval.irreversible,
+  };
 }
 
 export function shouldRenderCompletedJourneySummary(model: TaskJourneyViewModel) {

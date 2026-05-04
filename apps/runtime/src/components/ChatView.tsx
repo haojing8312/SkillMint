@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { SkillManifest, ModelConfig, PendingAttachment, SendMessageRequest, EmployeeGroupRunSnapshot, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
+import { SkillManifest, ModelConfig, PendingAttachment, EmployeeGroupRunSnapshot, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
 import { ChatWorkspaceSidePanel } from "./chat-side-panel/ChatWorkspaceSidePanel";
 import { ChatActionDialogs } from "./chat/ChatActionDialogs";
 import { ChatExecutionContextBar } from "./chat/ChatExecutionContextBar";
@@ -14,21 +14,26 @@ import { ChatMessageRail } from "./chat/ChatMessageRail";
 import { useChatInstallCandidatesController } from "./chat/useChatInstallCandidatesController";
 import { useChatLinkActions } from "./chat/useChatLinkActions";
 import { useChatDerivedViewModels } from "./chat/useChatDerivedViewModels";
+import { useChatSessionDisplayModel } from "./chat/useChatSessionDisplayModel";
 import { ChatScrollJumpButton } from "./chat/ChatScrollJumpButton";
 import { useChatViewportController } from "./chat/useChatViewportController";
 import { ChatGroupRunSection } from "./chat/group-run/ChatGroupRunSection";
 import { ChatShell } from "./chat/ChatShell";
 import {
-  buildApprovalImpactText,
-  buildApprovalReasonText,
   buildChatAgentBannerViewModel,
+  buildPendingApprovalDialogViewModel,
   CopyActionIcon,
   extractInstallCandidates,
   getRunFailureDisplay,
-  getThinkingSupport,
   shouldRenderCompletedJourneySummary,
-  TOOL_ACTION_LABELS,
 } from "./chat/chatViewHelpers";
+import {
+  buildScrollJumpViewModel,
+  buildStreamingAssistantViewModel,
+  getLiveBlockingStatus,
+  shouldGrantContinuationBudgetRequest,
+  shouldShowTeamEntryEmptyState as getShouldShowTeamEntryEmptyState,
+} from "./chat/chatViewStateHelpers";
 import { deriveDelegationState, deriveGroupRunState } from "./chat/chatGroupRunHelpers";
 import {
   clearSessionDraft,
@@ -38,8 +43,6 @@ import {
 } from "../scenes/chat/chatRuntimeState";
 import { useChatDraftState } from "../scenes/chat/useChatDraftState";
 import { buildTaskJourneyViewModel } from "./chat-side-panel/view-model";
-import type { TaskJourneyViewModel } from "./chat-side-panel/view-model";
-import { getDefaultModel } from "../lib/default-model";
 import { answerUserQuestion, cancelAgent } from "../services/chat/chatSessionService";
 import { resolveApproval as resolvePendingApproval } from "../services/chat/chatApprovalService";
 import { useChatSessionController, type PendingApprovalView } from "../scenes/chat/useChatSessionController";
@@ -478,12 +481,6 @@ export function ChatView({
     }
   }
 
-  // 从 models 查找当前会话的模型名称
-  const currentModel = useMemo(
-    () => models.find((model) => model.id === sessionModelId) ?? getDefaultModel(models),
-    [models, sessionModelId],
-  );
-  const thinkingSupport = useMemo(() => getThinkingSupport(currentModel), [currentModel]);
   const {
     renderedMessages,
     virtualWindow,
@@ -504,56 +501,34 @@ export function ChatView({
     scrollTop,
     viewportHeight,
   });
-  const showScrollJump = hasScrollableContent || !isNearBottom;
-  const scrollJumpLabel = isNearBottom ? "跳转到顶部" : "跳转到底部";
-  const scrollJumpHint = isNearBottom
-    ? isNearTop
-      ? "当前已在顶部"
-      : "返回顶部"
-    : "回到底部并继续跟随";
-  const normalizedSessionMode = (sessionMode || "").trim().toLowerCase();
-  const isTeamEntrySession = normalizedSessionMode === "team_entry";
-  const isEmployeeDirectSession = normalizedSessionMode === "employee_direct";
-  const normalizedSessionTitle = (sessionTitle || "").trim();
-  const normalizedSessionEmployeeName = (sessionEmployeeName || "").trim();
-  const sessionDisplayTitle = isTeamEntrySession
-    ? "团队协作"
-    : isEmployeeDirectSession
-    ? normalizedSessionEmployeeName || normalizedSessionTitle || skill.name
-    : skill.name;
-  const sessionDisplaySubtitle = isTeamEntrySession ? normalizedSessionTitle || "团队已连接" : "";
-  const normalizedSessionSourceChannel = (sessionSourceChannel || "").trim().toLowerCase();
-  const isImSource = normalizedSessionSourceChannel.length > 0 && normalizedSessionSourceChannel !== "local";
-  const sessionSourceBadgeText =
-    (sessionSourceLabel || "").trim() ||
-    (normalizedSessionSourceChannel ? `${normalizedSessionSourceChannel} 同步` : "IM 同步");
-  const displayWorkDirLabel = (workspace || "").trim() || "选择工作目录";
-  const localStatusSummary = useMemo(() => {
-    const lines = [
-      "当前会话状态：",
-      `- 模型：${currentModel?.name || "未配置"}`,
-      `- 工作目录：${(workspace || "").trim() || "未设置"}`,
-      `- 会话类型：${normalizedSessionMode || "general"}`,
-      `- 来源：${isImSource ? sessionSourceBadgeText : "本地"}`,
-      `- 权限模式：${operationPermissionMode}`,
-    ];
-    if (sessionDisplayTitle.trim()) {
-      lines.push(`- 标题：${sessionDisplayTitle.trim()}`);
-    }
-    if (sessionDisplaySubtitle.trim()) {
-      lines.push(`- 副标题：${sessionDisplaySubtitle.trim()}`);
-    }
-    return lines.join("\n");
-  }, [
-    currentModel?.name,
-    workspace,
+  const { showScrollJump, scrollJumpLabel, scrollJumpHint } = buildScrollJumpViewModel({
+    hasScrollableContent,
+    isNearBottom,
+    isNearTop,
+  });
+  const {
+    currentModel,
+    thinkingSupport,
     normalizedSessionMode,
-    isImSource,
-    sessionSourceBadgeText,
-    operationPermissionMode,
+    isTeamEntrySession,
     sessionDisplayTitle,
     sessionDisplaySubtitle,
-  ]);
+    isImSource,
+    sessionSourceBadgeText,
+    displayWorkDirLabel,
+    localStatusSummary,
+  } = useChatSessionDisplayModel({
+    skill,
+    models,
+    sessionModelId,
+    workspace,
+    sessionTitle,
+    sessionMode,
+    sessionEmployeeName,
+    sessionSourceChannel,
+    sessionSourceLabel,
+    operationPermissionMode,
+  });
   const {
     parseDuplicateSkillName,
     renderInstallCandidates,
@@ -622,38 +597,15 @@ export function ChatView({
   }, [sessionId, initialAttachments, initialMessage]);
   const activePendingApproval = pendingApprovals[0] ?? null;
   const queuedApprovalCount = Math.max(0, pendingApprovals.length - 1);
-  const activePendingApprovalDialog = useMemo(() => {
-    if (!activePendingApproval) return null;
-    const manifestEntry = toolManifest.find((item) => item.name === activePendingApproval.toolName) ?? null;
-    const toolLabel =
-      manifestEntry?.display_name ||
-      TOOL_ACTION_LABELS[activePendingApproval.toolName] ||
-      activePendingApproval.title ||
-      activePendingApproval.toolName;
-    const impact = buildApprovalImpactText(
-      activePendingApproval,
-      manifestEntry?.read_only ?? false,
-      manifestEntry?.destructive ?? false,
-    );
-    const reason = buildApprovalReasonText(
-      activePendingApproval,
-      toolLabel,
-      manifestEntry?.read_only ?? false,
-      manifestEntry?.destructive ?? false,
-      manifestEntry?.requires_approval ?? false,
-    );
-    const noteParts = [
-      reason,
-      queuedApprovalCount > 0 ? `还有 ${queuedApprovalCount} 条待审批` : undefined,
-    ].filter((item): item is string => Boolean(item && item.trim()));
-    return {
-      title: activePendingApproval.title || "高危操作确认",
-      summary: activePendingApproval.summary || `将执行工具 ${activePendingApproval.toolName}`,
-      impact,
-      note: noteParts.length > 0 ? noteParts.join(" · ") : undefined,
-      irreversible: activePendingApproval.irreversible,
-    };
-  }, [activePendingApproval, queuedApprovalCount, toolManifest]);
+  const activePendingApprovalDialog = useMemo(
+    () =>
+      buildPendingApprovalDialogViewModel({
+        activeApproval: activePendingApproval,
+        queuedApprovalCount,
+        toolManifest,
+      }),
+    [activePendingApproval, queuedApprovalCount, toolManifest],
+  );
   const {
     primaryDelegationCard,
     delegationHistoryCards,
@@ -704,10 +656,13 @@ export function ChatView({
       }),
     [groupRunCoordinatorEmployeeId, groupRunMemberEmployeeIds, groupRunRules, groupRunSnapshot, sessionId],
   );
-  const showStreamingThinkingState =
-    Boolean(streamReasoning) || (agentState?.state === "thinking" && thinkingSupport.indicator);
-  const showStreamingAssistantBubble =
-    showStreamingThinkingState || streamItems.length > 0 || subAgentBuffer.length > 0;
+  const { showStreamingThinkingState, showStreamingAssistantBubble } = buildStreamingAssistantViewModel({
+    streamReasoning,
+    agentState,
+    thinkingIndicator: thinkingSupport.indicator,
+    streamItems,
+    subAgentBuffer,
+  });
   const handleToggleRunDetail = (runId: string) => {
     setExpandedRunDetailIds((prev) =>
       prev.includes(runId) ? prev.filter((item) => item !== runId) : [...prev, runId],
@@ -719,40 +674,24 @@ export function ChatView({
       parts: [{ type: "text", text: CONTINUE_MESSAGE_TEXT }],
       maxIterations: CONTINUE_BUDGET_INCREMENT,
     });
-  const liveBlockingStatus = useMemo(() => {
-    if (pendingApprovals.length > 0 || agentState?.state === "waiting_approval") {
-      return "waiting_approval";
-    }
-    if (agentState?.state === "thinking" || streamReasoning?.status === "thinking") {
-      return "thinking";
-    }
-    if (agentState?.state === "tool_calling") {
-      return "tool_calling";
-    }
-    if (compactionStatus?.phase === "started" || compactionStatus?.phase === "completed") {
-      return "thinking";
-    }
-    if (streaming || streamItems.length > 0 || subAgentBuffer.trim()) {
-      return "running";
-    }
-    return null;
-  }, [
-    agentState?.state,
-    compactionStatus?.phase,
-    pendingApprovals.length,
-    streamItems.length,
-    streamReasoning?.status,
+  const liveBlockingStatus = getLiveBlockingStatus({
+    pendingApprovalCount: pendingApprovals.length,
+    agentState,
+    streamReasoning,
+    compactionStatus,
     streaming,
+    streamItems,
     subAgentBuffer,
-  ]);
-  const shouldShowTeamEntryEmptyState =
-    isTeamEntrySession &&
-    !initialMessage?.trim() &&
-    messages.length === 0 &&
-    streamItems.length === 0 &&
-    !subAgentBuffer.trim() &&
-    !streaming &&
-    !groupRunSnapshot;
+  });
+  const shouldShowTeamEntryEmptyState = getShouldShowTeamEntryEmptyState({
+    isTeamEntrySession,
+    initialMessage,
+    messageCount: messages.length,
+    streamItemCount: streamItems.length,
+    subAgentBuffer,
+    streaming,
+    hasGroupRunSnapshot: Boolean(groupRunSnapshot),
+  });
   const groupPhaseLabel = groupPhaseLabelFromSnapshot || groupPhaseFromSnapshot || groupPhaseFromEvents;
   const groupRound = groupRoundFromSnapshot || groupRoundFromEvents;
   const groupMemberStates =
@@ -784,17 +723,8 @@ export function ChatView({
     setSidePanelTab("files");
   }
 
-  function isContinuationText(text: string) {
-    const normalized = text.trim().toLowerCase();
-    return normalized === "继续" || normalized === "继续执行" || normalized === "continue";
-  }
-
-  function shouldGrantContinuationBudget(request: SendMessageRequest) {
-    if (!latestMaxTurnsRun) return false;
-    if (request.parts.length !== 1) return false;
-    const [part] = request.parts;
-    if (part.type !== "text") return false;
-    return isContinuationText(part.text);
+  function shouldGrantContinuationBudget(request: Parameters<typeof shouldGrantContinuationBudgetRequest>[0]) {
+    return shouldGrantContinuationBudgetRequest(request, Boolean(latestMaxTurnsRun));
   }
 
   const agentBanner = buildChatAgentBannerViewModel({
