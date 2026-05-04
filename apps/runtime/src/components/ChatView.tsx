@@ -2,22 +2,15 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SkillManifest, ModelConfig, PendingAttachment, EmployeeGroupRunSnapshot, PersistedChatRuntimeState, ChatDelegationCardState } from "../types";
 import { ChatWorkspaceSidePanel } from "./chat-side-panel/ChatWorkspaceSidePanel";
-import { ChatActionDialogs } from "./chat/ChatActionDialogs";
 import { ChatExecutionContextBar } from "./chat/ChatExecutionContextBar";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ChatComposer } from "./chat/ChatComposer";
-import { ChatCollaborationStatusPanel } from "./chat/ChatCollaborationStatusPanel";
-import { ChatEmployeeAssistantContext } from "./chat/ChatEmployeeAssistantContext";
-import { ChatAgentStateBanner } from "./chat/ChatAgentStateBanner";
-import { ChatLinkToast } from "./chat/ChatLinkToast";
-import { ChatMessageRail } from "./chat/ChatMessageRail";
+import { ChatMainContent } from "./chat/ChatMainContent";
 import { useChatInstallCandidatesController } from "./chat/useChatInstallCandidatesController";
 import { useChatLinkActions } from "./chat/useChatLinkActions";
 import { useChatDerivedViewModels } from "./chat/useChatDerivedViewModels";
 import { useChatSessionDisplayModel } from "./chat/useChatSessionDisplayModel";
-import { ChatScrollJumpButton } from "./chat/ChatScrollJumpButton";
 import { useChatViewportController } from "./chat/useChatViewportController";
-import { ChatGroupRunSection } from "./chat/group-run/ChatGroupRunSection";
 import { ChatShell } from "./chat/ChatShell";
 import {
   buildChatAgentBannerViewModel,
@@ -754,136 +747,120 @@ export function ChatView({
         ) : undefined
       }
       mainContent={
-        <>
-        {/* 消息列表 */}
-        <div className="relative flex-1 bg-[#f7f7f4]">
-        <div
-          ref={scrollRegionRef}
-          data-testid="chat-scroll-region"
+        <ChatMainContent
+          scrollRegionRef={scrollRegionRef}
+          bottomRef={bottomRef}
           onScroll={handleScrollRegionScroll}
-          className="h-full overflow-y-auto bg-transparent px-4 py-6 sm:px-6 xl:px-8"
-        >
-        <div data-testid="chat-content-rail" className="mx-auto flex w-full max-w-[76rem] flex-col gap-5">
-        <ChatEmployeeAssistantContext employeeAssistantContext={employeeAssistantContext} />
-        <ChatAgentStateBanner
-          visible={agentBanner.visible}
-          state={agentBanner.state}
-          label={agentBanner.label}
-          indicator={agentBanner.indicator}
-          secondary={agentBanner.secondary}
+          employeeAssistantContext={employeeAssistantContext}
+          agentBanner={agentBanner}
+          collaborationStatusPanel={{
+            mainRoleName,
+            primaryDelegationCard,
+            delegationHistoryCards,
+            collaborationStatusText,
+            completedDelegationCount,
+            failedDelegationCount,
+          }}
+          groupRunSection={{
+            groupPhaseLabel,
+            groupRound,
+            groupReviewRound,
+            groupWaitingLabel,
+            groupStatusReason,
+            groupRunSnapshot,
+            onApproveGroupRunReview: () => void handleApproveGroupRunReview(),
+            onRejectGroupRunReview: () => void handleRejectGroupRunReview(),
+            onPauseGroupRun: () => void handlePauseGroupRun(),
+            onResumeGroupRun: () => void handleResumeGroupRun(),
+            onRetryFailedGroupRunSteps: () => void handleRetryFailedGroupRunSteps(),
+            onReassignFailedGroupRunStep: handleReassignFailedGroupRunStep,
+            groupRunActionLoading,
+            canPauseGroupRun,
+            canResumeGroupRun,
+            canRetryFailedGroupRunSteps,
+            canReassignFailedGroupRunStep,
+            failedGroupRunReassignOptions,
+            groupMemberStates,
+            recentGroupEvents,
+            groupRunExecuteStepCards,
+            highlightedGroupRunStepId,
+            highlightedGroupRunStepEventId,
+            expandedGroupRunStepIds,
+            groupRunStepElementRefs,
+            groupRunStepEventElementRefs,
+            onToggleGroupRunStepDetails: toggleGroupRunStepDetails,
+            onOpenSession,
+            sessionId,
+            shouldShowTeamEntryEmptyState,
+            sessionDisplaySubtitle,
+          }}
+          messageRail={{
+            renderedMessages: virtualizedRenderedMessages,
+            visibleStartIndex: virtualWindow.startIndex,
+            topSpacerHeight: virtualWindow.topSpacerHeight,
+            bottomSpacerHeight: virtualWindow.bottomSpacerHeight,
+            highlightedMessageIndex,
+            messageElementRefs,
+            expandedThinkingKeys,
+            onToggleThinkingBlock: toggleThinkingBlock,
+            buildTaskJourneyModel: buildTaskJourneyViewModel,
+            shouldRenderCompletedJourneySummary,
+            failedRunsByAssistantMessageId,
+            failedRunsByUserMessageId,
+            renderInstallCandidates,
+            extractInstallCandidates,
+            copiedAssistantMessageKey,
+            onCopyAssistantMessage: handleCopyAssistantMessage,
+            CopyActionIcon,
+            onViewFilesFromDelivery: handleViewFilesFromDelivery,
+            expandedRunDetailIds,
+            streaming,
+            onToggleRunDetail: handleToggleRunDetail,
+            onContinueExecution: handleContinueExecution,
+            getRunFailureDisplay,
+            orphanFailedRuns,
+            showStreamingAssistantBubble,
+            showStreamingThinkingState,
+            streamReasoning,
+            streamItems,
+            toolManifest,
+            subAgentBuffer,
+            subAgentRoleName,
+            askUserQuestion,
+            askUserOptions,
+            askUserAnswer,
+            onAskUserAnswerChange: setAskUserAnswer,
+            onAnswerUser: handleAnswerUser,
+            onOpenExternalLink: handleOpenChatExternalLink,
+          }}
+          linkToast={{
+            toast: chatLinkToast,
+            onRetry: (url) => void handleOpenChatExternalLink(url),
+            onCopy: (url) => void handleCopyChatLink(url),
+            onClose: closeChatLinkToast,
+          }}
+          actionDialogs={{
+            approvalOpen: Boolean(activePendingApproval),
+            approvalDialog: activePendingApprovalDialog,
+            approvalLoading: Boolean(resolvingApprovalId),
+            onAllowOnce: () => void handleResolveApproval("allow_once"),
+            onAllowAlways: () => void handleResolveApproval("allow_always"),
+            onDeny: () => void handleResolveApproval("deny"),
+            installOpen: installDialog.open,
+            installSummary: installDialog.summary,
+            installImpact: installDialog.impact,
+            installLoading: installDialog.loading,
+            onConfirmInstall: installDialog.onConfirm,
+            onCancelInstall: installDialog.onCancel,
+          }}
+          scrollJump={{
+            visible: showScrollJump,
+            isNearBottom,
+            label: scrollJumpLabel,
+            hint: scrollJumpHint,
+            onClick: handleScrollJump,
+          }}
         />
-        <ChatCollaborationStatusPanel
-          mainRoleName={mainRoleName}
-          primaryDelegationCard={primaryDelegationCard}
-          delegationHistoryCards={delegationHistoryCards}
-          collaborationStatusText={collaborationStatusText}
-          completedDelegationCount={completedDelegationCount}
-          failedDelegationCount={failedDelegationCount}
-        />
-        <ChatGroupRunSection
-          groupPhaseLabel={groupPhaseLabel}
-          groupRound={groupRound}
-          groupReviewRound={groupReviewRound}
-          groupWaitingLabel={groupWaitingLabel}
-          groupStatusReason={groupStatusReason}
-          groupRunSnapshot={groupRunSnapshot}
-          onApproveGroupRunReview={() => void handleApproveGroupRunReview()}
-          onRejectGroupRunReview={() => void handleRejectGroupRunReview()}
-          onPauseGroupRun={() => void handlePauseGroupRun()}
-          onResumeGroupRun={() => void handleResumeGroupRun()}
-          onRetryFailedGroupRunSteps={() => void handleRetryFailedGroupRunSteps()}
-          onReassignFailedGroupRunStep={handleReassignFailedGroupRunStep}
-          groupRunActionLoading={groupRunActionLoading}
-          canPauseGroupRun={canPauseGroupRun}
-          canResumeGroupRun={canResumeGroupRun}
-          canRetryFailedGroupRunSteps={canRetryFailedGroupRunSteps}
-          canReassignFailedGroupRunStep={canReassignFailedGroupRunStep}
-          failedGroupRunReassignOptions={failedGroupRunReassignOptions}
-          groupMemberStates={groupMemberStates}
-          recentGroupEvents={recentGroupEvents}
-          groupRunExecuteStepCards={groupRunExecuteStepCards}
-          highlightedGroupRunStepId={highlightedGroupRunStepId}
-          highlightedGroupRunStepEventId={highlightedGroupRunStepEventId}
-          expandedGroupRunStepIds={expandedGroupRunStepIds}
-          groupRunStepElementRefs={groupRunStepElementRefs}
-          groupRunStepEventElementRefs={groupRunStepEventElementRefs}
-          onToggleGroupRunStepDetails={toggleGroupRunStepDetails}
-          onOpenSession={onOpenSession}
-          sessionId={sessionId}
-          shouldShowTeamEntryEmptyState={shouldShowTeamEntryEmptyState}
-          sessionDisplaySubtitle={sessionDisplaySubtitle}
-        />
-        <ChatMessageRail
-          renderedMessages={virtualizedRenderedMessages}
-          visibleStartIndex={virtualWindow.startIndex}
-          topSpacerHeight={virtualWindow.topSpacerHeight}
-          bottomSpacerHeight={virtualWindow.bottomSpacerHeight}
-          highlightedMessageIndex={highlightedMessageIndex}
-          messageElementRefs={messageElementRefs}
-          expandedThinkingKeys={expandedThinkingKeys}
-          onToggleThinkingBlock={toggleThinkingBlock}
-          buildTaskJourneyModel={buildTaskJourneyViewModel}
-          shouldRenderCompletedJourneySummary={shouldRenderCompletedJourneySummary}
-          failedRunsByAssistantMessageId={failedRunsByAssistantMessageId}
-          failedRunsByUserMessageId={failedRunsByUserMessageId}
-          renderInstallCandidates={renderInstallCandidates}
-          extractInstallCandidates={extractInstallCandidates}
-          copiedAssistantMessageKey={copiedAssistantMessageKey}
-          onCopyAssistantMessage={handleCopyAssistantMessage}
-          CopyActionIcon={CopyActionIcon}
-          onViewFilesFromDelivery={handleViewFilesFromDelivery}
-          expandedRunDetailIds={expandedRunDetailIds}
-          streaming={streaming}
-          onToggleRunDetail={handleToggleRunDetail}
-          onContinueExecution={handleContinueExecution}
-          getRunFailureDisplay={getRunFailureDisplay}
-          orphanFailedRuns={orphanFailedRuns}
-          showStreamingAssistantBubble={showStreamingAssistantBubble}
-          showStreamingThinkingState={showStreamingThinkingState}
-          streamReasoning={streamReasoning}
-          streamItems={streamItems}
-          toolManifest={toolManifest}
-          subAgentBuffer={subAgentBuffer}
-          subAgentRoleName={subAgentRoleName}
-          askUserQuestion={askUserQuestion}
-          askUserOptions={askUserOptions}
-          askUserAnswer={askUserAnswer}
-          onAskUserAnswerChange={setAskUserAnswer}
-          onAnswerUser={handleAnswerUser}
-          onOpenExternalLink={handleOpenChatExternalLink}
-        />
-        <ChatLinkToast
-          toast={chatLinkToast}
-          onRetry={(url) => void handleOpenChatExternalLink(url)}
-          onCopy={(url) => void handleCopyChatLink(url)}
-          onClose={closeChatLinkToast}
-        />
-        <ChatActionDialogs
-          approvalOpen={Boolean(activePendingApproval)}
-          approvalDialog={activePendingApprovalDialog}
-          approvalLoading={Boolean(resolvingApprovalId)}
-          onAllowOnce={() => void handleResolveApproval("allow_once")}
-          onAllowAlways={() => void handleResolveApproval("allow_always")}
-          onDeny={() => void handleResolveApproval("deny")}
-          installOpen={installDialog.open}
-          installSummary={installDialog.summary}
-          installImpact={installDialog.impact}
-          installLoading={installDialog.loading}
-          onConfirmInstall={installDialog.onConfirm}
-          onCancelInstall={installDialog.onCancel}
-        />
-        <div ref={bottomRef} />
-        </div>
-      </div>
-      <ChatScrollJumpButton
-        visible={showScrollJump}
-        isNearBottom={isNearBottom}
-        label={scrollJumpLabel}
-        hint={scrollJumpHint}
-        onClick={handleScrollJump}
-      />
-      </div>
-      </>
       }
       sidePanel={<ChatWorkspaceSidePanel
         open={sidePanelOpen}
