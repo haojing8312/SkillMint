@@ -92,10 +92,18 @@ async fn resolve_group_step_memory_binding(
     .await;
 
     match profile_row {
-        Ok(Some((profile_id, profile_home))) if !profile_home.trim().is_empty() => {
+        Ok(Some((profile_id, profile_home))) => {
+            let resolved_home =
+                super::super::resolve_profile_home_for_curator(&profile_id, &profile_home, None);
+            if let Some(profile_home) = resolved_home {
+                return Ok(GroupStepMemoryBinding {
+                    memory_dir: PathBuf::from(profile_home).join("memories"),
+                    profile_id: Some(profile_id),
+                });
+            }
             Ok(GroupStepMemoryBinding {
-                memory_dir: PathBuf::from(profile_home.trim()).join("memories"),
-                profile_id: Some(profile_id),
+                memory_dir: legacy_group_step_memory_dir(work_dir, employee_id, skill_id),
+                profile_id: None,
             })
         }
         Ok(_) => Ok(GroupStepMemoryBinding {
@@ -859,6 +867,35 @@ mod tests {
             binding.memory_dir,
             legacy_group_step_memory_dir("D:/workspace/acme", "sales_lead", "skill-sales")
         );
+    }
+
+    #[tokio::test]
+    async fn group_step_memory_binding_resolves_blank_profile_home_to_canonical_profile_home() {
+        let pool = setup_profile_memory_binding_pool().await;
+        sqlx::query(
+            "INSERT INTO agent_profiles (
+                id, legacy_employee_row_id, display_name, profile_home, created_at, updated_at
+             ) VALUES ('profile-sales', 'employee-row-sales', 'Sales', '', 'now', 'now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed blank profile home");
+
+        let binding = resolve_group_step_memory_binding(
+            &pool,
+            "employee-row-sales",
+            "sales_lead",
+            "skill-sales",
+            "D:/workspace/acme",
+        )
+        .await
+        .expect("resolve binding");
+
+        assert_eq!(binding.profile_id.as_deref(), Some("profile-sales"));
+        assert!(binding
+            .memory_dir
+            .ends_with("profiles/profile-sales/memories"));
+        assert!(!binding.memory_dir.to_string_lossy().contains("openclaw"));
     }
 
     #[tokio::test]
