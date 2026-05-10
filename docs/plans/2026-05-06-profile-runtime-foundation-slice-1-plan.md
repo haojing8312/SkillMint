@@ -35,42 +35,42 @@ This slice must not do these things:
 
 Create:
 
-- `apps/runtime/src-tauri/src/profile_runtime/mod.rs`  
+- `apps/runtime/src-tauri/src/profile_runtime/mod.rs`
   Module entrypoint for profile runtime helpers.
 
-- `apps/runtime/src-tauri/src/profile_runtime/types.rs`  
+- `apps/runtime/src-tauri/src/profile_runtime/types.rs`
   Small structs for `AgentProfileRecord`, `ProfileAliasCandidate`, and resolver outputs.
 
-- `apps/runtime/src-tauri/src/profile_runtime/repo.rs`  
+- `apps/runtime/src-tauri/src/profile_runtime/repo.rs`
   SQL helpers for profile seed/backfill and alias lookup.
 
-- `apps/runtime/src-tauri/src/profile_runtime/alias_resolver.rs`  
+- `apps/runtime/src-tauri/src/profile_runtime/alias_resolver.rs`
   Pure-ish profile alias resolution logic on top of repo rows.
 
-- `apps/runtime/src-tauri/src/agent/runtime/runtime_io/skill_source_policy.rs`  
+- `apps/runtime/src-tauri/src/agent/runtime/runtime_io/skill_source_policy.rs`
   Source policy enum and mutation rules for installed skill source types.
 
 Modify:
 
-- `apps/runtime/src-tauri/src/lib.rs`  
+- `apps/runtime/src-tauri/src/lib.rs`
   Add `pub(crate) mod profile_runtime;`.
 
-- `apps/runtime/src-tauri/src/db/schema.rs`  
+- `apps/runtime/src-tauri/src/db/schema.rs`
   Add `agent_profiles`, `sessions.profile_id`, and supporting indexes for current schema.
 
-- `apps/runtime/src-tauri/src/db/migrations.rs`  
+- `apps/runtime/src-tauri/src/db/migrations.rs`
   Add legacy migration steps for `agent_profiles`, `sessions.profile_id`, and safe backfill.
 
-- `apps/runtime/src-tauri/src/commands/chat_session_io/session_store.rs`  
+- `apps/runtime/src-tauri/src/commands/chat_session_io/session_store.rs`
   Populate `sessions.profile_id` during new session creation where an employee alias can resolve to a profile, while preserving `employee_id`.
 
-- `apps/runtime/src-tauri/src/commands/skills.rs`  
+- `apps/runtime/src-tauri/src/commands/skills.rs`
   Add backend deletion guard using source policy.
 
-- `apps/runtime/src-tauri/src/agent/runtime/runtime_io/workspace_skills.rs`  
+- `apps/runtime/src-tauri/src/agent/runtime/runtime_io/workspace_skills.rs`
   Use source policy for directory-backed/encrypted classification, without changing projection behavior.
 
-- `apps/runtime/src-tauri/src/agent/runtime/runtime_io/runtime_inputs.rs`  
+- `apps/runtime/src-tauri/src/agent/runtime/runtime_io/runtime_inputs.rs`
   Use source policy normalization around installed skill source reads, preserving legacy builtin self-heal.
 
 Test:

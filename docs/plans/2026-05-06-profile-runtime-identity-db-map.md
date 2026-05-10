@@ -179,4 +179,3 @@ Start Phase 1 with the smallest profile identity slice that does not change memo
 4. Update startup-critical reads to prefer `sessions.profile_id` and fall back to `sessions.employee_id` plus alias resolver.
 5. Add legacy-schema regression tests for session list/search, local chat execution context, and IM conversation binding lookup.
 6. Only after this lands, move memory path selection from `employee_id + skill_id` to profile home with a read fallback/import path.
-
