@@ -53,3 +53,57 @@ If the user gives a concrete local repo path, inspect that path first and keep t
 - Tags: correction, repo-selection, local-reference, analysis-scope
 
 ---
+## [LRN-20260507-001] correction
+
+**Logged**: 2026-05-07T00:00:00+08:00
+**Priority**: high
+**Status**: promoted
+**Area**: docs
+
+### Summary
+Hermes parity work should not turn WorkClaw self-improvement into a default manual approval queue.
+
+### Details
+The next-stage WorkClaw plan briefly drifted toward `memory_patch_proposals`, growth review inboxes, approve/reject no-op APIs, and approval audit tables. The user clarified that Hermes does not make manual approval the core experience, and WorkClaw should align with Hermes in function, capability, and usage feel instead of adding extra enterprise-style steps. The correct direction is agent-managed memory and skill evolution with provenance, versioning, audit, undo/rollback where possible, and explicit confirmation only for dangerous or high-risk operations.
+
+### Suggested Action
+Before adding self-improving runtime features, check the roadmap for Hermes parity: direct low-risk memory/skill operations, progressive skill loading, session search, curator, profile identity, and growth records. Do not add default pending proposal/review queues unless a later design explicitly proves they match Hermes-like UX.
+
+### Metadata
+- Source: user_feedback
+- Related Files: AGENTS.md, docs/plans/2026-05-06-self-improving-profile-runtime-roadmap.md, docs/plans/2026-05-06-self-improving-employee-ux.md
+- Tags: correction, hermes-parity, self-improving, approval-queue
+
+### Resolution
+- **Resolved**: 2026-05-07T00:00:00+08:00
+- **Commit/PR**: pending
+- **Notes**: Promoted the durable rule to `AGENTS.md` and removed the off-track growth review / memory proposal implementation and plans.
+
+---
+## [LRN-20260507-002] correction
+
+**Logged**: 2026-05-07T00:00:00+08:00
+**Priority**: high
+**Status**: promoted
+**Area**: docs
+
+### Summary
+WorkClaw next-stage self-improving runtime should stop treating OpenClaw directory compatibility as a product goal.
+
+### Details
+The user clarified that WorkClaw should fully pivot toward Hermes parity and does not need to preserve OpenClaw compatibility for the new profile runtime. Existing employee `AGENTS.md / SOUL.md / USER.md` files should be treated as legacy/profile instruction assets to migrate into canonical `profiles/<profile_id>/...`, not as an OpenClaw mirror or a second memory system.
+
+### Suggested Action
+For upcoming profile runtime work, make `profiles/<profile_id>/` the only canonical home. Use old OpenClaw-shaped employee folders only as migration inputs. Store stable learning in Memory OS, and store behavior/persona/user-context instructions separately under profile instructions.
+
+### Metadata
+- Source: user_feedback
+- Related Files: AGENTS.md, docs/plans/2026-05-06-self-improving-profile-runtime-roadmap.md, docs/plans/2026-05-06-self-improving-employee-ux.md
+- Tags: correction, hermes-parity, openclaw-compatibility, profile-runtime
+
+### Resolution
+- **Resolved**: 2026-05-07T00:00:00+08:00
+- **Commit/PR**: pending
+- **Notes**: Promoted the durable rule to `AGENTS.md` and updated the roadmap/UX docs to make Profile Home canonical.
+
+---

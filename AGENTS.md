@@ -26,6 +26,7 @@
   - `pnpm review:repo-hygiene:dup`
   - `pnpm review:repo-hygiene:loc`
   - `pnpm review:repo-hygiene:cycles`
+- Use `pnpm report:frontend-large-files` when reviewing frontend file growth before split planning.
 - Treat duplicate implementations, oversized files, and import cycles as review-first governance signals. They should trigger triage and split plans, not blind deletion or mechanical rewrites.
 - Use `workclaw-repo-hygiene-review` to classify candidates and recommend the smallest safe cleanup batch before destructive edits.
 - Use `workclaw-cleanup-execution` only after review selected a cleanup batch and its reviewed action per file.
@@ -37,6 +38,29 @@
 - Default development may happen directly on `main` when that is the most practical path.
 - Repo-local skills are lightweight self-check and workflow guidance tools, not mandatory PR approval gates.
 - PR-based review, automated merge gates, and stricter branch policies are optional future upgrades, not the default workflow today.
+
+## Next Stage R&D Focus: Self-Improving Profile Runtime
+
+- The next major WorkClaw product direction is the Hermes-inspired self-improving AI employee runtime documented in `docs/plans/2026-05-06-self-improving-profile-runtime-roadmap.md`.
+- Treat that roadmap as the phase-level source of truth for upcoming work on memory, skills, curator behavior, toolsets, employee runtime identity, and growth records.
+- New self-improving runtime work should use `profile_id -> AI employee runtime home` as the target architecture. Do not extend the old `employee_id + skill_id` memory bucket model.
+- Existing `employee_id` and `skill_id` fields may remain for routing aliases, UI labels, and skill selection, but persistent memory and growth behavior must hang from profile runtime boundaries. Do not add runtime reads or UI management for legacy `memory/employees/<employee>/skills/<skill>` buckets.
+- For the next-generation self-improving profile runtime, do not preserve OpenClaw-style `employees/<employee>/openclaw/...` directories as a compatibility target. `profiles/<profile_id>/...` is the canonical home; legacy OpenClaw-shaped files are migration inputs only.
+- The old employee `AGENTS.md / SOUL.md / USER.md` panel should evolve into profile instruction assets, not a second memory system. Keep or migrate their contents as rules/persona/user-context instructions; store new long-term learning in Profile Memory OS.
+- Profile Session Search is now part of the Profile Memory OS: keep `profile_session_index` as the session aggregate and `profile_session_fts` as both session-level and run-level recall. New recall work should preserve `document_kind` and `matched_run_id` so agents can cite the exact session run that matched.
+- Profile and project memory changes are versioned under `profiles/<profile_id>/memories/versions/...`. New memory mutations must keep history, version metadata, source evidence fields, and rollback behavior intact.
+- Profile artifact export should follow the Hermes-style profile boundary: export the resolved `profiles/<profile_id>/...` home as a whole artifact with manifest metadata, not separate one-off exports for growth, memory, or curator subviews.
+- Skill OS has a source-aware read-only boundary. Use the `skills` agent tool for `skills_list` and `skill_view`; default turn preparation is summary-first and must not project all installed skills into the workspace. Directory-backed local/preset/agent_created skills may be created, improved, archived, restored, deleted, rolled back, and reset through `skill_create`, `skill_patch`, `skill_archive(confirm=true)`, `skill_restore`, `skill_delete(confirm=true)`, `skill_versions`, `skill_view_version`, `skill_rollback(confirm=true)`, and `skill_reset(confirm=true)`, with snapshots stored in `skill_versions`, lifecycle state stored in `skill_lifecycle`, and growth evidence stored in `growth_events`. `.skillpack` must stay immutable/read-only and must not be unpacked or mutated by ordinary skill listing/viewing or patch/archive/delete/rollback/reset flows.
+- Builtin skills should evolve toward preset skills: preinstalled seeds that users and Hermes-aligned agent flows can optimize, archive, delete, and reset.
+- Encrypted `.skillpack` skills are a commercial distribution boundary. Curator, self-improvement flows, and skill patch tools must not mutate, delete, or reset `.skillpack` contents unless a later reviewed design explicitly changes that boundary.
+- Do not build a manual approval queue as the default self-improving path. Hermes parity means agent-managed memory and skill evolution with source evidence, version history, audit records, undo or rollback where possible, and explicit confirmation only for dangerous or high-risk operations.
+- Every task in this direction must identify which roadmap phase it advances and which acceptance checkboxes it completes. When a phase or acceptance item is completed, update the roadmap status marker in the same work batch.
+- If a proposed memory, skill, curator, toolset, or employee-growth change does not fit an existing roadmap phase, update the roadmap first before implementing the change.
+- Self-improving writes must be observable, auditable, and reversible where possible: record source session/tool evidence, changed files or rows, version metadata, rollback path, and `growth_events` entries when the runtime can identify the profile/session. Approval state belongs only to existing high-risk tool approval or explicit risk-confirmation flows, not to ordinary memory/skill growth.
+- Employee detail growth views should read from `list_employee_growth_events` / `growth_events` and show source session, target skill, version evidence, and summary without creating a separate review inbox.
+- The `curator` agent tool is the Hermes-aligned cleanup/growth manager. Its product-default trigger is Hermes-style automatic background maintenance based on interval plus idle time through `curator_scheduler_state`; manual scan/run/status controls are only operator overrides. Blank legacy `agent_profiles.profile_home` values must resolve to the canonical runtime `profiles/<profile_id>` home before curator reads or writes report artifacts. `curator.scan` is dry-run and may report duplicate memory, reusable skill candidates, low-value debris, pinned-skill skips, stale skill candidates, and active draft improvement candidates while persisting reports in `curator_runs` plus profile `curator/reports`. `curator.run` may only perform reversible lifecycle hygiene such as marking unpinned, unused mutable skills `stale`; `curator.restore` may restore stale skills back to `active`. Curator must not mutate memory content, delete skills, or touch `.skillpack` contents.
+- Employee detail curator views should read from `list_employee_curator_runs` / `curator_runs` and remain report-first. `curator.history` already projects `mode`, `changed_targets`, `restore_candidates`, and `has_state_changes` from raw reports; reuse that structure instead of reparsing report JSON in each UI. Execution of suggested cleanup must go through existing reversible `memory`, `skills`, or `curator.restore` flows rather than a new approval inbox.
+- The `toolsets` agent tool is the Toolset Gateway projection over the active registry. It groups tools into `core`, `memory`, `skills`, `web`, `browser`, `im`, `desktop`, `media`, and `mcp` using manifest metadata plus name-based bridge inference. It can also store the current profile's default `allowed_toolsets` preference, and Skill frontmatter can declare `requires_toolsets`, `optional_toolsets`, and `denied_toolsets` for `skill_view` observability. These toolset policies are configuration/audit facts unless a later roadmap slice explicitly wires them into effective tool policy; they must not silently alter approval behavior.
 
 ## Mandatory Skill Usage
 - Use `$workclaw-implementation-strategy` before changing runtime behavior, routing, provider integration, tool permissions, sidecar protocols, IM orchestration behavior, or vendor sync boundaries.
@@ -154,6 +178,8 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 
 ## Project Docs Index
 - Windows contributor prerequisites, local Tauri startup, and GitHub Windows release: [windows-contributor-guide.md](/e:/code/yzpd/workclaw/docs/development/windows-contributor-guide.md)
+- Next-stage self-improving AI employee roadmap: [2026-05-06-self-improving-profile-runtime-roadmap.md](/e:/code/yzpd/workclaw/docs/plans/2026-05-06-self-improving-profile-runtime-roadmap.md)
+- Hermes parity stabilization checklist: [2026-05-09-hermes-parity-stabilization-checklist.md](/e:/code/yzpd/workclaw/docs/plans/2026-05-09-hermes-parity-stabilization-checklist.md)
 
 ## Local Reference Mapping
 - `close code` means the local repo at `F:\code\yzpd\close-code`.
@@ -161,6 +187,7 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 - When the user mentions `close code`, assume they may want WorkClaw to reference its implementations or UX patterns.
 - Priority reference areas from `close code`: core agent capabilities, especially context compaction, tool calling, and React-side interaction patterns.
 - Other areas in `close code` may also be used as reference when the user explicitly asks or when the task clearly benefits from comparison.
+- `hermes` or `Hermes Agent` means the NousResearch Hermes Agent project. For next-stage WorkClaw planning, prioritize its self-improving runtime patterns: memory, session search, progressive skill loading, curator, toolsets, and multi-agent growth loops.
 
 ## Real Agent Eval Harness
 - Real agent evals are local-only, manually triggered runtime regressions for validating real model + real skill execution without checking secrets into git.
@@ -168,6 +195,7 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 - Keep real model/provider settings, real skill mappings, and external-system credentials only in `agent-evals/config/config.local.yaml`, which stays local and untracked.
 - Use environment variable names in `config.local.yaml` such as `MINIMAX_API_KEY`; never paste raw API keys into the YAML file.
 - Reports, traces, journals, and stdout/stderr artifacts are written to `temp/agent-evals/...` and stay local-only.
+- Hermes parity self-improving eval coverage includes `skill_curator_lifecycle_parity_2026_05_09`, which exercises Skill OS creation/version inspection plus Curator lifecycle recommendations in one profile-bound multi-turn scenario.
 - First validated golden case:
   - Scenario: `pm_weekly_summary_xietao_2026_03_30_2026_04_04`
   - Prompt: `获取谢涛2026年3月30日到4月4日的工作日报并汇总成简报`
