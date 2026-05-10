@@ -8,7 +8,7 @@ use super::types::{
 };
 use crate::runtime_environment::runtime_paths_from_app;
 use chrono::Utc;
-use skillpack_rs::{verify_and_unpack, SkillManifest};
+use skillpack_rs::{SkillManifest, verify_and_unpack};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

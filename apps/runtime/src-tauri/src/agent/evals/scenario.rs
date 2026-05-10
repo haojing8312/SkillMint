@@ -21,6 +21,14 @@ pub struct EvalScenario {
 pub struct EvalScenarioInput {
     pub user_text: String,
     #[serde(default)]
+    pub user_turns: Vec<String>,
+    #[serde(default)]
+    pub employee_alias: Option<String>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub profile_display_name: Option<String>,
+    #[serde(default)]
     pub workspace_files: Vec<EvalWorkspaceFile>,
 }
 
@@ -180,5 +188,112 @@ thresholds:
         assert!(scenario.expect.structured.is_none());
         assert_eq!(scenario.expect.tools.called_all, vec!["vision_analyze"]);
         assert_eq!(scenario.input.workspace_files[0].path, "red-dot.png");
+    }
+
+    #[test]
+    fn self_improving_scenario_yaml_parses_profile_and_turn_fields() {
+        let raw = r#"
+id: profile_memory_write_growth_2026_05_08
+title: Profile Memory 写入成长记录
+capability_id: self_improving_profile_memory
+kind: real-agent
+mode: self-improving-memory
+side_effect: profile-memory-write
+enabled: true
+input:
+  employee_alias: eval_memory_agent
+  profile_id: eval-profile-memory
+  profile_display_name: Eval Memory Agent
+  user_text: 记住：用户偏好先给结论，再给细节。
+  user_turns:
+    - 记住：用户偏好先给结论，再给细节。
+    - 你刚才长期记住了什么？
+expect:
+  tools:
+    called_all:
+      - memory
+  output:
+    contains_any:
+      - 先给结论
+thresholds:
+  pass_total_ms: 150000
+  warn_total_ms: 180000
+  max_turn_count: 6
+  max_tool_count: 10
+"#;
+
+        let scenario: EvalScenario =
+            serde_yaml::from_str(raw).expect("parse self-improving scenario");
+
+        assert_eq!(
+            scenario.input.employee_alias.as_deref(),
+            Some("eval_memory_agent")
+        );
+        assert_eq!(
+            scenario.input.profile_id.as_deref(),
+            Some("eval-profile-memory")
+        );
+        assert_eq!(scenario.input.user_turns.len(), 2);
+    }
+
+    #[test]
+    fn all_tracked_scenario_yamls_parse_and_match_file_names() {
+        let scenarios_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("agent-evals")
+            .join("scenarios");
+        let mut count = 0usize;
+        for entry in fs::read_dir(&scenarios_dir).expect("read scenarios dir") {
+            let path = entry.expect("scenario entry").path();
+            if path.extension().and_then(|value| value.to_str()) != Some("yaml") {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).expect("read scenario yaml");
+            let scenario: EvalScenario = serde_yaml::from_str(&raw)
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+            assert_eq!(
+                path.file_stem().and_then(|value| value.to_str()),
+                Some(scenario.id.as_str())
+            );
+            assert!(!scenario.capability_id.trim().is_empty());
+            count += 1;
+        }
+        assert!(count >= 2);
+    }
+
+    #[test]
+    fn skill_curator_lifecycle_parity_scenario_requires_skills_and_curator() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("agent-evals")
+            .join("scenarios")
+            .join("skill_curator_lifecycle_parity_2026_05_09.yaml");
+        let raw = fs::read_to_string(path).expect("read skill curator lifecycle scenario");
+        let scenario: EvalScenario = serde_yaml::from_str(&raw).expect("parse scenario");
+
+        assert_eq!(scenario.capability_id, "skill_curator_lifecycle_parity");
+        assert_eq!(scenario.input.user_turns.len(), 2);
+        assert_eq!(
+            scenario.input.profile_id.as_deref(),
+            Some("eval-profile-skill-curator")
+        );
+        assert!(
+            scenario
+                .expect
+                .tools
+                .called_all
+                .contains(&"skills".to_string())
+        );
+        assert!(
+            scenario
+                .expect
+                .tools
+                .called_all
+                .contains(&"curator".to_string())
+        );
     }
 }

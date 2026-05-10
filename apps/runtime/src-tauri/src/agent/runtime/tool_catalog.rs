@@ -255,6 +255,11 @@ fn score_tool_match(entry: &ToolManifestEntry, query: &str, tokens: &[String]) -
         push_unique(&mut detail.matched_fields, "document_analysis_intent");
         push_unique(&mut detail.matched_terms, "full_document_analysis");
     }
+    if name == "skills" && is_skill_os_query(query) {
+        detail.score += 20_000;
+        push_unique(&mut detail.matched_fields, "skill_os_intent");
+        push_unique(&mut detail.matched_terms, "skill_os");
+    }
 
     for token in tokens {
         let mut matched = false;
@@ -298,6 +303,31 @@ fn score_tool_match(entry: &ToolManifestEntry, query: &str, tokens: &[String]) -
     }
 
     detail
+}
+
+fn is_skill_os_query(query: &str) -> bool {
+    let normalized = query.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "创建技能",
+        "新建技能",
+        "生成技能",
+        "修改技能",
+        "优化技能",
+        "查看技能",
+        "技能",
+        "skill_create",
+        "create skill",
+        "new skill",
+        "skill os",
+        "skills_list",
+        "skill_view",
+        "skill_patch",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 fn is_full_document_analysis_query(query: &str) -> bool {
@@ -708,6 +738,40 @@ mod tests {
             hits[0]
                 .matched_fields
                 .contains(&"document_analysis_intent".to_string())
+        );
+        assert_eq!(hits[0].stage, ToolRecommendationStage::Primary);
+    }
+
+    #[test]
+    fn discover_tool_candidates_prefers_skills_for_chinese_skill_creation_intent() {
+        let entries = vec![
+            entry(
+                "toolsets",
+                "List toolset projections and tool metadata",
+                ToolCategory::System,
+                ToolSource::Runtime,
+            ),
+            entry(
+                "skills",
+                "Skill OS 工具。skill_create 创建 agent_created skill",
+                ToolCategory::Agent,
+                ToolSource::Runtime,
+            ),
+            entry(
+                "write_file",
+                "Write file",
+                ToolCategory::File,
+                ToolSource::Native,
+            ),
+        ];
+
+        let hits = discover_tool_candidates(&entries, "帮我创建一个项目周报总结技能", 3);
+
+        assert_eq!(hits.first().map(|hit| hit.name.as_str()), Some("skills"));
+        assert!(
+            hits[0]
+                .matched_fields
+                .contains(&"skill_os_intent".to_string())
         );
         assert_eq!(hits[0].stage, ToolRecommendationStage::Primary);
     }

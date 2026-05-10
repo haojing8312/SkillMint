@@ -74,6 +74,7 @@ pub(crate) struct ToolSetupParams<'a> {
     pub execution_preparation_service: &'a ChatExecutionPreparationService,
     pub execution_guidance: &'a ChatExecutionGuidance,
     pub memory_bucket_employee_id: &'a str,
+    pub profile_id: &'a str,
     pub employee_collaboration_guidance: Option<&'a str>,
     pub supplemental_runtime_notes: &'a [String],
     pub resource_context: Option<&'a TurnResourceContext>,
@@ -98,6 +99,7 @@ pub(crate) async fn prepare_runtime_tools(
         execution_preparation_service: params.execution_preparation_service,
         execution_guidance: params.execution_guidance,
         memory_bucket_employee_id: params.memory_bucket_employee_id,
+        profile_id: params.profile_id,
     })
     .await?;
 
@@ -172,7 +174,8 @@ pub(crate) async fn prepare_runtime_tools(
         workspace_skill_context.skill_command_specs.clone(),
         merge_runtime_notes(registry_setup.runtime_notes, &supplemental_runtime_notes),
     );
-    let memory_content = chat_io::load_memory_content(&registry_setup.memory_dir);
+    let memory_bundle = chat_io::load_profile_memory_bundle(&registry_setup.profile_memory_locator);
+    let memory_content = memory_bundle.content;
     let context_bundle = ContextBundle::build(
         params.skill_system_prompt,
         &capability_snapshot,

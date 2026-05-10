@@ -1,3 +1,5 @@
+use super::skill_source_policy::{resolve_skill_source_policy, SkillSourceKind};
+
 async fn maybe_self_heal_builtin_skill_source_with_pool(
     pool: &sqlx::SqlitePool,
     skill_id: &str,
@@ -5,7 +7,8 @@ async fn maybe_self_heal_builtin_skill_source_with_pool(
     pack_path: &str,
     source_type: &str,
 ) -> Result<(String, String, String), String> {
-    if source_type != "builtin" {
+    let policy = resolve_skill_source_policy(source_type);
+    if policy.kind != SkillSourceKind::LegacyBuiltin {
         return Ok((
             username.to_string(),
             pack_path.to_string(),

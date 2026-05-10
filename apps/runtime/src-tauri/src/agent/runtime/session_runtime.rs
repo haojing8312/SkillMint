@@ -1,15 +1,15 @@
 use super::events::ToolConfirmResponder;
+use crate::agent::AgentExecutor;
 use crate::agent::context::build_tool_context_with_permission_mode;
 use crate::agent::run_guard::{RunBudgetPolicy, RunBudgetScope};
 use crate::agent::runtime::kernel::execution_plan::ExecutionContext;
 use crate::agent::runtime::kernel::turn_preparation::parse_user_skill_command;
 use crate::agent::runtime::task_entry::{self, PrimaryLocalChatTaskRunAndFinalizeRequest};
-use crate::agent::AgentExecutor;
 use crate::session_journal::SessionJournalStore;
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tauri::AppHandle;
 use uuid::Uuid;
 
@@ -36,6 +36,7 @@ impl SessionRuntime {
     pub(crate) async fn maybe_execute_user_skill_command(
         app: &AppHandle,
         agent_executor: &Arc<AgentExecutor>,
+        db: &sqlx::SqlitePool,
         session_id: &str,
         run_id: &str,
         user_message: &str,
@@ -67,6 +68,20 @@ impl SessionRuntime {
             error: err.to_string(),
             skill_id: spec.skill_id.clone(),
         })?;
+
+        if let Err(error) = crate::agent::runtime::runtime_io::record_skill_os_usage_with_pool(
+            db,
+            &spec.skill_id,
+            "use",
+        )
+        .await
+        {
+            eprintln!(
+                "[skill-os] failed to record skill command use for {}: {error}",
+                spec.skill_id
+            );
+        }
+
         let dispatch_context = crate::agent::runtime::tool_dispatch::ToolDispatchContext {
             registry: agent_executor.registry(),
             app_handle: Some(app),

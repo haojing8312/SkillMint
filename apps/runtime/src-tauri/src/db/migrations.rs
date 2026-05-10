@@ -11,6 +11,86 @@ async fn im_thread_sessions_exists(pool: &SqlitePool) -> Result<bool> {
     Ok(!table_names.is_empty())
 }
 
+async fn agent_employees_exists(pool: &SqlitePool) -> Result<bool> {
+    let table_names: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_employees'",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(!table_names.is_empty())
+}
+
+async fn ensure_agent_profiles_table(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS agent_profiles (
+            id TEXT PRIMARY KEY,
+            legacy_employee_row_id TEXT NOT NULL DEFAULT '',
+            display_name TEXT NOT NULL DEFAULT '',
+            route_aliases_json TEXT NOT NULL DEFAULT '[]',
+            profile_home TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_agent_profiles_employee_row_id
+         ON agent_profiles(legacy_employee_row_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn ensure_sessions_profile_id_column(pool: &SqlitePool) -> Result<()> {
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN profile_id TEXT")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_profile_id
+         ON sessions(profile_id)",
+    )
+    .execute(pool)
+    .await;
+    Ok(())
+}
+
+async fn backfill_agent_profiles_from_employees(pool: &SqlitePool) -> Result<()> {
+    if !agent_employees_exists(pool).await? {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO agent_profiles (
+            id,
+            legacy_employee_row_id,
+            display_name,
+            route_aliases_json,
+            profile_home,
+            created_at,
+            updated_at
+        )
+        SELECT
+            id,
+            id,
+            COALESCE(NULLIF(TRIM(name), ''), COALESCE(NULLIF(TRIM(employee_id), ''), COALESCE(NULLIF(TRIM(role_id), ''), id))),
+            '[]',
+            '',
+            datetime('now'),
+            datetime('now')
+        FROM agent_employees
+        WHERE TRIM(id) <> ''",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub(super) async fn apply_legacy_migrations(pool: &SqlitePool) -> Result<()> {
     let has_im_thread_sessions = im_thread_sessions_exists(pool).await?;
 
@@ -105,6 +185,50 @@ pub(super) async fn apply_legacy_migrations(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await;
+    ensure_agent_profiles_table(pool).await?;
+    ensure_sessions_profile_id_column(pool).await?;
+    crate::agent::runtime::runtime_io::ensure_profile_session_index_schema_with_pool(pool)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    crate::agent::runtime::runtime_io::ensure_skill_os_versions_schema_with_pool(pool)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    crate::agent::runtime::runtime_io::ensure_skill_os_lifecycle_schema_with_pool(pool)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    crate::commands::employee_agents::curator_scheduler::ensure_curator_scheduler_schema_with_pool(
+        pool,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS growth_events (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            event_type TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_growth_events_profile_created
+         ON growth_events(profile_id, created_at DESC)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_growth_events_target
+         ON growth_events(target_type, target_id, created_at DESC)",
+    )
+    .execute(pool)
+    .await?;
+    backfill_agent_profiles_from_employees(pool).await?;
 
     let _ = sqlx::query(
         "ALTER TABLE im_thread_sessions ADD COLUMN route_session_key TEXT NOT NULL DEFAULT ''",
@@ -725,5 +849,111 @@ mod tests {
         .expect("query authority route");
         assert_eq!(route.0, "session-legacy");
         assert_eq!(route.1, "legacy-thread");
+    }
+
+    #[tokio::test]
+    async fn legacy_employee_and_session_db_backfills_profiles_without_breaking_sessions() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE agent_employees (
+                id TEXT PRIMARY KEY,
+                role_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                primary_skill_id TEXT NOT NULL DEFAULT '',
+                default_work_dir TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy agent_employees");
+
+        sqlx::query(
+            "INSERT INTO agent_employees (id, role_id, name, primary_skill_id, default_work_dir)
+             VALUES ('employee-row-1', 'planner', 'Planner', 'builtin-general', 'D:/work')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed legacy employee");
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                model_id TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy sessions");
+
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id)
+             VALUES ('session-1', 'builtin-general', 'Legacy', '2026-05-06T00:00:00Z', 'model-1')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed legacy session");
+
+        apply_legacy_migrations_for_test(&pool)
+            .await
+            .expect("apply legacy migrations");
+
+        let profile: (String, String, String) = sqlx::query_as(
+            "SELECT id, legacy_employee_row_id, display_name
+             FROM agent_profiles
+             WHERE legacy_employee_row_id = 'employee-row-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query profile");
+
+        assert_eq!(profile.0, "employee-row-1");
+        assert_eq!(profile.1, "employee-row-1");
+        assert_eq!(profile.2, "Planner");
+
+        let session_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+                .fetch_all(&pool)
+                .await
+                .expect("query session columns");
+        assert!(session_columns.iter().any(|name| name == "profile_id"));
+    }
+
+    #[tokio::test]
+    async fn legacy_migrations_create_profile_session_index_tables() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        apply_legacy_migrations_for_test(&pool)
+            .await
+            .expect("apply legacy migrations");
+
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+             AND name IN ('profile_session_index', 'profile_session_fts')
+             ORDER BY name",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("query profile session index tables");
+
+        assert_eq!(
+            tables,
+            vec![
+                "profile_session_fts".to_string(),
+                "profile_session_index".to_string()
+            ]
+        );
     }
 }

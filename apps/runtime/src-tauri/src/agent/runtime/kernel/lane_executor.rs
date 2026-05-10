@@ -284,6 +284,7 @@ mod tests {
                 local_month_range: "2026-04-01 ~ 2026-04-30".to_string(),
             },
             memory_bucket_employee_id: "employee-1".to_string(),
+            profile_id: String::new(),
             employee_collaboration_guidance: None,
             workspace_skill_entries: Vec::new(),
             route_index: SkillRouteIndex::default(),

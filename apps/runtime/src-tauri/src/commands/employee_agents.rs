@@ -1,4 +1,4 @@
-use crate::commands::skills::DbState;
+use crate::commands::{chat_runtime_io, skills::DbState};
 use crate::employee_runtime_adapter::employee_adapter::{
     build_group_run_execute_targets, build_team_runtime_view,
 };
@@ -10,8 +10,11 @@ use crate::im::{
 };
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
+use std::path::Path;
 use tauri::State;
 
+#[path = "employee_agents/curator_scheduler.rs"]
+pub(crate) mod curator_scheduler;
 #[path = "employee_agents/group_management.rs"]
 mod group_management;
 #[path = "employee_agents/group_run_entry.rs"]
@@ -48,12 +51,14 @@ use team_rules::{group_rule_matches_relation_types, normalize_member_employee_id
 use types::{default_group_execution_window, default_group_max_retry};
 pub use types::{
     AgentEmployee, CloneEmployeeGroupTemplateInput, CreateEmployeeGroupInput,
-    CreateEmployeeTeamInput, CreateEmployeeTeamRuleInput, EmployeeGroup, EmployeeGroupRule,
+    CreateEmployeeTeamInput, CreateEmployeeTeamRuleInput, EmployeeCuratorChangedTarget,
+    EmployeeCuratorFinding, EmployeeCuratorReports, EmployeeCuratorRestoreCandidate,
+    EmployeeCuratorRun, EmployeeCuratorSchedulerStatus, EmployeeGroup, EmployeeGroupRule,
     EmployeeGroupRunEvent, EmployeeGroupRunResult, EmployeeGroupRunSnapshot, EmployeeGroupRunStep,
-    EmployeeGroupRunSummary, EmployeeInboundDispatchSession, EmployeeMemoryExport,
-    EmployeeMemoryExportFile, EmployeeMemorySkillStats, EmployeeMemoryStats,
-    EnsuredEmployeeSession, GroupStepExecutionResult, SaveFeishuEmployeeAssociationInput,
-    StartEmployeeGroupRunInput, UpsertAgentEmployeeInput,
+    EmployeeGroupRunSummary, EmployeeGrowthEvent, EmployeeGrowthTimeline,
+    EmployeeInboundDispatchSession, EmployeeProfileMemoryStatus, EnsuredEmployeeSession,
+    GroupStepExecutionResult, SaveFeishuEmployeeAssociationInput, StartEmployeeGroupRunInput,
+    UpsertAgentEmployeeInput,
 };
 
 async fn load_execute_reassignment_targets_with_pool(
@@ -127,28 +132,6 @@ async fn load_execute_reassignment_targets_with_pool(
     ))
 }
 
-fn sanitize_memory_bucket_component(raw: &str, fallback: &str) -> String {
-    let mut out = String::new();
-    let mut prev_sep = false;
-    for ch in raw.trim().to_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            prev_sep = false;
-            continue;
-        }
-        if !prev_sep {
-            out.push('_');
-            prev_sep = true;
-        }
-    }
-    let normalized = out.trim_matches('_').to_string();
-    if normalized.is_empty() {
-        fallback.to_string()
-    } else {
-        normalized
-    }
-}
-
 fn normalize_employee_id(employee_id: &str) -> Result<String, String> {
     let normalized = employee_id.trim().to_string();
     if normalized.is_empty() {
@@ -168,195 +151,57 @@ fn normalize_memory_skill_scope(skill_id: Option<&str>) -> Result<Option<String>
     Ok(Some(normalized.to_string()))
 }
 
-fn employee_memory_skills_root(
+fn memory_status_path_payload(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+pub(crate) fn collect_employee_profile_memory_status_from_root(
+    runtime_root: &std::path::Path,
     memory_root: &std::path::Path,
-    employee_id: &str,
-) -> std::path::PathBuf {
-    let employee_bucket = sanitize_memory_bucket_component(employee_id, "employee");
-    memory_root
-        .join("employees")
-        .join(employee_bucket)
-        .join("skills")
-}
-
-fn list_scope_skill_dirs(
-    skills_root: &std::path::Path,
-    skill_scope: Option<&str>,
-) -> Result<Vec<(String, std::path::PathBuf)>, String> {
-    if let Some(skill_id) = skill_scope {
-        let skill_root = skills_root.join(skill_id);
-        if !skill_root.exists() {
-            return Ok(Vec::new());
-        }
-        return Ok(vec![(skill_id.to_string(), skill_root)]);
-    }
-
-    if !skills_root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut dirs = Vec::new();
-    for entry in std::fs::read_dir(skills_root).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let skill_id = entry.file_name().to_string_lossy().to_string();
-        if skill_id.trim().is_empty() {
-            continue;
-        }
-        dirs.push((skill_id, path));
-    }
-    dirs.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(dirs)
-}
-
-fn system_time_to_rfc3339(system_time: std::time::SystemTime) -> String {
-    chrono::DateTime::<chrono::Utc>::from(system_time).to_rfc3339()
-}
-
-fn collect_skill_file_entries(
+    work_dir: Option<&std::path::Path>,
     skill_id: &str,
-    skill_root: &std::path::Path,
-    include_content: bool,
-) -> Result<(u64, u64, Vec<EmployeeMemoryExportFile>), String> {
-    let mut entries = Vec::new();
-    if !skill_root.exists() {
-        return Ok((0, 0, entries));
-    }
-
-    let mut total_files = 0u64;
-    let mut total_bytes = 0u64;
-    let mut stack = vec![skill_root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for item in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-            let item = item.map_err(|e| e.to_string())?;
-            let path = item.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !path.is_file() {
-                continue;
-            }
-            let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-            let size_bytes = metadata.len();
-            total_files += 1;
-            total_bytes += size_bytes;
-
-            let relative_path = path
-                .strip_prefix(skill_root)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let modified_at = metadata.modified().ok().map(system_time_to_rfc3339);
-            let content = if include_content {
-                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-                String::from_utf8_lossy(&bytes).to_string()
-            } else {
-                String::new()
-            };
-
-            entries.push(EmployeeMemoryExportFile {
-                skill_id: skill_id.to_string(),
-                relative_path,
-                size_bytes,
-                modified_at,
-                content,
-            });
-        }
-    }
-    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    Ok((total_files, total_bytes, entries))
-}
-
-pub(crate) fn collect_employee_memory_stats_from_root(
     employee_id: &str,
-    skill_id: Option<&str>,
-    skills_root: &std::path::Path,
-) -> Result<EmployeeMemoryStats, String> {
+    profile_id: Option<&str>,
+    im_role_id: Option<&str>,
+) -> Result<EmployeeProfileMemoryStatus, String> {
     let employee_id = normalize_employee_id(employee_id)?;
-    let skill_scope = normalize_memory_skill_scope(skill_id)?;
-    let skill_dirs = list_scope_skill_dirs(skills_root, skill_scope.as_deref())?;
+    let skill_id = normalize_memory_skill_scope(Some(skill_id))?
+        .ok_or_else(|| "skill_id is required".to_string())?;
+    let profile_id = profile_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
 
-    let mut total_files = 0u64;
-    let mut total_bytes = 0u64;
-    let mut skills = Vec::with_capacity(skill_dirs.len());
-    for (skill_key, skill_root) in skill_dirs {
-        let (files, bytes, _entries) = collect_skill_file_entries(&skill_key, &skill_root, false)?;
-        total_files += files;
-        total_bytes += bytes;
-        skills.push(EmployeeMemorySkillStats {
-            skill_id: skill_key,
-            total_files: files,
-            total_bytes: bytes,
-        });
-    }
-    skills.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+    let locator = chat_runtime_io::build_profile_memory_locator(
+        runtime_root,
+        memory_root,
+        work_dir,
+        &skill_id,
+        &employee_id,
+        profile_id.as_deref(),
+        im_role_id,
+    );
+    let status = chat_runtime_io::collect_profile_memory_status(&locator);
 
-    Ok(EmployeeMemoryStats {
+    Ok(EmployeeProfileMemoryStatus {
         employee_id,
-        total_files,
-        total_bytes,
-        skills,
+        profile_id,
+        skill_id,
+        profile_memory_dir: status
+            .profile_memory_dir
+            .as_deref()
+            .map(memory_status_path_payload),
+        profile_memory_file_path: status
+            .profile_memory_file_path
+            .as_deref()
+            .map(memory_status_path_payload),
+        profile_memory_file_exists: status.profile_memory_file_exists,
+        active_source: status.active_source.to_string(),
+        active_source_path: status
+            .active_source_path
+            .as_deref()
+            .map(memory_status_path_payload),
     })
-}
-
-pub(crate) fn export_employee_memory_from_root(
-    employee_id: &str,
-    skill_id: Option<&str>,
-    skills_root: &std::path::Path,
-) -> Result<EmployeeMemoryExport, String> {
-    let employee_id = normalize_employee_id(employee_id)?;
-    let skill_scope = normalize_memory_skill_scope(skill_id)?;
-    let skill_dirs = list_scope_skill_dirs(skills_root, skill_scope.as_deref())?;
-
-    let mut total_files = 0u64;
-    let mut total_bytes = 0u64;
-    let mut files = Vec::new();
-    for (skill_key, skill_root) in skill_dirs {
-        let (file_count, byte_count, mut entries) =
-            collect_skill_file_entries(&skill_key, &skill_root, true)?;
-        total_files += file_count;
-        total_bytes += byte_count;
-        files.append(&mut entries);
-    }
-    files.sort_by(|a, b| {
-        a.skill_id
-            .cmp(&b.skill_id)
-            .then_with(|| a.relative_path.cmp(&b.relative_path))
-    });
-
-    Ok(EmployeeMemoryExport {
-        employee_id,
-        skill_id: skill_scope,
-        exported_at: chrono::Utc::now().to_rfc3339(),
-        total_files,
-        total_bytes,
-        files,
-    })
-}
-
-pub(crate) fn clear_employee_memory_from_root(
-    employee_id: &str,
-    skill_id: Option<&str>,
-    skills_root: &std::path::Path,
-) -> Result<(), String> {
-    let _employee_id = normalize_employee_id(employee_id)?;
-    let skill_scope = normalize_memory_skill_scope(skill_id)?;
-    if let Some(skill) = skill_scope {
-        let target = skills_root.join(skill);
-        if target.exists() {
-            std::fs::remove_dir_all(target).map_err(|e| e.to_string())?;
-        }
-        return Ok(());
-    }
-
-    if skills_root.exists() {
-        std::fs::remove_dir_all(skills_root).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 pub async fn list_agent_employees_with_pool(
@@ -587,31 +432,810 @@ pub async fn resolve_agent_session_dispatches_for_event_with_pool(
         })
 }
 
-#[tauri::command]
-pub async fn get_employee_memory_stats(
-    employee_id: String,
-    skill_id: Option<String>,
-    app: tauri::AppHandle,
-) -> Result<EmployeeMemoryStats, String> {
-    memory_commands::get_employee_memory_stats(employee_id, skill_id, app).await
+async fn table_exists(pool: &SqlitePool, table_name: &str) -> Result<bool, String> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+    )
+    .bind(table_name)
+    .fetch_one(pool)
+    .await
+    .map(|count| count > 0)
+    .map_err(|e| e.to_string())
+}
+
+async fn resolve_employee_profile_id_for_growth_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+) -> Result<Option<String>, String> {
+    if !table_exists(pool, "agent_profiles").await? {
+        return Ok(None);
+    }
+    sqlx::query_scalar::<_, String>(
+        "SELECT id
+         FROM agent_profiles
+         WHERE legacy_employee_row_id = ? OR id = ?
+         ORDER BY CASE WHEN legacy_employee_row_id = ? THEN 0 ELSE 1 END
+         LIMIT 1",
+    )
+    .bind(employee_id)
+    .bind(employee_id)
+    .bind(employee_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+pub async fn list_employee_growth_events_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+    limit: i64,
+) -> Result<EmployeeGrowthTimeline, String> {
+    let employee_id = employee_id.trim();
+    if employee_id.is_empty() {
+        return Err("employee_id 不能为空".to_string());
+    }
+    let profile_id = resolve_employee_profile_id_for_growth_with_pool(pool, employee_id).await?;
+    if !table_exists(pool, "growth_events").await? {
+        return Ok(EmployeeGrowthTimeline {
+            employee_id: employee_id.to_string(),
+            profile_id,
+            events: Vec::new(),
+        });
+    }
+    let query_profile_id = profile_id.as_deref().unwrap_or(employee_id);
+    let limit = limit.clamp(1, 100);
+    let rows = if table_exists(pool, "sessions").await? {
+        sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+            ),
+        >(
+            "SELECT ge.id,
+                    ge.profile_id,
+                    ge.session_id,
+                    COALESCE(s.title, '') AS session_title,
+                    ge.event_type,
+                    ge.target_type,
+                    ge.target_id,
+                    ge.summary,
+                    ge.evidence_json,
+                    ge.created_at
+             FROM growth_events ge
+             LEFT JOIN sessions s ON s.id = ge.session_id
+             WHERE ge.profile_id = ?
+             ORDER BY ge.created_at DESC, ge.id DESC
+             LIMIT ?",
+        )
+        .bind(query_profile_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+            ),
+        >(
+            "SELECT id,
+                    profile_id,
+                    session_id,
+                    '' AS session_title,
+                    event_type,
+                    target_type,
+                    target_id,
+                    summary,
+                    evidence_json,
+                    created_at
+             FROM growth_events
+             WHERE profile_id = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?",
+        )
+        .bind(query_profile_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    let events = rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                profile_id,
+                session_id,
+                session_title,
+                event_type,
+                target_type,
+                target_id,
+                summary,
+                evidence_json,
+                created_at,
+            )| {
+                let evidence_json: Value =
+                    serde_json::from_str(&evidence_json).unwrap_or_else(|_| serde_json::json!({}));
+                let display_summary = human_growth_summary(
+                    &event_type,
+                    &target_type,
+                    &target_id,
+                    &summary,
+                    &evidence_json,
+                );
+                let target_label = human_growth_target_label(&target_type, &target_id);
+                let evidence_label = human_growth_evidence_label(&evidence_json);
+                EmployeeGrowthEvent {
+                    id,
+                    profile_id,
+                    session_id,
+                    session_title,
+                    event_type,
+                    target_type,
+                    target_id,
+                    summary,
+                    display_summary,
+                    target_label,
+                    evidence_label,
+                    evidence_json,
+                    created_at,
+                }
+            },
+        )
+        .collect();
+
+    Ok(EmployeeGrowthTimeline {
+        employee_id: employee_id.to_string(),
+        profile_id,
+        events,
+    })
+}
+
+fn human_growth_summary(
+    event_type: &str,
+    target_type: &str,
+    target_id: &str,
+    summary: &str,
+    evidence: &Value,
+) -> String {
+    let trimmed = summary.trim();
+    if !trimmed.is_empty() && !matches!(trimmed, "add" | "replace" | "remove" | "update") {
+        return trimmed.to_string();
+    }
+
+    if event_type.starts_with("memory_") {
+        if let Some(preview) = read_growth_memory_preview(evidence) {
+            return match event_type {
+                "memory_add" => format!("记住：{preview}"),
+                "memory_replace" => format!("更新记忆：{preview}"),
+                "memory_remove" => format!("删除记忆：{preview}"),
+                "memory_rollback" => format!("回滚记忆：{preview}"),
+                _ => format!("更新 Profile Memory：{preview}"),
+            };
+        }
+        return match event_type {
+            "memory_add" => "写入 Profile Memory".to_string(),
+            "memory_replace" => "更新 Profile Memory".to_string(),
+            "memory_remove" => "删除 Profile Memory".to_string(),
+            "memory_rollback" => "回滚 Profile Memory".to_string(),
+            _ => "Profile Memory 已更新".to_string(),
+        };
+    }
+
+    if event_type.starts_with("skill_") {
+        return match event_type {
+            "skill_create" => format!("创建技能：{target_id}"),
+            "skill_patch" => format!("优化技能：{target_id}"),
+            "skill_archive" => format!("归档技能：{target_id}"),
+            "skill_restore" => format!("恢复技能：{target_id}"),
+            "skill_delete" => format!("删除技能：{target_id}"),
+            "skill_rollback" => format!("回滚技能：{target_id}"),
+            "skill_reset" => format!("重置技能：{target_id}"),
+            _ => format!("技能已更新：{target_id}"),
+        };
+    }
+
+    if event_type.starts_with("curator_") {
+        return match event_type {
+            "curator_scan" => "Curator 完成扫描".to_string(),
+            "curator_restore" => "Curator 恢复 stale skill".to_string(),
+            _ => "Curator 已更新".to_string(),
+        };
+    }
+
+    if target_type.is_empty() && target_id.is_empty() {
+        event_type.to_string()
+    } else {
+        format!("{event_type}: {target_type}/{target_id}")
+    }
+}
+
+fn human_growth_target_label(target_type: &str, target_id: &str) -> String {
+    match target_type {
+        "profile_memory" => "Profile Memory".to_string(),
+        "skill" => {
+            if target_id.trim().is_empty() {
+                "Skill OS".to_string()
+            } else {
+                format!("Skill: {target_id}")
+            }
+        }
+        "curator" => "Curator".to_string(),
+        _ if target_id.trim().is_empty() => target_type.to_string(),
+        _ => format!("{target_type}: {target_id}"),
+    }
+}
+
+fn human_growth_evidence_label(evidence: &Value) -> String {
+    let version_id = evidence
+        .get("version_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            evidence
+                .pointer("/memory_version/version_id")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or_default();
+    if version_id.trim().is_empty() {
+        "有审计记录".to_string()
+    } else {
+        "已保存版本，可审计/回滚".to_string()
+    }
+}
+
+fn read_growth_memory_preview(evidence: &Value) -> Option<String> {
+    let path = evidence.get("path").and_then(Value::as_str)?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let preview = content
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or(content.trim())
+        .chars()
+        .take(80)
+        .collect::<String>();
+    (!preview.trim().is_empty()).then_some(preview)
+}
+
+fn parse_curator_findings(report_json: &str) -> Vec<EmployeeCuratorFinding> {
+    let report =
+        serde_json::from_str::<Value>(report_json).unwrap_or_else(|_| serde_json::json!({}));
+    report["findings"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| EmployeeCuratorFinding {
+                    kind: item["kind"].as_str().unwrap_or_default().to_string(),
+                    severity: item["severity"].as_str().unwrap_or_default().to_string(),
+                    target_type: item["target_type"].as_str().unwrap_or_default().to_string(),
+                    target_id: item["target_id"].as_str().unwrap_or_default().to_string(),
+                    summary: item["summary"].as_str().unwrap_or_default().to_string(),
+                    evidence_json: item
+                        .get("evidence")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                    suggested_action: item["suggested_action"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    reversible: item["reversible"].as_bool().unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_curator_changed_targets(report: &Value) -> Vec<EmployeeCuratorChangedTarget> {
+    report["findings"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let evidence = item.get("evidence").unwrap_or(&Value::Null);
+                    let state_changed = evidence["state_changed"].as_bool().unwrap_or(false);
+                    let restored_to = evidence["restored_to"].as_str().unwrap_or_default();
+                    if !state_changed && restored_to.is_empty() {
+                        return None;
+                    }
+                    Some(EmployeeCuratorChangedTarget {
+                        kind: item["kind"].as_str().unwrap_or_default().to_string(),
+                        target_type: item["target_type"].as_str().unwrap_or_default().to_string(),
+                        target_id: item["target_id"].as_str().unwrap_or_default().to_string(),
+                        state_changed,
+                        restored_to: restored_to.to_string(),
+                        suggested_action: item["suggested_action"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        reversible: item["reversible"].as_bool().unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_curator_restore_candidates(report: &Value) -> Vec<EmployeeCuratorRestoreCandidate> {
+    report["findings"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let kind = item["kind"].as_str().unwrap_or_default();
+                    let target_type = item["target_type"].as_str().unwrap_or_default();
+                    let target_id = item["target_id"].as_str().unwrap_or_default();
+                    let evidence = item.get("evidence").unwrap_or(&Value::Null);
+                    let state_changed = evidence["state_changed"].as_bool().unwrap_or(false);
+                    let reversible = item["reversible"].as_bool().unwrap_or(false);
+                    if kind != "stale_skill"
+                        || target_type != "skill"
+                        || target_id.is_empty()
+                        || !state_changed
+                        || !reversible
+                    {
+                        return None;
+                    }
+                    Some(EmployeeCuratorRestoreCandidate {
+                        target_type: "skill".to_string(),
+                        target_id: target_id.to_string(),
+                        tool: "curator".to_string(),
+                        action: "restore".to_string(),
+                        input: serde_json::json!({
+                            "action": "restore",
+                            "skill_id": target_id
+                        }),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn project_employee_curator_run(
+    id: String,
+    profile_id: String,
+    scope: String,
+    summary: String,
+    report_json: String,
+    report_path: String,
+    created_at: String,
+) -> EmployeeCuratorRun {
+    let report =
+        serde_json::from_str::<Value>(&report_json).unwrap_or_else(|_| serde_json::json!({}));
+    let changed_targets = parse_curator_changed_targets(&report);
+    let restore_candidates = parse_curator_restore_candidates(&report);
+    EmployeeCuratorRun {
+        id,
+        profile_id,
+        scope,
+        summary,
+        report_path,
+        mode: report["mode"].as_str().unwrap_or("scan").to_string(),
+        has_state_changes: !changed_targets.is_empty(),
+        changed_targets,
+        restore_candidates,
+        findings: parse_curator_findings(&report_json),
+        created_at,
+    }
+}
+
+pub async fn list_employee_curator_runs_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+    limit: i64,
+) -> Result<EmployeeCuratorReports, String> {
+    let employee_id = employee_id.trim();
+    if employee_id.is_empty() {
+        return Err("employee_id 不能为空".to_string());
+    }
+    let profile_id = resolve_employee_profile_id_for_growth_with_pool(pool, employee_id).await?;
+    if !table_exists(pool, "curator_runs").await? {
+        return Ok(EmployeeCuratorReports {
+            employee_id: employee_id.to_string(),
+            profile_id,
+            runs: Vec::new(),
+        });
+    }
+    let query_profile_id = profile_id.as_deref().unwrap_or(employee_id);
+    let limit = limit.clamp(1, 50);
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String)>(
+        "SELECT id, profile_id, scope, summary, report_json, report_path, created_at
+         FROM curator_runs
+         WHERE profile_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?",
+    )
+    .bind(query_profile_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("读取 curator_runs 失败: {e}"))?;
+    let runs = rows
+        .into_iter()
+        .map(
+            |(id, profile_id, scope, summary, report_json, report_path, created_at)| {
+                project_employee_curator_run(
+                    id,
+                    profile_id,
+                    scope,
+                    summary,
+                    report_json,
+                    report_path,
+                    created_at,
+                )
+            },
+        )
+        .collect();
+
+    Ok(EmployeeCuratorReports {
+        employee_id: employee_id.to_string(),
+        profile_id,
+        runs,
+    })
+}
+
+async fn resolve_employee_profile_for_curator_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+) -> Result<(String, String), String> {
+    if !table_exists(pool, "agent_profiles").await? {
+        return Ok((employee_id.to_string(), String::new()));
+    }
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT id, COALESCE(profile_home, '')
+         FROM agent_profiles
+         WHERE legacy_employee_row_id = ? OR id = ?
+         ORDER BY CASE WHEN legacy_employee_row_id = ? THEN 0 ELSE 1 END
+         LIMIT 1",
+    )
+    .bind(employee_id)
+    .bind(employee_id)
+    .bind(employee_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())
+    .map(|row| row.unwrap_or_else(|| (employee_id.to_string(), String::new())))
+}
+
+fn sanitize_curator_profile_path_component(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return None;
+    }
+    let mut out = String::new();
+    let mut prev_sep = false;
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+            prev_sep = false;
+        } else if !prev_sep {
+            out.push('_');
+            prev_sep = true;
+        }
+    }
+    let normalized = out.trim_matches('_').to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+pub(crate) fn resolve_profile_home_for_curator(
+    profile_id: &str,
+    profile_home: &str,
+    runtime_root: Option<&Path>,
+) -> Option<String> {
+    let trimmed_home = profile_home.trim();
+    if !trimmed_home.is_empty() {
+        return Some(trimmed_home.to_string());
+    }
+    let profile_id = sanitize_curator_profile_path_component(profile_id)?;
+    let root = runtime_root
+        .map(Path::to_path_buf)
+        .unwrap_or_else(crate::runtime_paths::resolve_runtime_root);
+    Some(
+        root.join("profiles")
+            .join(profile_id)
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
+async fn ensure_curator_runs_schema_with_pool(pool: &SqlitePool) -> Result<(), String> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS curator_runs (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL DEFAULT '',
+            scope TEXT NOT NULL DEFAULT 'profile',
+            summary TEXT NOT NULL DEFAULT '',
+            report_json TEXT NOT NULL DEFAULT '{}',
+            report_path TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("创建 curator_runs 表失败: {e}"))?;
+    Ok(())
+}
+
+async fn ensure_growth_events_schema_for_curator_with_pool(
+    pool: &SqlitePool,
+) -> Result<(), String> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS growth_events (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            event_type TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("创建 growth_events 表失败: {e}"))?;
+    Ok(())
+}
+
+pub async fn restore_employee_curator_stale_skill_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+    skill_id: &str,
+    runtime_root: Option<&Path>,
+) -> Result<EmployeeCuratorRun, String> {
+    let employee_id = employee_id.trim();
+    let skill_id = skill_id.trim();
+    if employee_id.is_empty() {
+        return Err("employee_id 不能为空".to_string());
+    }
+    if skill_id.is_empty() {
+        return Err("skill_id 不能为空".to_string());
+    }
+    let (profile_id, profile_home) =
+        resolve_employee_profile_for_curator_with_pool(pool, employee_id).await?;
+    let profile_home = resolve_profile_home_for_curator(&profile_id, &profile_home, runtime_root)
+        .unwrap_or_default();
+    let restored =
+        crate::agent::runtime::runtime_io::restore_stale_skill_os_with_pool(pool, skill_id).await?;
+    let run_id = format!("cur_{}", uuid::Uuid::new_v4().simple());
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let summary = if restored {
+        format!("已将 stale skill 恢复为 active: {skill_id}")
+    } else {
+        format!("未执行恢复：Skill 当前不是 stale: {skill_id}")
+    };
+    let report = serde_json::json!({
+        "run_id": run_id,
+        "profile_id": profile_id,
+        "scope": "profile",
+        "mode": "restore",
+        "summary": summary,
+        "created_at": created_at,
+        "findings": [{
+            "kind": "curator_restore",
+            "severity": "low",
+            "target_type": "skill",
+            "target_id": skill_id,
+            "summary": summary,
+            "evidence": {
+                "state_changed": restored,
+                "restored_to": if restored { "active" } else { "" }
+            },
+            "suggested_action": if restored {
+                "继续观察该技能的 use_count、patch_count 和后续任务表现"
+            } else {
+                "无需恢复；如需恢复 archived skill，请使用 skills.skill_restore"
+            },
+            "reversible": true
+        }]
+    });
+    let report_path = if profile_home.trim().is_empty() {
+        String::new()
+    } else {
+        let path = std::path::PathBuf::from(profile_home)
+            .join("curator")
+            .join("reports")
+            .join(format!("{run_id}.json"));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建 curator report 目录失败: {e}"))?;
+        }
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| format!("序列化 curator report 失败: {e}"))?,
+        )
+        .map_err(|e| format!("写入 curator report 失败: {e}"))?;
+        path.to_string_lossy().to_string()
+    };
+    let report_json =
+        serde_json::to_string(&report).map_err(|e| format!("序列化 curator report 失败: {e}"))?;
+    ensure_curator_runs_schema_with_pool(pool).await?;
+    ensure_growth_events_schema_for_curator_with_pool(pool).await?;
+    sqlx::query(
+        "INSERT INTO curator_runs (id, profile_id, scope, summary, report_json, report_path, created_at)
+         VALUES (?, ?, 'profile', ?, ?, ?, ?)",
+    )
+    .bind(&run_id)
+    .bind(&profile_id)
+    .bind(&summary)
+    .bind(&report_json)
+    .bind(&report_path)
+    .bind(&created_at)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("写入 curator_runs 失败: {e}"))?;
+    sqlx::query(
+        "INSERT INTO growth_events (
+            id, profile_id, session_id, event_type, target_type, target_id, summary, evidence_json, created_at
+         ) VALUES (?, ?, '', 'curator_restore', 'curator', ?, ?, ?, ?)",
+    )
+    .bind(format!("grw_{}", uuid::Uuid::new_v4().simple()))
+    .bind(&profile_id)
+    .bind(&run_id)
+    .bind(&summary)
+    .bind(&report_json)
+    .bind(&created_at)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("写入 curator growth event 失败: {e}"))?;
+
+    Ok(project_employee_curator_run(
+        run_id,
+        profile_id,
+        "profile".to_string(),
+        summary,
+        report_json,
+        report_path,
+        created_at,
+    ))
+}
+
+pub async fn scan_employee_curator_profile_with_pool(
+    pool: &SqlitePool,
+    employee_id: &str,
+    mode: Option<String>,
+    runtime_root: Option<&Path>,
+) -> Result<EmployeeCuratorRun, String> {
+    let employee_id = employee_id.trim();
+    if employee_id.is_empty() {
+        return Err("employee_id 不能为空".to_string());
+    }
+    let normalized_mode = mode.unwrap_or_else(|| "scan".to_string());
+    let mutate = match normalized_mode.trim() {
+        "" | "scan" => false,
+        "run" => true,
+        other => return Err(format!("未知 Curator 模式: {other}")),
+    };
+    let (profile_id, profile_home) =
+        resolve_employee_profile_for_curator_with_pool(pool, employee_id).await?;
+    let profile_home = resolve_profile_home_for_curator(&profile_id, &profile_home, runtime_root)
+        .unwrap_or_default();
+    let memory_dir = if profile_home.trim().is_empty() {
+        std::path::PathBuf::new()
+    } else {
+        std::path::PathBuf::from(&profile_home).join("memories")
+    };
+    let result = crate::agent::tools::CuratorTool::scan_profile_with_pool(
+        pool.clone(),
+        profile_id.clone(),
+        memory_dir,
+        mutate,
+    )
+    .await?;
+    let run_id = result["run_id"]
+        .as_str()
+        .ok_or_else(|| "Curator scan 未返回 run_id".to_string())?;
+    let row = sqlx::query_as::<_, (String, String, String, String, String, String, String)>(
+        "SELECT id, profile_id, scope, summary, report_json, report_path, created_at
+         FROM curator_runs
+         WHERE id = ?
+         LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("读取 Curator scan 结果失败: {e}"))?;
+
+    Ok(project_employee_curator_run(
+        row.0, row.1, row.2, row.3, row.4, row.5, row.6,
+    ))
 }
 
 #[tauri::command]
-pub async fn export_employee_memory(
+pub async fn get_employee_profile_memory_status(
     employee_id: String,
-    skill_id: Option<String>,
+    skill_id: String,
+    profile_id: Option<String>,
+    work_dir: Option<String>,
+    im_role_id: Option<String>,
     app: tauri::AppHandle,
-) -> Result<EmployeeMemoryExport, String> {
-    memory_commands::export_employee_memory(employee_id, skill_id, app).await
+    db: State<'_, DbState>,
+) -> Result<EmployeeProfileMemoryStatus, String> {
+    memory_commands::get_employee_profile_memory_status(
+        employee_id,
+        skill_id,
+        profile_id,
+        work_dir,
+        im_role_id,
+        app,
+        db,
+    )
+    .await
 }
 
 #[tauri::command]
-pub async fn clear_employee_memory(
+pub async fn scan_employee_curator_profile(
     employee_id: String,
-    skill_id: Option<String>,
+    mode: Option<String>,
     app: tauri::AppHandle,
-) -> Result<EmployeeMemoryStats, String> {
-    memory_commands::clear_employee_memory(employee_id, skill_id, app).await
+    db: State<'_, DbState>,
+) -> Result<EmployeeCuratorRun, String> {
+    let runtime_paths = crate::runtime_environment::runtime_paths_from_app(&app)?;
+    scan_employee_curator_profile_with_pool(&db.0, &employee_id, mode, Some(&runtime_paths.root))
+        .await
+}
+
+#[tauri::command]
+pub async fn list_employee_growth_events(
+    employee_id: String,
+    limit: Option<i64>,
+    db: State<'_, DbState>,
+) -> Result<EmployeeGrowthTimeline, String> {
+    list_employee_growth_events_with_pool(&db.0, &employee_id, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+pub async fn list_employee_curator_runs(
+    employee_id: String,
+    limit: Option<i64>,
+    db: State<'_, DbState>,
+) -> Result<EmployeeCuratorReports, String> {
+    list_employee_curator_runs_with_pool(&db.0, &employee_id, limit.unwrap_or(10)).await
+}
+
+#[tauri::command]
+pub async fn restore_employee_curator_stale_skill(
+    employee_id: String,
+    skill_id: String,
+    app: tauri::AppHandle,
+    db: State<'_, DbState>,
+) -> Result<EmployeeCuratorRun, String> {
+    let runtime_paths = crate::runtime_environment::runtime_paths_from_app(&app)?;
+    restore_employee_curator_stale_skill_with_pool(
+        &db.0,
+        &employee_id,
+        &skill_id,
+        Some(&runtime_paths.root),
+    )
+    .await
 }
 
 #[tauri::command]

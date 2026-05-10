@@ -13,6 +13,7 @@ pub(crate) mod employee_runtime_adapter;
 pub mod im;
 mod model_errors;
 mod model_transport;
+pub(crate) mod profile_runtime;
 pub mod providers;
 mod runtime_bootstrap;
 mod runtime_environment;
@@ -161,6 +162,9 @@ fn initialize_runtime_state(
     app.manage(ImChannelHostRuntimeState::default());
     app.manage(OpenClawPluginFeishuRuntimeState::default());
     app.manage(commands::openclaw_plugins::OpenClawLarkInstallerSessionState::default());
+    app.manage(
+        commands::employee_agents::curator_scheduler::EmployeeCuratorSchedulerState::default(),
+    );
 
     ManagedRuntimeHandles {
         registry,
@@ -435,6 +439,17 @@ pub fn run() {
                 Arc::clone(&handles.registry),
             );
             restore_saved_mcp_servers(pool.clone(), Arc::clone(&handles.registry));
+            let curator_scheduler_state = app
+                .state::<
+                    commands::employee_agents::curator_scheduler::EmployeeCuratorSchedulerState,
+                >()
+                .inner()
+                .clone();
+            commands::employee_agents::curator_scheduler::spawn_curator_scheduler(
+                pool.clone(),
+                curator_scheduler_state,
+                runtime_environment.paths.root.clone(),
+            );
             tauri::async_runtime::spawn({
                 let pool = pool.clone();
                 let runtime_state = app
@@ -463,7 +478,8 @@ pub fn run() {
                     )
                     .await
                     {
-                        let _ = record_im_channel_restore_report(&channel_host_runtime_state, report);
+                        let _ =
+                            record_im_channel_restore_report(&channel_host_runtime_state, report);
                     }
                 }
             });
@@ -486,6 +502,16 @@ pub fn run() {
             commands::skills::create_local_skill,
             commands::skills::render_local_skill_preview,
             commands::skills::list_skills,
+            commands::skills::list_skill_os_index,
+            commands::skills::get_skill_os_view,
+            commands::skills::list_skill_os_versions,
+            commands::skills::patch_skill_os,
+            commands::skills::rollback_skill_os,
+            commands::skills::reset_skill_os,
+            commands::skills::archive_skill_os,
+            commands::skills::restore_skill_os,
+            commands::skills::delete_skill_os,
+            commands::skills::pin_skill_os,
             commands::skills::get_skill_runtime_environment_status,
             commands::skills::delete_skill,
             commands::clawhub::search_clawhub_skills,
@@ -569,6 +595,7 @@ pub fn run() {
             commands::chat_session_commands::update_session_workspace,
             commands::chat_session_commands::search_sessions_global,
             commands::chat_session_commands::search_sessions,
+            commands::chat_session_commands::search_profile_sessions,
             commands::chat_session_commands::export_session,
             commands::chat_session_commands::write_export_file,
             commands::session_runs::list_session_runs,
@@ -637,12 +664,16 @@ pub fn run() {
             commands::employee_agents::upsert_agent_employee,
             commands::employee_agents::save_feishu_employee_association,
             commands::employee_agents::delete_agent_employee,
-            commands::employee_agents::get_employee_memory_stats,
-            commands::employee_agents::export_employee_memory,
-            commands::employee_agents::clear_employee_memory,
+            commands::employee_agents::get_employee_profile_memory_status,
+            commands::employee_agents::scan_employee_curator_profile,
+            commands::employee_agents::list_employee_curator_runs,
+            commands::employee_agents::restore_employee_curator_stale_skill,
+            commands::employee_agents::curator_scheduler::get_curator_scheduler_status,
+            commands::employee_agents::list_employee_growth_events,
             commands::agent_profile::generate_agent_profile_draft,
             commands::agent_profile::apply_agent_profile,
             commands::agent_profile::get_agent_profile_files,
+            commands::agent_profile::export_agent_profile,
             commands::mcp::add_mcp_server,
             commands::mcp::list_mcp_servers,
             commands::mcp::remove_mcp_server,

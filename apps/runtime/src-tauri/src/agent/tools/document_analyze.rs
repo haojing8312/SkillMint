@@ -3,9 +3,9 @@ use crate::agent::tools::tool_result;
 use crate::agent::{Tool, ToolContext};
 use crate::commands::chat_media_store::read_inbound_media_ref;
 use crate::runtime_paths::RuntimePaths;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::PathBuf;
 
 const DEFAULT_CHUNK_CHARS: usize = 12_000;
@@ -187,7 +187,7 @@ fn split_text_chunks(text: &str, chunk_chars: usize) -> Vec<DocumentTextChunk> {
 mod tests {
     use super::*;
     use crate::commands::chat_media_store::save_inbound_media;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
     use tempfile::tempdir;
 
     #[test]

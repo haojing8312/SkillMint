@@ -49,6 +49,69 @@ struct PreparedEmployeeStepSessionRun {
     parent_task_record: Option<TaskRecord>,
 }
 
+#[derive(Debug, Clone)]
+struct GroupStepMemoryBinding {
+    memory_dir: PathBuf,
+    profile_id: Option<String>,
+}
+
+fn legacy_group_step_memory_dir(work_dir: &str, employee_id: &str, skill_id: &str) -> PathBuf {
+    let memory_root = if work_dir.trim().is_empty() {
+        std::env::temp_dir().join("workclaw-group-run-memory")
+    } else {
+        PathBuf::from(work_dir.trim())
+            .join("openclaw")
+            .join(employee_id.trim())
+            .join("memory")
+    };
+    memory_root.join(if skill_id.trim().is_empty() {
+        "builtin-general"
+    } else {
+        skill_id.trim()
+    })
+}
+
+async fn resolve_group_step_memory_binding(
+    pool: &SqlitePool,
+    employee_row_id: &str,
+    employee_id: &str,
+    skill_id: &str,
+    work_dir: &str,
+) -> Result<GroupStepMemoryBinding, String> {
+    let profile_row = sqlx::query_as::<_, (String, String)>(
+        "SELECT id, COALESCE(profile_home, '')
+         FROM agent_profiles
+         WHERE legacy_employee_row_id = ? OR id = ?
+         ORDER BY CASE WHEN legacy_employee_row_id = ? THEN 0 ELSE 1 END
+         LIMIT 1",
+    )
+    .bind(employee_row_id)
+    .bind(employee_row_id)
+    .bind(employee_row_id)
+    .fetch_optional(pool)
+    .await;
+
+    match profile_row {
+        Ok(Some((profile_id, profile_home))) if !profile_home.trim().is_empty() => {
+            Ok(GroupStepMemoryBinding {
+                memory_dir: PathBuf::from(profile_home.trim()).join("memories"),
+                profile_id: Some(profile_id),
+            })
+        }
+        Ok(_) => Ok(GroupStepMemoryBinding {
+            memory_dir: legacy_group_step_memory_dir(work_dir, employee_id, skill_id),
+            profile_id: None,
+        }),
+        Err(error) if error.to_string().contains("no such table: agent_profiles") => {
+            Ok(GroupStepMemoryBinding {
+                memory_dir: legacy_group_step_memory_dir(work_dir, employee_id, skill_id),
+                profile_id: None,
+            })
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 async fn prepare_employee_step_session_run(
     pool: &SqlitePool,
     journal: &SessionJournalStore,
@@ -180,21 +243,20 @@ pub(crate) async fn execute_group_step_in_employee_context_with_pool(
         .collect();
 
     let registry = Arc::new(ToolRegistry::with_standard_tools());
-    let memory_root = if session_row.work_dir.trim().is_empty() {
-        std::env::temp_dir().join("workclaw-group-run-memory")
-    } else {
-        PathBuf::from(session_row.work_dir.trim())
-            .join("openclaw")
-            .join(employee.employee_id.trim())
-            .join("memory")
-    };
-    let memory_dir = memory_root.join(if session_row.skill_id.trim().is_empty() {
-        "builtin-general"
-    } else {
-        session_row.skill_id.trim()
-    });
-    std::fs::create_dir_all(&memory_dir).map_err(|e| e.to_string())?;
-    registry.register(Arc::new(MemoryTool::new(memory_dir)));
+    let memory_binding = resolve_group_step_memory_binding(
+        pool,
+        &employee.id,
+        &employee.employee_id,
+        &session_row.skill_id,
+        &session_row.work_dir,
+    )
+    .await?;
+    std::fs::create_dir_all(&memory_binding.memory_dir).map_err(|e| e.to_string())?;
+    let mut memory_tool = MemoryTool::new(memory_binding.memory_dir);
+    if let Some(profile_id) = memory_binding.profile_id {
+        memory_tool = memory_tool.with_profile_session_search(pool.clone(), profile_id);
+    }
+    registry.register(Arc::new(memory_tool));
     registry.register(Arc::new(EmployeeManageTool::new(pool.clone())));
 
     let executor = Arc::new(AgentExecutor::with_max_iterations(
@@ -652,7 +714,10 @@ pub(crate) async fn start_employee_group_run_internal_with_pool(
 
 #[cfg(test)]
 mod tests {
-    use super::{finalize_employee_step_execution_outcome, prepare_employee_step_session_run};
+    use super::{
+        finalize_employee_step_execution_outcome, legacy_group_step_memory_dir,
+        prepare_employee_step_session_run, resolve_group_step_memory_binding,
+    };
     use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
     use crate::agent::runtime::kernel::execution_plan::{ExecutionLane, ExecutionOutcome};
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
@@ -722,6 +787,78 @@ mod tests {
         .expect("create session_run_events table");
 
         pool
+    }
+
+    async fn setup_profile_memory_binding_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+        sqlx::query(
+            "CREATE TABLE agent_profiles (
+                id TEXT PRIMARY KEY,
+                legacy_employee_row_id TEXT NOT NULL DEFAULT '',
+                display_name TEXT NOT NULL DEFAULT '',
+                route_aliases_json TEXT NOT NULL DEFAULT '[]',
+                profile_home TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create agent_profiles");
+        pool
+    }
+
+    #[tokio::test]
+    async fn group_step_memory_binding_prefers_profile_home_when_available() {
+        let pool = setup_profile_memory_binding_pool().await;
+        let profile_home = tempdir().expect("profile home");
+        sqlx::query(
+            "INSERT INTO agent_profiles (
+                id, legacy_employee_row_id, display_name, profile_home, created_at, updated_at
+             ) VALUES ('profile-sales', 'employee-row-sales', 'Sales', ?, 'now', 'now')",
+        )
+        .bind(profile_home.path().to_string_lossy().to_string())
+        .execute(&pool)
+        .await
+        .expect("seed profile");
+
+        let binding = resolve_group_step_memory_binding(
+            &pool,
+            "employee-row-sales",
+            "sales_lead",
+            "skill-sales",
+            "D:/workspace/acme",
+        )
+        .await
+        .expect("resolve binding");
+
+        assert_eq!(binding.profile_id.as_deref(), Some("profile-sales"));
+        assert_eq!(binding.memory_dir, profile_home.path().join("memories"));
+        assert!(!binding.memory_dir.to_string_lossy().contains("openclaw"));
+    }
+
+    #[tokio::test]
+    async fn group_step_memory_binding_keeps_legacy_fallback_without_profile_home() {
+        let pool = setup_profile_memory_binding_pool().await;
+        let binding = resolve_group_step_memory_binding(
+            &pool,
+            "employee-row-missing",
+            "sales_lead",
+            "skill-sales",
+            "D:/workspace/acme",
+        )
+        .await
+        .expect("resolve binding");
+
+        assert_eq!(binding.profile_id, None);
+        assert_eq!(
+            binding.memory_dir,
+            legacy_group_step_memory_dir("D:/workspace/acme", "sales_lead", "skill-sales")
+        );
     }
 
     #[tokio::test]

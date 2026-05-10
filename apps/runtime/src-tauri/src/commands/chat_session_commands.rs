@@ -171,6 +171,56 @@ pub async fn search_sessions(
 }
 
 #[tauri::command]
+pub async fn search_profile_sessions(
+    profile_id: String,
+    query: String,
+    limit: Option<i64>,
+    work_dir: Option<String>,
+    updated_after: Option<String>,
+    updated_before: Option<String>,
+    skill_id: Option<String>,
+    source: Option<String>,
+    db: State<'_, DbState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let rows =
+        crate::agent::runtime::runtime_io::search_profile_session_index_with_filters_with_pool(
+            &db.0,
+            &profile_id,
+            &query,
+            limit.unwrap_or(20),
+            crate::agent::runtime::runtime_io::ProfileSessionSearchFilters {
+                work_dir,
+                updated_after,
+                updated_before,
+                skill_id,
+                source,
+            },
+        )
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "profile_id": row.profile_id,
+                "session_id": row.session_id,
+                "skill_id": row.skill_id,
+                "work_dir": row.work_dir,
+                "source": row.source,
+                "run_status": row.run_status,
+                "latest_run_id": row.latest_run_id,
+                "document_kind": row.document_kind,
+                "matched_run_id": row.matched_run_id,
+                "tool_summary_count": row.tool_summary_count,
+                "compaction_boundary_count": row.compaction_boundary_count,
+                "manifest_path": row.manifest_path,
+                "updated_at": row.updated_at,
+                "snippet": row.snippet,
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
 pub async fn export_session(
     app: AppHandle,
     session_id: String,

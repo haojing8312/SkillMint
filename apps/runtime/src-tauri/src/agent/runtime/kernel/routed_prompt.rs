@@ -114,6 +114,7 @@ pub(crate) async fn prepare_routed_prompt(
         execution_preparation_service: &execution_preparation_service,
         execution_guidance: &params.execution_context.execution_guidance,
         memory_bucket_employee_id: &params.execution_context.memory_bucket_employee_id,
+        profile_id: &params.execution_context.profile_id,
         employee_collaboration_guidance: params
             .execution_context
             .employee_collaboration_guidance

@@ -1,25 +1,26 @@
 use super::adjudicator::adjudicate_route;
 use super::index::SkillRouteIndex;
 use super::intent::RouteFallbackReason;
-use super::observability::{build_implicit_route_observation, PlannedImplicitRoute};
+use super::observability::{PlannedImplicitRoute, build_implicit_route_observation};
 use super::recall::recall_skill_candidates;
+use crate::agent::AgentExecutor;
 use crate::agent::runtime::kernel::direct_dispatch::execute_direct_dispatch_skill;
 use crate::agent::runtime::kernel::execution_plan::{
     ContinuationKind, ContinuationPreference, ExecutionContext, ExecutionPlan, TurnContext,
 };
 use crate::agent::runtime::kernel::route_lane::{
-    build_routed_skill_tool_setup, resolve_skill_allowed_tools, RouteRunOutcome, RouteRunPlan,
+    RouteRunOutcome, RouteRunPlan, build_routed_skill_tool_setup, resolve_skill_allowed_tools,
 };
 use crate::agent::runtime::kernel::routed_prompt::{
-    execute_routed_prompt, prepare_routed_prompt, RoutedPromptExecutionParams,
-    RoutedPromptPreparationParams,
+    RoutedPromptExecutionParams, RoutedPromptPreparationParams, execute_routed_prompt,
+    prepare_routed_prompt,
 };
 use crate::agent::runtime::runtime_io::{
     WorkspaceSkillCommandSpec, WorkspaceSkillRouteExecutionMode, WorkspaceSkillRuntimeEntry,
 };
-use crate::agent::AgentExecutor;
-use std::sync::atomic::AtomicBool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tauri::AppHandle;
 
 pub(crate) fn resolve_direct_dispatch_raw_args(
@@ -264,11 +265,12 @@ pub(crate) async fn execute_implicit_route_plan(
     match route_plan {
         RouteRunPlan::OpenTask { .. } => Ok(RouteRunOutcome::OpenTask),
         RouteRunPlan::DirectDispatchSkill {
-            skill_id: _skill_id,
+            skill_id,
             mut setup,
             command_spec,
             raw_args,
         } => {
+            record_skill_route_use(db, &skill_id).await;
             setup.skill_allowed_tools = resolve_skill_allowed_tools(
                 agent_executor.registry(),
                 &setup,
@@ -291,6 +293,7 @@ pub(crate) async fn execute_implicit_route_plan(
             Ok(RouteRunOutcome::DirectDispatch(output))
         }
         RouteRunPlan::PromptSkillInline { skill_id, setup } => {
+            record_skill_route_use(db, &skill_id).await;
             let resolved_allowed_tools = resolve_skill_allowed_tools(
                 agent_executor.registry(),
                 &setup,
@@ -343,6 +346,7 @@ pub(crate) async fn execute_implicit_route_plan(
             })
         }
         RouteRunPlan::PromptSkillFork { skill_id, setup } => {
+            record_skill_route_use(db, &skill_id).await;
             let resolved_allowed_tools = resolve_skill_allowed_tools(
                 agent_executor.registry(),
                 &setup,
@@ -395,6 +399,20 @@ pub(crate) async fn execute_implicit_route_plan(
                 reconstructed_history_len: fork_messages.len(),
             })
         }
+    }
+}
+
+async fn record_skill_route_use(db: &SqlitePool, skill_id: &str) {
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty() {
+        return;
+    }
+
+    if let Err(error) =
+        crate::agent::runtime::runtime_io::record_skill_os_usage_with_pool(db, skill_id, "use")
+            .await
+    {
+        eprintln!("[skill-os] failed to record routed skill use for {skill_id}: {error}");
     }
 }
 
@@ -504,6 +522,9 @@ mod tests {
                 description: Some(description.to_string()),
                 allowed_tools: allowed_tools_for_config,
                 denied_tools: None,
+                requires_toolsets: None,
+                optional_toolsets: None,
+                denied_toolsets: None,
                 allowed_tool_sources: None,
                 denied_tool_sources: None,
                 allowed_tool_categories: None,
@@ -917,6 +938,36 @@ mod tests {
 
         assert_eq!(fork_messages.len(), 1);
         assert_eq!(fork_messages[0]["content"].as_str(), Some("latest"));
+    }
+
+    #[test]
+    fn record_skill_route_use_updates_lifecycle_usage() {
+        let runtime = tokio::runtime::Runtime::new().expect("create tokio runtime");
+        let pool = runtime
+            .block_on(async {
+                sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect("sqlite::memory:")
+                    .await
+            })
+            .expect("create sqlite pool");
+
+        runtime.block_on(record_skill_route_use(&pool, "routed-skill"));
+
+        let (use_count, last_used_at): (i64, String) = runtime
+            .block_on(async {
+                sqlx::query_as(
+                    "SELECT use_count, last_used_at
+                     FROM skill_lifecycle
+                     WHERE skill_id = 'routed-skill'",
+                )
+                .fetch_one(&pool)
+                .await
+            })
+            .expect("query lifecycle usage");
+
+        assert_eq!(use_count, 1);
+        assert!(!last_used_at.is_empty());
     }
 
     #[test]

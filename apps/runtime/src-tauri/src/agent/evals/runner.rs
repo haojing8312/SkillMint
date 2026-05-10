@@ -138,15 +138,25 @@ impl RealAgentEvalRunner {
         let work_dir = PathBuf::from(&config.artifacts.output_dir)
             .join("workspaces")
             .join(&scenario.id);
+        self.reset_eval_directory(&work_dir, &config.artifacts.output_dir)
+            .await?;
         std::fs::create_dir_all(&work_dir).map_err(|e| format!("创建场景工作目录失败: {e}"))?;
         materialize_workspace_files(&work_dir, &scenario.input.workspace_files)?;
+        let employee_alias = self
+            .ensure_eval_profile_for_scenario(
+                config,
+                scenario,
+                &skill_selection.skill_id,
+                &work_dir,
+            )
+            .await?;
 
         let session_id = create_session(
             self.app.handle().clone(),
             skill_selection.skill_id.clone(),
             model_id.clone(),
             Some(work_dir.to_string_lossy().to_string()),
-            None,
+            employee_alias,
             Some(scenario.title.clone()),
             Some("standard".to_string()),
             Some("general".to_string()),
@@ -157,22 +167,31 @@ impl RealAgentEvalRunner {
 
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        let execution_error = send_message(
-            self.app.handle().clone(),
-            SendMessageRequest {
-                session_id: session_id.clone(),
-                parts: vec![SendMessagePart::Text {
-                    text: scenario.input.user_text.clone(),
-                }],
-                max_iterations: None,
-            },
-            self.app.state::<DbState>(),
-            self.app.state::<Arc<AgentExecutor>>(),
-            self.app.state::<SessionJournalStateHandle>(),
-            self.app.state::<CancelFlagState>(),
-        )
-        .await
-        .err();
+        let user_turns = if scenario.input.user_turns.is_empty() {
+            vec![scenario.input.user_text.clone()]
+        } else {
+            scenario.input.user_turns.clone()
+        };
+        let mut execution_error = None;
+        for text in user_turns {
+            execution_error = send_message(
+                self.app.handle().clone(),
+                SendMessageRequest {
+                    session_id: session_id.clone(),
+                    parts: vec![SendMessagePart::Text { text }],
+                    max_iterations: None,
+                },
+                self.app.state::<DbState>(),
+                self.app.state::<Arc<AgentExecutor>>(),
+                self.app.state::<SessionJournalStateHandle>(),
+                self.app.state::<CancelFlagState>(),
+            )
+            .await
+            .err();
+            if execution_error.is_some() {
+                break;
+            }
+        }
 
         let session_runs = list_session_runs_with_pool(&self.pool, &session_id).await?;
         let route_attempt_logs = load_route_attempt_logs(&self.pool, &session_id).await?;
@@ -258,13 +277,154 @@ impl RealAgentEvalRunner {
             "DELETE FROM messages",
             "DELETE FROM sessions",
             "DELETE FROM route_attempt_logs",
-            "DELETE FROM installed_skills WHERE source_type = 'local'",
+            "DELETE FROM installed_skills WHERE source_type IN ('local', 'agent_created')",
             "DELETE FROM model_configs WHERE id LIKE 'eval-%'",
         ] {
             sqlx::query(statement)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| format!("重置评测数据库失败: {e}"))?;
+        }
+        for statement in [
+            "DELETE FROM profile_session_index",
+            "DELETE FROM profile_session_fts",
+            "DELETE FROM profile_toolset_policies",
+            "DELETE FROM growth_events",
+            "DELETE FROM curator_runs",
+            "DELETE FROM skill_versions",
+            "DELETE FROM skill_lifecycle",
+            "DELETE FROM agent_profiles WHERE id LIKE 'eval-profile-%' OR legacy_employee_row_id LIKE 'eval-employee-%'",
+            "DELETE FROM agent_employees WHERE id LIKE 'eval-employee-%'",
+        ] {
+            self.execute_if_table_exists(statement).await?;
+        }
+        Ok(())
+    }
+
+    async fn execute_if_table_exists(&self, statement: &str) -> Result<(), String> {
+        let table_name = statement
+            .split_whitespace()
+            .nth(2)
+            .ok_or_else(|| format!("无法解析清理语句中的表名: {statement}"))?;
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)
+             FROM sqlite_master
+             WHERE type IN ('table', 'view')
+             AND name = ?",
+        )
+        .bind(table_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("检查评测清理表失败 ({table_name}): {e}"))?
+            > 0;
+        if !exists {
+            return Ok(());
+        }
+        sqlx::query(statement)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("重置评测数据库失败 ({table_name}): {e}"))?;
+        Ok(())
+    }
+
+    async fn ensure_eval_profile_for_scenario(
+        &self,
+        config: &LocalEvalConfig,
+        scenario: &EvalScenario,
+        skill_id: &str,
+        work_dir: &Path,
+    ) -> Result<Option<String>, String> {
+        let Some(employee_alias) = scenario
+            .input
+            .employee_alias
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(None);
+        };
+        let employee_row_id = format!("eval-employee-{}", sanitize_id_component(&scenario.id));
+        let profile_id = scenario
+            .input
+            .profile_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("eval-profile-{}", sanitize_id_component(&scenario.id)));
+        let display_name = scenario
+            .input
+            .profile_display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(employee_alias)
+            .to_string();
+        let profile_home = PathBuf::from(&config.artifacts.output_dir)
+            .join("runtime-state")
+            .join("profiles")
+            .join(&profile_id);
+        self.reset_eval_directory(&profile_home, &config.artifacts.output_dir)
+            .await?;
+        std::fs::create_dir_all(&profile_home)
+            .map_err(|e| format!("创建评测 profile home 失败: {e}"))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT OR REPLACE INTO agent_employees (
+                id, employee_id, name, role_id, persona, primary_skill_id,
+                default_work_dir, openclaw_agent_id, enabled_scopes_json,
+                enabled, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, '', ?, ?, ?, '[\"chat\"]', 1, ?, ?)",
+        )
+        .bind(&employee_row_id)
+        .bind(employee_alias)
+        .bind(&display_name)
+        .bind(employee_alias)
+        .bind(skill_id)
+        .bind(work_dir.to_string_lossy().to_string())
+        .bind(employee_alias)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("写入评测 agent employee 失败: {e}"))?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO agent_profiles (
+                id, legacy_employee_row_id, display_name, route_aliases_json,
+                profile_home, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&profile_id)
+        .bind(&employee_row_id)
+        .bind(&display_name)
+        .bind(serde_json::json!([employee_alias]).to_string())
+        .bind(profile_home.to_string_lossy().to_string())
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("写入评测 agent profile 失败: {e}"))?;
+        Ok(Some(employee_alias.to_string()))
+    }
+
+    async fn reset_eval_directory(&self, path: &Path, output_root: &str) -> Result<(), String> {
+        let output_root = PathBuf::from(output_root);
+        let output_root = output_root
+            .canonicalize()
+            .unwrap_or_else(|_| output_root.clone());
+        let target_parent = path.parent().unwrap_or(path);
+        let target_parent = target_parent
+            .canonicalize()
+            .unwrap_or_else(|_| target_parent.to_path_buf());
+        if !target_parent.starts_with(&output_root) {
+            return Err(format!(
+                "拒绝清理评测目录，目标不在 artifacts.output_dir 内: {}",
+                path.display()
+            ));
+        }
+        if path.exists() {
+            std::fs::remove_dir_all(path)
+                .map_err(|e| format!("清理评测目录失败 ({}): {e}", path.display()))?;
         }
         Ok(())
     }

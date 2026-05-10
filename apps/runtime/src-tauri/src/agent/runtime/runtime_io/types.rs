@@ -26,15 +26,6 @@ pub struct WorkspaceSkillRouteProjection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceSkillPromptEntry {
-    pub skill_id: String,
-    pub invoke_name: String,
-    pub name: String,
-    pub description: String,
-    pub skill_md_path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSkillCommandSpec {
     pub name: String,
     pub skill_id: String,

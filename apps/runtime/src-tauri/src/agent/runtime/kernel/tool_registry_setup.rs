@@ -2,18 +2,17 @@ use crate::agent::runtime::events::{AskUserState, SearchCacheState};
 use crate::agent::runtime::runtime_io as chat_io;
 use crate::agent::tools::search_providers::create_provider;
 use crate::agent::tools::{
-    AskUserTool, BashKillTool, BashOutputTool, BashTool, ClawhubRecommendTool, ClawhubSearchTool,
-    CompactTool, DocumentAnalyzeTool, EmployeeManageTool, ExecKillTool, ExecOutputTool, ExecTool,
-    GithubRepoDownloadTool, MemoryTool, ProcessManager, SkillInvokeTool, TaskTool,
-    VisionAnalyzeTool, WebSearchTool, browser_compat::register_browser_compat_tool,
-    browser_tools::register_browser_tools, register_tool_alias,
+    browser_compat::register_browser_compat_tool, browser_tools::register_browser_tools,
+    register_tool_alias, AskUserTool, BashKillTool, BashOutputTool, BashTool, ClawhubRecommendTool,
+    ClawhubSearchTool, CompactTool, CuratorTool, DocumentAnalyzeTool, EmployeeManageTool,
+    ExecKillTool, ExecOutputTool, ExecTool, GithubRepoDownloadTool, MemoryTool, ProcessManager,
+    SkillInvokeTool, SkillOsTool, TaskTool, ToolsetsTool, VisionAnalyzeTool, WebSearchTool,
 };
 use crate::agent::{AgentExecutor, BackgroundProcessEvent, Tool, ToolContext, ToolRegistry};
 use crate::runtime_environment::runtime_paths_from_app;
 use crate::session_journal::SessionJournalStateHandle;
 use runtime_chat_app::{ChatExecutionGuidance, ChatExecutionPreparationService};
-use serde_json::{Map, Value, json};
-use std::path::PathBuf;
+use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -261,10 +260,11 @@ pub(crate) struct ToolRegistrySetupParams<'a> {
     pub execution_preparation_service: &'a ChatExecutionPreparationService,
     pub execution_guidance: &'a ChatExecutionGuidance,
     pub memory_bucket_employee_id: &'a str,
+    pub profile_id: &'a str,
 }
 
 pub(crate) struct ToolRegistrySetupResult {
-    pub memory_dir: PathBuf,
+    pub profile_memory_locator: chat_io::ProfileMemoryLocator,
     pub runtime_notes: Vec<String>,
 }
 
@@ -424,15 +424,77 @@ pub(crate) async fn setup_runtime_tool_registry(
     }
 
     let app_data_dir = params.app.path().app_data_dir().unwrap_or_default();
-    let memory_dir = chat_io::build_memory_dir_for_session(
+    let runtime_paths = runtime_paths_from_app(params.app)?;
+    let executor_work_dir = params
+        .execution_preparation_service
+        .resolve_executor_work_dir(params.execution_guidance);
+    let profile_memory_locator = chat_io::build_profile_memory_locator(
+        &runtime_paths.root,
         &app_data_dir,
+        executor_work_dir.as_deref().map(std::path::Path::new),
         params.skill_id,
         params.memory_bucket_employee_id,
+        Some(params.profile_id).filter(|profile_id| !profile_id.trim().is_empty()),
+        Some(params.memory_bucket_employee_id).filter(|employee_id| !employee_id.trim().is_empty()),
     );
+    if !params.profile_id.trim().is_empty() {
+        let work_dir = executor_work_dir.clone();
+        match chat_io::write_profile_session_manifest(
+            &runtime_paths.root,
+            chat_io::ProfileSessionManifestInput {
+                profile_id: params.profile_id,
+                session_id: params.session_id,
+                skill_id: params.skill_id,
+                work_dir: work_dir.as_deref(),
+                source: "runtime_tool_setup",
+            },
+        ) {
+            Ok(manifest_path) => {
+                if let Err(err) =
+                    chat_io::index_profile_session_manifest_with_pool(params.db, &manifest_path)
+                        .await
+                {
+                    eprintln!("[profile-runtime] 索引 profile session manifest 失败: {err}");
+                }
+            }
+            Err(err) => {
+                eprintln!("[profile-runtime] 写入 profile session manifest 失败: {err}");
+            }
+        }
+    }
+    let memory_dir = profile_memory_locator
+        .profile_memory_dir
+        .clone()
+        .unwrap_or_else(|| runtime_paths.root.join("profiles").join("_default").join("memories"));
+    let mut memory_tool = MemoryTool::new(memory_dir.clone());
+    if let Some(project_memory_file) = profile_memory_locator.project_memory_file.clone() {
+        memory_tool = memory_tool.with_project_memory_path(project_memory_file);
+    }
+    if !params.profile_id.trim().is_empty() {
+        memory_tool = memory_tool
+            .with_profile_session_search(params.db.clone(), params.profile_id.to_string());
+    }
     params
         .agent_executor
         .registry()
-        .register(Arc::new(MemoryTool::new(memory_dir.clone())));
+        .register(Arc::new(memory_tool));
+    params
+        .agent_executor
+        .registry()
+        .register(Arc::new(CuratorTool::new(
+            params.db.clone(),
+            params.profile_id.to_string(),
+            memory_dir,
+        )));
+    params.agent_executor.registry().register(Arc::new(
+        ToolsetsTool::new(params.agent_executor.registry_arc())
+            .with_profile_policy(params.db.clone(), params.profile_id.to_string()),
+    ));
+
+    params
+        .agent_executor
+        .registry()
+        .register(Arc::new(SkillOsTool::new(params.db.clone())));
 
     let skill_roots = chat_io::build_skill_roots(
         params
@@ -471,7 +533,7 @@ pub(crate) async fn setup_runtime_tool_registry(
         .register(Arc::new(ask_user_tool));
 
     Ok(ToolRegistrySetupResult {
-        memory_dir,
+        profile_memory_locator,
         runtime_notes,
     })
 }

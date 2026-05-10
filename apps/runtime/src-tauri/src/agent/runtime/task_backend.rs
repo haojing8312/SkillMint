@@ -1,14 +1,15 @@
+use crate::agent::AgentExecutor;
 use crate::agent::run_guard::parse_run_stop_reason;
 use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
 use crate::agent::runtime::events::ToolConfirmResponder;
 use crate::agent::runtime::kernel::execution_plan::{
     ExecutionContext, ExecutionLane, ExecutionOutcome, TurnContext,
 };
-use crate::agent::runtime::kernel::lane_executor::{execute_execution_lane, LaneExecutionParams};
+use crate::agent::runtime::kernel::lane_executor::{LaneExecutionParams, execute_execution_lane};
 use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
 use crate::agent::runtime::kernel::turn_preparation::{
-    prepare_employee_step_turn, prepare_hidden_child_turn, prepare_local_turn,
-    PrepareLocalTurnParams,
+    PrepareLocalTurnParams, prepare_employee_step_turn, prepare_hidden_child_turn,
+    prepare_local_turn,
 };
 use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
 use crate::agent::runtime::runtime_io as chat_io;
@@ -16,12 +17,11 @@ use crate::agent::runtime::session_runtime::SessionRuntime;
 use crate::agent::runtime::skill_routing::runner::plan_implicit_route_with_observation;
 use crate::agent::runtime::task_state::{TaskBackendKind, TaskState};
 use crate::agent::types::StreamDelta;
-use crate::agent::AgentExecutor;
 use crate::model_transport::resolve_model_transport;
 use serde_json::Value;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use tauri::AppHandle;
 
 pub(crate) type TaskBackendTokenCallback = Arc<dyn Fn(StreamDelta) + Send + Sync + 'static>;
@@ -292,6 +292,7 @@ async fn run_interactive_chat_backend(
     match SessionRuntime::maybe_execute_user_skill_command(
         &request.app,
         &request.agent_executor,
+        request.db,
         request.session_id,
         request.run_id,
         request.user_message,
@@ -585,10 +586,9 @@ pub(crate) async fn execute_prepared_task_backend_with_context(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_prepared_task_backend_with_context, prepare_task_backend,
         EmployeeStepTaskBackendPreparationRequest, HiddenChildTaskBackendPreparationRequest,
         TaskBackendContract, TaskBackendExecutionContext, TaskBackendPreparationRequest,
-        TaskBackendTokenCallback,
+        TaskBackendTokenCallback, execute_prepared_task_backend_with_context, prepare_task_backend,
     };
     use crate::agent::runtime::kernel::session_profile::SessionSurfaceKind;
     use crate::agent::runtime::task_state::TaskBackendKind;

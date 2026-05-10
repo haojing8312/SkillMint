@@ -464,7 +464,7 @@ fn default_routing_priority_for_employee(employee: &TeamTemplateEmployee) -> i64
 fn build_profile_draft(employee: &TeamTemplateEmployee) -> AgentProfileDraft {
     let agents_md = non_empty_or_else(&employee.profile_templates.agents_md_template, || {
         format!(
-            "# AGENTS\n\n## Agent\n- 名称: {name}\n- 员工编号: {employee_id}\n\n## Mission\n{persona}\n",
+            "# RULES\n\n## Agent\n- 名称: {name}\n- 员工编号: {employee_id}\n\n## Mission\n{persona}\n",
             name = employee.name,
             employee_id = employee.employee_id,
             persona = fallback_persona(employee),
@@ -472,13 +472,13 @@ fn build_profile_draft(employee: &TeamTemplateEmployee) -> AgentProfileDraft {
     });
     let soul_md = non_empty_or_else(&employee.profile_templates.soul_md_template, || {
         format!(
-            "# SOUL\n\n## Tone\n专业、简洁、可执行。\n\n## Working Style\n{persona}\n",
+            "# PERSONA\n\n## Tone\n专业、简洁、可执行。\n\n## Working Style\n{persona}\n",
             persona = fallback_persona(employee),
         )
     });
     let user_md = non_empty_or_else(&employee.profile_templates.user_md_template, || {
         format!(
-            "# USER\n\n## External Role\n{name}\n\n## Collaboration Contract\n{persona}\n",
+            "# USER_CONTEXT\n\n## External Role\n{name}\n\n## Collaboration Contract\n{persona}\n",
             name = employee.name,
             persona = fallback_persona(employee),
         )

@@ -9,8 +9,51 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
             installed_at TEXT NOT NULL,
             last_used_at TEXT,
             username TEXT NOT NULL,
-            pack_path TEXT NOT NULL DEFAULT ''
+            pack_path TEXT NOT NULL DEFAULT '',
+            source_type TEXT NOT NULL DEFAULT 'encrypted'
         )",
+    )
+    .execute(pool)
+    .await?;
+
+    crate::agent::runtime::runtime_io::ensure_skill_os_versions_schema_with_pool(pool)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    crate::agent::runtime::runtime_io::ensure_skill_os_lifecycle_schema_with_pool(pool)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    crate::commands::employee_agents::curator_scheduler::ensure_curator_scheduler_schema_with_pool(
+        pool,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS growth_events (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            event_type TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_growth_events_profile_created
+         ON growth_events(profile_id, created_at DESC)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_growth_events_target
+         ON growth_events(target_type, target_id, created_at DESC)",
     )
     .execute(pool)
     .await?;
@@ -25,9 +68,21 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
             permission_mode TEXT NOT NULL DEFAULT 'accept_edits',
             work_dir TEXT NOT NULL DEFAULT '',
             employee_id TEXT NOT NULL DEFAULT '',
+            profile_id TEXT,
             session_mode TEXT NOT NULL DEFAULT 'general',
             team_id TEXT NOT NULL DEFAULT ''
         )",
+    )
+    .execute(pool)
+    .await?;
+
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN profile_id TEXT")
+        .execute(pool)
+        .await;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_profile_id
+         ON sessions(profile_id)",
     )
     .execute(pool)
     .await?;
@@ -387,6 +442,27 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS agent_profiles (
+            id TEXT PRIMARY KEY,
+            legacy_employee_row_id TEXT NOT NULL DEFAULT '',
+            display_name TEXT NOT NULL DEFAULT '',
+            route_aliases_json TEXT NOT NULL DEFAULT '[]',
+            profile_home TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_agent_profiles_employee_row_id
+         ON agent_profiles(legacy_employee_row_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS agent_employee_skills (
             employee_id TEXT NOT NULL,
             skill_id TEXT NOT NULL,
@@ -739,6 +815,10 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    crate::agent::runtime::runtime_io::ensure_profile_session_index_schema_with_pool(pool)
+        .await
+        .map_err(anyhow::Error::msg)?;
+
     Ok(())
 }
 
@@ -769,5 +849,115 @@ mod tests {
         .expect("query openclaw binding tables");
 
         assert_eq!(tables.len(), 2, "expected openclaw binding tables");
+    }
+
+    #[tokio::test]
+    async fn current_schema_creates_profile_runtime_tables_and_columns() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        apply_current_schema(&pool)
+            .await
+            .expect("apply current schema");
+
+        let profile_tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+             AND name IN ('agent_profiles', 'profile_session_index')
+             ORDER BY name",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("query profile tables");
+        assert_eq!(
+            profile_tables,
+            vec![
+                "agent_profiles".to_string(),
+                "profile_session_index".to_string()
+            ]
+        );
+
+        let fts_tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+             AND name = 'profile_session_fts'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("query profile session fts table");
+        assert_eq!(fts_tables, vec!["profile_session_fts".to_string()]);
+
+        let session_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+                .fetch_all(&pool)
+                .await
+                .expect("query session columns");
+        assert!(
+            session_columns.iter().any(|name| name == "profile_id"),
+            "sessions should include nullable profile_id"
+        );
+
+        let indexes: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'index'
+             AND name IN (
+                'idx_agent_profiles_employee_row_id',
+                'idx_sessions_profile_id'
+             )",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("query profile indexes");
+        assert_eq!(indexes.len(), 2, "expected profile runtime indexes");
+    }
+
+    #[tokio::test]
+    async fn current_schema_adds_profile_id_before_indexing_legacy_sessions() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                model_id TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy sessions table");
+
+        apply_current_schema(&pool)
+            .await
+            .expect("apply current schema over legacy sessions");
+
+        let session_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+                .fetch_all(&pool)
+                .await
+                .expect("query session columns");
+        assert!(
+            session_columns.iter().any(|name| name == "profile_id"),
+            "schema initialization should backfill profile_id before creating its index"
+        );
+
+        let index_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+             FROM sqlite_master
+             WHERE type = 'index'
+             AND name = 'idx_sessions_profile_id'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query profile id index");
+        assert_eq!(index_exists, 1);
     }
 }

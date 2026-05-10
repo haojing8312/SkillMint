@@ -3,8 +3,8 @@ use super::chat_compaction;
 use super::chat_runtime_io as chat_io;
 use super::chat_session_io;
 use super::skills::DbState;
-use crate::agent::AgentExecutor;
 use crate::agent::runtime::{RuntimeTranscript, SessionAdmissionGateState, SessionRuntime};
+use crate::agent::AgentExecutor;
 use crate::approval_bus::ApprovalManager;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::runtime_environment::runtime_paths_from_app;
@@ -12,8 +12,8 @@ use crate::session_journal::SessionJournalStateHandle;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub use crate::agent::runtime::AskUserPendingSessionState;
@@ -559,31 +559,262 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn build_memory_dir_for_session_keeps_legacy_skill_bucket_without_employee() {
-        let base = Path::new("C:/workclaw/runtime-root/memory");
-        let dir = chat_runtime_io::build_memory_dir_for_session(base, "builtin-general", "");
+    fn profile_memory_locator_points_to_profile_home() {
+        let runtime_root = Path::new("C:/workclaw/runtime-root");
+        let memory_root = runtime_root.join("memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            runtime_root,
+            &memory_root,
+            Some(Path::new("E:/workspace/acme")),
+            "builtin-general",
+            "Sales Lead/华东",
+            Some("profile-1"),
+            Some("planner-role"),
+        );
+
         assert_eq!(
-            dir,
-            Path::new("C:/workclaw/runtime-root/memory").join("builtin-general")
+            locator.profile_memory_dir.as_deref(),
+            Some(
+                runtime_root
+                    .join("profiles")
+                    .join("profile-1")
+                    .join("memories")
+                    .as_path()
+            )
+        );
+        assert_eq!(
+            locator
+                .project_memory_file
+                .as_ref()
+                .and_then(|path| path.parent())
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().to_string()),
+            Some("PROJECTS".to_string())
         );
     }
 
     #[test]
-    fn build_memory_dir_for_session_isolates_by_employee_when_provided() {
-        let base = Path::new("C:/workclaw/runtime-root/memory");
-        let dir = chat_runtime_io::build_memory_dir_for_session(
-            base,
+    fn profile_memory_bundle_reads_only_profile_memory_file() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+        let profile_memory_dir = runtime_root
+            .join("profiles")
+            .join("profile-1")
+            .join("memories");
+        std::fs::create_dir_all(&profile_memory_dir).expect("profile memory dir");
+        std::fs::write(profile_memory_dir.join("MEMORY.md"), "profile memory")
+            .expect("write profile memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            None,
             "builtin-general",
-            "Sales Lead/华东",
+            "planner",
+            Some("profile-1"),
+            None,
         );
+        let bundle = chat_runtime_io::load_profile_memory_bundle(&locator);
+
+        assert_eq!(bundle.content, "profile memory");
+        assert_eq!(bundle.source, "profile");
         assert_eq!(
-            dir,
-            Path::new("C:/workclaw/runtime-root/memory")
-                .join("employees")
-                .join("sales_lead")
-                .join("skills")
-                .join("builtin-general")
+            bundle.source_path,
+            Some(profile_memory_dir.join("MEMORY.md"))
         );
+    }
+
+    #[test]
+    fn profile_memory_bundle_includes_workspace_project_memory() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+        let profile_memory_dir = runtime_root
+            .join("profiles")
+            .join("profile-1")
+            .join("memories");
+        std::fs::create_dir_all(&profile_memory_dir).expect("profile memory dir");
+        std::fs::write(profile_memory_dir.join("MEMORY.md"), "profile fact")
+            .expect("write profile memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            Some(Path::new("E:/workspace/acme")),
+            "builtin-general",
+            "planner",
+            Some("profile-1"),
+            None,
+        );
+        let project_memory_file = locator
+            .project_memory_file
+            .as_ref()
+            .expect("project memory file");
+        std::fs::create_dir_all(project_memory_file.parent().expect("project dir"))
+            .expect("create project dir");
+        std::fs::write(project_memory_file, "project fact").expect("write project memory");
+
+        let bundle = chat_runtime_io::load_profile_memory_bundle(&locator);
+
+        assert_eq!(bundle.source, "profile");
+        assert!(bundle.content.contains("profile fact"));
+        assert!(bundle.content.contains("Project Memory"));
+        assert!(bundle.content.contains("project fact"));
+    }
+
+    #[test]
+    fn profile_memory_bundle_trims_to_budget() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+        let profile_memory_dir = runtime_root
+            .join("profiles")
+            .join("profile-1")
+            .join("memories");
+        std::fs::create_dir_all(&profile_memory_dir).expect("profile memory dir");
+        std::fs::write(
+            profile_memory_dir.join("MEMORY.md"),
+            format!(
+                "ancient-start {}\n{}",
+                "old ".repeat(200),
+                "fresh memory tail"
+            ),
+        )
+        .expect("write profile memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            None,
+            "builtin-general",
+            "planner",
+            Some("profile-1"),
+            None,
+        );
+        let bundle = chat_runtime_io::load_profile_memory_bundle_with_budget(&locator, 80);
+
+        assert!(bundle.content.contains("fresh memory tail"));
+        assert!(!bundle.content.contains("ancient-start"));
+        assert!(bundle.content.chars().count() <= 140);
+    }
+
+    #[test]
+    fn profile_memory_bundle_falls_back_to_legacy_memory_file() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+        let legacy_memory_dir = memory_root
+            .join("employees")
+            .join("planner")
+            .join("skills")
+            .join("builtin-general");
+        std::fs::create_dir_all(&legacy_memory_dir).expect("legacy memory dir");
+        std::fs::write(legacy_memory_dir.join("MEMORY.md"), "legacy memory")
+            .expect("write legacy memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            None,
+            "builtin-general",
+            "planner",
+            Some("profile-1"),
+            None,
+        );
+        let bundle = chat_runtime_io::load_profile_memory_bundle(&locator);
+
+        assert_eq!(bundle.content, "legacy memory");
+        assert_eq!(bundle.source, "legacy");
+        assert_eq!(
+            bundle.source_path,
+            Some(legacy_memory_dir.join("MEMORY.md"))
+        );
+    }
+
+    #[test]
+    fn profile_memory_status_reports_profile_memory_as_active_source() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+        let profile_memory_dir = runtime_root
+            .join("profiles")
+            .join("profile-1")
+            .join("memories");
+        std::fs::create_dir_all(&profile_memory_dir).expect("profile memory dir");
+        std::fs::write(profile_memory_dir.join("MEMORY.md"), "profile memory")
+            .expect("write profile memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            None,
+            "builtin-general",
+            "planner",
+            Some("profile-1"),
+            None,
+        );
+        let status = chat_runtime_io::collect_profile_memory_status(&locator);
+
+        assert_eq!(status.active_source, "profile");
+        assert_eq!(
+            status.active_source_path,
+            Some(profile_memory_dir.join("MEMORY.md"))
+        );
+        assert!(status.profile_memory_file_exists);
+    }
+
+    #[test]
+    fn profile_memory_status_ignores_legacy_fallback() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+        let legacy_memory_dir = memory_root
+            .join("employees")
+            .join("planner")
+            .join("skills")
+            .join("builtin-general");
+        std::fs::create_dir_all(&legacy_memory_dir).expect("legacy memory dir");
+        std::fs::write(legacy_memory_dir.join("MEMORY.md"), "legacy memory")
+            .expect("write legacy memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            None,
+            "builtin-general",
+            "planner",
+            Some("profile-1"),
+            None,
+        );
+        let status = chat_runtime_io::collect_profile_memory_status(&locator);
+
+        assert_eq!(status.active_source, "none");
+        assert_eq!(status.active_source_path, None);
+        assert!(!status.profile_memory_file_exists);
+    }
+
+    #[test]
+    fn profile_memory_status_reports_none_when_no_memory_file_exists() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let runtime_root = tmp.path().join("runtime-root");
+        let memory_root = runtime_root.join("memory");
+
+        let locator = chat_runtime_io::build_profile_memory_locator(
+            &runtime_root,
+            &memory_root,
+            None,
+            "builtin-general",
+            "planner",
+            Some("profile-1"),
+            None,
+        );
+        let status = chat_runtime_io::collect_profile_memory_status(&locator);
+
+        assert_eq!(status.active_source, "none");
+        assert_eq!(status.active_source_path, None);
+        assert!(!status.profile_memory_file_exists);
     }
 
     #[test]

@@ -344,35 +344,93 @@ pub struct GroupStepExecutionResult {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct EmployeeMemorySkillStats {
-    pub skill_id: String,
-    pub total_files: u64,
-    pub total_bytes: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct EmployeeMemoryStats {
+pub struct EmployeeProfileMemoryStatus {
     pub employee_id: String,
-    pub total_files: u64,
-    pub total_bytes: u64,
-    pub skills: Vec<EmployeeMemorySkillStats>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct EmployeeMemoryExportFile {
+    pub profile_id: Option<String>,
     pub skill_id: String,
-    pub relative_path: String,
-    pub size_bytes: u64,
-    pub modified_at: Option<String>,
-    pub content: String,
+    pub profile_memory_dir: Option<String>,
+    pub profile_memory_file_path: Option<String>,
+    pub profile_memory_file_exists: bool,
+    pub active_source: String,
+    pub active_source_path: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct EmployeeMemoryExport {
-    pub employee_id: String,
-    pub skill_id: Option<String>,
-    pub exported_at: String,
-    pub total_files: u64,
-    pub total_bytes: u64,
-    pub files: Vec<EmployeeMemoryExportFile>,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeGrowthEvent {
+    pub id: String,
+    pub profile_id: String,
+    pub session_id: String,
+    pub session_title: String,
+    pub event_type: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub summary: String,
+    pub display_summary: String,
+    pub target_label: String,
+    pub evidence_label: String,
+    pub evidence_json: serde_json::Value,
+    pub created_at: String,
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeGrowthTimeline {
+    pub employee_id: String,
+    pub profile_id: Option<String>,
+    pub events: Vec<EmployeeGrowthEvent>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeCuratorFinding {
+    pub kind: String,
+    pub severity: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub summary: String,
+    pub evidence_json: serde_json::Value,
+    pub suggested_action: String,
+    pub reversible: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeCuratorChangedTarget {
+    pub kind: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub state_changed: bool,
+    pub restored_to: String,
+    pub suggested_action: String,
+    pub reversible: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeCuratorRestoreCandidate {
+    pub target_type: String,
+    pub target_id: String,
+    pub tool: String,
+    pub action: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeCuratorRun {
+    pub id: String,
+    pub profile_id: String,
+    pub scope: String,
+    pub summary: String,
+    pub report_path: String,
+    pub mode: String,
+    pub changed_targets: Vec<EmployeeCuratorChangedTarget>,
+    pub restore_candidates: Vec<EmployeeCuratorRestoreCandidate>,
+    pub has_state_changes: bool,
+    pub findings: Vec<EmployeeCuratorFinding>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EmployeeCuratorReports {
+    pub employee_id: String,
+    pub profile_id: Option<String>,
+    pub runs: Vec<EmployeeCuratorRun>,
+}
+
+pub use super::curator_scheduler::EmployeeCuratorSchedulerStatus;

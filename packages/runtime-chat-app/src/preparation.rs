@@ -83,6 +83,7 @@ pub(crate) async fn prepare_chat_execution<R: ChatSettingsRepository>(
             session_mode_storage: "general".to_string(),
             normalized_team_id: String::new(),
             employee_id: String::new(),
+            profile_id: String::new(),
             work_dir: String::new(),
             imported_mcp_server_ids: Vec::new(),
         },
@@ -380,6 +381,7 @@ fn merge_execution_context(
         session_mode_storage,
         normalized_team_id,
         employee_id,
+        profile_id: snapshot.profile_id.trim().to_string(),
         work_dir,
         imported_mcp_server_ids,
     }
@@ -409,6 +411,7 @@ impl From<ChatExecutionPreparationRequest> for ChatExecutionContext {
                 value.team_id.as_deref(),
             ),
             employee_id: value.employee_id.unwrap_or_default().trim().to_string(),
+            profile_id: String::new(),
             work_dir: value.work_dir.unwrap_or_default().trim().to_string(),
             imported_mcp_server_ids: value.imported_mcp_server_ids,
         }

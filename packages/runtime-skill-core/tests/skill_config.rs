@@ -36,6 +36,22 @@ fn parse_with_frontmatter() {
 }
 
 #[test]
+fn parse_toolset_policy_fields() {
+    let content = "---\nname: toolset-aware\nrequires_toolsets:\n  - memory\n  - skills\noptional_toolsets: web, browser\ndenied_toolsets:\n  - mcp\n---\nUse profile-scoped memory and reusable skills.";
+    let config = SkillConfig::parse(content);
+
+    assert_eq!(
+        config.requires_toolsets,
+        Some(vec!["memory".into(), "skills".into()])
+    );
+    assert_eq!(
+        config.optional_toolsets,
+        Some(vec!["web".into(), "browser".into()])
+    );
+    assert_eq!(config.denied_toolsets, Some(vec!["mcp".into()]));
+}
+
+#[test]
 fn parse_claude_compatible_fields() {
     let content = "---\nname: claude-skill\ndescription: Claude compatible\nargument-hint: <file_path>\ndisable-model-invocation: true\nuser-invocable: false\ncontext: fork\nagent: Explore\n---\nDo something with $ARGUMENTS.";
     let config = SkillConfig::parse(content);

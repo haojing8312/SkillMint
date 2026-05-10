@@ -154,14 +154,18 @@ fn employee_manage_creates_employee_and_can_list() {
             .unwrap_or_default(),
         3
     );
-    let has_agents = created["profile"]["files"].as_array().is_some_and(|items| {
+    let has_rules = created["profile"]["files"].as_array().is_some_and(|items| {
         items.iter().any(|item| {
-            item["path"]
-                .as_str()
-                .is_some_and(|path| path.ends_with("AGENTS.md") && Path::new(path).exists())
+            item["path"].as_str().is_some_and(|path| {
+                path.ends_with("instructions/RULES.md") && Path::new(path).exists()
+            })
         })
     });
-    assert!(has_agents);
+    assert!(has_rules);
+    assert!(!profile_root
+        .join("openclaw")
+        .join("project_manager")
+        .exists());
 
     let list_output = tool
         .execute(
@@ -222,14 +226,14 @@ fn employee_manage_can_apply_profile_for_existing_employee() {
             .unwrap_or_default(),
         3
     );
-    let has_user = applied["files"].as_array().is_some_and(|items| {
+    let has_user_context = applied["files"].as_array().is_some_and(|items| {
         items.iter().any(|item| {
-            item["path"]
-                .as_str()
-                .is_some_and(|path| path.ends_with("USER.md") && Path::new(path).exists())
+            item["path"].as_str().is_some_and(|path| {
+                path.ends_with("instructions/USER_CONTEXT.md") && Path::new(path).exists()
+            })
         })
     });
-    assert!(has_user);
+    assert!(has_user_context);
     let _ = std::fs::remove_dir_all(&profile_root);
 }
 

@@ -120,5 +120,10 @@ diagnostics:
         assert_eq!(config.models.default_profile, "minimax_anthropic");
         assert!(config.providers.contains_key("minimax_anthropic"));
         assert!(config.capabilities.contains_key("pm_weekly_summary"));
+        assert!(
+            config
+                .capabilities
+                .contains_key("skill_curator_lifecycle_parity")
+        );
     }
 }

@@ -2,8 +2,9 @@ use crate::agent::run_guard::RunStopReason;
 use crate::agent::runtime::attempt_runner::RouteExecutionOutcome;
 use crate::agent::runtime::kernel::turn_state::TurnStateSnapshot;
 use crate::agent::runtime::runtime_io as chat_io;
+use crate::runtime_environment::runtime_paths_from_app;
 use crate::session_journal::SessionJournalStore;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct OutcomeCommitter;
@@ -31,15 +32,15 @@ pub(crate) enum TerminalOutcome {
 }
 
 impl OutcomeCommitter {
-    pub(crate) async fn commit_terminal_outcome<R: Runtime>(
-        app: &AppHandle<R>,
+    pub(crate) async fn commit_terminal_outcome(
+        app: &AppHandle,
         db: &sqlx::SqlitePool,
         journal: &SessionJournalStore,
         session_id: &str,
         run_id: &str,
         outcome: TerminalOutcome,
     ) -> Result<(), String> {
-        Self::commit_terminal_outcome_with_emitter(
+        let commit_result = Self::commit_terminal_outcome_with_emitter(
             db,
             journal,
             session_id,
@@ -57,7 +58,29 @@ impl OutcomeCommitter {
                 );
             },
         )
-        .await
+        .await;
+        if commit_result.is_ok() {
+            match runtime_paths_from_app(app) {
+                Ok(runtime_paths) => {
+                    if let Err(err) = chat_io::refresh_profile_session_index_for_session_with_pool(
+                        db,
+                        &runtime_paths.root,
+                        session_id,
+                        "terminal_outcome_commit",
+                    )
+                    .await
+                    {
+                        eprintln!("[profile-runtime] 刷新 profile session index 失败: {err}");
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "[profile-runtime] 获取 runtime paths 失败，跳过 session index 刷新: {err}"
+                    );
+                }
+            }
+        }
+        commit_result
     }
 
     async fn commit_terminal_outcome_with_emitter<F>(

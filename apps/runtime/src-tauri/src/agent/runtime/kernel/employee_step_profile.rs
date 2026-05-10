@@ -13,6 +13,7 @@ use std::path::PathBuf;
 pub(crate) struct EmployeeStepPersona<'a> {
     pub name: &'a str,
     pub employee_id: &'a str,
+    pub profile_id: &'a str,
     pub role_id: &'a str,
     pub persona: &'a str,
     pub default_work_dir: &'a str,
@@ -136,10 +137,11 @@ fn load_group_step_profile_markdown(employee: &EmployeeStepPersona<'_>) -> Strin
     }
 
     let profile_dir = PathBuf::from(employee.default_work_dir.trim())
-        .join("openclaw")
-        .join(employee.employee_id.trim());
+        .join("profiles")
+        .join(employee.profile_id.trim())
+        .join("instructions");
     let mut sections = Vec::new();
-    for name in ["AGENTS.md", "SOUL.md", "USER.md"] {
+    for name in ["RULES.md", "PERSONA.md", "USER_CONTEXT.md"] {
         let path = profile_dir.join(name);
         if let Ok(content) = std::fs::read_to_string(path) {
             let trimmed = content.trim();
@@ -179,6 +181,7 @@ mod tests {
         EmployeeStepPersona {
             name: "产品经理",
             employee_id: "pm-1",
+            profile_id: "profile-pm-1",
             role_id: "role-pm",
             persona: "负责围绕目标拆解执行路径",
             default_work_dir: "E:/workspace/demo",
@@ -193,6 +196,39 @@ mod tests {
         assert!(profile.base_prompt.contains("产品经理"));
         assert!(profile.allowed_tools.is_some());
         assert!(profile.max_iterations > 0);
+    }
+
+    #[test]
+    fn employee_step_execution_profile_loads_canonical_profile_instructions() {
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let instructions_dir = tmp
+            .path()
+            .join("profiles")
+            .join("profile-pm-1")
+            .join("instructions");
+        std::fs::create_dir_all(&instructions_dir).expect("create instructions");
+        std::fs::write(instructions_dir.join("RULES.md"), "只输出可执行结论").expect("write rules");
+        std::fs::write(instructions_dir.join("PERSONA.md"), "沉稳直接").expect("write persona");
+        std::fs::write(instructions_dir.join("USER_CONTEXT.md"), "用户关注交付质量")
+            .expect("write user context");
+        std::fs::create_dir_all(tmp.path().join("openclaw").join("pm-1"))
+            .expect("create stale openclaw dir");
+        std::fs::write(
+            tmp.path().join("openclaw").join("pm-1").join("AGENTS.md"),
+            "旧 OpenClaw 内容",
+        )
+        .expect("write stale openclaw file");
+
+        let persona = EmployeeStepPersona {
+            default_work_dir: tmp.path().to_str().expect("tmp path"),
+            ..sample_persona()
+        };
+        let profile = build_employee_step_execution_profile(persona, "builtin-general");
+
+        assert!(profile.base_prompt.contains("RULES.md"));
+        assert!(profile.base_prompt.contains("只输出可执行结论"));
+        assert!(profile.base_prompt.contains("USER_CONTEXT.md"));
+        assert!(!profile.base_prompt.contains("旧 OpenClaw 内容"));
     }
 
     #[test]

@@ -451,7 +451,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use skillpack_rs::SkillManifest;
-    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
     async fn setup_memory_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -515,7 +515,9 @@ mod tests {
     #[tokio::test]
     async fn vendored_docx_reports_missing_dotnet_sdk_when_not_installed() {
         let pool = setup_memory_pool().await;
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("builtin-skills").join("docx");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("builtin-skills")
+            .join("docx");
         insert_skill(
             &pool,
             "builtin-docx",
@@ -536,7 +538,9 @@ mod tests {
     #[tokio::test]
     async fn vendored_pptx_includes_vendor_warning_for_missing_helper_scripts() {
         let pool = setup_memory_pool().await;
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("builtin-skills").join("pptx");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("builtin-skills")
+            .join("pptx");
         insert_skill(
             &pool,
             "builtin-pptx",
@@ -550,10 +554,12 @@ mod tests {
             .await
             .expect("status");
 
-        assert!(status
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("helper scripts")));
+        assert!(
+            status
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("helper scripts"))
+        );
     }
 
     #[test]

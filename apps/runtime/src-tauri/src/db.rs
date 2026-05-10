@@ -48,8 +48,8 @@ pub async fn init_db_at_runtime_paths(runtime_paths: &RuntimePaths) -> Result<Sq
         .execute(&pool)
         .await?;
 
-    apply_current_schema(&pool).await?;
     apply_legacy_migrations(&pool).await?;
+    apply_current_schema(&pool).await?;
     seed_runtime_defaults(&pool, &runtime_paths.root).await?;
 
     Ok(pool)
@@ -268,5 +268,58 @@ mod tests {
         .expect("query conversation session table");
 
         assert_eq!(tables, vec!["im_conversation_sessions".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn init_db_migrates_legacy_im_thread_sessions_before_current_indexes() {
+        let temp = tempdir().expect("create runtime root");
+        let runtime_paths = RuntimePaths::new(temp.path());
+        let db_url = format!(
+            "sqlite://{}?mode=rwc",
+            runtime_paths.database.db_path.to_string_lossy()
+        );
+        let seed_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&db_url)
+            .await
+            .expect("create legacy sqlite database");
+
+        sqlx::query(
+            "CREATE TABLE im_thread_sessions (
+                thread_id TEXT NOT NULL,
+                employee_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                route_session_key TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (thread_id, employee_id)
+            )",
+        )
+        .execute(&seed_pool)
+        .await
+        .expect("create legacy im_thread_sessions table");
+        seed_pool.close().await;
+
+        let pool = init_db_at_runtime_paths(&runtime_paths)
+            .await
+            .expect("init database with legacy im_thread_sessions");
+
+        let columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('im_thread_sessions')")
+                .fetch_all(&pool)
+                .await
+                .expect("load migrated im_thread_sessions columns");
+        assert!(columns.iter().any(|name| name == "conversation_id"));
+        assert!(columns.iter().any(|name| name == "base_conversation_id"));
+
+        let indexes: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'index'
+             AND name = 'idx_im_thread_sessions_conversation_id'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("load migrated im_thread_sessions indexes");
+        assert_eq!(indexes, vec!["idx_im_thread_sessions_conversation_id"]);
     }
 }

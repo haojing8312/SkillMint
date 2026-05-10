@@ -1,8 +1,8 @@
-use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use super::session_view::{
     derive_session_display_title_with_pool, im_thread_sessions_has_channel_column,
     normalize_stream_items, resolve_im_session_source,
 };
+use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use chrono::Utc;
 use runtime_chat_app::{ChatPreparationService, SessionCreationRequest};
 use serde_json::{json, Value};
@@ -34,23 +34,64 @@ pub(crate) async fn create_session_with_pool(
     } else {
         prepared.normalized_work_dir
     };
-    sqlx::query(
-        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-    .bind(&session_id)
-    .bind(&skill_id)
-    .bind(&prepared.normalized_title)
-    .bind(&now)
-    .bind(&model_id)
-    .bind(&prepared.permission_mode_storage)
-    .bind(&resolved_work_dir)
-    .bind(&prepared.normalized_employee_id)
-    .bind(&prepared.session_mode_storage)
-    .bind(&prepared.normalized_team_id)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let has_profile_id_column = sessions_has_profile_id_column(pool).await?;
+    let resolved_profile_id =
+        if has_profile_id_column && !prepared.normalized_employee_id.trim().is_empty() {
+            crate::profile_runtime::resolve_profile_for_alias_with_pool(
+                pool,
+                &prepared.normalized_employee_id,
+            )
+            .await?
+            .map(|resolved| resolved.profile_id)
+        } else {
+            None
+        };
+
+    if has_profile_id_column {
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, profile_id, session_mode, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&session_id)
+        .bind(&skill_id)
+        .bind(&prepared.normalized_title)
+        .bind(&now)
+        .bind(&model_id)
+        .bind(&prepared.permission_mode_storage)
+        .bind(&resolved_work_dir)
+        .bind(&prepared.normalized_employee_id)
+        .bind(&resolved_profile_id)
+        .bind(&prepared.session_mode_storage)
+        .bind(&prepared.normalized_team_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    } else {
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, session_mode, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&session_id)
+        .bind(&skill_id)
+        .bind(&prepared.normalized_title)
+        .bind(&now)
+        .bind(&model_id)
+        .bind(&prepared.permission_mode_storage)
+        .bind(&resolved_work_dir)
+        .bind(&prepared.normalized_employee_id)
+        .bind(&prepared.session_mode_storage)
+        .bind(&prepared.normalized_team_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
     Ok(session_id)
+}
+
+async fn sessions_has_profile_id_column(pool: &sqlx::SqlitePool) -> Result<bool, String> {
+    let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(columns.iter().any(|name| name == "profile_id"))
 }
 
 pub(crate) async fn get_messages_with_pool(
@@ -443,4 +484,118 @@ pub(crate) async fn search_sessions_global_with_pool(
             },
         )
         .collect())
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::create_session_with_pool;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn setup_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                permission_mode TEXT NOT NULL DEFAULT 'accept_edits',
+                work_dir TEXT NOT NULL DEFAULT '',
+                employee_id TEXT NOT NULL DEFAULT '',
+                profile_id TEXT,
+                session_mode TEXT NOT NULL DEFAULT 'general',
+                team_id TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create sessions");
+
+        sqlx::query("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .expect("create app_settings");
+
+        sqlx::query(
+            "CREATE TABLE agent_employees (
+                id TEXT PRIMARY KEY,
+                employee_id TEXT NOT NULL DEFAULT '',
+                role_id TEXT NOT NULL DEFAULT '',
+                openclaw_agent_id TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL DEFAULT ''
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create agent_employees");
+
+        sqlx::query(
+            "CREATE TABLE agent_profiles (
+                id TEXT PRIMARY KEY,
+                legacy_employee_row_id TEXT NOT NULL DEFAULT '',
+                display_name TEXT NOT NULL DEFAULT '',
+                route_aliases_json TEXT NOT NULL DEFAULT '[]',
+                profile_home TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create agent_profiles");
+
+        sqlx::query(
+            "INSERT INTO agent_employees (id, employee_id, role_id, openclaw_agent_id, name)
+             VALUES ('employee-row-1', 'planner', 'planner-role', 'oc-planner', 'Planner')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed employee");
+
+        sqlx::query(
+            "INSERT INTO agent_profiles (id, legacy_employee_row_id, display_name, created_at, updated_at)
+             VALUES ('profile-1', 'employee-row-1', 'Planner', '2026-05-06T00:00:00Z', '2026-05-06T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed profile");
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn create_session_stores_profile_id_when_employee_alias_resolves() {
+        let pool = setup_pool().await;
+
+        let session_id = create_session_with_pool(
+            &pool,
+            "builtin-general".to_string(),
+            "model-1".to_string(),
+            Some("D:/work".to_string()),
+            Some("planner".to_string()),
+            Some("Task".to_string()),
+            None,
+            Some("employee_direct".to_string()),
+            None,
+        )
+        .await
+        .expect("create session");
+
+        let row: (String, String) = sqlx::query_as(
+            "SELECT employee_id, COALESCE(profile_id, '') FROM sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query session");
+
+        assert_eq!(row.0, "planner");
+        assert_eq!(row.1, "profile-1");
+    }
 }

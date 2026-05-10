@@ -68,6 +68,7 @@ pub(crate) struct ExecutionContext {
     pub route_retry_count: usize,
     pub execution_guidance: ChatExecutionGuidance,
     pub memory_bucket_employee_id: String,
+    pub profile_id: String,
     pub employee_collaboration_guidance: Option<String>,
     pub workspace_skill_entries: Vec<WorkspaceSkillRuntimeEntry>,
     pub route_index: SkillRouteIndex,
@@ -112,6 +113,7 @@ impl Default for ExecutionContext {
                 local_month_range: String::new(),
             },
             memory_bucket_employee_id: String::new(),
+            profile_id: String::new(),
             employee_collaboration_guidance: None,
             workspace_skill_entries: Vec::new(),
             route_index: SkillRouteIndex::default(),
@@ -316,6 +318,7 @@ mod tests {
                 local_month_range: "2026-04-01 ~ 2026-04-30".to_string(),
             },
             memory_bucket_employee_id: "employee-1".to_string(),
+            profile_id: "profile-1".to_string(),
             employee_collaboration_guidance: Some("Work with employee-1".to_string()),
             workspace_skill_entries: Vec::new(),
             route_index: SkillRouteIndex::default(),
@@ -342,6 +345,7 @@ mod tests {
             execution_context.employee_collaboration_guidance.as_deref(),
             Some("Work with employee-1")
         );
+        assert_eq!(execution_context.profile_id, "profile-1");
         assert_eq!(
             execution_context.session_profile.surface,
             SessionSurfaceKind::LocalChat

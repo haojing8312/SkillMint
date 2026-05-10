@@ -134,6 +134,7 @@ pub struct ChatExecutionContext {
     pub session_mode_storage: String,
     pub normalized_team_id: String,
     pub employee_id: String,
+    pub profile_id: String,
     pub work_dir: String,
     pub imported_mcp_server_ids: Vec<String>,
 }
@@ -144,6 +145,7 @@ pub struct SessionExecutionContextSnapshot {
     pub session_mode: String,
     pub team_id: String,
     pub employee_id: String,
+    pub profile_id: String,
     pub work_dir: String,
     pub imported_mcp_server_ids: Vec<String>,
 }
@@ -205,6 +207,7 @@ impl Default for PreparedChatExecution {
                 session_mode_storage: "general".to_string(),
                 normalized_team_id: String::new(),
                 employee_id: String::new(),
+                profile_id: String::new(),
                 work_dir: String::new(),
                 imported_mcp_server_ids: Vec::new(),
             },

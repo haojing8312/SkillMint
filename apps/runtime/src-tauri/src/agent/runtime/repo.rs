@@ -340,23 +340,40 @@ impl ChatSessionContextRepository for PoolChatSettingsRepository<'_> {
                 session_mode: "general".to_string(),
                 team_id: String::new(),
                 employee_id: String::new(),
+                profile_id: String::new(),
                 work_dir: String::new(),
                 imported_mcp_server_ids: Vec::new(),
             });
         };
 
-        let row = sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT COALESCE(session_mode, 'general'), COALESCE(team_id, ''), COALESCE(employee_id, ''), COALESCE(work_dir, '')
-             FROM sessions WHERE id = ?",
-        )
-        .bind(session_id)
-        .fetch_optional(self.db)
-        .await
-        .map_err(|e| format!("读取会话执行上下文失败 (session_id={session_id}): {e}"))?;
+        let has_profile_id_column = sessions_has_profile_id_column(self.db).await?;
+        let row = if has_profile_id_column {
+            sqlx::query_as::<_, (String, String, String, String, String)>(
+                "SELECT COALESCE(session_mode, 'general'), COALESCE(team_id, ''), COALESCE(employee_id, ''), COALESCE(profile_id, ''), COALESCE(work_dir, '')
+                 FROM sessions WHERE id = ?",
+            )
+            .bind(session_id)
+            .fetch_optional(self.db)
+            .await
+            .map_err(|e| format!("读取会话执行上下文失败 (session_id={session_id}): {e}"))?
+        } else {
+            sqlx::query_as::<_, (String, String, String, String)>(
+                "SELECT COALESCE(session_mode, 'general'), COALESCE(team_id, ''), COALESCE(employee_id, ''), COALESCE(work_dir, '')
+                 FROM sessions WHERE id = ?",
+            )
+            .bind(session_id)
+            .fetch_optional(self.db)
+            .await
+            .map_err(|e| format!("读取会话执行上下文失败 (session_id={session_id}): {e}"))?
+            .map(|(session_mode, team_id, employee_id, work_dir)| {
+                (session_mode, team_id, employee_id, String::new(), work_dir)
+            })
+        };
 
-        let (session_mode, team_id, employee_id, work_dir) = row.unwrap_or_else(|| {
+        let (session_mode, team_id, employee_id, profile_id, work_dir) = row.unwrap_or_else(|| {
             (
                 "general".to_string(),
+                String::new(),
                 String::new(),
                 String::new(),
                 String::new(),
@@ -368,10 +385,19 @@ impl ChatSessionContextRepository for PoolChatSettingsRepository<'_> {
             session_mode,
             team_id,
             employee_id,
+            profile_id,
             work_dir,
             imported_mcp_server_ids: Vec::new(),
         })
     }
+}
+
+async fn sessions_has_profile_id_column(pool: &SqlitePool) -> Result<bool, String> {
+    let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('sessions')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("读取 sessions schema 失败: {e}"))?;
+    Ok(columns.iter().any(|name| name == "profile_id"))
 }
 
 #[async_trait]

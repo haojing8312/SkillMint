@@ -76,6 +76,7 @@ fn employee_step_persona(employee: &AgentEmployee) -> EmployeeStepPersona<'_> {
     EmployeeStepPersona {
         name: employee.name.as_str(),
         employee_id: employee.employee_id.as_str(),
+        profile_id: employee.id.as_str(),
         role_id: employee.role_id.as_str(),
         persona: employee.persona.as_str(),
         default_work_dir: employee.default_work_dir.as_str(),
