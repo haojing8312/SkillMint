@@ -1,0 +1,40 @@
+id: curator_profile_scan_2026_05_08
+title: Curator Profile 扫描
+capability_id: curator_profile_scan
+
+kind: real-agent
+mode: self-improving-curator
+side_effect: profile-curator-report
+enabled: true
+
+input:
+  employee_alias: eval_curator_agent
+  profile_id: eval-profile-curator
+  profile_display_name: Eval Curator Agent
+  user_text: 扫描当前员工 profile 的记忆和技能，找出可以整理、沉淀或清理的项目，并告诉我报告结果。
+
+expect:
+  tools:
+    called_all:
+      - curator
+  output:
+    contains_any:
+      - 扫描
+      - 整理
+      - report
+      - curator
+
+thresholds:
+  pass_total_ms: 150000
+  warn_total_ms: 180000
+  max_turn_count: 4
+  max_tool_count: 8
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

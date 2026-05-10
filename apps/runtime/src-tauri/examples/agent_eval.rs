@@ -146,6 +146,9 @@ fn load_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
 #[cfg(test)]
 mod tests {
     use super::{default_config_path, parse_args, scenario_path_for};
+    use runtime_lib::agent::evals::{EvalScenario, LocalEvalConfig};
+    use std::fs;
+    use std::path::Path;
 
     #[test]
     fn parse_args_accepts_scenario_and_optional_config() {
@@ -180,5 +183,63 @@ mod tests {
                 .and_then(|value| value.to_str()),
             Some("pm_weekly_summary.yaml")
         );
+    }
+
+    #[test]
+    fn all_tracked_scenarios_parse_and_match_file_names() {
+        let scenarios_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("agent-evals")
+            .join("scenarios");
+        let mut count = 0usize;
+        for entry in fs::read_dir(&scenarios_dir).expect("read scenarios dir") {
+            let path = entry.expect("scenario entry").path();
+            if path.extension().and_then(|value| value.to_str()) != Some("yaml") {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).expect("read scenario yaml");
+            let scenario: EvalScenario = serde_yaml::from_str(&raw)
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+            assert_eq!(
+                path.file_stem().and_then(|value| value.to_str()),
+                Some(scenario.id.as_str())
+            );
+            assert!(!scenario.capability_id.trim().is_empty());
+            count += 1;
+        }
+        assert!(count >= 8);
+    }
+
+    #[test]
+    fn example_config_maps_all_tracked_scenario_capabilities() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..");
+        let config_raw = fs::read_to_string(
+            root.join("agent-evals")
+                .join("config")
+                .join("config.example.yaml"),
+        )
+        .expect("read example config");
+        let config: LocalEvalConfig =
+            serde_yaml::from_str(&config_raw).expect("parse example config");
+        let scenarios_dir = root.join("agent-evals").join("scenarios");
+        for entry in fs::read_dir(&scenarios_dir).expect("read scenarios dir") {
+            let path = entry.expect("scenario entry").path();
+            if path.extension().and_then(|value| value.to_str()) != Some("yaml") {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).expect("read scenario yaml");
+            let scenario: EvalScenario = serde_yaml::from_str(&raw)
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+            assert!(
+                config.capabilities.contains_key(&scenario.capability_id),
+                "missing config capability mapping for {}",
+                scenario.capability_id
+            );
+        }
     }
 }

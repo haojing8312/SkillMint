@@ -1,0 +1,39 @@
+id: skill_os_progressive_loading_2026_05_08
+title: Skill OS 渐进加载
+capability_id: skill_os_progressive_loading
+
+kind: real-agent
+mode: skill-os-progressive-loading
+side_effect: none
+enabled: true
+
+input:
+  employee_alias: eval_skill_reader
+  profile_id: eval-profile-skill-reader
+  profile_display_name: Eval Skill Reader
+  user_text: 先列出当前可用技能摘要，再只查看一个最适合“整理长期记忆”的技能详情，最后说明你查看了哪个技能。
+
+expect:
+  tools:
+    called_all:
+      - skills
+  output:
+    contains_any:
+      - 技能
+      - skills
+      - Skill
+
+thresholds:
+  pass_total_ms: 150000
+  warn_total_ms: 180000
+  max_turn_count: 4
+  max_tool_count: 8
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

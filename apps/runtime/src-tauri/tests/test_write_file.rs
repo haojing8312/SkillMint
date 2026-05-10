@@ -73,12 +73,10 @@ fn test_write_file_missing_params() {
     let input = json!({"path": "test.txt"});
     let result = tool.execute(input, &ctx);
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("缺少 content 参数")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("缺少 content 参数"));
 }
 
 #[test]

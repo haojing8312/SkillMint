@@ -1,5 +1,5 @@
-use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -41,6 +41,7 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             permission_mode TEXT NOT NULL DEFAULT 'standard',
             work_dir TEXT NOT NULL DEFAULT '',
             employee_id TEXT NOT NULL DEFAULT '',
+            profile_id TEXT,
             session_mode TEXT NOT NULL DEFAULT 'general',
             team_id TEXT NOT NULL DEFAULT ''
         )",
@@ -48,6 +49,10 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sessions_profile_id ON sessions(profile_id)")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS messages (
@@ -377,6 +382,28 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     .unwrap();
 
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS agent_profiles (
+            id TEXT PRIMARY KEY,
+            legacy_employee_row_id TEXT NOT NULL DEFAULT '',
+            display_name TEXT NOT NULL DEFAULT '',
+            route_aliases_json TEXT NOT NULL DEFAULT '[]',
+            profile_home TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_agent_profiles_employee_row_id
+         ON agent_profiles(legacy_employee_row_id)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS agent_employee_skills (
             employee_id TEXT NOT NULL,
             skill_id TEXT NOT NULL,
@@ -683,6 +710,7 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
     (pool, tmp)
 }
 
+#[allow(dead_code)]
 pub async fn seed_default_model_config(pool: &SqlitePool) {
     sqlx::query(
         "INSERT INTO model_configs (id, name, api_format, base_url, model_name, is_default, api_key)
@@ -693,6 +721,7 @@ pub async fn seed_default_model_config(pool: &SqlitePool) {
     .unwrap();
 }
 
+#[allow(dead_code)]
 pub async fn setup_legacy_thread_only_db() -> (SqlitePool, TempDir) {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("legacy-thread-only.db");
@@ -724,6 +753,7 @@ pub async fn setup_legacy_thread_only_db() -> (SqlitePool, TempDir) {
 
 /// 创建测试用 Skill 目录（含 SKILL.md + templates）
 #[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub fn create_test_skill_dir() -> (TempDir, PathBuf) {
     let tmp = TempDir::new().unwrap();
     let skill_dir = tmp.path().join("test-skill");

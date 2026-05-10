@@ -3,7 +3,7 @@ mod helpers;
 use base64::Engine;
 use runtime_lib::agent::{DocumentAnalyzeTool, Tool, ToolContext};
 use runtime_lib::commands::chat::{
-    SendMessagePart, SendMessageRequest, normalize_send_message_parts_with_pool,
+    normalize_send_message_parts_with_pool, SendMessagePart, SendMessageRequest,
 };
 use runtime_lib::commands::chat_attachment_policy::default_attachment_policy;
 use runtime_lib::commands::chat_attachment_resolution::resolve_attachment_input;
@@ -453,15 +453,14 @@ fn image_attachments_above_threshold_are_offloaded() {
     assert!(media_ref.starts_with("media://inbound/"));
 
     let media_id = media_ref.trim_start_matches("media://inbound/");
-    assert!(
-        temp.path()
-            .join("runtime-root")
-            .join("cache")
-            .join("chat-media")
-            .join("inbound")
-            .join(media_id)
-            .exists()
-    );
+    assert!(temp
+        .path()
+        .join("runtime-root")
+        .join("cache")
+        .join("chat-media")
+        .join("inbound")
+        .join(media_id)
+        .exists());
 }
 
 #[test]
@@ -923,12 +922,10 @@ fn attachment_parts_normalize_pdf_documents_to_legacy_pdf_parts() {
 
     assert_eq!(parts[0]["type"].as_str(), Some("pdf_file"));
     assert_eq!(parts[0]["name"].as_str(), Some("brief.pdf"));
-    assert!(
-        parts[0]["extractedText"]
-            .as_str()
-            .expect("extracted text")
-            .contains("Hello PDF")
-    );
+    assert!(parts[0]["extractedText"]
+        .as_str()
+        .expect("extracted text")
+        .contains("Hello PDF"));
 }
 
 #[test]
@@ -985,13 +982,11 @@ fn attachment_parts_preserve_binary_document_inputs_as_unified_attachment_parts(
         parts[0]["attachment"]["summary"].as_str(),
         Some("EXTRACTION_REQUIRED")
     );
-    assert!(
-        parts[0]["attachment"]["warnings"]
-            .as_array()
-            .expect("warnings")
-            .iter()
-            .any(|warning| warning.as_str() == Some("document_extraction_pending"))
-    );
+    assert!(parts[0]["attachment"]["warnings"]
+        .as_array()
+        .expect("warnings")
+        .iter()
+        .any(|warning| warning.as_str() == Some("document_extraction_pending")));
 }
 
 #[test]
@@ -1019,12 +1014,10 @@ fn attachment_parts_extract_docx_documents_to_text_parts() {
         .expect("normalize docx attachment");
 
     assert_eq!(parts[0]["type"].as_str(), Some("file_text"));
-    assert!(
-        parts[0]["text"]
-            .as_str()
-            .expect("text")
-            .contains("WorkClaw 文档内容")
-    );
+    assert!(parts[0]["text"]
+        .as_str()
+        .expect("text")
+        .contains("WorkClaw 文档内容"));
 }
 
 #[test]
@@ -1422,12 +1415,10 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
     assert_eq!(audio.kind, "audio");
     assert_eq!(audio.resolved_mime_type, "audio/mpeg");
     assert_eq!(audio.transcript.as_deref(), Some("TRANSCRIPTION_REQUIRED"));
-    assert!(
-        audio
-            .warnings
-            .iter()
-            .any(|warning| warning == "transcription_pending")
-    );
+    assert!(audio
+        .warnings
+        .iter()
+        .any(|warning| warning == "transcription_pending"));
 
     let video = resolve_attachment_input(
         &default_attachment_policy(),
@@ -1445,12 +1436,10 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
     assert_eq!(video.kind, "video");
     assert_eq!(video.resolved_mime_type, "video/mp4");
     assert_eq!(video.summary.as_deref(), Some("SUMMARY_REQUIRED"));
-    assert!(
-        video
-            .warnings
-            .iter()
-            .any(|warning| warning == "summary_pending")
-    );
+    assert!(video
+        .warnings
+        .iter()
+        .any(|warning| warning == "summary_pending"));
 
     let no_audio_video = resolve_attachment_input(
         &default_attachment_policy(),
@@ -1472,12 +1461,10 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
         no_audio_video.summary.as_deref(),
         Some("VIDEO_NO_AUDIO_TRACK")
     );
-    assert!(
-        no_audio_video
-            .warnings
-            .iter()
-            .any(|warning| warning == "video_no_audio_track")
-    );
+    assert!(no_audio_video
+        .warnings
+        .iter()
+        .any(|warning| warning == "video_no_audio_track"));
 
     let binary_document = resolve_attachment_input(
         &default_attachment_policy(),
@@ -1497,12 +1484,10 @@ fn resolution_preserves_attachment_kind_and_mime_metadata_for_supported_inputs()
         binary_document.summary.as_deref(),
         Some("EXTRACTION_REQUIRED")
     );
-    assert!(
-        binary_document
-            .warnings
-            .iter()
-            .any(|warning| warning == "document_extraction_pending")
-    );
+    assert!(binary_document
+        .warnings
+        .iter()
+        .any(|warning| warning == "document_extraction_pending"));
 }
 
 #[tokio::test]
@@ -1635,13 +1620,11 @@ async fn async_normalize_send_message_parts_keeps_pending_audio_without_audio_ro
         parts[0]["attachment"]["transcript"].as_str(),
         Some("TRANSCRIPTION_REQUIRED")
     );
-    assert!(
-        parts[0]["attachment"]["warnings"]
-            .as_array()
-            .expect("warnings")
-            .iter()
-            .any(|warning| warning.as_str() == Some("transcription_pending"))
-    );
+    assert!(parts[0]["attachment"]["warnings"]
+        .as_array()
+        .expect("warnings")
+        .iter()
+        .any(|warning| warning.as_str() == Some("transcription_pending")));
 }
 
 #[tokio::test]
@@ -1746,13 +1729,11 @@ async fn async_normalize_send_message_parts_marks_video_without_audio_track_expl
         parts[0]["attachment"]["summary"].as_str(),
         Some("VIDEO_NO_AUDIO_TRACK")
     );
-    assert!(
-        parts[0]["attachment"]["warnings"]
-            .as_array()
-            .expect("warnings")
-            .iter()
-            .any(|warning| warning.as_str() == Some("video_no_audio_track"))
-    );
+    assert!(parts[0]["attachment"]["warnings"]
+        .as_array()
+        .expect("warnings")
+        .iter()
+        .any(|warning| warning.as_str() == Some("video_no_audio_track")));
 }
 
 #[tokio::test]

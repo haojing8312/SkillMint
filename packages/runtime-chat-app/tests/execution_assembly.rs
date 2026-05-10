@@ -97,6 +97,7 @@ impl ChatSessionContextRepository for FakeExecutionAssemblyRepo {
             session_mode: "team_entry".to_string(),
             team_id: "team-from-session".to_string(),
             employee_id: "emp-from-session".to_string(),
+            profile_id: "profile-from-session".to_string(),
             work_dir: "E:/session-workdir".to_string(),
             imported_mcp_server_ids: vec!["session-mcp".to_string()],
         })

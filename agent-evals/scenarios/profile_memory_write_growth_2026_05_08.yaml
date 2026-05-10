@@ -1,0 +1,39 @@
+id: profile_memory_write_growth_2026_05_08
+title: Profile Memory 写入与成长记录
+capability_id: self_improving_profile_memory
+
+kind: real-agent
+mode: self-improving-memory
+side_effect: profile-memory-write
+enabled: true
+
+input:
+  employee_alias: eval_memory_agent
+  profile_id: eval-profile-memory
+  profile_display_name: Eval Memory Agent
+  user_text: 记住：用户偏好先给结论，再给细节。然后告诉我你保存了什么。
+
+expect:
+  tools:
+    called_all:
+      - memory
+  output:
+    contains_any:
+      - 先给结论
+      - 已记住
+      - 记忆
+
+thresholds:
+  pass_total_ms: 150000
+  warn_total_ms: 180000
+  max_turn_count: 4
+  max_tool_count: 8
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

@@ -1,0 +1,41 @@
+id: skill_self_improvement_create_version_2026_05_08
+title: Skill 自改进创建与版本记录
+capability_id: skill_self_improvement
+
+kind: real-agent
+mode: self-improving-skill
+side_effect: profile-skill-write
+enabled: true
+
+input:
+  employee_alias: eval_skill_improver
+  profile_id: eval-profile-skill-improver
+  profile_display_name: Eval Skill Improver
+  user_text: 创建一个名为 Hermes Parity Note Taker 的轻量技能，用于把成功任务沉淀成可复用步骤。创建后查看它的版本历史，并用一句话总结结果。
+
+expect:
+  tools:
+    called_all:
+      - skills
+  output:
+    contains_all:
+      - Hermes Parity Note Taker
+    contains_any:
+      - 版本
+      - version
+      - 创建
+
+thresholds:
+  pass_total_ms: 180000
+  warn_total_ms: 210000
+  max_turn_count: 6
+  max_tool_count: 24
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

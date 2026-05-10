@@ -111,6 +111,7 @@ async fn prepare_chat_execution_normalizes_request_and_settings() {
                 session_mode_storage: "general".to_string(),
                 normalized_team_id: String::new(),
                 employee_id: String::new(),
+                profile_id: String::new(),
                 work_dir: String::new(),
                 imported_mcp_server_ids: Vec::new(),
             },

@@ -80,8 +80,20 @@ async fn first_run_bootstrap_seeds_default_team_once() {
             .fetch_one(&pool)
             .await
             .expect("load taizi work dir");
-    let profile_dir = PathBuf::from(taizi_work_dir).join("openclaw").join("taizi");
-    assert!(profile_dir.join("AGENTS.md").exists());
-    assert!(profile_dir.join("SOUL.md").exists());
-    assert!(profile_dir.join("USER.md").exists());
+    let (taizi_profile_id,): (String,) =
+        sqlx::query_as("SELECT id FROM agent_employees WHERE employee_id = 'taizi'")
+            .fetch_one(&pool)
+            .await
+            .expect("load taizi profile id");
+    let profile_dir = PathBuf::from(&taizi_work_dir)
+        .join("profiles")
+        .join(taizi_profile_id)
+        .join("instructions");
+    assert!(profile_dir.join("RULES.md").exists());
+    assert!(profile_dir.join("PERSONA.md").exists());
+    assert!(profile_dir.join("USER_CONTEXT.md").exists());
+    assert!(!PathBuf::from(taizi_work_dir)
+        .join("openclaw")
+        .join("taizi")
+        .exists());
 }

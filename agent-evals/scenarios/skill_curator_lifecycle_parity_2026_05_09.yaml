@@ -1,0 +1,46 @@
+id: skill_curator_lifecycle_parity_2026_05_09
+title: Skill 与 Curator 生命周期协同
+capability_id: skill_curator_lifecycle_parity
+
+kind: real-agent
+mode: self-improving-skill-curator
+side_effect: profile-skill-and-curator-write
+enabled: true
+
+input:
+  employee_alias: eval_skill_curator_agent
+  profile_id: eval-profile-skill-curator
+  profile_display_name: Eval Skill Curator Agent
+  user_turns:
+    - 创建一个名为 Hermes Lifecycle Note 的轻量技能，用于把成功任务沉淀为可复用步骤；创建后查看它的详情和版本历史。
+    - 运行 curator 扫描当前 profile 的技能和记忆，告诉我它是否建议优化、归档或恢复刚才创建的技能，并说明为什么。
+  user_text: 创建一个可进化技能，然后运行 curator 检查它的生命周期建议。
+
+expect:
+  tools:
+    called_all:
+      - skills
+      - curator
+  output:
+    contains_all:
+      - Hermes Lifecycle Note
+    contains_any:
+      - curator
+      - 归档
+      - 优化
+      - 生命周期
+
+thresholds:
+  pass_total_ms: 210000
+  warn_total_ms: 240000
+  max_turn_count: 8
+  max_tool_count: 16
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

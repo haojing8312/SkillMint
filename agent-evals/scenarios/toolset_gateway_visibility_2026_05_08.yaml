@@ -1,0 +1,40 @@
+id: toolset_gateway_visibility_2026_05_08
+title: Toolset Gateway 可观测性
+capability_id: toolset_gateway_visibility
+
+kind: real-agent
+mode: toolset-gateway
+side_effect: none
+enabled: true
+
+input:
+  employee_alias: eval_toolset_agent
+  profile_id: eval-profile-toolset
+  profile_display_name: Eval Toolset Agent
+  user_text: 查看当前 runtime 的 toolsets，说明 core、memory、skills、browser、mcp 这些 toolset 是否存在，并保存当前 profile 默认 allowed_toolsets 为 memory 和 skills。
+
+expect:
+  tools:
+    called_all:
+      - toolsets
+  output:
+    contains_any:
+      - memory
+      - skills
+      - toolset
+      - Toolset
+
+thresholds:
+  pass_total_ms: 150000
+  warn_total_ms: 180000
+  max_turn_count: 4
+  max_tool_count: 8
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

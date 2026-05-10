@@ -17,6 +17,7 @@ impl ChatSessionContextRepository for FakeSessionContextRepo {
             session_mode: "team_entry".to_string(),
             team_id: "repo-team".to_string(),
             employee_id: "repo-employee".to_string(),
+            profile_id: "profile-7".to_string(),
             work_dir: "E:/repo-workdir".to_string(),
             imported_mcp_server_ids: vec!["repo-mcp".to_string()],
         })
@@ -48,6 +49,7 @@ async fn prepare_execution_context_prefers_explicit_request_values() {
     assert_eq!(prepared.session_mode_storage, "team_entry");
     assert_eq!(prepared.normalized_team_id, "request-team");
     assert_eq!(prepared.employee_id, "request-employee");
+    assert_eq!(prepared.profile_id, "profile-7");
     assert_eq!(prepared.work_dir, "E:/request-workdir");
     assert_eq!(prepared.imported_mcp_server_ids, vec!["request-mcp"]);
 }

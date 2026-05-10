@@ -1,0 +1,43 @@
+id: profile_memory_multi_turn_reuse_2026_05_08
+title: Profile Memory 多轮复用
+capability_id: self_improving_profile_memory
+
+kind: real-agent
+mode: self-improving-memory
+side_effect: profile-memory-write
+enabled: true
+
+input:
+  employee_alias: eval_memory_reuse_agent
+  profile_id: eval-profile-memory-reuse
+  profile_display_name: Eval Memory Reuse Agent
+  user_text: 记住一个偏好并在下一轮复用。
+  user_turns:
+    - 记住：我喜欢所有周报先给三条结论，再给证据。
+    - 你刚才长期记住了什么？请从你的记忆里召回后回答。
+
+expect:
+  tools:
+    called_all:
+      - memory
+  output:
+    contains_all:
+      - 三条结论
+    contains_any:
+      - 证据
+      - 周报
+
+thresholds:
+  pass_total_ms: 180000
+  warn_total_ms: 210000
+  max_turn_count: 8
+  max_tool_count: 12
+
+record_metrics:
+  - selected_skill
+  - selected_runner
+  - called_tools
+  - total_duration_ms
+  - turn_count
+  - tool_count
+  - fallback_reason

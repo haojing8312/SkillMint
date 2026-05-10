@@ -31,6 +31,30 @@ capabilities:
     workspace_root: D:\\code\\WorkClaw
     entry_kind: builtin
     entry_name: builtin-general
+  self_improving_profile_memory:
+    workspace_root: D:\\code\\WorkClaw
+    entry_kind: builtin
+    entry_name: builtin-general
+  skill_os_progressive_loading:
+    workspace_root: D:\\code\\WorkClaw
+    entry_kind: builtin
+    entry_name: builtin-general
+  skill_self_improvement:
+    workspace_root: D:\\code\\WorkClaw
+    entry_kind: builtin
+    entry_name: builtin-skill-creator
+  skill_curator_lifecycle_parity:
+    workspace_root: D:\\code\\WorkClaw
+    entry_kind: builtin
+    entry_name: builtin-general
+  curator_profile_scan:
+    workspace_root: D:\\code\\WorkClaw
+    entry_kind: builtin
+    entry_name: builtin-general
+  toolset_gateway_visibility:
+    workspace_root: D:\\code\\WorkClaw
+    entry_kind: builtin
+    entry_name: builtin-general
 
 diagnostics:
   export_journal: true
