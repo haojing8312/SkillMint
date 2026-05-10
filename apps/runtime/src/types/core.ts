@@ -11,6 +11,80 @@ export interface SkillManifest {
   source_type?: string;
 }
 
+export interface SkillOsSourceProjection {
+  raw_source_type: string;
+  canonical: string;
+  immutable_content: boolean;
+  directory_backed: boolean;
+  requires_unpack_for_view: boolean;
+}
+
+export interface SkillOsCapabilities {
+  can_list: boolean;
+  can_view: boolean;
+  can_patch: boolean;
+  can_archive: boolean;
+  can_reset: boolean;
+  can_agent_delete: boolean;
+  can_user_uninstall: boolean;
+}
+
+export interface SkillOsToolsetPolicy {
+  requires_toolsets: string[];
+  optional_toolsets: string[];
+  denied_toolsets: string[];
+  unknown_toolsets: string[];
+}
+
+export interface SkillOsUsageTelemetry {
+  view_count: number;
+  use_count: number;
+  patch_count: number;
+  last_viewed_at: string;
+  last_used_at: string;
+  last_patched_at: string;
+  pinned: boolean;
+}
+
+export interface SkillOsIndexEntry {
+  skill_id: string;
+  name: string;
+  description: string;
+  version: string;
+  tags: string[];
+  source: SkillOsSourceProjection;
+  capabilities: SkillOsCapabilities;
+  toolset_policy: SkillOsToolsetPolicy;
+  lifecycle_state: string;
+  usage: SkillOsUsageTelemetry;
+}
+
+export interface SkillOsView {
+  entry: SkillOsIndexEntry;
+  content: string;
+  read_only: boolean;
+  derived: boolean;
+}
+
+export interface SkillOsVersionEntry {
+  version_id: string;
+  skill_id: string;
+  source_type: string;
+  action: string;
+  summary: string;
+  created_at: string;
+}
+
+export interface SkillOsMutationResult {
+  action: string;
+  skill: SkillOsView;
+  version_id: string;
+  rollback_to_version_id?: string | null;
+  reset_to_version_id?: string | null;
+  growth_event_id?: string | null;
+  diff: string;
+}
+
 export interface ClawhubSkillSummary {
   name: string;
   slug: string;

@@ -131,7 +131,7 @@ export function AgentProfileChatWizard({ employee }: Props) {
   if (!employee) {
     return (
       <div className="rounded-lg border border-dashed border-gray-300 p-3 text-xs text-gray-500">
-        先在左侧选择一个员工，再开始对话配置 AGENTS/SOUL/USER。
+        先在左侧选择一个员工，再开始配置 Profile Instructions。
       </div>
     );
   }
@@ -139,7 +139,7 @@ export function AgentProfileChatWizard({ employee }: Props) {
   return (
     <div className="rounded-lg border border-gray-200 p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-medium text-gray-700">对话配置智能体（AGENTS/SOUL/USER）</div>
+          <div className="text-xs font-medium text-gray-700">对话配置 Profile Instructions</div>
         <div className="text-[11px] text-gray-500">
           {answeredCount}/{QUESTIONS.length} 已回答
         </div>
@@ -193,7 +193,7 @@ export function AgentProfileChatWizard({ employee }: Props) {
             onClick={applyProfile}
             disabled={running || !draft}
           >
-            应用到员工目录
+            应用到 Profile Home
           </button>
         </div>
       </div>
@@ -207,19 +207,19 @@ export function AgentProfileChatWizard({ employee }: Props) {
       {draft && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
           <div className="border border-gray-100 rounded p-2">
-            <div className="text-xs font-medium text-gray-700 mb-1">AGENTS.md</div>
+            <div className="text-xs font-medium text-gray-700 mb-1">RULES.md</div>
             <pre className="text-[11px] text-gray-600 whitespace-pre-wrap max-h-40 overflow-y-auto">
               {draft.agents_md}
             </pre>
           </div>
           <div className="border border-gray-100 rounded p-2">
-            <div className="text-xs font-medium text-gray-700 mb-1">SOUL.md</div>
+            <div className="text-xs font-medium text-gray-700 mb-1">PERSONA.md</div>
             <pre className="text-[11px] text-gray-600 whitespace-pre-wrap max-h-40 overflow-y-auto">
               {draft.soul_md}
             </pre>
           </div>
           <div className="border border-gray-100 rounded p-2">
-            <div className="text-xs font-medium text-gray-700 mb-1">USER.md</div>
+            <div className="text-xs font-medium text-gray-700 mb-1">USER_CONTEXT.md</div>
             <pre className="text-[11px] text-gray-600 whitespace-pre-wrap max-h-40 overflow-y-auto">
               {draft.user_md}
             </pre>

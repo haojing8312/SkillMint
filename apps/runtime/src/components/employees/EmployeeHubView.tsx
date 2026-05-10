@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AgentEmployee,
+  SkillOsVersionEntry,
   SkillManifest,
   UpsertAgentEmployeeInput,
 } from "../../types";
@@ -45,13 +46,6 @@ export interface EmployeeHubViewProps {
 
 export type EmployeeHubTab = EmployeeHubTabNavItem;
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
 function employeeKey(employee: AgentEmployee): string {
   return (employee.employee_id || employee.role_id || "").trim();
 }
@@ -78,6 +72,15 @@ export function EmployeeHubView({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [pendingDeleteEmployee, setPendingDeleteEmployee] = useState<{ id: string; name: string } | null>(null);
+  const [pendingSkillOsAction, setPendingSkillOsAction] = useState<
+    | { kind: "patch"; skillId: string; content: string }
+    | { kind: "reset"; skillId: string }
+    | { kind: "rollback"; skillId: string; version: SkillOsVersionEntry }
+    | { kind: "archive"; skillId: string }
+    | { kind: "restore"; skillId: string }
+    | { kind: "delete"; skillId: string }
+    | null
+  >(null);
   const [employeeScopeOverrides, setEmployeeScopeOverrides] = useState<Record<string, string[]>>({});
   const [employeeFilter, setEmployeeFilter] = useState<EmployeeHubEmployeeFilter>("all");
   const {
@@ -151,18 +154,41 @@ export function EmployeeHubView({
     setMessage,
   });
   const {
-    memoryScopeSkillId,
-    setMemoryScopeSkillId,
-    memoryStats,
-    memoryLoading,
-    memoryActionLoading,
-    pendingClearMemory,
-    setPendingClearMemory,
     profileView,
     profileLoading,
-    refreshEmployeeMemoryStats,
-    exportEmployeeMemory,
-    confirmClearEmployeeMemory,
+    profileActionLoading,
+    profileMemoryStatus,
+    profileMemoryStatusLoading,
+    profileMemoryStatusError,
+    curatorReports,
+    curatorReportsLoading,
+    curatorReportsError,
+    curatorSchedulerStatus,
+    curatorSchedulerError,
+    curatorActionLoading,
+    growthTimeline,
+    growthTimelineLoading,
+    growthTimelineError,
+    skillOsIndex,
+    skillOsLoading,
+    skillOsError,
+    selectedSkillOsId,
+    selectedSkillOsView,
+    selectedSkillOsVersions,
+    selectedSkillOsDetailLoading,
+    skillOsActionLoading,
+    refreshSkillOsIndex,
+    scanCuratorProfile,
+    restoreCuratorStaleSkill,
+    selectSkillOs,
+    patchSelectedSkillOs,
+    setSelectedSkillOsPinned,
+    resetSelectedSkillOs,
+    rollbackSelectedSkillOs,
+    archiveSelectedSkillOs,
+    restoreSelectedSkillOs,
+    deleteSelectedSkillOs,
+    exportSelectedAgentProfile,
   } = useEmployeeHubTools({
     selectedEmployee,
     selectedEmployeeId,
@@ -181,16 +207,6 @@ export function EmployeeHubView({
     setEmployeeScopeOverrides,
   });
   const skillNameById = useMemo(() => new Map(skills.map((skill) => [skill.id, skill.name])), [skills]);
-  const memorySkillScopeOptions = useMemo(() => {
-    if (!selectedEmployee) return [];
-    const ids = new Set<string>();
-    if (selectedEmployee.primary_skill_id.trim()) ids.add(selectedEmployee.primary_skill_id.trim());
-    for (const id of selectedEmployee.skill_ids) {
-      const normalized = id.trim();
-      if (normalized) ids.add(normalized);
-    }
-    return Array.from(ids.values());
-  }, [selectedEmployee]);
   const selectedEmployeeAuthorizedSkills = useMemo(() => {
     if (!selectedEmployee) return [];
     const ids = new Set<string>();
@@ -240,6 +256,31 @@ export function EmployeeHubView({
     }
   }
 
+  async function confirmSkillOsAction() {
+    if (!pendingSkillOsAction) return;
+    switch (pendingSkillOsAction.kind) {
+      case "patch":
+        await patchSelectedSkillOs(pendingSkillOsAction.content);
+        break;
+      case "reset":
+        await resetSelectedSkillOs();
+        break;
+      case "rollback":
+        await rollbackSelectedSkillOs(pendingSkillOsAction.version.version_id);
+        break;
+      case "archive":
+        await archiveSelectedSkillOs();
+        break;
+      case "restore":
+        await restoreSelectedSkillOs();
+        break;
+      case "delete":
+        await deleteSelectedSkillOs();
+        break;
+    }
+    setPendingSkillOsAction(null);
+  }
+
   function openEmployeesTab(filter: EmployeeHubEmployeeFilter = "all") {
     setEmployeeFilter(filter);
     setActiveTab("employees");
@@ -274,11 +315,46 @@ export function EmployeeHubView({
 
   const deleteDialogSummary = pendingDeleteEmployee ? `确定删除员工「${pendingDeleteEmployee.name}」吗？` : "确定删除该员工吗？";
   const deleteDialogImpact = pendingDeleteEmployee ? `员工ID: ${pendingDeleteEmployee.id}` : undefined;
-  const clearMemoryScopeLabel = memoryScopeSkillId === "__all__" ? "全部技能" : `技能 ${memoryScopeSkillId}`;
-  const clearMemoryDialogSummary = selectedEmployee
-    ? `确定清空员工「${selectedEmployee.name}」在${clearMemoryScopeLabel}下的长期记忆吗？`
-    : `确定清空${clearMemoryScopeLabel}下的长期记忆吗？`;
-  const clearMemoryDialogImpact = selectedEmployeeMemoryId ? `员工编号: ${selectedEmployeeMemoryId}` : undefined;
+  const skillOsDialogTitle =
+    pendingSkillOsAction?.kind === "patch"
+      ? "更新技能"
+      : pendingSkillOsAction?.kind === "rollback"
+        ? "回滚技能"
+        : pendingSkillOsAction?.kind === "archive"
+          ? "归档技能"
+          : pendingSkillOsAction?.kind === "restore"
+            ? "恢复技能"
+            : pendingSkillOsAction?.kind === "delete"
+              ? "删除技能"
+              : "重置技能";
+  const skillOsDialogSummary =
+    pendingSkillOsAction?.kind === "patch"
+      ? `确定更新技能「${pendingSkillOsAction.skillId}」吗？`
+      : pendingSkillOsAction?.kind === "rollback"
+      ? `确定将技能「${pendingSkillOsAction.skillId}」回滚到版本 ${pendingSkillOsAction.version.version_id} 吗？`
+      : pendingSkillOsAction?.kind === "archive"
+      ? `确定归档技能「${pendingSkillOsAction.skillId}」吗？`
+      : pendingSkillOsAction?.kind === "restore"
+      ? `确定恢复技能「${pendingSkillOsAction.skillId}」吗？`
+      : pendingSkillOsAction?.kind === "delete"
+      ? `确定删除技能「${pendingSkillOsAction.skillId}」吗？`
+      : pendingSkillOsAction
+        ? `确定将技能「${pendingSkillOsAction.skillId}」重置到基线版本吗？`
+        : "";
+  const skillOsDialogImpact =
+    pendingSkillOsAction?.kind === "patch"
+      ? "会生成新的 Skill OS 版本、diff 和成长记录。"
+      : pendingSkillOsAction?.kind === "rollback"
+      ? pendingSkillOsAction.version.summary || pendingSkillOsAction.version.created_at
+      : pendingSkillOsAction?.kind === "archive"
+      ? "会隐藏该技能的 active 入口，并保留版本记录和成长记录。"
+      : pendingSkillOsAction?.kind === "restore"
+      ? "会将已归档技能恢复为 active，并写入成长记录。"
+      : pendingSkillOsAction?.kind === "delete"
+      ? "会删除安装记录；agent-created 技能目录也会被移除。"
+      : "会生成新的版本记录和成长记录，可继续通过版本历史追溯。";
+  const skillOsDialogLevel = pendingSkillOsAction?.kind === "delete" ? "high" : "medium";
+  const skillOsDialogIrreversible = pendingSkillOsAction?.kind === "delete";
   const selectedEmployeeFeishuStatus = selectedEmployee ? resolveFeishuStatus(selectedEmployee, officialFeishuRuntimeStatus) : null;
   const selectedEmployeeFeishuRuntimeStatus = toEmployeeHubFeishuRuntimeStatus(officialFeishuRuntimeStatus);
   const defaultWorkspacePathExample = brandDefaultWorkspacePathExample();
@@ -310,7 +386,7 @@ export function EmployeeHubView({
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-[var(--sm-text)]">智能体员工</h1>
-            <p className="mt-2 text-sm text-[var(--sm-text-muted)]">用员工编号统一管理 OpenClaw 与多渠道路由。主员工默认进入且拥有全技能权限。</p>
+            <p className="mt-2 text-sm text-[var(--sm-text-muted)]">用 Profile Runtime 管理智能体员工、多渠道路由和团队协作。主员工默认进入且拥有全技能权限。</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -434,28 +510,34 @@ export function EmployeeHubView({
             employeeFilterLabel={employeeFilterLabel}
             employees={employees}
             filteredEmployees={filteredEmployees}
-            formatBytes={formatBytes}
             globalDefaultWorkDir={globalDefaultWorkDir}
+            curatorReports={curatorReports}
+            curatorReportsError={curatorReportsError}
+            curatorReportsLoading={curatorReportsLoading}
+            curatorSchedulerStatus={curatorSchedulerStatus}
+            curatorSchedulerError={curatorSchedulerError}
+            curatorActionLoading={curatorActionLoading}
+            growthTimeline={growthTimeline}
+            growthTimelineError={growthTimelineError}
+            growthTimelineLoading={growthTimelineLoading}
             highlightEmployeeId={highlightEmployeeId}
-            memoryActionLoading={memoryActionLoading}
-            memoryLoading={memoryLoading}
-            memoryScopeSkillId={memoryScopeSkillId}
-            memorySkillScopeOptions={memorySkillScopeOptions}
-            memoryStats={memoryStats}
             officialFeishuRuntimeStatus={officialFeishuRuntimeStatus}
             onClearEmployeeFilter={() => setEmployeeFilter("all")}
-            onExportEmployeeMemory={exportEmployeeMemory}
-            onMemoryScopeChange={setMemoryScopeSkillId}
+            onExportAgentProfile={exportSelectedAgentProfile}
             onOpenEmployeeCreatorSkill={onOpenEmployeeCreatorSkill}
             onOpenFeishuSettings={onOpenFeishuSettings}
             onOpenTeamsTab={() => openTeamsTab("all")}
-            onRefreshEmployeeMemoryStats={() => refreshEmployeeMemoryStats()}
-            onRequestClearEmployeeMemory={() => setPendingClearMemory(true)}
+            onScanCuratorProfile={scanCuratorProfile}
+            onRestoreCuratorStaleSkill={restoreCuratorStaleSkill}
             onRequestRemoveCurrent={requestRemoveCurrent}
             onSelectEmployee={onSelectEmployee}
             onSetAsMainAndEnter={onSetAsMainAndEnter}
             onStartTaskWithEmployee={onStartTaskWithEmployee}
             profileLoading={profileLoading}
+            profileActionLoading={profileActionLoading}
+            profileMemoryStatus={profileMemoryStatus}
+            profileMemoryStatusError={profileMemoryStatusError}
+            profileMemoryStatusLoading={profileMemoryStatusLoading}
             profileView={profileView}
             resolveFeishuStatus={resolveFeishuStatus}
             routingBindings={routingBindings}
@@ -468,8 +550,33 @@ export function EmployeeHubView({
             selectedEmployeeFeishuStatus={selectedEmployeeFeishuStatus}
             selectedEmployeeId={selectedEmployeeId}
             selectedEmployeeMemoryId={selectedEmployeeMemoryId}
+            selectedSkillOsDetailLoading={selectedSkillOsDetailLoading}
+            selectedSkillOsId={selectedSkillOsId}
+            selectedSkillOsVersions={selectedSkillOsVersions}
+            selectedSkillOsView={selectedSkillOsView}
+            selectSkillOs={selectSkillOs}
+            skillOsActionLoading={skillOsActionLoading}
             setMessage={setMessage}
+            skillOsError={skillOsError}
+            skillOsIndex={skillOsIndex}
+            skillOsLoading={skillOsLoading}
             skillNameById={skillNameById}
+            onRefreshSkillOsIndex={refreshSkillOsIndex}
+            onRequestSkillOsPatch={(skillId, content) =>
+              setPendingSkillOsAction({ kind: "patch", skillId, content })
+            }
+            onSetSkillOsPinned={setSelectedSkillOsPinned}
+            onRequestSkillOsReset={(skillId) => setPendingSkillOsAction({ kind: "reset", skillId })}
+            onRequestSkillOsRollback={(version) =>
+              setPendingSkillOsAction({
+                kind: "rollback",
+                skillId: version.skill_id,
+                version,
+              })
+            }
+            onRequestSkillOsArchive={(skillId) => setPendingSkillOsAction({ kind: "archive", skillId })}
+            onRequestSkillOsRestore={(skillId) => setPendingSkillOsAction({ kind: "restore", skillId })}
+            onRequestSkillOsDelete={(skillId) => setPendingSkillOsAction({ kind: "delete", skillId })}
           />
         )}
         {activeTab === "runs" && (
@@ -490,8 +597,8 @@ export function EmployeeHubView({
           </div>
         )}
       </div>
-      <RiskConfirmDialog open={pendingClearMemory} level="high" title="清空长期记忆" summary={clearMemoryDialogSummary} impact={clearMemoryDialogImpact} irreversible confirmLabel="确认清空" cancelLabel="取消" loading={memoryActionLoading === "clear"} onConfirm={confirmClearEmployeeMemory} onCancel={() => setPendingClearMemory(false)} />
       <RiskConfirmDialog open={Boolean(pendingDeleteEmployee)} level="high" title="删除员工" summary={deleteDialogSummary} impact={deleteDialogImpact} irreversible confirmLabel="确认删除" cancelLabel="取消" loading={saving} onConfirm={confirmRemoveCurrent} onCancel={() => setPendingDeleteEmployee(null)} />
+      <RiskConfirmDialog open={Boolean(pendingSkillOsAction)} level={skillOsDialogLevel} title={skillOsDialogTitle} summary={skillOsDialogSummary} impact={skillOsDialogImpact} irreversible={skillOsDialogIrreversible} confirmLabel="确认执行" cancelLabel="取消" loading={Boolean(skillOsActionLoading)} onConfirm={confirmSkillOsAction} onCancel={() => setPendingSkillOsAction(null)} />
     </div>
   );
 }

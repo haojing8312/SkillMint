@@ -91,9 +91,9 @@ describe("EmployeeHubView employee creation flow", () => {
         return Promise.resolve({
           profile_dir: "D:\\profiles\\emp-profile",
           files: [
-            { name: "AGENTS.md", exists: true, content: "你是项目经理", error: null },
-            { name: "SOUL.md", exists: false, content: "", error: null },
-            { name: "USER.md", exists: false, content: "", error: "permission denied" },
+            { name: "RULES.md", exists: true, content: "你是项目经理", error: null },
+            { name: "PERSONA.md", exists: false, content: "", error: null },
+            { name: "USER_CONTEXT.md", exists: false, content: "", error: "permission denied" },
           ],
         });
       }
@@ -150,10 +150,10 @@ describe("EmployeeHubView employee creation flow", () => {
       expect(invokeMock).toHaveBeenCalledWith("get_agent_profile_files", { employeeDbId: "emp-profile" });
     });
 
-    expect(screen.getByText("AGENTS / SOUL / USER（只读）")).toBeInTheDocument();
+    expect(screen.getByText("Profile Instructions（只读）")).toBeInTheDocument();
     expect(screen.getByText("目录：D:\\profiles\\emp-profile")).toBeInTheDocument();
     expect(screen.getByText("你是项目经理")).toBeInTheDocument();
-    expect(screen.getByText("SOUL.md （未生成）")).toBeInTheDocument();
+    expect(screen.getByText("PERSONA.md （未生成）")).toBeInTheDocument();
     expect(screen.getByText("读取失败：permission denied")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "更新画像" }));

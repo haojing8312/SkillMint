@@ -3,31 +3,68 @@ import { AgentProfileFilesView } from "../../../types";
 interface EmployeeProfileFilesSectionProps {
   profileLoading: boolean;
   profileView: AgentProfileFilesView | null;
+  actionLoading?: "export" | null;
   onOpenEmployeeCreatorSkill?: () => void;
+  onExportProfile?: () => void | Promise<void>;
 }
 
 export function EmployeeProfileFilesSection({
   profileLoading,
   profileView,
+  actionLoading = null,
   onOpenEmployeeCreatorSkill,
+  onExportProfile,
 }: EmployeeProfileFilesSectionProps) {
   return (
     <div className="rounded-lg border border-gray-200 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-medium text-gray-700">AGENTS / SOUL / USER（只读）</div>
-        <button
-          type="button"
-          onClick={onOpenEmployeeCreatorSkill}
-          className="h-7 px-2.5 rounded border border-blue-200 hover:bg-blue-50 text-blue-700 text-xs"
-        >
-          更新画像
-        </button>
+        <div className="text-xs font-medium text-gray-700">Profile Instructions（只读）</div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="employee-profile-export"
+            disabled={!profileView || Boolean(actionLoading)}
+            onClick={() => onExportProfile?.()}
+            className="h-7 px-2.5 rounded border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs disabled:opacity-50"
+          >
+            {actionLoading === "export" ? "导出中..." : "导出 Profile"}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenEmployeeCreatorSkill}
+            className="h-7 px-2.5 rounded border border-blue-200 hover:bg-blue-50 text-blue-700 text-xs"
+          >
+            更新画像
+          </button>
+        </div>
       </div>
       {profileLoading ? (
         <div className="text-xs text-gray-500">正在加载配置文件...</div>
       ) : profileView ? (
         <>
           <div className="text-[11px] text-gray-500 break-all">目录：{profileView.profile_dir}</div>
+          {profileView.artifacts && profileView.artifacts.length > 0 && (
+            <div
+              data-testid="employee-profile-artifacts"
+              className="grid grid-cols-2 gap-1 md:grid-cols-3"
+            >
+              {profileView.artifacts.map((artifact) => (
+                <div
+                  key={artifact.name}
+                  className={
+                    "rounded border px-2 py-1 " +
+                    (artifact.exists
+                      ? "border-emerald-100 bg-emerald-50 text-emerald-800"
+                      : "border-gray-100 bg-gray-50 text-gray-500")
+                  }
+                  title={artifact.path}
+                >
+                  <div className="text-[10px] font-medium">{artifact.name}</div>
+                  <div className="text-[10px]">{artifact.exists ? `${artifact.file_count} files` : "missing"}</div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             {profileView.files.map((file) => (
               <div key={file.name} className="border border-gray-100 rounded p-2 space-y-1">

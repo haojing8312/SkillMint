@@ -108,34 +108,104 @@ export interface EmployeeGroupRunEvent {
   created_at: string;
 }
 
-export interface EmployeeMemorySkillStats {
-  skill_id: string;
-  total_files: number;
-  total_bytes: number;
-}
-
-export interface EmployeeMemoryStats {
+export interface EmployeeProfileMemoryStatus {
   employee_id: string;
-  total_files: number;
-  total_bytes: number;
-  skills: EmployeeMemorySkillStats[];
-}
-
-export interface EmployeeMemoryExportFile {
+  profile_id?: string | null;
   skill_id: string;
-  relative_path: string;
-  size_bytes: number;
-  modified_at?: string | null;
-  content: string;
+  profile_memory_dir?: string | null;
+  profile_memory_file_path?: string | null;
+  profile_memory_file_exists: boolean;
+  active_source: "profile" | "legacy" | "none" | string;
+  active_source_path?: string | null;
 }
 
-export interface EmployeeMemoryExport {
+export interface EmployeeGrowthEvent {
+  id: string;
+  profile_id: string;
+  session_id: string;
+  session_title?: string;
+  event_type: string;
+  target_type: string;
+  target_id: string;
+  summary: string;
+  display_summary?: string;
+  target_label?: string;
+  evidence_label?: string;
+  evidence_json: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EmployeeGrowthTimeline {
   employee_id: string;
-  skill_id?: string | null;
-  exported_at: string;
-  total_files: number;
-  total_bytes: number;
-  files: EmployeeMemoryExportFile[];
+  profile_id?: string | null;
+  events: EmployeeGrowthEvent[];
+}
+
+export interface EmployeeCuratorFinding {
+  kind: string;
+  severity: string;
+  target_type: string;
+  target_id: string;
+  summary: string;
+  evidence_json: Record<string, unknown>;
+  suggested_action: string;
+  reversible: boolean;
+}
+
+export interface EmployeeCuratorChangedTarget {
+  kind: string;
+  target_type: string;
+  target_id: string;
+  state_changed: boolean;
+  restored_to: string;
+  suggested_action: string;
+  reversible: boolean;
+}
+
+export interface EmployeeCuratorRestoreCandidate {
+  target_type: string;
+  target_id: string;
+  tool: string;
+  action: string;
+  input: Record<string, unknown>;
+}
+
+export interface EmployeeCuratorRun {
+  id: string;
+  profile_id: string;
+  scope: string;
+  summary: string;
+  report_path: string;
+  mode?: string;
+  changed_targets?: EmployeeCuratorChangedTarget[];
+  restore_candidates?: EmployeeCuratorRestoreCandidate[];
+  has_state_changes?: boolean;
+  findings: EmployeeCuratorFinding[];
+  created_at: string;
+}
+
+export interface EmployeeCuratorReports {
+  employee_id: string;
+  profile_id?: string | null;
+  runs: EmployeeCuratorRun[];
+}
+
+export interface EmployeeCuratorSchedulerStatus {
+  enabled: boolean;
+  running: boolean;
+  interval_minutes: number;
+  min_idle_minutes: number;
+  active_run_count: number;
+  idle: boolean;
+  last_activity_at: string;
+  last_started_at: string;
+  last_completed_at: string;
+  last_error: string;
+  next_check_at: string;
+  profile_id?: string | null;
+  profile_due: boolean;
+  profile_last_run_at: string;
+  profile_last_summary: string;
 }
 
 export interface UpsertAgentEmployeeInput {
@@ -203,11 +273,29 @@ export interface AgentProfileFileView {
   error?: string | null;
 }
 
+export interface AgentProfileArtifactStatus {
+  name: string;
+  path: string;
+  exists: boolean;
+  file_count: number;
+}
+
 export interface AgentProfileFilesView {
   employee_id: string;
   employee_name: string;
   profile_dir: string;
+  artifacts?: AgentProfileArtifactStatus[];
   files: AgentProfileFileView[];
+}
+
+export interface AgentProfileExportResult {
+  employee_id: string;
+  employee_name: string;
+  profile_id: string;
+  profile_dir: string;
+  export_path: string;
+  file_count: number;
+  total_bytes: number;
 }
 
 export interface ImRoutingBinding {

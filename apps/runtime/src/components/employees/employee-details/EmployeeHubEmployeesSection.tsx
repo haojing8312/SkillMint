@@ -1,15 +1,24 @@
 import type {
   AgentEmployee,
   AgentProfileFilesView,
-  EmployeeMemoryStats,
+  EmployeeCuratorReports,
+  EmployeeCuratorSchedulerStatus,
+  EmployeeGrowthTimeline,
+  EmployeeProfileMemoryStatus,
   ImRoutingBinding,
   OpenClawPluginFeishuRuntimeStatus,
+  SkillOsIndexEntry,
+  SkillOsVersionEntry,
+  SkillOsView,
 } from "../../../types";
 import { EmployeeFeishuAssociationSection } from "../EmployeeFeishuAssociationSection";
 import type { EmployeeHubEmployeeFilter } from "../employeeHubOverview";
 import { toEmployeeHubFeishuRuntimeStatus } from "../hooks/useEmployeeHubFeishu";
-import { EmployeeMemoryToolsSection } from "../tools/EmployeeMemoryToolsSection";
+import { EmployeeCuratorReportsSection } from "../tools/EmployeeCuratorReportsSection";
+import { EmployeeGrowthTimelineSection } from "../tools/EmployeeGrowthTimelineSection";
 import { EmployeeProfileFilesSection } from "../tools/EmployeeProfileFilesSection";
+import { EmployeeProfileMemoryStatusBar } from "../tools/EmployeeProfileMemoryStatusBar";
+import { EmployeeSkillOsSection } from "../tools/EmployeeSkillOsSection";
 
 type EmployeeHubFeishuRuntimeStatus = ReturnType<typeof toEmployeeHubFeishuRuntimeStatus>;
 type FeishuAssociationSavePayload = {
@@ -25,28 +34,34 @@ interface EmployeeHubEmployeesSectionProps {
   employeeFilterLabel: string;
   employees: AgentEmployee[];
   filteredEmployees: AgentEmployee[];
-  formatBytes: (bytes: number) => string;
   globalDefaultWorkDir: string;
+  curatorReports: EmployeeCuratorReports | null;
+  curatorReportsError: string;
+  curatorReportsLoading: boolean;
+  curatorSchedulerStatus: EmployeeCuratorSchedulerStatus | null;
+  curatorSchedulerError: string;
+  curatorActionLoading: string | null;
+  growthTimeline: EmployeeGrowthTimeline | null;
+  growthTimelineError: string;
+  growthTimelineLoading: boolean;
   highlightEmployeeId?: string | null;
-  memoryActionLoading: "export" | "clear" | null;
-  memoryLoading: boolean;
-  memoryScopeSkillId: string;
-  memorySkillScopeOptions: string[];
-  memoryStats: EmployeeMemoryStats | null;
   officialFeishuRuntimeStatus: OpenClawPluginFeishuRuntimeStatus | null;
   onClearEmployeeFilter: () => void;
-  onExportEmployeeMemory: () => void | Promise<void>;
-  onMemoryScopeChange: (value: string) => void;
+  onExportAgentProfile: () => void | Promise<void>;
   onOpenEmployeeCreatorSkill?: (options?: { mode?: "create" | "update"; employeeId?: string }) => void | Promise<void>;
   onOpenFeishuSettings?: () => void;
   onOpenTeamsTab: () => void;
-  onRefreshEmployeeMemoryStats: () => void | Promise<void>;
-  onRequestClearEmployeeMemory: () => void;
+  onScanCuratorProfile: (mode?: "scan" | "run") => void | Promise<void>;
+  onRestoreCuratorStaleSkill: (skillId: string) => void | Promise<void>;
   onRequestRemoveCurrent: () => void;
   onSelectEmployee: (employeeId: string) => void;
   onSetAsMainAndEnter: (employeeId: string) => void;
   onStartTaskWithEmployee: (employeeId: string) => void | Promise<void>;
   profileLoading: boolean;
+  profileActionLoading: "export" | null;
+  profileMemoryStatus: EmployeeProfileMemoryStatus | null;
+  profileMemoryStatusError: string;
+  profileMemoryStatusLoading: boolean;
   profileView: AgentProfileFilesView | null;
   resolveFeishuStatus: (
     employee: AgentEmployee,
@@ -67,8 +82,25 @@ interface EmployeeHubEmployeesSectionProps {
   selectedEmployeeFeishuStatus: unknown;
   selectedEmployeeId: string | null;
   selectedEmployeeMemoryId: string;
+  selectedSkillOsDetailLoading: boolean;
+  selectedSkillOsId: string | null;
+  selectedSkillOsVersions: SkillOsVersionEntry[];
+  selectedSkillOsView: SkillOsView | null;
+  selectSkillOs: (skillId: string) => void;
+  skillOsActionLoading: "patch" | "pin" | "reset" | "rollback" | "archive" | "restore" | "delete" | null;
   setMessage: (message: string) => void;
+  skillOsError: string;
+  skillOsIndex: SkillOsIndexEntry[];
+  skillOsLoading: boolean;
   skillNameById: Map<string, string>;
+  onRefreshSkillOsIndex: () => void | Promise<void>;
+  onRequestSkillOsPatch: (skillId: string, content: string) => void;
+  onSetSkillOsPinned: (pinned: boolean) => void | Promise<void>;
+  onRequestSkillOsReset: (skillId: string) => void;
+  onRequestSkillOsRollback: (version: SkillOsVersionEntry) => void;
+  onRequestSkillOsArchive: (skillId: string) => void;
+  onRequestSkillOsRestore: (skillId: string) => void;
+  onRequestSkillOsDelete: (skillId: string) => void;
 }
 
 export function EmployeeHubEmployeesSection({
@@ -76,28 +108,34 @@ export function EmployeeHubEmployeesSection({
   employeeFilterLabel,
   employees,
   filteredEmployees,
-  formatBytes,
   globalDefaultWorkDir,
+  curatorReports,
+  curatorReportsError,
+  curatorReportsLoading,
+  curatorSchedulerStatus,
+  curatorSchedulerError,
+  curatorActionLoading,
+  growthTimeline,
+  growthTimelineError,
+  growthTimelineLoading,
   highlightEmployeeId,
-  memoryActionLoading,
-  memoryLoading,
-  memoryScopeSkillId,
-  memorySkillScopeOptions,
-  memoryStats,
   officialFeishuRuntimeStatus,
   onClearEmployeeFilter,
-  onExportEmployeeMemory,
-  onMemoryScopeChange,
+  onExportAgentProfile,
   onOpenEmployeeCreatorSkill,
   onOpenFeishuSettings,
   onOpenTeamsTab,
-  onRefreshEmployeeMemoryStats,
-  onRequestClearEmployeeMemory,
+  onScanCuratorProfile,
+  onRestoreCuratorStaleSkill,
   onRequestRemoveCurrent,
   onSelectEmployee,
   onSetAsMainAndEnter,
   onStartTaskWithEmployee,
   profileLoading,
+  profileActionLoading,
+  profileMemoryStatus,
+  profileMemoryStatusError,
+  profileMemoryStatusLoading,
   profileView,
   resolveFeishuStatus,
   routingBindings,
@@ -110,8 +148,25 @@ export function EmployeeHubEmployeesSection({
   selectedEmployeeFeishuStatus,
   selectedEmployeeId,
   selectedEmployeeMemoryId,
+  selectedSkillOsDetailLoading,
+  selectedSkillOsId,
+  selectedSkillOsVersions,
+  selectedSkillOsView,
+  selectSkillOs,
+  skillOsActionLoading,
   setMessage,
+  skillOsError,
+  skillOsIndex,
+  skillOsLoading,
   skillNameById,
+  onRefreshSkillOsIndex,
+  onRequestSkillOsPatch,
+  onSetSkillOsPinned,
+  onRequestSkillOsReset,
+  onRequestSkillOsRollback,
+  onRequestSkillOsArchive,
+  onRequestSkillOsRestore,
+  onRequestSkillOsDelete,
 }: EmployeeHubEmployeesSectionProps) {
   return (
     <div
@@ -262,9 +317,57 @@ export function EmployeeHubEmployeesSection({
               <EmployeeProfileFilesSection
                 profileLoading={profileLoading}
                 profileView={profileView}
+                actionLoading={profileActionLoading}
+                onExportProfile={onExportAgentProfile}
                 onOpenEmployeeCreatorSkill={() =>
                   onOpenEmployeeCreatorSkill?.({ mode: "update", employeeId: selectedEmployee.id })
                 }
+              />
+
+              <EmployeeProfileMemoryStatusBar
+                loading={profileMemoryStatusLoading}
+                error={profileMemoryStatusError}
+                status={profileMemoryStatus}
+              />
+
+              <EmployeeGrowthTimelineSection
+                loading={growthTimelineLoading}
+                error={growthTimelineError}
+                timeline={growthTimeline}
+              />
+
+              <EmployeeSkillOsSection
+                authorizedSkillIds={selectedEmployeeAuthorizedSkills.map((item) => item.id)}
+                fallbackSkillNames={skillNameById}
+                index={skillOsIndex}
+                loading={skillOsLoading}
+                error={skillOsError}
+                selectedSkillId={selectedSkillOsId}
+                selectedView={selectedSkillOsView}
+                selectedVersions={selectedSkillOsVersions}
+                detailLoading={selectedSkillOsDetailLoading}
+                actionLoading={skillOsActionLoading}
+                onSelectSkill={selectSkillOs}
+                onRefresh={onRefreshSkillOsIndex}
+                onRequestPatch={onRequestSkillOsPatch}
+                onSetPinned={onSetSkillOsPinned}
+                onRequestReset={onRequestSkillOsReset}
+                onRequestRollback={onRequestSkillOsRollback}
+                onRequestArchive={onRequestSkillOsArchive}
+                onRequestRestore={onRequestSkillOsRestore}
+                onRequestDelete={onRequestSkillOsDelete}
+              />
+
+              <EmployeeCuratorReportsSection
+                loading={curatorReportsLoading}
+                error={curatorReportsError}
+                reports={curatorReports}
+                schedulerStatus={curatorSchedulerStatus}
+                schedulerError={curatorSchedulerError}
+                actionLoading={curatorActionLoading}
+                onScan={() => onScanCuratorProfile("scan")}
+                onRun={() => onScanCuratorProfile("run")}
+                onRestoreStaleSkill={onRestoreCuratorStaleSkill}
               />
 
               <div className="flex items-center gap-2 pt-1">
@@ -314,19 +417,6 @@ export function EmployeeHubEmployeesSection({
             </div>
           )}
 
-          <EmployeeMemoryToolsSection
-            memoryLoading={memoryLoading}
-            memoryActionLoading={memoryActionLoading}
-            memoryScopeSkillId={memoryScopeSkillId}
-            memorySkillScopeOptions={memorySkillScopeOptions}
-            selectedEmployeeMemoryId={selectedEmployeeMemoryId}
-            memoryStats={memoryStats}
-            formatBytes={formatBytes}
-            onMemoryScopeChange={onMemoryScopeChange}
-            onRefreshEmployeeMemoryStats={onRefreshEmployeeMemoryStats}
-            onExportEmployeeMemory={onExportEmployeeMemory}
-            onRequestClearEmployeeMemory={onRequestClearEmployeeMemory}
-          />
         </div>
       </div>
     </div>

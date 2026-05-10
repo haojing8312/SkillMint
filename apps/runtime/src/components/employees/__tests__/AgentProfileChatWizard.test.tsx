@@ -15,17 +15,17 @@ describe("AgentProfileChatWizard", () => {
         return Promise.resolve({
           employee_id: "project_manager",
           employee_name: "项目经理",
-          agents_md: "# AGENTS\n\nAgent profile draft",
-          soul_md: "# SOUL\n\nSoul profile draft",
-          user_md: "# USER\n\nUser profile draft",
+          agents_md: "# RULES\n\nAgent profile draft",
+          soul_md: "# PERSONA\n\nSoul profile draft",
+          user_md: "# USER_CONTEXT\n\nUser profile draft",
         });
       }
       if (command === "apply_agent_profile") {
         return Promise.resolve({
           files: [
-            { path: "E:/workspace/openclaw/project_manager/AGENTS.md", ok: true, error: null },
-            { path: "E:/workspace/openclaw/project_manager/SOUL.md", ok: true, error: null },
-            { path: "E:/workspace/openclaw/project_manager/USER.md", ok: true, error: null },
+            { path: "E:/workspace/profiles/emp-1/instructions/RULES.md", ok: true, error: null },
+            { path: "E:/workspace/profiles/emp-1/instructions/PERSONA.md", ok: true, error: null },
+            { path: "E:/workspace/profiles/emp-1/instructions/USER_CONTEXT.md", ok: true, error: null },
           ],
         });
       }
@@ -78,10 +78,10 @@ describe("AgentProfileChatWizard", () => {
           }),
         }),
       );
-      expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
+      expect(screen.getByText("RULES.md")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "应用到员工目录" }));
+    fireEvent.click(screen.getByRole("button", { name: "应用到 Profile Home" }));
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith(
         "apply_agent_profile",

@@ -51,14 +51,6 @@ describe("EmployeeHubView thread binding removal", () => {
           },
         });
       }
-      if (command === "get_employee_memory_stats") {
-        return Promise.resolve({
-          employee_id: "project_manager",
-          total_files: 0,
-          total_bytes: 0,
-          skills: [],
-        });
-      }
       if (command === "list_im_routing_bindings") {
         return Promise.resolve([]);
       }
