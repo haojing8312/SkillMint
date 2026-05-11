@@ -1,5 +1,9 @@
 # OpenClaw IM Reuse Architecture Contract
 
+> **Historical / superseded guidance:** This document records an earlier OpenClaw-first IM architecture direction. It is no longer current WorkClaw product guidance. The active direction is the Hermes-aligned sidecar removal roadmap: profile runtime boundaries, native Rust `ToolRegistry` / toolsets, platform gateways/adapters, and profile-owned memory / skills / growth / curator. Treat OpenClaw-shaped routes, lifecycle names, and directories mentioned below as legacy migration inputs only.
+>
+> Current source of truth: [Hermes-Aligned Sidecar Removal Roadmap](../plans/2026-05-11-hermes-aligned-sidecar-removal-roadmap.md) and [OpenClaw Remnant Classification](../plans/2026-05-11-openclaw-remnant-classification.md).
+
 This document defines the target IM boundary for WorkClaw's OpenClaw-first rearchitecture.
 
 ## Core Mapping

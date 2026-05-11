@@ -1,6 +1,10 @@
 # OpenClaw 升级维护手册
 
-本文档用于维护者执行内置 OpenClaw 核心同步与回归验证，包括当前已启用的 routing subset，以及为后续多 IM 连接器预留的 vendor lane。
+> **历史 / 遗留 vendor lane：** 本文档保留给维护者理解和必要时复现既有 OpenClaw vendor 同步流程。它不再代表 WorkClaw 的前向产品架构，也不应作为新增 IM、routing、browser、MCP、toolset 或 profile-runtime 能力的设计入口。
+>
+> 当前方向以 Hermes-aligned sidecar removal roadmap 为准：profile runtime、原生 Rust `ToolRegistry` / toolsets、平台 gateway / adapter、profile-owned memory / skills / growth / curator。OpenClaw 相关脚本、vendor 目录和检查在 Batch 3C 前保持原样，等待替换或显式废弃计划；本批次不删除命令或脚本。
+
+本文档用于维护者执行遗留 OpenClaw 核心同步与回归验证，包括已存在的 routing subset，以及历史上为多 IM 连接器预留的 vendor lane。Batch 3C 将决定这些 vendor lane 的替换检查或废弃路径。
 
 ## 前置条件
 

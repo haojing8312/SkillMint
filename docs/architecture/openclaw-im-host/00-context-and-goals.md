@@ -1,5 +1,7 @@
 # OpenClaw IM Host：背景与目标
 
+> **历史 / 已被取代：** 本文档是 `openclaw-im-host/` 历史文件夹的一部分，记录 2026 年 4 月 OpenClaw-compatible IM host 方向。当前 WorkClaw 架构以 Hermes-aligned sidecar removal roadmap 为准：profile runtime、原生 ToolRegistry / toolsets、平台 gateway / adapter、profile-owned memory / skills / growth / curator。下文中的 OpenClaw 宿主、插件兼容和 lifecycle 目标仅作为历史迁移参考，不再是新增能力的设计入口。
+
 本文档定义 WorkClaw 在 IM 集成层的目标方向：不再维持一套逐渐分叉的私有飞书桥接，而是把 WorkClaw 重构为 OpenClaw IM 插件生态的兼容宿主。
 
 ## 背景

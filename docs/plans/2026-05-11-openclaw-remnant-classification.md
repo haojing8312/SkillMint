@@ -151,11 +151,37 @@ Acceptance:
 
 ### Batch 3B. Docs/product copy and roadmap wording update
 
+Status: `[~]`
+
 Acceptance:
-- `[ ]` README and active planning docs no longer describe OpenClaw compatibility as the forward product architecture.
-- `[ ]` Historical OpenClaw IM docs are marked as superseded or historical where they conflict with Hermes direction.
+- `[x]` README and active planning docs no longer describe OpenClaw compatibility as the forward product architecture.
+- `[x]` Historical OpenClaw IM docs are marked as superseded or historical where they conflict with Hermes direction.
 - `[ ]` Frontend visible copy stops telling users to think in OpenClaw-compatible mode, unless the copy is explicitly about a temporary legacy shim.
-- `[ ]` Docs-only validation runs with `git diff --check` and a scoped grep summary.
+- `[x]` Docs-only validation runs with `git diff --check` and a scoped grep summary.
+
+#### Batch 3B-1. README/docs/historical banners
+
+Status: `[x]`
+
+Handled:
+- Reworded `README.md` and `README.en.md` so WorkClaw is presented as a Hermes-aligned, local-first desktop AI employee runtime/workbench.
+- Marked OpenClaw as historical inspiration, legacy migration input, or temporary compatibility surface rather than a forward product architecture.
+- Added superseded/historical guidance to `docs/architecture/openclaw-im-reuse.md`, a folder-level `docs/architecture/openclaw-im-host/README.md`, and the entry document `docs/architecture/openclaw-im-host/00-context-and-goals.md`.
+- Marked `docs/maintainers/openclaw-upgrade.md` as a legacy vendor lane and deferred replacement/deprecation planning to Batch 3C.
+
+Left for later:
+- Batch 3B-2 must update frontend visible copy in implementation files.
+- Batch 3C must plan replacement or explicit deprecation for OpenClaw vendor sync lanes and release-sensitive checks.
+- Batch 3D and 3E still own browser compatibility and plugin-host/OpenClaw SDK compatibility removal planning.
+
+#### Batch 3B-2. Frontend visible copy
+
+Status: `[ ]`
+
+Acceptance:
+- `[ ]` Active UI strings and settings copy are rewritten to Hermes-native language where they still describe OpenClaw compatibility as the user-facing mode.
+- `[ ]` Temporary legacy shim copy remains explicit and scoped.
+- `[ ]` Frontend/runtime validation is selected in the implementation batch.
 
 ### Batch 3C. Release/vendor lane replacement plan
 

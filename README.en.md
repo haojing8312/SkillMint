@@ -14,7 +14,7 @@
 
 **Help Everyone Quickly Build Their Own AI Employee Team**
 
-WorkClaw is a beginner-friendly OpenClaw desktop agent distribution that removes command-line and config-file friction. Through conversational interaction, users can install and configure the system, create skills, encrypt/package skills, discover skills across the web, and direct AI teams from mobile via Feishu and other IM channels.
+WorkClaw is a Hermes-aligned, local-first desktop AI employee runtime and workbench. Through conversational interaction, users can install and configure the system, create skills, encrypt/package skills, organize AI employee teams, and direct tasks from mobile via Feishu and other IM channels. Early implementation work drew from the OpenClaw ecosystem; in the current roadmap, OpenClaw is historical inspiration and legacy migration input only, not WorkClaw's forward product architecture or compatibility target.
 
 ⭐ If you believe AI employee teams should be accessible to everyone, please Star this repository.
 
@@ -41,6 +41,7 @@ WorkClaw is a beginner-friendly OpenClaw desktop agent distribution that removes
 
 WorkClaw's core mission is to make AI employee teams usable by everyone, not just technical experts:
 - **For non-technical users**: no command line, no manual config editing; complete setup and usage through chat-like interaction
+- **For AI employee runtime work**: evolve around profile runtime boundaries, native ToolRegistry / toolsets, platform gateways, and profile-owned memory / skills / growth / curator
 - **For skill creators**: create, test, encrypt, package, and distribute skills through user-friendly agent workflows
 - **For software companies (OEM)**: build and monetize B2B offerings on top of the open-source base
 - **For individual users**: easily install, configure, and run a personal AI employee team
@@ -51,7 +52,7 @@ WorkClaw also benchmarks against Claude Cowork-style desktop agent experiences w
 
 - **Start tasks in one sentence**: Use the landing page to start local automation and coding tasks quickly.
 - **Agent + tools in one chat loop**: The assistant can read/write files, run commands, and show tool traces while responding.
-- **Employee-scoped long-term memory**: Memory is isolated by `employee_id + skill_id`, so each employee agent keeps its own context over time.
+- **Profile-scoped long-term memory**: Memory, skills, growth records, and curator evidence are organized around profile runtime boundaries; legacy `employee_id` / `skill_id` values remain migration labels and routing aliases.
 - **Default team templates**: On first launch, WorkClaw seeds a built-in "Three Departments and Six Ministries" team that users can run directly or clone into a custom team.
 - **Expert Skills workflow**: Create reusable local skills with guided input and real-time `SKILL.md` preview.
 - **Built-in packaging flow**: Package skills from the app for secure sharing and distribution.
@@ -71,11 +72,11 @@ In early 2026, major companies worldwide have launched desktop AI agent products
 | ClawX | Valuecell Team | OpenClaw visual client | GUI, zero CLI, 50+ built-in skills | Free basic, $99/year pro |
 | LobsterAI (Youdao Lobster) | NetEase Youdao | Chinese-localized OpenClaw | Full Chinese UI, Feishu/DingTalk integration | Free + paid membership |
 | MonsterClaw | Independent team | Lightweight OpenClaw wrapper | Minimal install, auto-config environment | Free basic, premium paid |
-| **WorkClaw (卧龙AI)** | **Open Source** | **OpenClaw Desktop Agent Distribution** | **Open source, local-only data, no cloud, encrypted packaging for sales** | **Completely free (Apache 2.0)** |
+| **WorkClaw (卧龙AI)** | **Open Source** | **Hermes-aligned AI employee workbench / runtime** | **Open source, local-only data, profile runtime, native toolsets, encrypted packaging for sales** | **Completely free (Apache 2.0)** |
 
 ### WorkClaw's Unique Advantages
 
-As a **fully open-source** desktop AI agent, WorkClaw offers key differences from commercial products:
+As a **fully open-source, local-first** desktop AI employee runtime, WorkClaw offers key differences from commercial products:
 
 #### 1. Complete Local Data, No Cloud Servers
 - All chat logs, employee memories, and skill data stored locally on user devices
@@ -169,11 +170,11 @@ The integrated environment where users can package, install, and run encrypted S
 **Core Agent Capabilities**:
 - ✅ **File Operations**: Read, write, edit files with permission control
 - ✅ **Code Execution**: Cross-platform Bash/PowerShell command execution
-- ✅ **Browser Automation**: Playwright integration for web scraping and automation (via Sidecar)
+- ✅ **Browser Automation**: Playwright integration for web scraping and automation; the current Sidecar path is transitional, with native browser provider + ToolRegistry as the target
 - ✅ **MCP Integration**: Model Context Protocol server support for extended capabilities
 - ✅ **Multi-Agent System**: Sub-Agent task distribution with isolated contexts
 - ✅ **Team-template runtime**: First-launch team seeding, cloneable team instances, and phase-driven collaboration across `plan / review / execute / synthesize`
-- ✅ **Layered Memory Management**: TodoWrite tracking + long-term isolation by `employee_id + skill_id`
+- ✅ **Layered Memory Management**: TodoWrite tracking + profile-owned memory / skills / growth / curator direction; old employee/skill buckets remain only as migration aliases
 - ✅ **Web Search**: DuckDuckGo integration for real-time information
 - ✅ **Permission System**: Multi-layer security validation
 
@@ -208,7 +209,7 @@ Creators can develop Skills with **Claude Code** or **VS Code**, then package di
 - **Team templates + runtime state**: Seeded teams can be cloned into custom variants, with visible phase, review round, waiting owner, and event history
 - **Context Compression**: Smart truncation to stay within token limits
 - **Tool Registry**: Dynamic tool registration including MCP servers
-- **Long-Term Memory Isolation**: Employee sessions persist by `employee_id + skill_id`, while non-employee sessions keep the legacy path
+- **Long-Term Memory Isolation**: The next runtime uses `profile_id -> profiles/<profile_id>/...` as the canonical home; old employee/skill paths remain legacy migration inputs or compatibility aliases
 
 ### Developer Experience
 - **Multi-Model Support**: 15+ models across 9 providers
@@ -223,7 +224,7 @@ Creators can develop Skills with **Claude Code** or **VS Code**, then package di
 - **Database**: SQLite (sqlx)
 - **Encryption**: AES-256-GCM (aes-gcm + ring crates)
 - **HTTP Client**: reqwest (for LLM APIs)
-- **Sidecar**: Node.js 20+ (Playwright, MCP)
+- **Legacy transitional sidecar**: Node.js 20+ (Playwright and MCP migration path, with native Rust ToolRegistry providers as the target)
 
 ### App Frontend
 - **UI**: React 18 + TypeScript
@@ -269,7 +270,7 @@ workclaw/
 │       │   │   ├── commands/ # Tauri commands (skills, chat, models, mcp, packaging)
 │       │   │   └── db.rs     # SQLite schema
 │       │   └── tests/        # Integration tests
-│       └── sidecar/          # Node.js sidecar (Playwright, MCP)
+│       └── sidecar/          # Transitional Node.js sidecar (Playwright, MCP), targeted for native runtime migration
 ├── packages/
 │   └── skillpack-rs/         # Encryption library (Rust)
 ├── docs/                     # Documentation
@@ -332,19 +333,19 @@ cargo test
 ### Next
 - Ship distribution capabilities: cross-platform installers and release channels.
 - Strengthen creator workflows: templates, visual editing, and publishing flow.
-- Expand ecosystem connectivity: IM remote control, marketplace compatibility, and mobile collaboration.
+- Expand ecosystem connectivity: IM remote control, native toolsets / skillpack ecosystem, and mobile collaboration.
 
 ### Later
 - Enterprise capabilities: multi-tenancy, SSO and RBAC, allowlisted Skill installation, controlled work directories, centralized auditing, and enterprise-managed token relay with quotas and rate limits.
 - Agent evolution: EvoMap / GEP / A2A integration with traceable evolution.
-- Open ecosystem: ongoing compatibility with OpenClaw / ClawHub.
+- Open ecosystem: Hermes-aligned profile, toolset, Skill OS, and platform-adapter ecosystem.
 
 Detailed planning and execution logs are maintained in [docs/plans/](docs/plans/).
 
 ## Why "WorkClaw"?
 
 **Work**: Focuses on real task execution, delivery, and team collaboration  
-**Claw**: Draws from the OpenClaw ecosystem and the "lobster crew" metaphor for controllable AI workers
+**Claw**: Keeps a historical acknowledgement of the OpenClaw ecosystem and the "lobster crew" metaphor, while WorkClaw's forward architecture is a Hermes-aligned AI employee runtime
 
 The Chinese brand name **Wolong AI (卧龙AI)** is meant to convey strategic intelligence held in reserve, aligned with the product's positioning as an AI employee team you can direct.
 
@@ -374,7 +375,7 @@ The following docs are optional for most end users and mainly target integrators
 
 - Feishu routing integration (CN): [docs/integrations/feishu-routing.md](docs/integrations/feishu-routing.md)
 - Employee identity and memory model (`employee_id`) (CN): [docs/architecture/employee-identity-model.md](docs/architecture/employee-identity-model.md)
-- OpenClaw upgrade runbook (CN): [docs/maintainers/openclaw-upgrade.md](docs/maintainers/openclaw-upgrade.md)
+- OpenClaw legacy vendor lane runbook (CN, historical/migration reference): [docs/maintainers/openclaw-upgrade.md](docs/maintainers/openclaw-upgrade.md)
 - Skill installation troubleshooting (CN): [docs/troubleshooting/skill-installation.md](docs/troubleshooting/skill-installation.md)
 
 ## License
@@ -397,7 +398,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 
 ## Acknowledgements
 
-- Thanks to the [OpenClaw](https://github.com/openclaw/openclaw) open-source ecosystem for the foundational ideas and capabilities that WorkClaw builds on.
+- Thanks to the [OpenClaw](https://github.com/openclaw/openclaw) open-source ecosystem for historical inspiration and early reference points. The current WorkClaw roadmap has moved to a Hermes-aligned, local-first AI employee runtime; OpenClaw-shaped code and docs remain only as legacy migration inputs.
 
 ---
 

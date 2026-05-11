@@ -221,15 +221,54 @@ cargo check
 
 #### Batch 3B. Docs/product copy and roadmap wording update
 
-**Status:** `[ ]`
+**Status:** `[~]`
 
 **Scope:** Rewrite active product and planning language so OpenClaw is historical migration input, not the forward architecture.
 
 **Acceptance:**
-- `[ ]` README and active planning docs no longer describe OpenClaw compatibility as the product target.
-- `[ ]` Historical OpenClaw IM docs are marked superseded or historical where they conflict with the Hermes direction.
+- `[x]` README and active planning docs no longer describe OpenClaw compatibility as the product target.
+- `[x]` Historical OpenClaw IM docs are marked superseded or historical where they conflict with the Hermes direction.
 - `[ ]` Frontend visible copy is rewritten to Hermes-native language, except where explicitly describing a temporary legacy shim.
-- `[ ]` Browser/vendor/plugin-host removal remains unclaimed.
+- `[x]` Browser/vendor/plugin-host removal remains unclaimed.
+
+##### Batch 3B-1. README/docs/historical banners
+
+**Status:** `[x]`
+
+**Scope:** Markdown-only product and maintainer documentation update. This batch changed README narrative, active planning status, historical OpenClaw IM architecture banners, and the legacy OpenClaw vendor-lane runbook. It intentionally did not change frontend implementation files.
+
+**Files:**
+- Modify: `README.md`
+- Modify: `README.en.md`
+- Modify: `docs/architecture/openclaw-im-reuse.md`
+- Create: `docs/architecture/openclaw-im-host/README.md`
+- Modify: `docs/architecture/openclaw-im-host/00-context-and-goals.md`
+- Modify: `docs/maintainers/openclaw-upgrade.md`
+- Modify: `docs/plans/2026-05-11-hermes-aligned-sidecar-removal-roadmap.md`
+- Modify: `docs/plans/2026-05-11-openclaw-remnant-classification.md`
+
+**Acceptance:**
+- `[x]` WorkClaw is described as a Hermes-aligned, local-first desktop AI employee runtime/workbench.
+- `[x]` OpenClaw is acknowledged only as historical inspiration, legacy migration input, or a temporary compatibility surface.
+- `[x]` The OpenClaw IM architecture docs have clear superseded/historical entry banners.
+- `[x]` The OpenClaw upgrade runbook is marked as a legacy vendor lane and points to Batch 3C for replacement/deprecation planning.
+- `[x]` Runtime code, tests, package scripts, release scripts, sidecar implementation, frontend implementation, DB schema, package manager files, browser compatibility, vendor lanes, and plugin-host implementation remain unchanged.
+
+**Verification:**
+- `git diff --check`
+- `git status --short --branch`
+- Scoped grep over README files and changed docs to confirm remaining OpenClaw references are historical, legacy, acknowledgement, or temporary compatibility references.
+
+##### Batch 3B-2. Frontend visible copy
+
+**Status:** `[ ]`
+
+**Scope:** Rewrite active frontend UI copy to Hermes-native language where users still see OpenClaw-compatible wording. This must be a separate implementation batch because Batch 3B-1 is Markdown-only.
+
+**Acceptance:**
+- `[ ]` Frontend visible copy stops telling users to think in OpenClaw-compatible mode, except where copy explicitly describes a temporary legacy shim.
+- `[ ]` UI behavior remains unchanged unless a later batch intentionally changes behavior.
+- `[ ]` Verification uses the frontend/runtime checks selected by `workclaw-change-verification`.
 
 #### Batch 3C. Release/vendor lane replacement plan
 
@@ -269,7 +308,7 @@ cargo check
 cd /mnt/d/code/workclaw
 git diff --check
 git status --short --branch
-git grep -n -i openclaw | awk -F: '...bucket by path prefix...'
+# Re-run the reproducible bucket script from docs/plans/2026-05-11-openclaw-remnant-classification.md when updating classification counts.
 ```
 
 **Exit criteria:**
@@ -413,9 +452,9 @@ pnpm build:runtime
 
 ## 5. Implementation Order Recommendation
 
-**Batch 1, Batch 2, and Batch 3A are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, and remaining OpenClaw references have a Batch 3 classification map.
+**Batch 1, Batch 2, Batch 3A, and Batch 3B-1 are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, remaining OpenClaw references have a Batch 3 classification map, and active README/docs narrative marks OpenClaw as historical legacy migration input.
 
-Next start with **Batch 3B: Docs/product copy and roadmap wording update**. Do not start browser/vendor/plugin-host deletion until the Batch 3C-3E acceptance checks are ready.
+Next choose between **Batch 3B-2: Frontend visible copy** and **Batch 3C: Release/vendor lane replacement plan**. Do not start browser/vendor/plugin-host deletion until the Batch 3C-3E acceptance checks are ready.
 
 Batch 1 was chosen first because:
 
