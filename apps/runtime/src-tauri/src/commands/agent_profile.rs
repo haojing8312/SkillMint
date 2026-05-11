@@ -207,6 +207,48 @@ fn resolve_profile_dir(employee: &AgentEmployee, profile_id: &str, fallback_base
     PathBuf::from(base).join("profiles").join(profile_id.trim())
 }
 
+fn profile_home_artifact_dirs(profile_dir: &std::path::Path) -> [PathBuf; 6] {
+    [
+        profile_dir.join("instructions"),
+        profile_dir.join("memories"),
+        profile_dir.join("skills"),
+        profile_dir.join("sessions"),
+        profile_dir.join("growth"),
+        profile_dir.join("curator"),
+    ]
+}
+
+fn ensure_profile_home_dirs(profile_dir: &std::path::Path) -> Result<(), String> {
+    for dir in profile_home_artifact_dirs(profile_dir) {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create profile dir: {e}"))?;
+    }
+    Ok(())
+}
+
+async fn recorded_profile_home_with_pool(
+    pool: &SqlitePool,
+    employee: &AgentEmployee,
+    profile_id: &str,
+) -> Result<Option<String>, String> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT COALESCE(profile_home, '')
+         FROM agent_profiles
+         WHERE legacy_employee_row_id = ? OR id = ?
+         ORDER BY CASE WHEN legacy_employee_row_id = ? THEN 0 ELSE 1 END
+         LIMIT 1",
+    )
+    .bind(&employee.id)
+    .bind(profile_id)
+    .bind(&employee.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row
+        .map(|row| row.0.trim().to_string())
+        .filter(|home| !home.is_empty()))
+}
+
 async fn record_profile_home_with_pool(
     pool: &SqlitePool,
     employee: &AgentEmployee,
@@ -244,21 +286,31 @@ async fn record_profile_home_with_pool(
     Ok(())
 }
 
+pub(crate) async fn ensure_employee_profile_home_with_pool(
+    pool: &SqlitePool,
+    employee: &AgentEmployee,
+) -> Result<(String, PathBuf), String> {
+    let profile_id = resolve_profile_id_with_pool(pool, employee).await?;
+    let fallback_base = if employee.default_work_dir.trim().is_empty() {
+        resolve_default_work_dir_with_pool(pool).await?
+    } else {
+        String::new()
+    };
+    let profile_dir = match recorded_profile_home_with_pool(pool, employee, &profile_id).await? {
+        Some(home) => PathBuf::from(home),
+        None => resolve_profile_dir(employee, &profile_id, &fallback_base),
+    };
+    ensure_profile_home_dirs(&profile_dir)?;
+    record_profile_home_with_pool(pool, employee, &profile_id, &profile_dir).await?;
+    Ok((profile_id, profile_dir))
+}
+
 fn write_profile_files(
     profile_dir: &std::path::Path,
     draft: AgentProfileDraft,
 ) -> Result<ApplyAgentProfileResult, String> {
     let instructions_dir = profile_dir.join("instructions");
-    for dir in [
-        instructions_dir.as_path(),
-        profile_dir.join("memories").as_path(),
-        profile_dir.join("skills").as_path(),
-        profile_dir.join("sessions").as_path(),
-        profile_dir.join("growth").as_path(),
-        profile_dir.join("curator").as_path(),
-    ] {
-        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create profile dir: {e}"))?;
-    }
+    ensure_profile_home_dirs(profile_dir)?;
 
     let mut files = Vec::with_capacity(3);
     let write_targets = [
@@ -301,16 +353,9 @@ pub async fn apply_agent_profile_draft_with_pool(
     draft: AgentProfileDraft,
 ) -> Result<ApplyAgentProfileResult, String> {
     let employee = find_employee_with_pool(pool, employee_db_id.trim()).await?;
-    let profile_id = resolve_profile_id_with_pool(pool, &employee).await?;
-    let fallback_base = if employee.default_work_dir.trim().is_empty() {
-        resolve_default_work_dir_with_pool(pool).await?
-    } else {
-        String::new()
-    };
-    let profile_dir = resolve_profile_dir(&employee, &profile_id, &fallback_base);
-    let result = write_profile_files(&profile_dir, draft)?;
-    record_profile_home_with_pool(pool, &employee, &profile_id, &profile_dir).await?;
-    Ok(result)
+    let (_profile_id, profile_dir) =
+        ensure_employee_profile_home_with_pool(pool, &employee).await?;
+    write_profile_files(&profile_dir, draft)
 }
 
 pub async fn apply_agent_profile_with_pool(
@@ -327,13 +372,8 @@ pub async fn get_agent_profile_files_with_pool(
     employee_db_id: &str,
 ) -> Result<AgentProfileFilesView, String> {
     let employee = find_employee_with_pool(pool, employee_db_id.trim()).await?;
-    let profile_id = resolve_profile_id_with_pool(pool, &employee).await?;
-    let fallback_base = if employee.default_work_dir.trim().is_empty() {
-        resolve_default_work_dir_with_pool(pool).await?
-    } else {
-        String::new()
-    };
-    let profile_dir = resolve_profile_dir(&employee, &profile_id, &fallback_base);
+    let (_profile_id, profile_dir) =
+        ensure_employee_profile_home_with_pool(pool, &employee).await?;
     let instructions_dir = profile_dir.join("instructions");
     let profile_dir_text = profile_dir.to_string_lossy().to_string();
     let mut files = Vec::with_capacity(3);
@@ -423,13 +463,7 @@ pub async fn export_agent_profile_with_pool(
     output_path: &str,
 ) -> Result<AgentProfileExportResult, String> {
     let employee = find_employee_with_pool(pool, employee_db_id.trim()).await?;
-    let profile_id = resolve_profile_id_with_pool(pool, &employee).await?;
-    let fallback_base = if employee.default_work_dir.trim().is_empty() {
-        resolve_default_work_dir_with_pool(pool).await?
-    } else {
-        String::new()
-    };
-    let profile_dir = resolve_profile_dir(&employee, &profile_id, &fallback_base);
+    let (profile_id, profile_dir) = ensure_employee_profile_home_with_pool(pool, &employee).await?;
     if !profile_dir.exists() {
         return Err(format!(
             "profile home 不存在，无法导出: {}",

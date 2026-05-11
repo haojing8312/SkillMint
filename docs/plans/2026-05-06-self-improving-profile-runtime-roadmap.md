@@ -117,7 +117,7 @@ profiles/<profile_id>/
 
 - `[x]` Foundation Slice 1 plan：`docs/plans/2026-05-06-profile-runtime-foundation-slice-1-plan.md`
 - `[x]` 新增 `agent_profiles` 及 profile runtime service。
-- `[~]` 建立 profile home 目录创建、读取、迁移、恢复逻辑。当前画像应用会创建 `profiles/<profile_id>/instructions`、`memories`、`skills`、`sessions`、`growth`、`curator` 基础目录；完整恢复/导出待后续 slice。
+- `[~]` 建立 profile home 目录创建、读取、迁移、恢复逻辑。当前画像应用和普通桌面员工 upsert 都会创建 `profiles/<profile_id>/instructions`、`memories`、`skills`、`sessions`、`growth`、`curator` 基础目录；员工 workbench 读取/导出会修复空 `profile_home` 到 canonical profile home；完整恢复/导入待后续 slice。
 - `[x]` 将旧员工 `AGENTS.md / SOUL.md / USER.md` 迁移到 `instructions/RULES.md / PERSONA.md / USER_CONTEXT.md`，并停止生成 OpenClaw-style mirror 目录。
 - `[~]` 将聊天会话、员工入口、IM 路由、团队运行入口接入 `profile_id`。
 - `[~]` 保留旧 `employee_id` UI/API 兼容层，但内部新上下文使用 profile。
@@ -125,8 +125,8 @@ profiles/<profile_id>/
 
 验收标准：
 
-- `[~]` 新创建员工必须拥有 profile home。当前通过员工助手/团队模板应用画像时会创建 canonical profile home；普通 upsert 自动创建待后续补齐。
-- `[ ]` 新创建员工不再依赖 `employees/<employee>/openclaw/...` 目录作为 profile source。
+- `[x]` 新创建员工必须拥有 profile home。当前通过员工助手/团队模板应用画像以及普通桌面 upsert 都会创建 canonical profile home；员工详情读取/导出会修复空 `profile_home`。
+- `[x]` 新创建员工不再依赖 `employees/<employee>/openclaw/...` 目录作为 profile source。
 - `[ ]` 旧员工启动后能迁移或映射到 profile，不丢会话。
 - `[ ]` 团队运行中的每个步骤绑定 profile，而不是只绑定文本 employee id。
 - `[ ]` IM 路由能定位目标 profile。

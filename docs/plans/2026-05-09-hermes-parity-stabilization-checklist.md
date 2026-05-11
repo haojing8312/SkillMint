@@ -36,7 +36,7 @@ Acceptance:
 - `[x]` New eval profiles bind sessions to `profile_id`.
 - `[x]` Alias resolver prefers the canonical profile row with non-empty `profile_home`.
 - `[x]` Legacy databases without `sessions.profile_id` can initialize before profile index creation.
-- `[ ]` Desktop-created employees always get canonical profile home without relying on profile wizard completion.
+- `[x]` Desktop-created employees always get canonical profile home without relying on profile wizard completion.
 
 Notes:
 

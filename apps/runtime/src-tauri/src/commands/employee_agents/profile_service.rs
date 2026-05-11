@@ -1,9 +1,10 @@
 use super::super::repo::{
-    clear_default_employee_flag, delete_agent_employee_record, find_employee_db_id_by_employee_id,
-    list_agent_employee_rows, list_skill_ids_for_employee, replace_employee_skill_bindings,
-    upsert_agent_employee_record, AgentEmployeeRow, UpsertAgentEmployeeRecordInput,
+    AgentEmployeeRow, UpsertAgentEmployeeRecordInput, clear_default_employee_flag,
+    delete_agent_employee_record, find_employee_db_id_by_employee_id, list_agent_employee_rows,
+    list_skill_ids_for_employee, replace_employee_skill_bindings, upsert_agent_employee_record,
 };
 use super::super::{AgentEmployee, UpsertAgentEmployeeInput};
+use crate::commands::agent_profile::ensure_employee_profile_home_with_pool;
 use crate::commands::runtime_preferences::resolve_default_work_dir_with_pool;
 use crate::im::resolve_agent_id;
 use sqlx::SqlitePool;
@@ -184,6 +185,15 @@ pub(crate) async fn upsert_agent_employee_with_pool(
 
     replace_employee_skill_bindings(&mut tx, &id, &skill_ids).await?;
     tx.commit().await.map_err(|e| e.to_string())?;
+
+    let rows = list_agent_employee_rows(pool).await?;
+    let row = rows
+        .into_iter()
+        .find(|row| row.id == id)
+        .ok_or_else(|| "created employee row not found".to_string())?;
+    let employee = build_agent_employee(row, skill_ids);
+    ensure_employee_profile_home_with_pool(pool, &employee).await?;
+
     Ok(id)
 }
 

@@ -1,12 +1,12 @@
 mod helpers;
 
 use runtime_lib::commands::agent_profile::{
-    apply_agent_profile_with_pool, export_agent_profile_with_pool,
-    generate_agent_profile_draft_with_pool, get_agent_profile_files_with_pool,
-    AgentProfileAnswerInput, AgentProfilePayload,
+    AgentProfileAnswerInput, AgentProfilePayload, apply_agent_profile_with_pool,
+    export_agent_profile_with_pool, generate_agent_profile_draft_with_pool,
+    get_agent_profile_files_with_pool,
 };
 use runtime_lib::commands::employee_agents::{
-    upsert_agent_employee_with_pool, UpsertAgentEmployeeInput,
+    UpsertAgentEmployeeInput, upsert_agent_employee_with_pool,
 };
 
 #[tokio::test]
@@ -118,10 +118,126 @@ async fn apply_agent_profile_writes_canonical_instruction_files() {
         .expect("instructions artifact");
     assert!(instructions.exists);
     assert_eq!(instructions.file_count, 3);
-    assert!(view
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.name == "memories" && artifact.exists));
+    assert!(
+        view.artifacts
+            .iter()
+            .any(|artifact| artifact.name == "memories" && artifact.exists)
+    );
+}
+
+#[tokio::test]
+async fn upsert_agent_employee_creates_profile_home_without_profile_wizard() {
+    let (pool, tmp) = helpers::setup_test_db().await;
+    let work_dir = tmp
+        .path()
+        .join("employee-workspace-direct")
+        .to_string_lossy()
+        .to_string();
+
+    let employee_db_id = upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "direct_desktop_employee".to_string(),
+            name: "Direct Desktop Employee".to_string(),
+            role_id: "direct_desktop_employee".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: work_dir.clone(),
+            openclaw_agent_id: "direct_desktop_employee".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["app".to_string()],
+            enabled: true,
+            is_default: false,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("upsert employee");
+
+    let profile_root = std::path::PathBuf::from(&work_dir)
+        .join("profiles")
+        .join(&employee_db_id);
+    let (profile_home, legacy_employee_row_id): (String, String) = sqlx::query_as(
+        "SELECT profile_home, legacy_employee_row_id FROM agent_profiles WHERE id = ?",
+    )
+    .bind(&employee_db_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load profile row");
+
+    assert_eq!(profile_home, profile_root.to_string_lossy());
+    assert_eq!(legacy_employee_row_id, employee_db_id);
+    for name in [
+        "instructions",
+        "memories",
+        "skills",
+        "sessions",
+        "growth",
+        "curator",
+    ] {
+        assert!(profile_root.join(name).is_dir(), "{name} should exist");
+    }
+}
+
+#[tokio::test]
+async fn get_agent_profile_files_repairs_blank_profile_home() {
+    let (pool, tmp) = helpers::setup_test_db().await;
+    let work_dir = tmp
+        .path()
+        .join("employee-workspace-blank-home")
+        .to_string_lossy()
+        .to_string();
+
+    let employee_db_id = upsert_agent_employee_with_pool(
+        &pool,
+        UpsertAgentEmployeeInput {
+            id: None,
+            employee_id: "blank_home_employee".to_string(),
+            name: "Blank Home Employee".to_string(),
+            role_id: "blank_home_employee".to_string(),
+            persona: "".to_string(),
+            feishu_open_id: "".to_string(),
+            feishu_app_id: "".to_string(),
+            feishu_app_secret: "".to_string(),
+            primary_skill_id: "builtin-general".to_string(),
+            default_work_dir: work_dir.clone(),
+            openclaw_agent_id: "blank_home_employee".to_string(),
+            routing_priority: 100,
+            enabled_scopes: vec!["app".to_string()],
+            enabled: true,
+            is_default: false,
+            skill_ids: vec![],
+        },
+    )
+    .await
+    .expect("upsert employee");
+
+    sqlx::query("UPDATE agent_profiles SET profile_home = '' WHERE id = ?")
+        .bind(&employee_db_id)
+        .execute(&pool)
+        .await
+        .expect("blank profile home");
+
+    let view = get_agent_profile_files_with_pool(&pool, &employee_db_id)
+        .await
+        .expect("load profile files");
+    let profile_root = std::path::PathBuf::from(&work_dir)
+        .join("profiles")
+        .join(&employee_db_id);
+
+    assert_eq!(view.profile_dir, profile_root.to_string_lossy());
+    assert!(view.artifacts.iter().all(|artifact| artifact.exists));
+    let (profile_home,): (String,) =
+        sqlx::query_as("SELECT profile_home FROM agent_profiles WHERE id = ?")
+            .bind(&employee_db_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load repaired profile home");
+    assert_eq!(profile_home, profile_root.to_string_lossy());
 }
 
 #[tokio::test]
@@ -265,7 +381,9 @@ async fn export_agent_profile_writes_profile_home_artifact_zip() {
     assert!(names.iter().any(|name| name == "PROFILE_EXPORT.json"));
     assert!(names.iter().any(|name| name == "instructions/RULES.md"));
     assert!(names.iter().any(|name| name == "memories/MEMORY.md"));
-    assert!(names
-        .iter()
-        .any(|name| name == "curator/reports/curator-run.json"));
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "curator/reports/curator-run.json")
+    );
 }

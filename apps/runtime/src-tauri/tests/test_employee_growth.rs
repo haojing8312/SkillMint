@@ -225,6 +225,7 @@ async fn restore_employee_curator_stale_skill_restores_state_and_records_report(
         &pool,
         "employee-row-restore",
         "agent-stale",
+        None,
     )
     .await
     .expect("restore stale skill");
