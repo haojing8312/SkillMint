@@ -81,7 +81,7 @@ export function createFeishuSettingsControllerLoaders(deps: FeishuSettingsContro
     }
     deps.setOfficialFeishuRuntimeStatus(status);
     if (options?.showStartErrorNotice && !status.running && status.last_error?.trim()) {
-      deps.setFeishuConnectorError(`官方插件启动失败: ${status.last_error.trim()}`);
+      deps.setFeishuConnectorError(`平台适配器启动失败: ${status.last_error.trim()}`);
     }
   }
 

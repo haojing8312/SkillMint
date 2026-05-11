@@ -11,6 +11,8 @@ import type { SettingsTabName } from "../SettingsTabNav";
 import {
   buildConnectorStatusDisplay,
   describeFeishuReplyCompletionHint,
+  getChannelRegistryDisplaySummary,
+  normalizeLegacyChannelDisplayCopy,
   resolveFeishuReplyCompletionShortcutTargets,
   normalizeWecomGatewaySettings,
   summarizeRegistryIssue,
@@ -195,8 +197,8 @@ export function useChannelRegistryController({
     error,
     feishuHostPanel: {
       visible: Boolean(feishuEntry),
-      summary: feishuEntry?.summary || "飞书宿主状态暂不可用。",
-      statusLabel: feishuEntry?.detail || "未识别",
+      summary: feishuEntry ? getChannelRegistryDisplaySummary(feishuEntry) : "飞书宿主状态暂不可用。",
+      statusLabel: normalizeLegacyChannelDisplayCopy(feishuEntry?.detail) || "未识别",
       pluginVersionLabel: feishuEntry?.plugin_host?.version || "未识别",
       currentAccountLabel:
         feishuRuntimeStatus?.account_id || feishuEntry?.instance_id || "未识别",
@@ -264,8 +266,8 @@ export function useChannelRegistryController({
     },
     wecomHostPanel: {
       visible: Boolean(wecomEntry),
-      summary: wecomEntry?.summary || "企业微信宿主状态暂不可用。",
-      statusLabel: wecomEntry?.detail || "未识别",
+      summary: wecomEntry ? getChannelRegistryDisplaySummary(wecomEntry) : "企业微信宿主状态暂不可用。",
+      statusLabel: normalizeLegacyChannelDisplayCopy(wecomEntry?.detail) || "未识别",
       instanceIdLabel:
         wecomRuntimeStatus?.instance_id ||
         wecomEntry?.instance_id ||

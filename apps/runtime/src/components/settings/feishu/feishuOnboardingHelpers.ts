@@ -125,7 +125,7 @@ export function formatFeishuOnboardingStepLabel(step: FeishuOnboardingStep) {
     case "existing_robot":
       return "绑定已有机器人";
     case "plugin":
-      return "安装官方插件";
+      return "安装适配器";
     case "create_robot":
       return "新建机器人";
     case "authorize":
@@ -155,8 +155,8 @@ function resolveFeishuOnboardingStepDisplay(step: FeishuOnboardingStep): FeishuO
       };
     case "plugin":
       return {
-        title: "安装官方插件",
-        body: "先安装飞书官方插件。安装完成后，再继续新建机器人或绑定已有机器人。",
+        title: "安装适配器",
+        body: "先安装飞书平台适配器。安装完成后，再继续新建机器人或绑定已有机器人。",
       };
     case "create_robot":
       return {
@@ -166,7 +166,7 @@ function resolveFeishuOnboardingStepDisplay(step: FeishuOnboardingStep): FeishuO
     case "authorize":
       return {
         title: "完成授权",
-        body: "完成官方插件启动后，回到飞书会话里走完授权；如果机器人提示 access not configured，下一步还需要批准这次接入。",
+        body: "完成平台适配器启动后，回到飞书会话里走完授权；如果机器人提示 access not configured，下一步还需要批准这次接入。",
       };
     case "approve_pairing":
       return {
@@ -232,7 +232,7 @@ export function resolveFeishuOnboardingPanelDisplay(
       ...stepDisplay,
       badgeLabel: state.canContinue ? "可继续使用" : "仍需完成当前步骤",
       badgeClassName: "border-blue-200 bg-blue-50 text-blue-700",
-      primaryActionLabel: "安装官方插件",
+      primaryActionLabel: "安装适配器",
     };
   }
   if (branchStep === "approve_pairing") {
@@ -271,14 +271,20 @@ export function resolveFeishuGuidedInlineError(
   if (branch === "existing_robot" && errorMessage.startsWith("请先填写并保存已有机器人的 App ID 和 App Secret")) {
     return errorMessage;
   }
-  if (step === "plugin" && errorMessage.startsWith("安装飞书官方插件失败:")) {
+  if (
+    step === "plugin" &&
+    (errorMessage.startsWith("安装飞书平台适配器失败:") || errorMessage.startsWith("安装飞书官方插件失败:"))
+  ) {
     return errorMessage;
   }
   if (
     step === "authorize" &&
     (errorMessage.startsWith("安装并启动飞书连接失败:") ||
+      errorMessage.startsWith("刷新飞书平台适配器状态失败:") ||
       errorMessage.startsWith("刷新飞书官方插件状态失败:") ||
+      errorMessage.startsWith("平台适配器启动失败:") ||
       errorMessage.startsWith("官方插件启动失败:") ||
+      errorMessage.startsWith("启动飞书平台适配器失败:") ||
       errorMessage.startsWith("启动飞书官方插件失败:"))
   ) {
     return errorMessage;
@@ -302,8 +308,11 @@ export function resolveFeishuAuthorizationInlineError(errorMessage: string): str
   }
   if (
     errorMessage.startsWith("安装并启动飞书连接失败:") ||
+    errorMessage.startsWith("刷新飞书平台适配器状态失败:") ||
     errorMessage.startsWith("刷新飞书官方插件状态失败:") ||
+    errorMessage.startsWith("平台适配器启动失败:") ||
     errorMessage.startsWith("官方插件启动失败:") ||
+    errorMessage.startsWith("启动飞书平台适配器失败:") ||
     errorMessage.startsWith("启动飞书官方插件失败:")
   ) {
     return errorMessage;
@@ -326,7 +335,10 @@ export function resolveFeishuGuidedInlineNotice(
   ) {
     return noticeMessage;
   }
-  if (step === "plugin" && noticeMessage.startsWith("飞书官方插件已安装")) {
+  if (
+    step === "plugin" &&
+    (noticeMessage.startsWith("飞书平台适配器已安装") || noticeMessage.startsWith("飞书官方插件已安装"))
+  ) {
     return noticeMessage;
   }
   if (

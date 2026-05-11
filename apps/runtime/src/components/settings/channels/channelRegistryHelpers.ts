@@ -12,6 +12,27 @@ import type {
 
 export type FeishuReplyHintShortcutTarget = "employees" | "advanced";
 
+export const FEISHU_COMPAT_BRIDGE_RUNNING_SUMMARY = "通过飞书平台适配器兼容桥接收与回复消息。";
+export const FEISHU_COMPAT_BRIDGE_STANDBY_SUMMARY =
+  "飞书渠道暂由平台适配器兼容桥提供，WorkClaw 统一负责路由、会话与回复生命周期。";
+export const WECOM_PLATFORM_CONNECTOR_RUNNING_SUMMARY =
+  "通过企业微信平台 connector 宿主接入，再由 WorkClaw 统一路由与回复。";
+export const WECOM_PLATFORM_CONNECTOR_STANDBY_SUMMARY =
+  "企业微信渠道将通过平台 connector 宿主接入。";
+
+export function normalizeLegacyChannelDisplayCopy(value: string | null | undefined) {
+  return String(value || "")
+    .replace(/OpenClaw 官方飞书插件/g, "飞书平台适配器兼容桥")
+    .replace(/OpenClaw 官方插件宿主/g, "平台适配器兼容桥")
+    .replace(/OpenClaw 插件宿主/g, "平台适配器宿主")
+    .replace(/OpenClaw 兼容的 connector host 形态/g, "平台 connector 宿主")
+    .replace(/OpenClaw 兼容模式/g, "平台适配器兼容桥")
+    .replace(/飞书官方插件/g, "飞书平台适配器")
+    .replace(/官方插件宿主/g, "平台适配器兼容桥")
+    .replace(/官方插件/g, "平台适配器")
+    .replace(/openclaw shim/g, "兼容 shim");
+}
+
 export function normalizeWecomGatewaySettings(
   settings: WecomGatewaySettings | null | undefined,
 ): WecomGatewaySettings {
@@ -56,8 +77,8 @@ export function buildFeishuRegistryEntry(
     host_kind: "openclaw_plugin",
     status,
     summary: runtimeStatus?.running
-      ? "通过 OpenClaw 官方飞书插件接收与回复消息。"
-      : "飞书渠道由 OpenClaw 官方插件宿主提供，WorkClaw 只负责路由、会话与回复生命周期。",
+      ? FEISHU_COMPAT_BRIDGE_RUNNING_SUMMARY
+      : FEISHU_COMPAT_BRIDGE_STANDBY_SUMMARY,
     detail: detailParts.join(" · "),
     capabilities: baseCapabilities,
     instance_id: runtimeStatus?.account_id || null,
@@ -100,8 +121,8 @@ export function buildWecomRegistryEntry(input: {
     host_kind: "connector",
     status,
     summary: configured
-      ? "通过 sidecar channel connector 接入企业微信，再由 WorkClaw 统一路由与回复。"
-      : "企业微信渠道将复用与 OpenClaw 兼容的 connector host 形态接入。",
+      ? WECOM_PLATFORM_CONNECTOR_RUNNING_SUMMARY
+      : WECOM_PLATFORM_CONNECTOR_STANDBY_SUMMARY,
     detail: detailParts.join(" · ") || "等待配置连接器",
     capabilities: input.descriptor?.capabilities || [],
     instance_id: input.connectorStatus?.instance_id || input.diagnostics?.health.instance_id || null,
@@ -115,6 +136,26 @@ export function buildWecomRegistryEntry(input: {
     diagnostics: input.diagnostics,
     monitor_status: input.monitorStatus,
   };
+}
+
+export function getChannelRegistryDisplaySummary(entry: ImChannelRegistryEntry) {
+  if (entry.channel === "feishu") {
+    const runtimeStatus =
+      (entry.runtime_status as OpenClawPluginFeishuRuntimeStatus | null | undefined) ?? null;
+    return runtimeStatus?.running || entry.status === "running"
+      ? FEISHU_COMPAT_BRIDGE_RUNNING_SUMMARY
+      : FEISHU_COMPAT_BRIDGE_STANDBY_SUMMARY;
+  }
+  if (entry.channel === "wecom") {
+    return entry.status === "not_configured"
+      ? WECOM_PLATFORM_CONNECTOR_STANDBY_SUMMARY
+      : WECOM_PLATFORM_CONNECTOR_RUNNING_SUMMARY;
+  }
+  return entry.summary;
+}
+
+export function getChannelHostKindDisplayLabel(kind: ImChannelRegistryEntry["host_kind"]) {
+  return kind === "openclaw_plugin" ? "平台适配器宿主" : "Connector 宿主";
 }
 
 export function buildConnectorStatusDisplay(status: ImChannelRegistryStatus, error?: string | null) {

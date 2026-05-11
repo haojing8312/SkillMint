@@ -134,8 +134,8 @@ export function resolveFeishuConnectorStatus(input: FeishuConnectorStatusInput):
     return {
       dotClass: "bg-emerald-500",
       stateLabel: "运行中",
-      label: "飞书官方插件运行中",
-      detail: "官方插件宿主已启动，正在按 OpenClaw 兼容模式接收飞书消息。",
+      label: "飞书平台适配器运行中",
+      detail: "平台适配器兼容桥已启动，正在接收飞书消息。",
       error: input.lastError ?? "",
     };
   }
@@ -144,8 +144,8 @@ export function resolveFeishuConnectorStatus(input: FeishuConnectorStatusInput):
     stateLabel: "未启动",
     label: "未启动",
     detail: input.hasInstalledOfficialFeishuPlugin
-      ? "官方插件宿主尚未启动。保存配置或刷新插件状态后会尝试拉起运行时。"
-      : "当前飞书只支持官方插件主路径。请先安装或绑定飞书官方插件，再启动运行时。",
+      ? "平台适配器兼容桥尚未启动。保存配置或刷新适配器状态后会尝试拉起运行时。"
+      : "当前飞书只支持平台适配器主路径。请先安装或绑定飞书平台适配器，再启动运行时。",
     error: input.lastError ?? "",
   };
 }
@@ -265,9 +265,9 @@ export function getFeishuSetupSummary(input: FeishuSetupSummaryInput): FeishuSet
   }
   if (input.summaryState === "plugin_not_installed") {
     return {
-      title: "先安装飞书官方插件，再继续机器人接入",
-      description: "当前电脑还没有安装飞书官方插件。安装完成后，才能继续新建机器人或绑定已有机器人。",
-      primaryActionLabel: "安装官方插件",
+      title: "先安装飞书平台适配器，再继续机器人接入",
+      description: "当前电脑还没有安装飞书平台适配器。安装完成后，才能继续新建机器人或绑定已有机器人。",
+      primaryActionLabel: "安装适配器",
     };
   }
   if (input.summaryState === "plugin_starting") {
@@ -275,7 +275,7 @@ export function getFeishuSetupSummary(input: FeishuSetupSummaryInput): FeishuSet
       title: input.authApproved ? "正在恢复飞书连接" : "机器人信息已准备好，下一步启动飞书连接组件",
       description: input.authApproved
         ? "WorkClaw 会自动尝试恢复上次已接通的飞书连接；如果恢复失败，再手动点击“启动连接”。"
-        : "可以继续安装并启动官方插件，然后回到飞书完成授权。",
+        : "可以继续安装并启动平台适配器，然后回到飞书完成授权。",
       primaryActionLabel: input.authApproved ? "重新启动连接" : "安装并启动",
     };
   }
@@ -309,7 +309,7 @@ export function getFeishuSetupSummary(input: FeishuSetupSummaryInput): FeishuSet
   }
   if (input.summaryState === "ready_to_bind") {
     return {
-      title: "官方插件已准备好，下一步请选择接入方式",
+      title: "平台适配器已准备好，下一步请选择接入方式",
       description: "你可以直接新建机器人，也可以切换到绑定已有机器人后继续完成接入。",
       primaryActionLabel: "继续设置",
     };
@@ -323,7 +323,7 @@ export function getFeishuSetupSummary(input: FeishuSetupSummaryInput): FeishuSet
   }
   return {
     title: "飞书还未接入，完成下方步骤后即可开始接待消息",
-    description: "请先安装官方插件，再创建机器人或绑定已有机器人，最后完成授权和接待设置。",
+    description: "请先安装平台适配器，再创建机器人或绑定已有机器人，最后完成授权和接待设置。",
     primaryActionLabel: "开始设置",
   };
 }

@@ -580,7 +580,8 @@ describe("SettingsView connector visibility", () => {
     expect(screen.getByText("渠道宿主总览")).toBeInTheDocument();
     expect(screen.getByTestId("channel-registry-card-feishu")).toBeInTheDocument();
     expect(screen.getByTestId("channel-registry-card-wecom")).toBeInTheDocument();
-    expect(screen.getByText("OpenClaw 插件宿主")).toBeInTheDocument();
+    expect(screen.getByText("平台适配器宿主")).toBeInTheDocument();
+    expect(screen.getAllByText("飞书渠道暂由平台适配器兼容桥提供，WorkClaw 统一负责路由、会话与回复生命周期。").length).toBeGreaterThan(0);
     expect(screen.getByText("Connector 宿主")).toBeInTheDocument();
     expect(screen.getByTestId("connector-panel-wecom")).toBeInTheDocument();
     expect(screen.getByTestId("connector-diagnostics-panel-wecom")).toBeInTheDocument();
@@ -634,7 +635,7 @@ describe("SettingsView connector visibility", () => {
 
     expect(screen.getByText("版本过低")).toBeInTheDocument();
     expect(screen.getByText("v20.11.1 · 需要 >= v22")).toBeInTheDocument();
-    expect(screen.getByText("已检测到 Node.js v20.11.1，但飞书官方插件当前要求 Node.js >= v22")).toBeInTheDocument();
+    expect(screen.getByText("已检测到 Node.js v20.11.1，但飞书平台适配器当前要求 Node.js >= v22")).toBeInTheDocument();
   });
 
   test("refreshes plugin host inspection while feishu tab stays open without auto-starting runtime", async () => {
@@ -1516,7 +1517,7 @@ describe("SettingsView connector visibility", () => {
 
     await waitFor(() => {
       const panel = screen.getByTestId("feishu-host-details-panel");
-      expect(screen.getByText("这里展示飞书 OpenClaw 插件宿主的运行状态、最近一次事件、最近回复状态与宿主日志，方便排查接入问题。")).toBeInTheDocument();
+      expect(screen.getByText("这里展示飞书平台适配器兼容桥的运行状态、最近一次事件、最近回复状态与宿主日志，方便排查接入问题。")).toBeInTheDocument();
       expect(within(panel).getByRole("button", { name: "刷新宿主状态" })).toBeInTheDocument();
       expect(within(panel).getByRole("button", { name: "启动宿主" })).toBeInTheDocument();
       expect(within(panel).getByText("最近自动恢复")).toBeInTheDocument();
@@ -2250,9 +2251,9 @@ describe("SettingsView connector visibility", () => {
 
     expect(screen.getByText("运行环境")).toBeInTheDocument();
     expect(screen.getAllByText("已准备好").length).toBeGreaterThan(0);
-    expect(screen.getByText("先安装飞书官方插件，再继续机器人接入")).toBeInTheDocument();
-    expect(screen.getByText("先安装飞书官方插件。安装完成后，再继续新建机器人或绑定已有机器人。")).toBeInTheDocument();
-    expect(within(onboardingStep).getByRole("button", { name: "安装官方插件" })).toBeInTheDocument();
+    expect(screen.getByText("先安装飞书平台适配器，再继续机器人接入")).toBeInTheDocument();
+    expect(screen.getByText("先安装飞书平台适配器。安装完成后，再继续新建机器人或绑定已有机器人。")).toBeInTheDocument();
+    expect(within(onboardingStep).getByRole("button", { name: "安装适配器" })).toBeInTheDocument();
     expect(within(onboardingStep).queryByRole("button", { name: "新建机器人" })).not.toBeInTheDocument();
   });
 
@@ -2294,7 +2295,7 @@ describe("SettingsView connector visibility", () => {
     render(<SettingsView onClose={() => {}} initialTab="feishu" />);
 
     const onboardingStep = await screen.findByTestId("feishu-onboarding-step");
-    fireEvent.click(within(onboardingStep).getByRole("button", { name: "安装官方插件" }));
+    fireEvent.click(within(onboardingStep).getByRole("button", { name: "安装适配器" }));
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("install_openclaw_plugin_from_npm", {

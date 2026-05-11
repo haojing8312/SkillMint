@@ -108,9 +108,9 @@ export function createFeishuSettingsControllerActions(deps: FeishuSettingsContro
       await deps.loadConnectorStatuses();
       await loadConnectorPlatformData();
       await deps.loadFeishuSetupProgress();
-      deps.setFeishuConnectorNotice("飞书官方插件配置已保存");
+      deps.setFeishuConnectorNotice("飞书平台适配器配置已保存");
     } catch (error) {
-      deps.setFeishuConnectorError("保存飞书官方插件配置失败: " + String(error));
+      deps.setFeishuConnectorError("保存飞书平台适配器配置失败: " + String(error));
     } finally {
       deps.setSavingFeishuConnector(false);
     }
@@ -171,9 +171,9 @@ export function createFeishuSettingsControllerActions(deps: FeishuSettingsContro
     try {
       await installOpenClawLarkPluginFromService();
       await refreshFeishuSetupData();
-      deps.setFeishuConnectorNotice("飞书官方插件已安装");
+      deps.setFeishuConnectorNotice("飞书平台适配器已安装");
     } catch (error) {
-      deps.setFeishuConnectorError("安装飞书官方插件失败: " + String(error));
+      deps.setFeishuConnectorError("安装飞书平台适配器失败: " + String(error));
     } finally {
       deps.setInstallingOfficialFeishuPlugin(false);
     }

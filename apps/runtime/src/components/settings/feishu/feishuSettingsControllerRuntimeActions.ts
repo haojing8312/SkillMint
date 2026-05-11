@@ -71,10 +71,10 @@ export function createFeishuSettingsControllerRuntimeActions(
       }
       await helpers.refreshFeishuSetupData();
       deps.setFeishuConnectorNotice(
-        runtimeStatus ? (runtimeStatus.running ? "已触发飞书官方插件启动" : "已刷新飞书官方插件状态") : "已触发飞书官方插件启动",
+        runtimeStatus ? (runtimeStatus.running ? "已触发飞书平台适配器启动" : "已刷新飞书平台适配器状态") : "已触发飞书平台适配器启动",
       );
     } catch (error) {
-      deps.setFeishuConnectorError("刷新飞书官方插件状态失败: " + String(error));
+      deps.setFeishuConnectorError("刷新飞书平台适配器状态失败: " + String(error));
     } finally {
       deps.setRetryingFeishuConnector(false);
     }

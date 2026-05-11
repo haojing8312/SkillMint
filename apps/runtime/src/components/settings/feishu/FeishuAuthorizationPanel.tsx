@@ -224,7 +224,7 @@ export function FeishuAuthorizationPanel({
             </button>
           </div>
           <div className="text-[11px] text-gray-500">
-            如果你的电脑已安装 OpenClaw，当前向导也会优先命中 WorkClaw 内置的受控 openclaw shim，不会写到外部 OpenClaw 配置。
+            即使本机存在旧 OpenClaw 配置，当前向导也只使用 WorkClaw 内置受控兼容 shim，不会写入外部旧 OpenClaw 配置。
           </div>
         </div>
       </details>

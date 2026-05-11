@@ -99,7 +99,7 @@ export function FeishuOnboardingCard(props: FeishuOnboardingCardProps) {
           : feishuOnboardingHeaderStep === "existing_robot"
             ? "绑定已有机器人"
             : feishuOnboardingHeaderStep === "plugin"
-              ? "安装官方插件"
+              ? "安装适配器"
               : feishuOnboardingHeaderMode === "create_robot"
                 ? "创建机器人"
                 : "绑定已有机器人"} ·

@@ -53,7 +53,7 @@ export function FeishuHostDetailsPanel({
     <details className="rounded-lg border border-gray-200 bg-white p-4" data-testid="feishu-host-details-panel">
       <summary className="cursor-pointer text-sm font-medium text-gray-900">飞书宿主详情</summary>
       <div className="mt-2 text-xs text-gray-500">
-        这里展示飞书 OpenClaw 插件宿主的运行状态、最近一次事件、最近回复状态与宿主日志，方便排查接入问题。
+        这里展示飞书平台适配器兼容桥的运行状态、最近一次事件、最近回复状态与宿主日志，方便排查接入问题。
       </div>
       <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-sm text-blue-900">
         {entrySummary}

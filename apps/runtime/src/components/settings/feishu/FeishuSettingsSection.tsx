@@ -71,7 +71,7 @@ export function FeishuSettingsSection({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1">
             <div className="text-sm font-medium text-gray-900">飞书连接</div>
-            <div className="text-xs text-gray-500">先完成机器人接入，再安装飞书官方插件并完成授权，最后补充接待员工设置。</div>
+            <div className="text-xs text-gray-500">先完成机器人接入，再安装飞书平台适配器并完成授权，最后补充接待员工设置。</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button

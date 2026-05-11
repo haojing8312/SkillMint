@@ -29,7 +29,7 @@ function resolveOnboardingPrimaryActionLabel(input: {
     return input.retryingFeishuConnector ? "检测中..." : "重新检测环境";
   }
   if (input.feishuOnboardingHeaderStep === "plugin") {
-    return input.installingOfficialFeishuPlugin ? "安装中..." : "安装官方插件";
+    return input.installingOfficialFeishuPlugin ? "安装中..." : "安装适配器";
   }
   if (input.feishuOnboardingHeaderStep === "create_robot") {
     return input.feishuInstallerBusy && input.feishuInstallerStartingMode === "create"

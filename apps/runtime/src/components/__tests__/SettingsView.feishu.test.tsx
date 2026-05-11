@@ -157,7 +157,9 @@ describe("SettingsView connector tab", () => {
     });
     expect(screen.getByText("飞书连接")).toBeInTheDocument();
     expect(screen.getByText("渠道宿主总览")).toBeInTheDocument();
-    expect(screen.getByText("这里展示 WorkClaw 当前接入的 IM 渠道宿主形态。飞书走 OpenClaw 官方插件宿主，企业微信走 connector 宿主。")).toBeInTheDocument();
+    expect(screen.getByText("这里展示 WorkClaw 当前接入的 IM 渠道宿主形态。飞书暂由平台适配器兼容桥提供，企业微信走平台 connector 宿主。")).toBeInTheDocument();
+    expect(screen.getAllByText("飞书渠道暂由平台适配器兼容桥提供，WorkClaw 统一负责路由、会话与回复生命周期。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("企业微信渠道将通过平台 connector 宿主接入。").length).toBeGreaterThan(0);
     expect(screen.getAllByText("飞书接入概览").length).toBeGreaterThan(0);
     expect(screen.getByText("员工关联入口")).toBeInTheDocument();
     expect(screen.getByText("查看飞书连接是否已启动并可接收事件。")).toBeInTheDocument();

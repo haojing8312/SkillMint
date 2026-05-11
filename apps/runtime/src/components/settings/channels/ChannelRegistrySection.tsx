@@ -5,6 +5,9 @@ import type { ImChannelRegistryEntry } from "../../../types";
 import {
   describeFeishuReplyCompletionHint,
   describeFeishuReplyCompletionSummary,
+  getChannelHostKindDisplayLabel,
+  getChannelRegistryDisplaySummary,
+  normalizeLegacyChannelDisplayCopy,
   resolveFeishuReplyCompletionShortcutTargets,
   describeRegistryStatus,
 } from "./channelRegistryHelpers";
@@ -78,10 +81,6 @@ interface ChannelRegistrySectionProps {
   onRefresh: () => void | Promise<void>;
 }
 
-function hostKindLabel(kind: ImChannelRegistryEntry["host_kind"]) {
-  return kind === "openclaw_plugin" ? "OpenClaw 插件宿主" : "Connector 宿主";
-}
-
 export function ChannelRegistrySection({
   entries,
   loading,
@@ -99,7 +98,7 @@ export function ChannelRegistrySection({
         <div className="space-y-1">
           <div className="text-sm font-medium text-gray-900">渠道宿主总览</div>
           <div className="text-xs text-gray-500">
-            这里展示 WorkClaw 当前接入的 IM 渠道宿主形态。飞书走 OpenClaw 官方插件宿主，企业微信走 connector 宿主。
+            这里展示 WorkClaw 当前接入的 IM 渠道宿主形态。飞书暂由平台适配器兼容桥提供，企业微信走平台 connector 宿主。
           </div>
         </div>
         <button
@@ -138,10 +137,10 @@ export function ChannelRegistrySection({
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="text-sm font-medium text-gray-900">{entry.display_name}</div>
-                    <div className="text-xs text-gray-500">{entry.summary}</div>
+                    <div className="text-xs text-gray-500">{getChannelRegistryDisplaySummary(entry)}</div>
                   </div>
                   <span className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] text-gray-600 border border-gray-200">
-                    {hostKindLabel(entry.host_kind)}
+                    {getChannelHostKindDisplayLabel(entry.host_kind)}
                   </span>
                 </div>
 
@@ -159,7 +158,7 @@ export function ChannelRegistrySection({
                   ))}
                 </div>
 
-                <div className="text-xs text-gray-600">{entry.detail}</div>
+                <div className="text-xs text-gray-600">{normalizeLegacyChannelDisplayCopy(entry.detail)}</div>
                 {entry.channel === "feishu" ? (
                   <div className="space-y-2">
                     <div className="rounded border border-blue-100 bg-blue-50 px-2 py-2 text-xs text-blue-800">
@@ -192,7 +191,7 @@ export function ChannelRegistrySection({
                 ) : null}
                 {entry.last_error ? (
                   <div className="rounded border border-red-100 bg-red-50 px-2 py-2 text-xs text-red-700">
-                    {entry.last_error}
+                    {normalizeLegacyChannelDisplayCopy(entry.last_error)}
                   </div>
                 ) : null}
                 {entry.monitor_status?.running ? (

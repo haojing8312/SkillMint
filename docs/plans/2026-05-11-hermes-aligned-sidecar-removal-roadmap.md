@@ -221,14 +221,14 @@ cargo check
 
 #### Batch 3B. Docs/product copy and roadmap wording update
 
-**Status:** `[~]`
+**Status:** `[x]`
 
 **Scope:** Rewrite active product and planning language so OpenClaw is historical migration input, not the forward architecture.
 
 **Acceptance:**
 - `[x]` README and active planning docs no longer describe OpenClaw compatibility as the product target.
 - `[x]` Historical OpenClaw IM docs are marked superseded or historical where they conflict with the Hermes direction.
-- `[ ]` Frontend visible copy is rewritten to Hermes-native language, except where explicitly describing a temporary legacy shim.
+- `[x]` Frontend visible copy is rewritten to Hermes-native language, except where explicitly describing a temporary legacy shim.
 - `[x]` Browser/vendor/plugin-host removal remains unclaimed.
 
 ##### Batch 3B-1. README/docs/historical banners
@@ -261,14 +261,16 @@ cargo check
 
 ##### Batch 3B-2. Frontend visible copy
 
-**Status:** `[ ]`
+**Status:** `[x]`
 
 **Scope:** Rewrite active frontend UI copy to Hermes-native language where users still see OpenClaw-compatible wording. This must be a separate implementation batch because Batch 3B-1 is Markdown-only.
 
 **Acceptance:**
-- `[ ]` Frontend visible copy stops telling users to think in OpenClaw-compatible mode, except where copy explicitly describes a temporary legacy shim.
-- `[ ]` UI behavior remains unchanged unless a later batch intentionally changes behavior.
-- `[ ]` Verification uses the frontend/runtime checks selected by `workclaw-change-verification`.
+- `[x]` Frontend visible copy stops telling users to think in OpenClaw-compatible mode, except where copy explicitly describes a temporary legacy shim.
+- `[x]` UI behavior remains unchanged unless a later batch intentionally changes behavior.
+- `[x]` Verification uses the frontend/runtime checks selected by `workclaw-change-verification`.
+
+**Batch 3B-2 result:** Active Feishu and WeCom settings copy now presents platform adapter, compatibility bridge, and connector-host language instead of OpenClaw as the user-facing product mode. Legacy OpenClaw names remain only in command/type/service/package identifiers and in explicit temporary compatibility-shim copy.
 
 #### Batch 3C. Release/vendor lane replacement plan
 
