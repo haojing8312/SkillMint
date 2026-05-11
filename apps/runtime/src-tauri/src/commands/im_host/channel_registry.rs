@@ -1,8 +1,7 @@
 use crate::commands::channel_connectors::{
     get_channel_connector_diagnostics_with_pool, get_channel_connector_monitor_status_in_state,
-    list_channel_connectors_with_pool, start_channel_connector_monitor_with_pool_and_app,
-    stop_channel_connector_monitor_in_state, ChannelConnectorDiagnostics,
-    ChannelConnectorMonitorState, ChannelConnectorMonitorStatus,
+    list_channel_connectors_with_pool, stop_channel_connector_monitor_in_state,
+    ChannelConnectorDiagnostics, ChannelConnectorMonitorState, ChannelConnectorMonitorStatus,
 };
 use crate::commands::im_host::{
     get_im_channel_host_runtime_snapshot_in_state, get_im_channel_runtime_status_in_state,
@@ -287,7 +286,10 @@ pub(crate) async fn list_im_channel_registry_with_pool(
         .cloned();
 
     let wecom_settings = get_wecom_gateway_settings_with_pool(pool).await?;
-    let wecom_connector_status = get_wecom_connector_status_with_pool(pool, None).await.ok();
+    let wecom_connector_status =
+        get_wecom_connector_status_with_pool(pool, None, Some(host_runtime_state))
+            .await
+            .ok();
     let wecom_host_runtime_status =
         get_im_channel_runtime_status_in_state(host_runtime_state, "wecom")?;
     let wecom_monitor_status = Some(get_channel_connector_monitor_status_in_state(
@@ -480,24 +482,19 @@ pub async fn set_im_channel_host_running(
         }
         "wecom" => {
             if desired_running {
-                let instance_id =
-                    start_wecom_connector_with_pool(&db.0, None, None, None, None).await?;
-                start_channel_connector_monitor_with_pool_and_app(
+                start_wecom_connector_with_pool(
                     &db.0,
-                    monitor.inner().clone(),
-                    Some(host_runtime_state.inner().clone()),
-                    app.clone(),
-                    instance_id,
-                    Some(1500),
-                    Some(50),
-                    Some("processed".to_string()),
                     None,
+                    None,
+                    None,
+                    None,
+                    Some(host_runtime_state.inner()),
                 )
                 .await
                 .map(|_| ())
             } else {
                 let _ = stop_channel_connector_monitor_in_state(monitor.inner().clone());
-                stop_wecom_connector_with_pool(&db.0, None).await
+                stop_wecom_connector_with_pool(&db.0, None, Some(host_runtime_state.inner())).await
             }
         }
         _ => Err(format!("unsupported im channel host: {}", channel)),
@@ -512,7 +509,13 @@ pub async fn set_im_channel_host_running(
         Ok(_) => {
             if normalized_channel == "wecom" {
                 let monitor_status = get_channel_connector_monitor_status_in_state(monitor.inner());
-                let connector_status = get_wecom_connector_status_with_pool(&db.0, None).await.ok();
+                let connector_status = get_wecom_connector_status_with_pool(
+                    &db.0,
+                    None,
+                    Some(host_runtime_state.inner()),
+                )
+                .await
+                .ok();
                 let runtime_status = WecomRuntimeAdapterStatus {
                     running: connector_status
                         .as_ref()

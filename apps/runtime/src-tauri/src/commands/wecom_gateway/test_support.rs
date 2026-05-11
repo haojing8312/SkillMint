@@ -1,5 +1,17 @@
 use std::sync::{Arc, Mutex};
 
+pub use crate::commands::im_host::channel_runtime_state::ImChannelHostRuntimeState as WecomHostRuntimeStateForTests;
+
+pub fn new_wecom_host_runtime_state_for_tests() -> WecomHostRuntimeStateForTests {
+    WecomHostRuntimeStateForTests::default()
+}
+
+pub fn wecom_runtime_status_for_tests(
+    state: &WecomHostRuntimeStateForTests,
+) -> Result<Option<serde_json::Value>, String> {
+    super::get_im_channel_runtime_status_in_state(state, "wecom")
+}
+
 pub fn install_recording_wecom_send_hook() -> Arc<Mutex<Vec<String>>> {
     let sent_texts = Arc::new(Mutex::new(Vec::<String>::new()));
     let sent_texts_for_hook = sent_texts.clone();

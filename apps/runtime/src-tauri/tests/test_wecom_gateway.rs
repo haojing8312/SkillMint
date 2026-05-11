@@ -4,7 +4,8 @@ use runtime_lib::commands::feishu_gateway::set_app_setting;
 use runtime_lib::commands::wecom_gateway::{
     get_wecom_connector_status_with_pool, resolve_wecom_credentials,
     resolve_wecom_sidecar_base_url, send_wecom_text_message_with_pool,
-    start_wecom_connector_with_pool,
+    start_wecom_connector_with_pool, stop_wecom_connector_with_pool,
+    test_support as wecom_test_support,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -38,18 +39,6 @@ async fn spawn_mock_wecom_sidecar(
             requests.push((path.clone(), body_json.clone()));
 
             let output = match path.as_str() {
-                "/api/channels/start" => serde_json::json!({
-                    "instance_id": "wecom:wecom-main"
-                }),
-                "/api/channels/health" => serde_json::json!({
-                    "adapter_name": "wecom",
-                    "instance_id": "wecom:wecom-main",
-                    "state": "running",
-                    "last_ok_at": "2026-03-10T10:00:00Z",
-                    "last_error": null,
-                    "reconnect_attempts": 1,
-                    "queue_depth": 3
-                }),
                 "/api/channels/send-message" => serde_json::json!({
                     "message_id": "wecom-msg-1",
                     "delivered_at": "2026-03-10T10:00:01Z"
@@ -116,12 +105,9 @@ async fn resolve_wecom_credentials_reads_from_app_settings() {
 }
 
 #[tokio::test]
-async fn wecom_connector_flow_uses_channel_neutral_sidecar_endpoints() {
+async fn wecom_connector_start_status_stop_uses_native_runtime_state_without_sidecar() {
     let (pool, _tmp) = helpers::setup_test_db().await;
-    let (base_url, server_task) = spawn_mock_wecom_sidecar(3).await;
-    set_app_setting(&pool, "im_sidecar_base_url", &base_url)
-        .await
-        .expect("set generic sidecar");
+    let host_runtime_state = wecom_test_support::new_wecom_host_runtime_state_for_tests();
     set_app_setting(&pool, "wecom_corp_id", "wwcorp")
         .await
         .expect("set corp id");
@@ -132,17 +118,58 @@ async fn wecom_connector_flow_uses_channel_neutral_sidecar_endpoints() {
         .await
         .expect("set agent secret");
 
-    let instance_id = start_wecom_connector_with_pool(&pool, None, None, None, None)
-        .await
-        .expect("start connector");
+    let instance_id = start_wecom_connector_with_pool(
+        &pool,
+        Some("http://127.0.0.1:1".to_string()),
+        None,
+        None,
+        None,
+        Some(&host_runtime_state),
+    )
+    .await
+    .expect("start connector without sidecar");
     assert_eq!(instance_id, "wecom:wecom-main");
 
-    let status = get_wecom_connector_status_with_pool(&pool, None)
+    let started_status = get_wecom_connector_status_with_pool(
+        &pool,
+        Some("http://127.0.0.1:1".to_string()),
+        Some(&host_runtime_state),
+    )
+    .await
+    .expect("get native runtime status");
+    assert!(started_status.running);
+    assert_eq!(started_status.state, "running");
+    assert_eq!(started_status.instance_id, "wecom:wecom-main");
+
+    let runtime_status = wecom_test_support::wecom_runtime_status_for_tests(&host_runtime_state)
+        .expect("runtime status persisted")
+        .expect("wecom runtime status");
+    assert_eq!(runtime_status["running"], true);
+    assert_eq!(runtime_status["instance_id"], "wecom:wecom-main");
+
+    stop_wecom_connector_with_pool(
+        &pool,
+        Some("http://127.0.0.1:1".to_string()),
+        Some(&host_runtime_state),
+    )
+    .await
+    .expect("stop connector without sidecar");
+    let stopped_status =
+        get_wecom_connector_status_with_pool(&pool, None, Some(&host_runtime_state))
+            .await
+            .expect("get stopped native status");
+    assert!(!stopped_status.running);
+    assert_eq!(stopped_status.state, "stopped");
+    assert_eq!(stopped_status.instance_id, "wecom:wecom-main");
+}
+
+#[tokio::test]
+async fn wecom_text_send_still_uses_channel_neutral_sidecar_endpoint() {
+    let (pool, _tmp) = helpers::setup_test_db().await;
+    let (base_url, server_task) = spawn_mock_wecom_sidecar(1).await;
+    set_app_setting(&pool, "im_sidecar_base_url", &base_url)
         .await
-        .expect("get connector status");
-    assert!(status.running);
-    assert_eq!(status.instance_id, "wecom:wecom-main");
-    assert_eq!(status.queue_depth, 3);
+        .expect("set generic sidecar");
 
     let send_result = send_wecom_text_message_with_pool(
         &pool,
@@ -156,20 +183,10 @@ async fn wecom_connector_flow_uses_channel_neutral_sidecar_endpoints() {
     assert!(send_result.contains("wecom-msg-1"));
 
     let requests = server_task.await.expect("mock sidecar task");
-    assert_eq!(requests.len(), 3);
-    assert_eq!(requests[0].0, "/api/channels/start");
-    assert_eq!(requests[0].1["adapter_name"], "wecom");
-    assert_eq!(requests[0].1["connector_id"], "wecom-main");
-    assert_eq!(requests[0].1["settings"]["corp_id"], "wwcorp");
-    assert_eq!(requests[0].1["settings"]["agent_id"], "1000002");
-    assert_eq!(requests[0].1["settings"]["agent_secret"], "secret-x");
-
-    assert_eq!(requests[1].0, "/api/channels/health");
-    assert_eq!(requests[1].1["instance_id"], "wecom:wecom-main");
-
-    assert_eq!(requests[2].0, "/api/channels/send-message");
-    assert_eq!(requests[2].1["instance_id"], "wecom:wecom-main");
-    assert_eq!(requests[2].1["request"]["thread_id"], "conversation-1");
-    assert_eq!(requests[2].1["request"]["reply_target"], "conversation-1");
-    assert_eq!(requests[2].1["request"]["text"], "hello");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].0, "/api/channels/send-message");
+    assert_eq!(requests[0].1["instance_id"], "wecom:wecom-main");
+    assert_eq!(requests[0].1["request"]["thread_id"], "conversation-1");
+    assert_eq!(requests[0].1["request"]["reply_target"], "conversation-1");
+    assert_eq!(requests[0].1["request"]["text"], "hello");
 }

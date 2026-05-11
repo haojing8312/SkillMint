@@ -1,6 +1,4 @@
-use crate::commands::channel_connectors::{
-    start_channel_connector_monitor_with_pool_and_app, ChannelConnectorMonitorState,
-};
+use crate::commands::channel_connectors::ChannelConnectorMonitorState;
 use crate::commands::im_host::ImChannelHostRuntimeState;
 use crate::commands::openclaw_plugins::{
     maybe_restore_openclaw_plugin_feishu_runtime_with_pool, OpenClawPluginFeishuRuntimeState,
@@ -92,14 +90,17 @@ async fn should_auto_restore_wecom_connector_with_pool(pool: &SqlitePool) -> Res
 
 async fn ensure_wecom_connector_running_with_pool(
     pool: &SqlitePool,
+    host_runtime_state: &ImChannelHostRuntimeState,
 ) -> Result<WecomConnectorStatus, String> {
-    let status = get_wecom_connector_status_with_pool(pool, None).await?;
+    let status = get_wecom_connector_status_with_pool(pool, None, Some(host_runtime_state)).await?;
     if status.running {
         return Ok(status);
     }
 
-    let instance_id = start_wecom_connector_with_pool(pool, None, None, None, None).await?;
-    get_wecom_connector_status_with_pool(pool, None)
+    let instance_id =
+        start_wecom_connector_with_pool(pool, None, None, None, None, Some(host_runtime_state))
+            .await?;
+    get_wecom_connector_status_with_pool(pool, None, Some(host_runtime_state))
         .await
         .or_else(|_| {
             Ok(WecomConnectorStatus {
@@ -156,31 +157,22 @@ async fn restore_wecom_channel(
         });
     }
 
-    let status = ensure_wecom_connector_running_with_pool(context.pool).await?;
-    let monitor_status = start_channel_connector_monitor_with_pool_and_app(
-        context.pool,
-        context.channel_monitor_state.clone(),
-        Some(context.host_runtime_state.clone()),
-        context.app.clone(),
-        status.instance_id.clone(),
-        Some(1500),
-        Some(50),
-        Some("processed".to_string()),
-        None,
-    )
-    .await?;
+    let _ = &context.channel_monitor_state;
+    let _ = &context.app;
+    let status =
+        ensure_wecom_connector_running_with_pool(context.pool, &context.host_runtime_state).await?;
 
     Ok(ImChannelRestoreEntry {
         channel: ImChannelRestoreKind::Wecom.channel().to_string(),
         host_kind: ImChannelRestoreKind::Wecom.host_kind().to_string(),
         should_restore: true,
         restored: status.running,
-        monitor_restored: monitor_status.running,
+        monitor_restored: false,
         detail: format!(
-            "WeCom connector auto-restore attempted for {}",
+            "WeCom native runtime status auto-restore attempted for {}",
             status.instance_id
         ),
-        error: status.last_error.or(monitor_status.last_error),
+        error: status.last_error,
     })
 }
 

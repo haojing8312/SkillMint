@@ -1,22 +1,22 @@
 use crate::commands::channel_connectors::{
-    start_channel_connector_monitor_with_pool_and_app, stop_channel_connector_monitor_in_state,
-    stop_channel_connector_with_pool, ChannelConnectorMonitorState,
+    stop_channel_connector_monitor_in_state, stop_channel_connector_with_pool,
+    ChannelConnectorMonitorState,
 };
 use crate::commands::feishu_gateway::{call_sidecar_json, get_app_setting, set_app_setting};
-use crate::commands::im_host::{
-    get_im_channel_runtime_status_in_state, record_im_channel_runtime_status,
-    ImChannelHostRuntimeState,
-};
 use crate::commands::im_host::lifecycle::{
     SessionLifecycleDispatch, SessionProcessingStopDispatch,
-};
-use crate::commands::openclaw_plugins::{
-    build_wecom_runtime_status_value, handle_openclaw_plugin_wecom_runtime_stdout_line,
-    parse_wecom_runtime_status_value,
 };
 use crate::commands::im_host::{
     build_sidecar_channel_instance_id, build_sidecar_text_message_request,
     parse_sidecar_channel_health,
+};
+use crate::commands::im_host::{
+    get_im_channel_runtime_status_in_state, record_im_channel_runtime_status,
+    ImChannelHostRuntimeState,
+};
+use crate::commands::openclaw_plugins::{
+    build_wecom_runtime_status_value, handle_openclaw_plugin_wecom_runtime_stdout_line,
+    parse_wecom_runtime_status_value,
 };
 use crate::commands::skills::DbState;
 use sqlx::SqlitePool;
@@ -27,37 +27,31 @@ use tauri::{AppHandle, State};
 const DEFAULT_WECOM_ADAPTER_NAME: &str = "wecom";
 const DEFAULT_WECOM_CONNECTOR_ID: &str = "wecom-main";
 
-#[path = "wecom_gateway/outbound_service.rs"]
-mod outbound_service;
 #[path = "wecom_gateway/interactive_service.rs"]
 mod interactive_service;
+#[path = "wecom_gateway/outbound_service.rs"]
+mod outbound_service;
 #[path = "wecom_gateway/test_support.rs"]
 #[doc(hidden)]
 pub mod test_support;
+pub(crate) use interactive_service::{
+    notify_wecom_approval_requested_with_pool, notify_wecom_approval_resolved_with_pool,
+    notify_wecom_ask_user_requested_with_pool,
+};
 pub(crate) use outbound_service::{
     execute_registered_wecom_reply_plan_with_pool,
     maybe_emit_registered_wecom_lifecycle_phase_for_session_with_pool,
     maybe_stop_registered_wecom_processing_for_session_with_pool,
 };
-pub(crate) use interactive_service::{
-    notify_wecom_approval_requested_with_pool, notify_wecom_approval_resolved_with_pool,
-    notify_wecom_ask_user_requested_with_pool,
-};
 
-pub type WecomOutboundSendHook = dyn Fn(
-        &str,
-        &str,
-    ) -> Result<serde_json::Value, String>
-    + Send
-    + Sync;
+pub type WecomOutboundSendHook =
+    dyn Fn(&str, &str) -> Result<serde_json::Value, String> + Send + Sync;
 
-pub(crate) type WecomProcessingStopHook = dyn Fn(&SessionProcessingStopDispatch) -> Result<(), String>
-    + Send
-    + Sync;
+pub(crate) type WecomProcessingStopHook =
+    dyn Fn(&SessionProcessingStopDispatch) -> Result<(), String> + Send + Sync;
 
-pub(crate) type WecomLifecycleEventHook = dyn Fn(&SessionLifecycleDispatch) -> Result<(), String>
-    + Send
-    + Sync;
+pub(crate) type WecomLifecycleEventHook =
+    dyn Fn(&SessionLifecycleDispatch) -> Result<(), String> + Send + Sync;
 
 fn wecom_outbound_send_hook_slot() -> &'static Mutex<Option<Arc<WecomOutboundSendHook>>> {
     static SLOT: OnceLock<Mutex<Option<Arc<WecomOutboundSendHook>>>> = OnceLock::new();
@@ -115,6 +109,85 @@ pub struct WecomConnectorStatus {
     pub reconnect_attempts: i64,
     pub queue_depth: i64,
     pub instance_id: String,
+}
+
+fn default_wecom_instance_id() -> String {
+    build_sidecar_channel_instance_id(DEFAULT_WECOM_ADAPTER_NAME, DEFAULT_WECOM_CONNECTOR_ID)
+}
+
+fn wecom_connector_status_from_runtime_value(
+    value: &serde_json::Value,
+) -> Result<WecomConnectorStatus, String> {
+    let runtime_status = parse_wecom_runtime_status_value(value)?;
+    let instance_id = runtime_status
+        .instance_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(default_wecom_instance_id);
+    Ok(WecomConnectorStatus {
+        running: runtime_status.running,
+        state: if runtime_status.running {
+            "running"
+        } else if runtime_status.last_error.is_some() {
+            "degraded"
+        } else {
+            "stopped"
+        }
+        .to_string(),
+        started_at: runtime_status.started_at,
+        last_error: runtime_status.last_error,
+        reconnect_attempts: runtime_status.reconnect_attempts,
+        queue_depth: runtime_status.queue_depth,
+        instance_id,
+    })
+}
+
+fn stopped_wecom_connector_status() -> WecomConnectorStatus {
+    WecomConnectorStatus {
+        running: false,
+        state: "stopped".to_string(),
+        started_at: None,
+        last_error: None,
+        reconnect_attempts: 0,
+        queue_depth: 0,
+        instance_id: default_wecom_instance_id(),
+    }
+}
+
+fn record_native_wecom_connector_status_in_state(
+    host_runtime_state: &ImChannelHostRuntimeState,
+    running: bool,
+    log_message: String,
+) -> Result<String, String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut runtime_status = get_im_channel_runtime_status_in_state(host_runtime_state, "wecom")?
+        .as_ref()
+        .map(parse_wecom_runtime_status_value)
+        .transpose()?
+        .unwrap_or_default();
+    let instance_id = runtime_status
+        .instance_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(default_wecom_instance_id);
+    runtime_status.running = running;
+    runtime_status.instance_id = Some(instance_id.clone());
+    if running && runtime_status.started_at.is_none() {
+        runtime_status.started_at = Some(now.clone());
+    }
+    runtime_status.last_event_at = Some(now);
+    runtime_status.last_error = None;
+    runtime_status.recent_logs.push(log_message);
+    if runtime_status.recent_logs.len() > 40 {
+        let overflow = runtime_status.recent_logs.len() - 40;
+        runtime_status.recent_logs.drain(0..overflow);
+    }
+    record_im_channel_runtime_status(
+        host_runtime_state,
+        "wecom",
+        build_wecom_runtime_status_value(&runtime_status),
+    )?;
+    Ok(instance_id)
 }
 
 pub async fn resolve_wecom_sidecar_base_url(
@@ -210,6 +283,28 @@ pub async fn start_wecom_connector_with_pool(
     corp_id: Option<String>,
     agent_id: Option<String>,
     agent_secret: Option<String>,
+    host_runtime_state: Option<&ImChannelHostRuntimeState>,
+) -> Result<String, String> {
+    let _ = sidecar_base_url;
+    let _ = resolve_wecom_credentials(pool, corp_id, agent_id, agent_secret).await?;
+    let instance_id = if let Some(host_runtime_state) = host_runtime_state {
+        record_native_wecom_connector_status_in_state(
+            host_runtime_state,
+            true,
+            "[wecom] native platform adapter started".to_string(),
+        )?
+    } else {
+        default_wecom_instance_id()
+    };
+    Ok(instance_id)
+}
+
+pub async fn start_wecom_connector_via_sidecar_with_pool(
+    pool: &SqlitePool,
+    sidecar_base_url: Option<String>,
+    corp_id: Option<String>,
+    agent_id: Option<String>,
+    agent_secret: Option<String>,
 ) -> Result<String, String> {
     let (resolved_corp_id, resolved_agent_id, resolved_agent_secret) =
         resolve_wecom_credentials(pool, corp_id, agent_id, agent_secret).await?;
@@ -240,10 +335,26 @@ pub async fn start_wecom_connector_with_pool(
 pub async fn get_wecom_connector_status_with_pool(
     pool: &SqlitePool,
     sidecar_base_url: Option<String>,
+    host_runtime_state: Option<&ImChannelHostRuntimeState>,
+) -> Result<WecomConnectorStatus, String> {
+    let _ = pool;
+    let _ = sidecar_base_url;
+    if let Some(host_runtime_state) = host_runtime_state {
+        if let Some(runtime_status) =
+            get_im_channel_runtime_status_in_state(host_runtime_state, "wecom")?
+        {
+            return wecom_connector_status_from_runtime_value(&runtime_status);
+        }
+    }
+    Ok(stopped_wecom_connector_status())
+}
+
+pub async fn get_wecom_connector_status_via_sidecar_with_pool(
+    pool: &SqlitePool,
+    sidecar_base_url: Option<String>,
 ) -> Result<WecomConnectorStatus, String> {
     let resolved_sidecar_base_url = resolve_wecom_sidecar_base_url(pool, sidecar_base_url).await?;
-    let instance_id =
-        build_sidecar_channel_instance_id(DEFAULT_WECOM_ADAPTER_NAME, DEFAULT_WECOM_CONNECTOR_ID);
+    let instance_id = default_wecom_instance_id();
     let response = call_sidecar_json(
         "/api/channels/health",
         serde_json::json!({
@@ -379,9 +490,25 @@ fn record_wecom_runtime_event_in_state(
 pub async fn stop_wecom_connector_with_pool(
     pool: &SqlitePool,
     sidecar_base_url: Option<String>,
+    host_runtime_state: Option<&ImChannelHostRuntimeState>,
 ) -> Result<(), String> {
-    let instance_id =
-        build_sidecar_channel_instance_id(DEFAULT_WECOM_ADAPTER_NAME, DEFAULT_WECOM_CONNECTOR_ID);
+    let _ = pool;
+    let _ = sidecar_base_url;
+    if let Some(host_runtime_state) = host_runtime_state {
+        let _ = record_native_wecom_connector_status_in_state(
+            host_runtime_state,
+            false,
+            "[wecom] native platform adapter stopped".to_string(),
+        )?;
+    }
+    Ok(())
+}
+
+pub async fn stop_wecom_connector_via_sidecar_with_pool(
+    pool: &SqlitePool,
+    sidecar_base_url: Option<String>,
+) -> Result<(), String> {
+    let instance_id = default_wecom_instance_id();
     stop_channel_connector_with_pool(pool, instance_id, sidecar_base_url).await
 }
 
@@ -420,26 +547,17 @@ pub async fn start_wecom_connector(
     monitor: State<'_, ChannelConnectorMonitorState>,
     host_runtime_state: State<'_, ImChannelHostRuntimeState>,
 ) -> Result<String, String> {
+    let _ = app;
+    let _ = monitor;
     let instance_id = start_wecom_connector_with_pool(
         &db.0,
-        sidecar_base_url.clone(),
+        sidecar_base_url,
         corp_id,
         agent_id,
         agent_secret,
+        Some(host_runtime_state.inner()),
     )
     .await?;
-    let _ = start_channel_connector_monitor_with_pool_and_app(
-        &db.0,
-        monitor.inner().clone(),
-        Some(host_runtime_state.inner().clone()),
-        app,
-        instance_id.clone(),
-        Some(1500),
-        Some(50),
-        Some("processed".to_string()),
-        sidecar_base_url,
-    )
-    .await;
     Ok(instance_id)
 }
 
@@ -448,17 +566,20 @@ pub async fn stop_wecom_connector(
     sidecar_base_url: Option<String>,
     db: State<'_, DbState>,
     monitor: State<'_, ChannelConnectorMonitorState>,
+    host_runtime_state: State<'_, ImChannelHostRuntimeState>,
 ) -> Result<(), String> {
     let _ = stop_channel_connector_monitor_in_state(monitor.inner().clone());
-    stop_wecom_connector_with_pool(&db.0, sidecar_base_url).await
+    stop_wecom_connector_with_pool(&db.0, sidecar_base_url, Some(host_runtime_state.inner())).await
 }
 
 #[tauri::command]
 pub async fn get_wecom_connector_status(
     sidecar_base_url: Option<String>,
     db: State<'_, DbState>,
+    host_runtime_state: State<'_, ImChannelHostRuntimeState>,
 ) -> Result<WecomConnectorStatus, String> {
-    get_wecom_connector_status_with_pool(&db.0, sidecar_base_url).await
+    get_wecom_connector_status_with_pool(&db.0, sidecar_base_url, Some(host_runtime_state.inner()))
+        .await
 }
 
 #[tauri::command]

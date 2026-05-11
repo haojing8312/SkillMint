@@ -46,10 +46,11 @@ pub(crate) mod target_resolver;
 #[doc(hidden)]
 pub mod test_support;
 
+pub use channel_runtime_state::ImChannelHostRuntimeState;
 pub(crate) use channel_runtime_state::{
     get_im_channel_host_runtime_snapshot_in_state, get_im_channel_runtime_status_in_state,
     record_im_channel_host_action, record_im_channel_restore_report,
-    record_im_channel_runtime_status, ImChannelHostRuntimeSnapshot, ImChannelHostRuntimeState,
+    record_im_channel_runtime_status, ImChannelHostRuntimeSnapshot,
 };
 pub(crate) use chunk_planner::plan_text_chunks;
 pub(crate) use contract::{

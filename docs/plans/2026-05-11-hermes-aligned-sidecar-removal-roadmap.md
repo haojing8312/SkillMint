@@ -416,6 +416,8 @@ pnpm --dir apps/runtime exec tsc --noEmit
 - Feishu/WeCom runtime paths no longer call `/api/channels/*` or `/api/feishu/*` sidecar endpoints.
 - Settings UI no longer presents sidecar as the connector architecture.
 
+**T2A partial result (2026-05-11):** WeCom public start/status/stop command paths now validate existing credentials and record/read the runtime-owned `wecom` status in `ImChannelHostRuntimeState` without defaulting to `/api/channels/start`, `/api/channels/health`, or `/api/channels/stop`. Legacy WeCom sidecar channel start/health/stop calls remain only in explicitly named `*_via_sidecar_*` compatibility helpers, and WeCom send-message still uses the existing channel sidecar delivery path until the outbound adapter migration is implemented. This does not complete Feishu migration, channel diagnostics/catalog removal, browser provider work, or full sidecar removal.
+
 ### Batch 6. Native browser provider replaces sidecar Playwright HTTP bridge
 
 **Objective:** Preserve Hermes-compatible browser tool names while replacing sidecar HTTP execution with a native provider boundary.
