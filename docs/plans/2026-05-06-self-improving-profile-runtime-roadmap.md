@@ -292,6 +292,32 @@ profiles/<profile_id>/
 - `[~]` Toolset 变更不会绕过现有危险命令拦截。当前第一刀只读 projection，不参与 allow/deny 或审批决策。
 - `[~]` Browser、IM、MCP 工具都能通过 toolset manifest 可观测。当前 browser/mcp/name-based IM projection 已有测试覆盖 browser/mcp；真实 IM 工具映射待后续补齐。
 
+### Phase 7B. Hermes-Aligned Sidecar Removal
+
+状态：`[~]`
+
+目标：一步一步去掉 `apps/runtime/sidecar`，把 browser、MCP、IM/channel、Feishu/WeCom、OpenClaw route compatibility 和 sidecar lifecycle 分别迁移到 Hermes-aligned runtime 边界：Rust ToolRegistry、Toolset Gateway、gateway/platform adapters、profile runtime 与 native providers。详细迁移计划见 `docs/plans/2026-05-11-hermes-aligned-sidecar-removal-roadmap.md`。
+
+任务：
+
+- `[x]` 完成 sidecar 职责盘点和 Hermes 参考架构映射，明确 sidecar 不再是未来产品边界。
+- `[x]` 明确 OpenClaw 相关内容仅作为 legacy migration input；不再新增 OpenClaw compatibility、vendor sync 或 OpenClaw-shaped runtime 设计。
+- `[x]` 第一批替换 `/api/openclaw/resolve-route`：IM route resolver 已由 Rust runtime 原生处理，保留当前调用契约和回归测试。
+- `[ ]` 将 OpenClaw 命名的核心 routing/gateway 层迁移到中性 IM/profile runtime 命名，只保留必要的临时 adapter。
+- `[ ]` 删除 OpenClaw browser compatibility、vendor sync lanes 和 sidecar route endpoint。
+- `[ ]` 将 MCP server 管理、list/call tools 和动态工具注册迁入 native runtime，废弃 MCP sidecar bridge。
+- `[ ]` 将 Feishu/WeCom/channel connector 迁入 gateway/platform adapter 边界，移除 `sidecar_base_url` 产品心智。
+- `[ ]` 将 browser automation backend 迁入 native browser provider，保留 Hermes-compatible browser tool schema。
+- `[ ]` 在所有消费者迁移后删除 `apps/runtime/sidecar`、sidecar lifecycle、bundle resources 和 sidecar build/test scripts。
+
+验收标准：
+
+- `[x]` Rust/Tauri 不再调用 `/api/openclaw/resolve-route`。
+- `[ ]` OpenClaw compatibility 不再作为新 runtime 功能、文档或 release lane 的默认目标。
+- `[ ]` Browser、MCP、IM 工具都通过 native provider + Toolset Gateway 可观测，而不是通过 sidecar bridge 推断。
+- `[ ]` Runtime startup 不再启动或 health-check sidecar process。
+- `[ ]` Desktop build/package 不再包含 `resources/sidecar-runtime`。
+
 ### Phase 8. Hermes Parity Evals
 
 状态：`[ ]`

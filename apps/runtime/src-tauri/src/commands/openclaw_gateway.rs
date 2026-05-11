@@ -1,4 +1,3 @@
-use crate::commands::feishu_gateway::{call_sidecar_json, resolve_feishu_sidecar_base_url};
 use crate::commands::im_config::get_thread_role_config_with_pool;
 use crate::commands::im_gateway::FeishuCallbackResult;
 use crate::commands::im_host::dispatch_im_inbound_to_workclaw_with_pool_and_app;
@@ -11,6 +10,9 @@ use crate::im::runtime_bridge::{
 use crate::im::types::{ImEvent, ImEventType};
 use sqlx::SqlitePool;
 use tauri::State;
+
+mod route_resolver;
+use route_resolver::resolve_route_from_payload;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct OpenClawEnvelope {
@@ -333,47 +335,15 @@ pub async fn resolve_openclaw_route_with_pool(
         "default_agent_id": default_agent_id,
         "bindings": bindings_to_openclaw_payload(bindings),
     });
-    let sidecar_base_url = resolve_feishu_sidecar_base_url(pool, None).await?;
-    call_sidecar_json("/api/openclaw/resolve-route", body, sidecar_base_url).await
+    Ok(resolve_route_from_payload(&body))
 }
 
 #[tauri::command]
 pub async fn simulate_im_route(
     payload: serde_json::Value,
-    db: State<'_, DbState>,
+    _db: State<'_, DbState>,
 ) -> Result<serde_json::Value, String> {
-    let sidecar_base_url = resolve_feishu_sidecar_base_url(&db.0, None).await?;
-    let channel = payload
-        .get("channel")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("app");
-    let account_id = payload
-        .get("account_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let default_agent_id = payload
-        .get("default_agent_id")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("main");
-    let peer = payload.get("peer").cloned().unwrap_or_else(|| {
-        serde_json::json!({
-            "kind": "group",
-            "id": "",
-        })
-    });
-    let bindings = payload
-        .get("bindings")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!([]));
-
-    let body = serde_json::json!({
-        "channel": channel,
-        "account_id": account_id,
-        "peer": peer,
-        "default_agent_id": default_agent_id,
-        "bindings": bindings,
-    });
-    call_sidecar_json("/api/openclaw/resolve-route", body, sidecar_base_url).await
+    Ok(resolve_route_from_payload(&payload))
 }
 
 #[tauri::command]

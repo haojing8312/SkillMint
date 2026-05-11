@@ -9,8 +9,6 @@ use runtime_lib::commands::openclaw_gateway::{
     validate_openclaw_auth_with_pool,
 };
 use runtime_lib::im::types::{ImEvent, ImEventType};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 #[test]
 fn parse_openclaw_payload_supports_wrapped_event() {
@@ -161,6 +159,10 @@ async fn plan_role_events_preserves_wecom_source_channel() {
         tenant_id: Some("corp-123".to_string()),
         sender_id: None,
         chat_type: None,
+        conversation_id: None,
+        base_conversation_id: None,
+        parent_conversation_candidates: Vec::new(),
+        conversation_scope: None,
     };
 
     let planned = plan_role_events_for_openclaw(&pool, &evt)
@@ -170,84 +172,9 @@ async fn plan_role_events_preserves_wecom_source_channel() {
     assert_eq!(planned[0].source_channel, "wecom");
 }
 
-async fn spawn_mock_sidecar_once() -> (String, tokio::task::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind mock sidecar");
-    let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.expect("accept");
-        let mut buf = vec![0u8; 64 * 1024];
-        let n = socket.read(&mut buf).await.expect("read request");
-        let raw = String::from_utf8_lossy(&buf[..n]).to_string();
-        let body = raw.split("\r\n\r\n").nth(1).unwrap_or("{}");
-        let body_json: serde_json::Value =
-            serde_json::from_str(body).unwrap_or_else(|_| serde_json::json!({}));
-
-        let peer_id = body_json
-            .get("peer")
-            .and_then(|v| v.get("id"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let bindings = body_json
-            .get("bindings")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-
-        let mut resolved = serde_json::json!({
-            "agentId": "main",
-            "matchedBy": "default",
-        });
-        for binding in bindings {
-            let binding_peer_id = binding
-                .get("match")
-                .and_then(|m| m.get("peer"))
-                .and_then(|p| p.get("id"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if !binding_peer_id.is_empty() && binding_peer_id == peer_id {
-                let agent_id = binding
-                    .get("agentId")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("main");
-                resolved = serde_json::json!({
-                    "agentId": agent_id,
-                    "matchedBy": "binding.peer",
-                });
-                break;
-            }
-        }
-
-        let response_body = serde_json::json!({
-            "output": resolved.to_string()
-        })
-        .to_string();
-        let response = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-            response_body.len(),
-            response_body
-        );
-        socket
-            .write_all(response.as_bytes())
-            .await
-            .expect("write response");
-    });
-    (format!("http://{}", addr), handle)
-}
-
 #[tokio::test]
 async fn resolve_route_prefers_peer_binding() {
     let (pool, _tmp) = helpers::setup_test_db().await;
-    let (sidecar_base, server_task) = spawn_mock_sidecar_once().await;
-
-    sqlx::query(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('feishu_sidecar_base_url', ?)",
-    )
-    .bind(&sidecar_base)
-    .execute(&pool)
-    .await
-    .expect("seed sidecar base url");
 
     upsert_im_routing_binding_with_pool(
         &pool,
@@ -303,6 +230,10 @@ async fn resolve_route_prefers_peer_binding() {
             tenant_id: Some("tenant-a".to_string()),
             sender_id: None,
             chat_type: None,
+            conversation_id: None,
+            base_conversation_id: None,
+            parent_conversation_candidates: Vec::new(),
+            conversation_scope: None,
         },
     )
     .await
@@ -310,6 +241,4 @@ async fn resolve_route_prefers_peer_binding() {
 
     assert_eq!(route["agentId"], "peer-agent");
     assert_eq!(route["matchedBy"], "binding.peer");
-
-    server_task.await.expect("mock sidecar task");
 }
