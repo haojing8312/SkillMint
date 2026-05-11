@@ -171,11 +171,18 @@ cargo check
 - New code imports neutral IM/profile routing functions.
 - Remaining OpenClaw names are thin adapters, not core routing ownership.
 
-### Batch 3. Remove OpenClaw browser compatibility and vendor lanes
+### Batch 3. Classify and remove OpenClaw remnants in smaller sub-batches
 
-**Objective:** Delete OpenClaw-specific browser compatibility, route engine tests, and vendor sync lanes after native routing has replaced consumers.
+**Status:** `[~]`
+
+**Objective:** Classify remaining OpenClaw references first, then remove or rewrite them through smaller docs, release/vendor, browser, and plugin-host batches after replacement checks exist.
 
 **Candidate files:**
+- `docs/plans/2026-05-11-openclaw-remnant-classification.md`
+- `README.md`
+- `README.en.md`
+- `docs/architecture/openclaw-im-host/**`
+- `docs/maintainers/openclaw-upgrade.md`
 - `apps/runtime/src-tauri/src/agent/tools/browser_compat.rs`
 - `apps/runtime/sidecar/src/openclaw-bridge/**`
 - `apps/runtime/sidecar/vendor/openclaw-core/**`
@@ -187,25 +194,87 @@ cargo check
 - `scripts/check-openclaw-vendor-lane.test.mjs`
 - `scripts/check-openclaw-wecom-vendor-lane.test.mjs`
 - Root `package.json` OpenClaw sync/check scripts
+- `apps/runtime/plugin-host/openclaw/**`
+- `apps/runtime/plugin-host/src/**`
 
 **Implementation notes:**
-1. Confirm `git grep -n 'openclaw'` results and classify each remaining hit as legacy migration, UI copy, test fixture, or removable compatibility.
-2. Remove `/api/browser/compat` callers before deleting the endpoint.
-3. Remove vendor sync scripts only after release-sensitive checks are updated.
-4. Update docs that still describe OpenClaw compatibility as an active architecture.
+1. Batch 3A is classification only and must not change runtime, tests, package scripts, release scripts, sidecar implementation, frontend implementation, DB schema, or package manager files.
+2. Use `docs/plans/2026-05-11-openclaw-remnant-classification.md` as the Batch 3 source map before deleting or renaming OpenClaw remnants.
+3. Remove `/api/browser/compat` callers before deleting the endpoint.
+4. Remove vendor sync scripts only after release-sensitive checks are updated or explicitly deprecated.
+5. Update docs that still describe OpenClaw compatibility as an active architecture before removing compatibility code that users may still see documented.
+
+#### Batch 3A. Remnant classification
+
+**Status:** `[x]`
+
+**Scope:** Classify tracked `git grep -i openclaw` results by ownership area and migration category.
+
+**Files:**
+- Create: `docs/plans/2026-05-11-openclaw-remnant-classification.md`
+- Modify: `docs/plans/2026-05-11-hermes-aligned-sidecar-removal-roadmap.md`
+
+**Acceptance:**
+- `[x]` Current tracked `git grep -i openclaw` results are grouped by area.
+- `[x]` Remaining references are classified as temporary adapters, neutralization candidates, removable vendor/browser compatibility, release-sensitive surfaces, or product/docs/frontend copy.
+- `[x]` No runtime code, tests, package scripts, release scripts, sidecar implementation, frontend implementation, DB schema, or package manager files are changed.
+
+#### Batch 3B. Docs/product copy and roadmap wording update
+
+**Status:** `[ ]`
+
+**Scope:** Rewrite active product and planning language so OpenClaw is historical migration input, not the forward architecture.
+
+**Acceptance:**
+- `[ ]` README and active planning docs no longer describe OpenClaw compatibility as the product target.
+- `[ ]` Historical OpenClaw IM docs are marked superseded or historical where they conflict with the Hermes direction.
+- `[ ]` Frontend visible copy is rewritten to Hermes-native language, except where explicitly describing a temporary legacy shim.
+- `[ ]` Browser/vendor/plugin-host removal remains unclaimed.
+
+#### Batch 3C. Release/vendor lane replacement plan
+
+**Status:** `[ ]`
+
+**Scope:** Plan replacement or explicit deprecation for OpenClaw vendor sync lanes and release-sensitive checks.
+
+**Acceptance:**
+- `[ ]` `sync-openclaw-*` and `check-openclaw-*` scripts are mapped to a replacement check or explicit deprecation.
+- `[ ]` Root `package.json`, AGENTS guidance, and release docs have an agreed migration plan before commands are removed.
+- `[ ]` Release-sensitive validation requirements are documented for the later removal batch.
+
+#### Batch 3D. Browser compatibility endpoint removal after caller audit
+
+**Status:** `[ ]`
+
+**Scope:** Remove `/api/browser/compat` and OpenClaw browser compatibility only after callers and replacement checks are known.
+
+**Acceptance:**
+- `[ ]` Caller audit proves every `/api/browser/compat` consumer is migrated or intentionally retained as a temporary wrapper.
+- `[ ]` Native browser provider checks exist before sidecar browser compatibility tests are deleted.
+- `[ ]` Browser compatibility removal does not regress Hermes-compatible browser tool names.
+
+#### Batch 3E. Plugin-host/OpenClaw SDK compatibility retirement plan
+
+**Status:** `[ ]`
+
+**Scope:** Decide the retirement path for `openclaw/plugin-sdk` shim surfaces and official plugin-host compatibility.
+
+**Acceptance:**
+- `[ ]` `apps/runtime/plugin-host/openclaw/**` and shim imports are classified as retained, renamed, or retired.
+- `[ ]` `openclaw-lark` public service names have neutral target names before public command removal.
+- `[ ]` Plugin-host compatibility is not deleted before a Hermes-native platform adapter replacement or explicit legacy-retirement plan exists.
 
 **Verification commands:**
 ```bash
 cd /mnt/d/code/workclaw
-pnpm test:sidecar
-pnpm test:rust-fast
-pnpm test:release-docs
-pnpm test:openclaw-vendor-lane # expected to be removed or intentionally replaced in this batch
+git diff --check
+git status --short --branch
+git grep -n -i openclaw | awk -F: '...bucket by path prefix...'
 ```
 
 **Exit criteria:**
-- OpenClaw vendor lanes are removed or marked obsolete in release docs.
-- No new runtime path depends on OpenClaw compatibility.
+- Batch 3A classification exists and points to smaller Batch 3B-3E work.
+- OpenClaw vendor lanes, browser compatibility, and plugin-host compatibility are not marked removed until their specific sub-batch acceptance checks pass.
 
 ### Batch 4. Native MCP runtime
 
@@ -344,9 +413,9 @@ pnpm build:runtime
 
 ## 5. Implementation Order Recommendation
 
-**Batch 1 is complete**: Rust/Tauri now resolves IM routes natively and no longer calls `/api/openclaw/resolve-route`.
+**Batch 1, Batch 2, and Batch 3A are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, and remaining OpenClaw references have a Batch 3 classification map.
 
-Next start with **Batch 2: Rename routing compatibility layer to Hermes-native IM/profile language**.
+Next start with **Batch 3B: Docs/product copy and roadmap wording update**. Do not start browser/vendor/plugin-host deletion until the Batch 3C-3E acceptance checks are ready.
 
 Batch 1 was chosen first because:
 
@@ -361,6 +430,7 @@ Do **not** start with browser or MCP unless there is a blocking bug there. Those
 ## 6. Acceptance Checklist
 
 - `[x]` No new code path calls `/api/openclaw/resolve-route`.
+- `[x]` Remaining OpenClaw references are classified before Batch 3 removal work.
 - `[ ]` No new code path calls `/api/browser/compat`.
 - `[ ]` OpenClaw vendor sync lanes are removed or explicitly marked historical.
 - `[ ]` MCP server restore/list/call works without sidecar HTTP.
