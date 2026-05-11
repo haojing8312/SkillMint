@@ -23,6 +23,7 @@ mod glob_tool;
 mod grep_tool;
 mod list_dir;
 mod memory_tool;
+mod native_mcp;
 mod open_in_folder;
 mod read_file;
 mod screenshot;
@@ -59,6 +60,9 @@ pub use glob_tool::GlobTool;
 pub use grep_tool::GrepTool;
 pub use list_dir::ListDirTool;
 pub use memory_tool::MemoryTool;
+pub use native_mcp::{
+    list_native_mcp_tools, NativeMcpServerConfig, NativeMcpTool, NativeMcpToolDefinition,
+};
 pub use open_in_folder::OpenInFolderTool;
 pub use process_manager::ProcessManager;
 pub use read_file::ReadFileTool;

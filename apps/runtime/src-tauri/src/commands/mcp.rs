@@ -1,11 +1,36 @@
 use super::skills::DbState;
-use crate::agent::tools::SidecarBridgeTool;
+use crate::agent::tools::{list_native_mcp_tools, NativeMcpServerConfig, NativeMcpTool};
 use crate::agent::ToolRegistry;
 use chrono::Utc;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
+
+pub async fn register_native_mcp_server_tools(
+    registry: Arc<ToolRegistry>,
+    server: NativeMcpServerConfig,
+) -> Result<usize, String> {
+    let tools = list_native_mcp_tools(&server)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut registered = 0;
+
+    for tool in tools {
+        let full_name = format!("mcp_{}_{}", server.name, tool.name);
+        registry.register(Arc::new(NativeMcpTool::new(
+            full_name,
+            tool.description,
+            tool.input_schema,
+            server.clone(),
+            tool.name,
+        )));
+        registered += 1;
+    }
+
+    Ok(registered)
+}
 
 pub async fn add_mcp_server_with_registry(
     pool: &sqlx::SqlitePool,
@@ -13,7 +38,7 @@ pub async fn add_mcp_server_with_registry(
     name: String,
     command: String,
     args: Vec<String>,
-    env: std::collections::HashMap<String, String>,
+    env: HashMap<String, String>,
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -32,60 +57,19 @@ pub async fn add_mcp_server_with_registry(
     .await
     .map_err(|e| e.to_string())?;
 
-    // 通知 Sidecar 连接 MCP 服务器
-    let client = reqwest::Client::new();
-    let connect_resp = client
-        .post("http://localhost:8765/api/mcp/add-server")
-        .json(&json!({
-            "name": name,
-            "config": {
-                "command": command,
-                "args": args,
-                "env": env,
-            }
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("连接 Sidecar 失败: {}", e))?;
+    let server = NativeMcpServerConfig {
+        name,
+        command,
+        args,
+        env,
+    };
 
-    if !connect_resp.status().is_success() {
-        // 连接失败时回滚数据库记录
+    if let Err(error) = register_native_mcp_server_tools(registry, server).await {
         let _ = sqlx::query("DELETE FROM mcp_servers WHERE id = ?")
             .bind(&id)
             .execute(pool)
             .await;
-        return Err("MCP 服务器连接失败".to_string());
-    }
-
-    // 获取工具列表并注册
-    let tools_resp = client
-        .post("http://localhost:8765/api/mcp/list-tools")
-        .json(&json!({ "serverName": name }))
-        .send()
-        .await
-        .map_err(|e| format!("获取工具列表失败: {}", e))?;
-
-    let tools_body: Value = tools_resp.json().await.map_err(|e| e.to_string())?;
-
-    if let Some(tool_list) = tools_body["tools"].as_array() {
-        for tool in tool_list {
-            let tool_name = tool["name"].as_str().unwrap_or_default();
-            let tool_desc = tool["description"].as_str().unwrap_or_default();
-            let schema = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type": "object", "properties": {}}));
-
-            let full_name = format!("mcp_{}_{}", name, tool_name);
-            registry.register(Arc::new(SidecarBridgeTool::new_mcp(
-                "http://localhost:8765".to_string(),
-                full_name,
-                tool_desc.to_string(),
-                schema,
-                name.clone(),
-                tool_name.to_string(),
-            )));
-        }
+        return Err(error);
     }
 
     Ok(id)
@@ -136,16 +120,15 @@ pub async fn list_mcp_servers(db: State<'_, DbState>) -> Result<Vec<Value>, Stri
         .collect())
 }
 
-#[tauri::command]
-pub async fn remove_mcp_server(
+pub async fn remove_mcp_server_with_registry(
+    pool: &sqlx::SqlitePool,
+    registry: Arc<ToolRegistry>,
     id: String,
-    db: State<'_, DbState>,
-    registry: State<'_, Arc<ToolRegistry>>,
 ) -> Result<(), String> {
     // 获取 server name
     let (name,): (String,) = sqlx::query_as("SELECT name FROM mcp_servers WHERE id = ?")
         .bind(&id)
-        .fetch_one(&db.0)
+        .fetch_one(pool)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -159,9 +142,54 @@ pub async fn remove_mcp_server(
     // 从数据库删除
     sqlx::query("DELETE FROM mcp_servers WHERE id = ?")
         .bind(&id)
-        .execute(&db.0)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_mcp_server(
+    id: String,
+    db: State<'_, DbState>,
+    registry: State<'_, Arc<ToolRegistry>>,
+) -> Result<(), String> {
+    remove_mcp_server_with_registry(&db.0, Arc::clone(&registry.inner()), id).await
+}
+
+pub async fn restore_saved_mcp_servers_with_registry(
+    pool: &sqlx::SqlitePool,
+    registry: Arc<ToolRegistry>,
+) -> Result<usize, String> {
+    let servers = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT name, command, args, env FROM mcp_servers WHERE enabled = 1",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut restored = 0;
+    for (name, command, args_json, env_json) in servers {
+        let args: Vec<String> = serde_json::from_str(&args_json).unwrap_or_default();
+        let env: HashMap<String, String> = serde_json::from_str(&env_json).unwrap_or_default();
+        let server = NativeMcpServerConfig {
+            name: name.clone(),
+            command,
+            args,
+            env,
+        };
+
+        match register_native_mcp_server_tools(Arc::clone(&registry), server).await {
+            Ok(_) => {
+                restored += 1;
+                eprintln!("[mcp] restored native MCP server tool registration for {name}");
+            }
+            Err(error) => {
+                eprintln!("[mcp] failed to restore native MCP server {name}: {error}");
+            }
+        }
+    }
+
+    Ok(restored)
 }

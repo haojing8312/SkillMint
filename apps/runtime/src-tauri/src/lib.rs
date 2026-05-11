@@ -38,7 +38,7 @@ use commands::chat::{
     PendingApprovalBridgeState, SearchCacheState, ToolConfirmResponder, ToolConfirmState,
 };
 use commands::feishu_gateway::FeishuEventRelayState;
-use commands::im_host::{ImChannelHostRuntimeState, record_im_channel_restore_report};
+use commands::im_host::{record_im_channel_restore_report, ImChannelHostRuntimeState};
 use commands::openclaw_plugins::OpenClawPluginFeishuRuntimeState;
 use commands::skills::DbState;
 use diagnostics::{DiagnosticsState, ManagedDiagnosticsState};
@@ -205,67 +205,10 @@ async fn bootstrap_sidecar(sidecar_manager: Arc<SidecarManager>) {
 
 fn restore_saved_mcp_servers(pool: sqlx::SqlitePool, registry: Arc<ToolRegistry>) {
     tauri::async_runtime::spawn(async move {
-        let servers = sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT name, command, args, env FROM mcp_servers WHERE enabled = 1",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
-
-        if servers.is_empty() {
-            return;
-        }
-
-        let client = reqwest::Client::new();
-        for (name, command, args_json, env_json) in servers {
-            let args: Vec<String> = serde_json::from_str(&args_json).unwrap_or_default();
-            let env: std::collections::HashMap<String, String> =
-                serde_json::from_str(&env_json).unwrap_or_default();
-
-            let connect_result = client
-                .post("http://localhost:8765/api/mcp/add-server")
-                .json(&serde_json::json!({
-                    "name": name,
-                    "config": { "command": command, "args": args, "env": env }
-                }))
-                .send()
-                .await;
-
-            if connect_result.is_err() {
-                eprintln!("[mcp] 连接 MCP 服务器 {} 失败（Sidecar 可能未启动）", name);
-                continue;
-            }
-
-            if let Ok(resp) = client
-                .post("http://localhost:8765/api/mcp/list-tools")
-                .json(&serde_json::json!({ "serverName": name }))
-                .send()
-                .await
-            {
-                if let Ok(body) = resp.json::<serde_json::Value>().await {
-                    if let Some(tool_list) = body["tools"].as_array() {
-                        for tool in tool_list {
-                            let tool_name = tool["name"].as_str().unwrap_or_default();
-                            let tool_desc = tool["description"].as_str().unwrap_or_default();
-                            let schema = tool
-                                .get("inputSchema")
-                                .cloned()
-                                .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
-
-                            let full_name = format!("mcp_{}_{}", name, tool_name);
-                            registry.register(Arc::new(agent::tools::SidecarBridgeTool::new_mcp(
-                                "http://localhost:8765".to_string(),
-                                full_name,
-                                tool_desc.to_string(),
-                                schema,
-                                name.clone(),
-                                tool_name.to_string(),
-                            )));
-                        }
-                        eprintln!("[mcp] 已恢复 MCP 服务器 {} 的工具注册", name);
-                    }
-                }
-            }
+        if let Err(error) =
+            commands::mcp::restore_saved_mcp_servers_with_registry(&pool, registry).await
+        {
+            eprintln!("[mcp] failed to restore saved native MCP servers: {error}");
         }
     });
 }
@@ -696,8 +639,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        SINGLE_INSTANCE_FOCUS_DEBOUNCE, SingleInstanceActivationState,
-        should_surface_single_instance_activation,
+        should_surface_single_instance_activation, SingleInstanceActivationState,
+        SINGLE_INSTANCE_FOCUS_DEBOUNCE,
     };
     use std::time::Instant;
 
