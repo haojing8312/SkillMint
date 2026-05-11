@@ -227,7 +227,7 @@ fn route_choose(
     })
 }
 
-pub(super) fn resolve_route_from_payload(payload: &serde_json::Value) -> serde_json::Value {
+pub(super) fn resolve_im_route_from_payload(payload: &serde_json::Value) -> serde_json::Value {
     let channel =
         normalize_route_channel(payload.get("channel").and_then(serde_json::Value::as_str));
     let account_id = normalize_route_account(

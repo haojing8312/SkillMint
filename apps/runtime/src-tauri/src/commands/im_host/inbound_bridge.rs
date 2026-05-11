@@ -5,8 +5,7 @@ use crate::commands::feishu_gateway::{
 };
 use crate::commands::im_gateway::{process_im_event, FeishuCallbackResult};
 use crate::commands::openclaw_gateway::{
-    plan_role_dispatch_requests_for_openclaw, plan_role_events_for_openclaw,
-    resolve_openclaw_route_with_pool,
+    plan_im_role_dispatch_requests, plan_im_role_events, resolve_im_route_with_pool,
 };
 use crate::im::runtime_bridge::{
     build_im_role_dispatch_request_for_channel, build_im_role_event_payload_for_channel,
@@ -575,7 +574,7 @@ pub(crate) async fn dispatch_im_inbound_to_workclaw_with_pool_and_app(
         return Ok(result);
     }
 
-    let route_decision = resolve_openclaw_route_with_pool(pool, &projected_event)
+    let route_decision = resolve_im_route_with_pool(pool, &projected_event)
         .await
         .ok();
     let dispatches =
@@ -585,12 +584,11 @@ pub(crate) async fn dispatch_im_inbound_to_workclaw_with_pool_and_app(
     emit_inbound_dispatch_sessions(app, &projected_event.channel, &dispatches);
 
     if dispatches.is_empty() {
-        let planned = plan_role_events_for_openclaw(pool, &projected_event).await?;
+        let planned = plan_im_role_events(pool, &projected_event).await?;
         for evt in planned {
             let _ = app.emit("im-role-event", evt);
         }
-        let dispatch_requests =
-            plan_role_dispatch_requests_for_openclaw(pool, &projected_event).await?;
+        let dispatch_requests = plan_im_role_dispatch_requests(pool, &projected_event).await?;
         for req in dispatch_requests {
             let _ = app.emit("im-role-dispatch-request", req);
         }

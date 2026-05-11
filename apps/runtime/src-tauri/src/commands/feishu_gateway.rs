@@ -52,7 +52,7 @@ mod types;
 
 pub(crate) use approval_service::notify_feishu_approval_resolved_with_pool;
 pub(crate) use approval_service::parse_feishu_approval_command;
-pub(crate) use approval_service::{
+pub use approval_service::{
     maybe_handle_feishu_approval_command_with_pool, notify_feishu_approval_requested_with_pool,
 };
 pub(crate) use ask_user_service::notify_feishu_ask_user_requested_with_pool;

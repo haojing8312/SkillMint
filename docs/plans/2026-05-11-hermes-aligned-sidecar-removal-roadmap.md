@@ -134,6 +134,8 @@ git grep -n 'api/openclaw/resolve-route\|call_sidecar_json("/api/openclaw/resolv
 
 ### Batch 2. Rename routing compatibility layer to Hermes-native IM/profile language
 
+**Status:** `[x]`
+
 **Objective:** Stop presenting IM routing as an OpenClaw gateway internally.
 
 **Non-goals:**

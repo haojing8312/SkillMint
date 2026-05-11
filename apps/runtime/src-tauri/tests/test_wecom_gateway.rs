@@ -149,6 +149,7 @@ async fn wecom_connector_flow_uses_channel_neutral_sidecar_endpoints() {
         "conversation-1".to_string(),
         "hello".to_string(),
         None,
+        None,
     )
     .await
     .expect("send text");

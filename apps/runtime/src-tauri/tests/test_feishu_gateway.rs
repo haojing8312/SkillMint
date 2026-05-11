@@ -298,8 +298,16 @@ async fn feishu_outbound_send_uses_official_runtime_helper() {
     .await
     .expect("send via official runtime");
 
+    let execution_result: serde_json::Value =
+        serde_json::from_str(&result_json).expect("parse outbound execution result");
+    let delivery = execution_result
+        .get("deliveries")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|deliveries| deliveries.first())
+        .cloned()
+        .expect("first outbound delivery");
     let result: OpenClawPluginFeishuOutboundSendResult =
-        serde_json::from_str(&result_json).expect("parse outbound send result");
+        serde_json::from_value(delivery).expect("parse outbound send result");
     assert_eq!(result.request.account_id, "default");
     assert_eq!(result.request.target, "chat-outbound-1");
     assert_eq!(result.request.thread_id.as_deref(), Some("chat-outbound-1"));
@@ -451,6 +459,8 @@ async fn feishu_approve_command_resolves_pending_approval() {
                 approval_id: "approval-feishu-cmd-1".to_string(),
                 session_id: "session-feishu-cmd-1".to_string(),
                 run_id: Some("run-feishu-cmd-1".to_string()),
+                task_identity: None,
+                task_continuation: None,
                 call_id: "call-feishu-cmd-1".to_string(),
                 tool_name: "file_delete".to_string(),
                 input: serde_json::json!({
@@ -481,6 +491,10 @@ async fn feishu_approve_command_resolves_pending_approval() {
             tenant_id: Some("ou_approver_1".to_string()),
             sender_id: Some("ou_approver_1".to_string()),
             chat_type: Some("direct".to_string()),
+            conversation_id: None,
+            base_conversation_id: None,
+            parent_conversation_candidates: Vec::new(),
+            conversation_scope: None,
         },
         None,
     )

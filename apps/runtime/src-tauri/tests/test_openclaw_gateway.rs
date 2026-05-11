@@ -5,7 +5,7 @@ use runtime_lib::commands::im_routing::{
     upsert_im_routing_binding_with_pool, UpsertImRoutingBindingInput,
 };
 use runtime_lib::commands::openclaw_gateway::{
-    parse_openclaw_payload, plan_role_events_for_openclaw, resolve_openclaw_route_with_pool,
+    parse_openclaw_payload, plan_im_role_events, resolve_im_route_with_pool,
     validate_openclaw_auth_with_pool,
 };
 use runtime_lib::im::types::{ImEvent, ImEventType};
@@ -126,9 +126,7 @@ async fn plan_role_events_uses_thread_bindings() {
         r#"{"event_type":"message.created","thread_id":"thread-1","text":"请开始评审"}"#,
     )
     .expect("parse");
-    let planned = plan_role_events_for_openclaw(&pool, &evt)
-        .await
-        .expect("plan events");
+    let planned = plan_im_role_events(&pool, &evt).await.expect("plan events");
     assert_eq!(planned.len(), 2);
     assert_eq!(planned[0].thread_id, "thread-1");
     assert_eq!(planned[0].status, "running");
@@ -165,7 +163,7 @@ async fn plan_role_events_preserves_wecom_source_channel() {
         conversation_scope: None,
     };
 
-    let planned = plan_role_events_for_openclaw(&pool, &evt)
+    let planned = plan_im_role_events(&pool, &evt)
         .await
         .expect("plan wecom events");
     assert_eq!(planned.len(), 1);
@@ -216,7 +214,7 @@ async fn resolve_route_prefers_peer_binding() {
     .await
     .expect("seed peer binding");
 
-    let route = resolve_openclaw_route_with_pool(
+    let route = resolve_im_route_with_pool(
         &pool,
         &ImEvent {
             channel: "feishu".to_string(),

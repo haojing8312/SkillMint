@@ -3,7 +3,7 @@ mod helpers;
 use runtime_lib::commands::im_routing::{
     upsert_im_routing_binding_with_pool, UpsertImRoutingBindingInput,
 };
-use runtime_lib::commands::openclaw_gateway::resolve_openclaw_route_with_pool;
+use runtime_lib::commands::openclaw_gateway::resolve_im_route_with_pool;
 use runtime_lib::im::types::{ImEvent, ImEventType};
 
 #[tokio::test]
@@ -29,7 +29,7 @@ async fn resolve_route_uses_event_channel_instead_of_feishu_default() {
     .await
     .expect("seed discord binding");
 
-    let out = resolve_openclaw_route_with_pool(
+    let out = resolve_im_route_with_pool(
         &pool,
         &ImEvent {
             channel: "discord".to_string(),
@@ -82,7 +82,7 @@ async fn resolve_route_supports_wecom_channel_via_native_resolver() {
     .await
     .expect("seed wecom binding");
 
-    let out = resolve_openclaw_route_with_pool(
+    let out = resolve_im_route_with_pool(
         &pool,
         &ImEvent {
             channel: "wecom".to_string(),
@@ -132,7 +132,7 @@ async fn resolve_route_preserves_group_channel_peer_kind_alias() {
     .await
     .expect("seed channel peer binding");
 
-    let out = resolve_openclaw_route_with_pool(
+    let out = resolve_im_route_with_pool(
         &pool,
         &ImEvent {
             channel: "discord".to_string(),
@@ -182,7 +182,7 @@ async fn resolve_route_normalizes_account_ids_like_openclaw() {
     .await
     .expect("seed normalized account binding");
 
-    let out = resolve_openclaw_route_with_pool(
+    let out = resolve_im_route_with_pool(
         &pool,
         &ImEvent {
             channel: "wecom".to_string(),
@@ -251,7 +251,7 @@ async fn resolve_route_does_not_treat_guild_binding_as_generic_channel_binding()
     .await
     .expect("seed generic channel binding");
 
-    let out = resolve_openclaw_route_with_pool(
+    let out = resolve_im_route_with_pool(
         &pool,
         &ImEvent {
             channel: "discord".to_string(),
@@ -377,7 +377,7 @@ async fn route_regression_vectors_match_expected_priority() {
             .expect("seed peer binding");
         }
 
-        let out = resolve_openclaw_route_with_pool(
+        let out = resolve_im_route_with_pool(
             &pool,
             &ImEvent {
                 channel: "feishu".to_string(),

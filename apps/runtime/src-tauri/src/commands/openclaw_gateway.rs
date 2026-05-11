@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 
 mod route_resolver;
-use route_resolver::resolve_route_from_payload;
+use route_resolver::resolve_im_route_from_payload;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct OpenClawEnvelope {
@@ -175,7 +175,7 @@ pub async fn validate_openclaw_auth_with_pool(
     }
 }
 
-pub async fn plan_role_events_for_openclaw(
+pub async fn plan_im_role_events(
     pool: &SqlitePool,
     event: &ImEvent,
 ) -> Result<Vec<ImRoleEventPayload>, String> {
@@ -194,7 +194,7 @@ pub async fn plan_role_events_for_openclaw(
         if cfg.roles.iter().any(|r| r == &role_id) {
             vec![role_id]
         } else {
-            Vec::new()
+            cfg.roles
         }
     } else {
         cfg.roles
@@ -224,7 +224,7 @@ pub async fn plan_role_events_for_openclaw(
         .collect())
 }
 
-pub async fn plan_role_dispatch_requests_for_openclaw(
+pub async fn plan_im_role_dispatch_requests(
     pool: &SqlitePool,
     event: &ImEvent,
 ) -> Result<Vec<ImRoleDispatchRequest>, String> {
@@ -243,7 +243,7 @@ pub async fn plan_role_dispatch_requests_for_openclaw(
         if cfg.roles.iter().any(|r| r == &role_id) {
             vec![role_id]
         } else {
-            Vec::new()
+            cfg.roles
         }
     } else {
         cfg.roles
@@ -283,7 +283,7 @@ pub async fn plan_role_dispatch_requests_for_openclaw(
         .collect())
 }
 
-fn bindings_to_openclaw_payload(
+fn bindings_to_im_route_payload(
     bindings: Vec<crate::commands::im_routing::ImRoutingBinding>,
 ) -> Vec<serde_json::Value> {
     bindings
@@ -319,7 +319,25 @@ fn bindings_to_openclaw_payload(
         .collect()
 }
 
-pub async fn resolve_openclaw_route_with_pool(
+pub async fn plan_role_events_for_openclaw(
+    pool: &SqlitePool,
+    event: &ImEvent,
+) -> Result<Vec<ImRoleEventPayload>, String> {
+    // Temporary OpenClaw compatibility adapter; native IM callers should use
+    // `plan_im_role_events`.
+    plan_im_role_events(pool, event).await
+}
+
+pub async fn plan_role_dispatch_requests_for_openclaw(
+    pool: &SqlitePool,
+    event: &ImEvent,
+) -> Result<Vec<ImRoleDispatchRequest>, String> {
+    // Temporary OpenClaw compatibility adapter; native IM callers should use
+    // `plan_im_role_dispatch_requests`.
+    plan_im_role_dispatch_requests(pool, event).await
+}
+
+pub async fn resolve_im_route_with_pool(
     pool: &SqlitePool,
     event: &ImEvent,
 ) -> Result<serde_json::Value, String> {
@@ -333,9 +351,18 @@ pub async fn resolve_openclaw_route_with_pool(
             "id": event.thread_id.clone(),
         },
         "default_agent_id": default_agent_id,
-        "bindings": bindings_to_openclaw_payload(bindings),
+        "bindings": bindings_to_im_route_payload(bindings),
     });
-    Ok(resolve_route_from_payload(&body))
+    Ok(resolve_im_route_from_payload(&body))
+}
+
+pub async fn resolve_openclaw_route_with_pool(
+    pool: &SqlitePool,
+    event: &ImEvent,
+) -> Result<serde_json::Value, String> {
+    // Temporary OpenClaw compatibility adapter; native IM callers should use
+    // `resolve_im_route_with_pool`.
+    resolve_im_route_with_pool(pool, event).await
 }
 
 #[tauri::command]
@@ -343,7 +370,7 @@ pub async fn simulate_im_route(
     payload: serde_json::Value,
     _db: State<'_, DbState>,
 ) -> Result<serde_json::Value, String> {
-    Ok(resolve_route_from_payload(&payload))
+    Ok(resolve_im_route_from_payload(&payload))
 }
 
 #[tauri::command]

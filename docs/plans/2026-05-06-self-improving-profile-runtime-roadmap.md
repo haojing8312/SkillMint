@@ -303,7 +303,7 @@ profiles/<profile_id>/
 - `[x]` 完成 sidecar 职责盘点和 Hermes 参考架构映射，明确 sidecar 不再是未来产品边界。
 - `[x]` 明确 OpenClaw 相关内容仅作为 legacy migration input；不再新增 OpenClaw compatibility、vendor sync 或 OpenClaw-shaped runtime 设计。
 - `[x]` 第一批替换 `/api/openclaw/resolve-route`：IM route resolver 已由 Rust runtime 原生处理，保留当前调用契约和回归测试。
-- `[ ]` 将 OpenClaw 命名的核心 routing/gateway 层迁移到中性 IM/profile runtime 命名，只保留必要的临时 adapter。
+- `[x]` 将 OpenClaw 命名的核心 routing/gateway 层迁移到中性 IM/profile runtime 命名，只保留必要的临时 adapter。
 - `[ ]` 删除 OpenClaw browser compatibility、vendor sync lanes 和 sidecar route endpoint。
 - `[ ]` 将 MCP server 管理、list/call tools 和动态工具注册迁入 native runtime，废弃 MCP sidecar bridge。
 - `[ ]` 将 Feishu/WeCom/channel connector 迁入 gateway/platform adapter 边界，移除 `sidecar_base_url` 产品心智。

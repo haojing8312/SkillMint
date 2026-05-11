@@ -6,15 +6,13 @@ use super::{
     resolve_feishu_sidecar_base_url,
 };
 use crate::commands::chat::ApprovalManagerState;
-use crate::commands::employee_agents::{
-    list_agent_employees_with_pool, AgentEmployee,
-};
-use crate::commands::im_host::emit_inbound_dispatch_sessions;
-use crate::commands::im_host::maybe_handle_registered_approval_command_with_pool_and_app;
+use crate::commands::employee_agents::{list_agent_employees_with_pool, AgentEmployee};
 use crate::commands::feishu_gateway::pairing_service::maybe_create_feishu_pairing_request_with_pool;
 use crate::commands::feishu_gateway::types::FeishuInboundGateDecision;
 use crate::commands::im_gateway::process_im_event;
-use crate::commands::openclaw_gateway::resolve_openclaw_route_with_pool;
+use crate::commands::im_host::emit_inbound_dispatch_sessions;
+use crate::commands::im_host::maybe_handle_registered_approval_command_with_pool_and_app;
+use crate::commands::openclaw_gateway::resolve_im_route_with_pool;
 use crate::commands::skills::DbState;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::im::feishu_adapter::build_feishu_markdown_message;
@@ -515,13 +513,10 @@ pub(crate) async fn sync_feishu_ws_events_core(
                     continue;
                 }
             }
-            let route_decision = resolve_openclaw_route_with_pool(pool, &inbound).await.ok();
-            if let Ok(dispatches) = resolve_agent_session_dispatches_with_pool(
-                pool,
-                &inbound,
-                route_decision.as_ref(),
-            )
-            .await
+            let route_decision = resolve_im_route_with_pool(pool, &inbound).await.ok();
+            if let Ok(dispatches) =
+                resolve_agent_session_dispatches_with_pool(pool, &inbound, route_decision.as_ref())
+                    .await
             {
                 if let Some(app) = app {
                     emit_inbound_dispatch_sessions(app, "feishu", &dispatches);
