@@ -272,14 +272,19 @@ cargo check
 
 #### Batch 3C. Release/vendor lane replacement plan
 
-**Status:** `[ ]`
+**Status:** `[x]`
 
 **Scope:** Plan replacement or explicit deprecation for OpenClaw vendor sync lanes and release-sensitive checks.
 
+**Plan:** `docs/plans/2026-05-11-release-vendor-lane-replacement-plan.md`
+
 **Acceptance:**
-- `[ ]` `sync-openclaw-*` and `check-openclaw-*` scripts are mapped to a replacement check or explicit deprecation.
-- `[ ]` Root `package.json`, AGENTS guidance, and release docs have an agreed migration plan before commands are removed.
-- `[ ]` Release-sensitive validation requirements are documented for the later removal batch.
+- `[x]` `sync-openclaw-*` and `check-openclaw-*` scripts are mapped to a replacement check or explicit deprecation.
+- `[x]` Root `package.json`, AGENTS guidance, release docs, and maintainer docs have a documented migration plan before commands are removed.
+- `[x]` Release-sensitive validation requirements are documented for later neutral-check, command-removal, and vendor-folder deletion batches.
+- `[x]` No root package scripts, sync scripts, check scripts, runtime code, sidecar code, frontend code, DB schema, package manager files, or vendored sidecar files are changed in this batch.
+
+**Batch 3C result:** Planning documented only. Existing OpenClaw vendor lanes remain in place as temporary legacy migration guards; they are not removed or renamed by this batch.
 
 #### Batch 3D. Browser compatibility endpoint removal after caller audit
 
@@ -452,9 +457,9 @@ pnpm build:runtime
 
 ## 5. Implementation Order Recommendation
 
-**Batch 1, Batch 2, Batch 3A, and Batch 3B-1 are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, remaining OpenClaw references have a Batch 3 classification map, and active README/docs narrative marks OpenClaw as historical legacy migration input.
+**Batch 1, Batch 2, Batch 3A, Batch 3B-1, and Batch 3C are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, remaining OpenClaw references have a Batch 3 classification map, active README/docs narrative marks OpenClaw as historical legacy migration input, and existing OpenClaw vendor lanes have a documented replacement/deprecation plan.
 
-Next choose between **Batch 3B-2: Frontend visible copy** and **Batch 3C: Release/vendor lane replacement plan**. Do not start browser/vendor/plugin-host deletion until the Batch 3C-3E acceptance checks are ready.
+Next choose between **Batch 3B-2: Frontend visible copy**, **Batch 3D: Browser compatibility endpoint removal after caller audit**, and **Batch 3E: Plugin-host/OpenClaw SDK compatibility retirement plan**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E acceptance checks are ready.
 
 Batch 1 was chosen first because:
 
@@ -471,7 +476,7 @@ Do **not** start with browser or MCP unless there is a blocking bug there. Those
 - `[x]` No new code path calls `/api/openclaw/resolve-route`.
 - `[x]` Remaining OpenClaw references are classified before Batch 3 removal work.
 - `[ ]` No new code path calls `/api/browser/compat`.
-- `[ ]` OpenClaw vendor sync lanes are removed or explicitly marked historical.
+- `[x]` OpenClaw vendor sync lanes have a documented replacement/deprecation plan before removal.
 - `[ ]` MCP server restore/list/call works without sidecar HTTP.
 - `[ ]` Browser tools execute without sidecar HTTP and remain in `browser` toolset.
 - `[ ]` Feishu/WeCom/channel connectors run through runtime gateway/platform adapters without sidecar base URL.

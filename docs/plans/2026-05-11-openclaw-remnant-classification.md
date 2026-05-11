@@ -185,10 +185,24 @@ Acceptance:
 
 ### Batch 3C. Release/vendor lane replacement plan
 
+Status: `[x]`
+
 Acceptance:
-- `[ ]` Current OpenClaw vendor sync and check scripts are mapped to either replacement Hermes-native checks or explicit deprecation.
-- `[ ]` Release-sensitive commands in `package.json`, AGENTS guidance, and release docs have a reviewed migration plan.
-- `[ ]` No vendor lane script is removed until the replacement/deprecation path is documented.
+- `[x]` Current OpenClaw vendor sync and check scripts are mapped to either replacement Hermes-native checks or explicit deprecation.
+- `[x]` Release-sensitive commands in `package.json`, AGENTS guidance, and release docs have a reviewed migration plan.
+- `[x]` No vendor lane script is removed until the replacement/deprecation path is documented.
+
+Handled:
+- Added `docs/plans/2026-05-11-release-vendor-lane-replacement-plan.md`.
+- Mapped `test:openclaw-vendor-lane`, `sync:openclaw-core`, `sync:openclaw-im-core`, sync scripts, check scripts, `docs/maintainers/openclaw-upgrade.md`, and both sidecar vendor metadata folders to retain, replace, or deprecate actions.
+- Defined Stage 0 through Stage 4 migration order so neutral release checks are introduced before legacy OpenClaw command names are removed.
+- Documented future validation, including release-doc/vendor tests and grep checks over `package.json`, `AGENTS.md`, docs, scripts, and vendor paths.
+
+Left for later:
+- Stage 1 must implement neutral package/script checks while preserving old OpenClaw command names as aliases.
+- Stage 2 must migrate active docs and AGENTS guidance to neutral commands.
+- Stage 3 may remove legacy OpenClaw command names only after downstream references are gone.
+- Stage 4 may delete sidecar vendor folders only after route, browser, plugin, and IM consumers are gone.
 
 ### Batch 3D. Browser compatibility endpoint removal after caller audit
 
