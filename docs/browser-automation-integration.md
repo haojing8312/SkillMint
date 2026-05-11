@@ -1,5 +1,7 @@
 # 浏览器自动化集成（本地实现）
 
+> Legacy current-state note: this document describes the current sidecar-backed browser compatibility implementation. The compatibility path is retained temporarily pending the Batch 3D caller audit and native provider migration plan in `docs/plans/2026-05-11-browser-compat-caller-audit.md`.
+
 本文档说明 WorkClaw 当前版本的浏览器自动化能力（纯本地 sidecar + Playwright），以及面向 OpenClaw browser skill 的 P0 兼容层。
 
 当前实现不依赖任何外部 OpenClaw 服务，也不需要 `openclaw browser start` 一类额外进程。

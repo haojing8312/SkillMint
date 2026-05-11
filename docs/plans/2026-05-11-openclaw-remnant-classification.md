@@ -106,6 +106,8 @@ Representative files:
 
 Removal rule: first prove no caller uses `/api/browser/compat` or the sidecar OpenClaw route engine, then remove sidecar tests and vendored code with replacement native provider or gateway coverage.
 
+Batch 3D caller audit result: `docs/plans/2026-05-11-browser-compat-caller-audit.md` shows browser compatibility is a known active temporary wrapper, not safe to delete yet. Runtime registration still exposes the unified `browser` compatibility tool through `/api/browser/compat`, so deletion is blocked until a native browser provider or neutral wrapper replaces that path.
+
 ### D. Release-sensitive scripts, checks, and docs that require replacement or explicit deprecation
 
 These affect release expectations or maintainer workflows and should not be deleted as ordinary cleanup.
@@ -206,10 +208,19 @@ Left for later:
 
 ### Batch 3D. Browser compatibility endpoint removal after caller audit
 
+Status: `[~]`
+
+Audit: `docs/plans/2026-05-11-browser-compat-caller-audit.md`
+
 Acceptance:
-- `[ ]` `git grep` proves all `/api/browser/compat` callers are known and either migrated or intentionally retained as temporary wrappers.
+- `[x]` `git grep` proves all `/api/browser/compat` callers are known and either migrated or intentionally retained as temporary wrappers.
 - `[ ]` Native browser provider checks exist before sidecar browser compatibility tests are deleted.
-- `[ ]` `apps/runtime/src-tauri/src/agent/tools/browser_compat.rs` has a clear remove-or-wrap decision.
+- `[x]` `apps/runtime/src-tauri/src/agent/tools/browser_compat.rs` has a clear remove-or-wrap decision: retain temporarily as the unified `browser` compatibility wrapper, then migrate to a native provider or neutral wrapper before endpoint deletion.
+
+Result:
+- `/api/browser/compat` remains active and must not be deleted in Batch 3D.
+- Prompt guidance in `packages/runtime-chat-app/src/prompt_assembly.rs` remains a later code-batch dependency because it still tells agents to use WorkClaw's built-in `browser` compatibility tool for OpenClaw/Xiaohongshu-like skills.
+- No runtime, sidecar, package, script, vendored, test, or prompt assembly files are changed by the Batch 3D documentation step.
 
 ### Batch 3E. Plugin-host/OpenClaw SDK compatibility retirement plan
 

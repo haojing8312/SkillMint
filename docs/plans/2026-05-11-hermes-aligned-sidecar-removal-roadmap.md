@@ -288,14 +288,18 @@ cargo check
 
 #### Batch 3D. Browser compatibility endpoint removal after caller audit
 
-**Status:** `[ ]`
+**Status:** `[~]` Audit complete; removal blocked until native provider replacement.
 
 **Scope:** Remove `/api/browser/compat` and OpenClaw browser compatibility only after callers and replacement checks are known.
 
+**Audit:** `docs/plans/2026-05-11-browser-compat-caller-audit.md`
+
 **Acceptance:**
-- `[ ]` Caller audit proves every `/api/browser/compat` consumer is migrated or intentionally retained as a temporary wrapper.
+- `[x]` Caller audit proves every `/api/browser/compat` consumer is migrated or intentionally retained as a temporary wrapper.
 - `[ ]` Native browser provider checks exist before sidecar browser compatibility tests are deleted.
 - `[ ]` Browser compatibility removal does not regress Hermes-compatible browser tool names.
+
+**Batch 3D result:** Caller audit documented only. No runtime code, sidecar code, package scripts, Rust tests, TypeScript tests, vendored files, or prompt assembly code was changed; endpoint removal remains blocked because runtime code still registers the sidecar-backed unified `browser` compatibility tool.
 
 #### Batch 3E. Plugin-host/OpenClaw SDK compatibility retirement plan
 
@@ -459,7 +463,7 @@ pnpm build:runtime
 
 **Batch 1, Batch 2, Batch 3A, Batch 3B-1, and Batch 3C are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, remaining OpenClaw references have a Batch 3 classification map, active README/docs narrative marks OpenClaw as historical legacy migration input, and existing OpenClaw vendor lanes have a documented replacement/deprecation plan.
 
-Next choose between **Batch 3B-2: Frontend visible copy**, **Batch 3D: Browser compatibility endpoint removal after caller audit**, and **Batch 3E: Plugin-host/OpenClaw SDK compatibility retirement plan**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E acceptance checks are ready.
+Next choose between **Batch 3B-2: Frontend visible copy**, **Batch 3D follow-up: native browser provider replacement**, and **Batch 3E: Plugin-host/OpenClaw SDK compatibility retirement plan**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E acceptance checks are ready. Batch 3D's caller audit is documented in `docs/plans/2026-05-11-browser-compat-caller-audit.md`; endpoint deletion remains blocked.
 
 Batch 1 was chosen first because:
 
