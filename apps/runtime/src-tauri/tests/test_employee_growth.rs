@@ -57,6 +57,7 @@ async fn list_employee_growth_events_resolves_profile_and_orders_recent_events()
          ) VALUES
          ('old-event', 'profile-growth-ui', 'session-1', 'skill_patch', 'skill', 'skill-a', 'older patch', '{\"version_id\":\"v1\"}', '2026-05-08T00:00:00Z'),
          ('new-event', 'profile-growth-ui', 'session-2', 'skill_reset', 'skill', 'skill-a', 'newer reset', '{\"version_id\":\"v2\"}', '2026-05-08T01:00:00Z'),
+         ('memory-event', 'profile-growth-ui', 'session-4', 'memory_add', 'profile_memory', 'MEMORY', 'learn current memory', '{\"version_id\":\"v3\",\"content_preview\":\"客户偏好先给结论\",\"diff_summary\":\"追加客户偏好\",\"path\":\"/tmp/should-not-be-read/MEMORY.md\"}', '2026-05-08T01:30:00Z'),
          ('other-profile', 'profile-other', 'session-3', 'skill_patch', 'skill', 'skill-b', 'other', '{}', '2026-05-08T02:00:00Z')",
     )
     .execute(&pool)
@@ -69,11 +70,14 @@ async fn list_employee_growth_events_resolves_profile_and_orders_recent_events()
 
     assert_eq!(timeline.employee_id, "employee-row-growth");
     assert_eq!(timeline.profile_id.as_deref(), Some("profile-growth-ui"));
-    assert_eq!(timeline.events.len(), 2);
-    assert_eq!(timeline.events[0].id, "new-event");
-    assert_eq!(timeline.events[0].event_type, "skill_reset");
-    assert_eq!(timeline.events[0].evidence_json["version_id"], "v2");
-    assert_eq!(timeline.events[1].id, "old-event");
+    assert_eq!(timeline.events.len(), 3);
+    assert_eq!(timeline.events[0].id, "memory-event");
+    assert_eq!(timeline.events[0].display_summary, "记住：客户偏好先给结论");
+    assert_eq!(timeline.events[0].evidence_label, "已保存版本，可审计/回滚");
+    assert_eq!(timeline.events[1].id, "new-event");
+    assert_eq!(timeline.events[1].event_type, "skill_reset");
+    assert_eq!(timeline.events[1].evidence_json["version_id"], "v2");
+    assert_eq!(timeline.events[2].id, "old-event");
 }
 
 #[tokio::test]

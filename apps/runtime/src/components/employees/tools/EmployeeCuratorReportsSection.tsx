@@ -93,10 +93,17 @@ export function EmployeeCuratorReportsSection({
         : "border-amber-200 bg-amber-50 text-amber-700"
       : "border-gray-200 bg-white text-gray-500";
   const profileRunLabel = schedulerStatus?.profile_last_run_at
-    ? `上次 ${schedulerStatus.profile_last_run_at}`
+    ? `上次整理 ${schedulerStatus.profile_last_run_at}`
     : schedulerStatus?.profile_due
       ? "等待首次自动整理"
-      : "";
+      : "已纳入自动维护";
+  const lastCompletedLabel = schedulerStatus?.last_completed_at
+    ? schedulerStatus.last_completed_at
+    : latest?.created_at || "暂无完成记录";
+  const nextCheckLabel = schedulerStatus?.next_check_at || "等待调度";
+  const recentSuggestionLabel = latest
+    ? `${findingCount} 个最近建议${latest.has_state_changes ? " · 有状态变更" : ""}`
+    : "暂无最近建议";
   const subtitle = schedulerError
     ? "自动状态暂不可用"
     : schedulerStatus
@@ -113,7 +120,7 @@ export function EmployeeCuratorReportsSection({
     <div className="rounded-lg border border-cyan-100 bg-cyan-50/70 p-3">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="text-xs font-medium text-cyan-900">Curator</div>
+          <div className="text-xs font-medium text-cyan-900">Curator 自动整理</div>
           <div className="mt-1 text-[11px] text-cyan-800">{subtitle}</div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
@@ -122,6 +129,50 @@ export function EmployeeCuratorReportsSection({
               {autoStateLabel}
             </span>
           )}
+          <span className="rounded border border-cyan-100 bg-white px-2 py-1 text-[10px] text-cyan-700">
+            {recentSuggestionLabel}
+          </span>
+        </div>
+      </div>
+
+      {schedulerStatus && (
+        <div className="mt-3 grid gap-2 md:grid-cols-4">
+          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
+            <div className="text-[10px] uppercase text-cyan-600">自动周期</div>
+            <div className="mt-0.5 text-[11px] text-gray-700">
+              每 {schedulerStatus.interval_minutes} 分钟
+            </div>
+          </div>
+          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
+            <div className="text-[10px] uppercase text-cyan-600">空闲条件</div>
+            <div className="mt-0.5 text-[11px] text-gray-700">
+              {schedulerStatus.idle ? "当前空闲" : `${schedulerStatus.active_run_count} 个运行中`}
+            </div>
+          </div>
+          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
+            <div className="text-[10px] uppercase text-cyan-600">上次整理</div>
+            <div className="mt-0.5 truncate text-[11px] text-gray-700" title={lastCompletedLabel}>
+              {lastCompletedLabel}
+            </div>
+          </div>
+          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
+            <div className="text-[10px] uppercase text-cyan-600">下次检查</div>
+            <div className="mt-0.5 truncate text-[11px] text-gray-700" title={nextCheckLabel}>
+              {nextCheckLabel}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {schedulerStatus && (
+        <div className="mt-2 rounded border border-cyan-100 bg-white px-2 py-1.5 text-[11px] text-cyan-800">
+          {profileRunLabel}
+        </div>
+      )}
+
+      <details className="mt-2 text-[10px] text-cyan-700">
+        <summary className="cursor-pointer select-none">调试 / 立即执行</summary>
+        <div className="mt-2 flex flex-wrap gap-1.5 rounded border border-cyan-100 bg-white p-2">
           <button
             type="button"
             data-testid="employee-curator-scan"
@@ -129,7 +180,7 @@ export function EmployeeCuratorReportsSection({
             onClick={onScan}
             className="h-7 rounded border border-cyan-200 bg-white px-2 text-[10px] text-cyan-700 hover:bg-cyan-100 disabled:opacity-60"
           >
-            {scanLoading ? "扫描中..." : "扫描"}
+            {scanLoading ? "扫描中..." : "立即 Scan（调试）"}
           </button>
           <button
             type="button"
@@ -138,33 +189,10 @@ export function EmployeeCuratorReportsSection({
             onClick={onRun}
             className="h-7 rounded border border-emerald-200 bg-white px-2 text-[10px] text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
           >
-            {runLoading ? "整理中..." : "Run"}
+            {runLoading ? "整理中..." : "立即 Run（调试）"}
           </button>
         </div>
-      </div>
-
-      {schedulerStatus && (
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
-          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
-            <div className="text-[10px] uppercase text-cyan-600">Interval</div>
-            <div className="mt-0.5 text-[11px] text-gray-700">
-              {schedulerStatus.interval_minutes} min
-            </div>
-          </div>
-          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
-            <div className="text-[10px] uppercase text-cyan-600">Idle</div>
-            <div className="mt-0.5 text-[11px] text-gray-700">
-              {schedulerStatus.idle ? "空闲" : `${schedulerStatus.active_run_count} 个运行中`}
-            </div>
-          </div>
-          <div className="rounded border border-cyan-100 bg-white px-2 py-1.5">
-            <div className="text-[10px] uppercase text-cyan-600">Profile</div>
-            <div className="mt-0.5 truncate text-[11px] text-gray-700" title={profileRunLabel}>
-              {profileRunLabel || "已纳入自动维护"}
-            </div>
-          </div>
-        </div>
-      )}
+      </details>
 
       {schedulerStatus?.last_error && (
         <div className="mt-2 rounded border border-amber-100 bg-white px-2 py-1.5 text-[11px] text-amber-700">
@@ -228,11 +256,6 @@ export function EmployeeCuratorReportsSection({
                 {expanded ? "收起报告" : "展开报告"}
               </button>
             </div>
-            {latest.report_path && (
-              <div className="mt-1 truncate text-[10px] text-gray-400" title={latest.report_path}>
-                {latest.report_path}
-              </div>
-            )}
           </div>
           {expanded && (
             <div

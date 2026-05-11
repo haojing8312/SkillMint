@@ -4,9 +4,9 @@ use crate::employee_runtime_adapter::employee_adapter::{
 };
 use crate::im::types::ImEvent;
 use crate::im::{
+    AgentInboundDispatchSession, EnsuredAgentSession,
     link_inbound_event_to_agent_session_with_pool as link_inbound_event_to_agent_session_binding_with_pool,
-    list_ensured_agent_sessions_for_event_with_pool, AgentInboundDispatchSession,
-    EnsuredAgentSession,
+    list_ensured_agent_sessions_for_event_with_pool,
 };
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
@@ -48,7 +48,6 @@ pub(crate) use group_run_entry::{
     run_group_step_with_pool_and_journal, start_employee_group_run_with_pool_and_journal,
 };
 use team_rules::{group_rule_matches_relation_types, normalize_member_employee_ids};
-use types::{default_group_execution_window, default_group_max_retry};
 pub use types::{
     AgentEmployee, CloneEmployeeGroupTemplateInput, CreateEmployeeGroupInput,
     CreateEmployeeTeamInput, CreateEmployeeTeamRuleInput, EmployeeCuratorChangedTarget,
@@ -60,6 +59,7 @@ pub use types::{
     GroupStepExecutionResult, SaveFeishuEmployeeAssociationInput, StartEmployeeGroupRunInput,
     UpsertAgentEmployeeInput,
 };
+use types::{default_group_execution_window, default_group_max_retry};
 
 async fn load_execute_reassignment_targets_with_pool(
     pool: &SqlitePool,
@@ -618,10 +618,6 @@ fn human_growth_summary(
     evidence: &Value,
 ) -> String {
     let trimmed = summary.trim();
-    if !trimmed.is_empty() && !matches!(trimmed, "add" | "replace" | "remove" | "update") {
-        return trimmed.to_string();
-    }
-
     if event_type.starts_with("memory_") {
         if let Some(preview) = read_growth_memory_preview(evidence) {
             return match event_type {
@@ -632,6 +628,9 @@ fn human_growth_summary(
                 _ => format!("更新 Profile Memory：{preview}"),
             };
         }
+        if !trimmed.is_empty() && !matches!(trimmed, "add" | "replace" | "remove" | "update") {
+            return trimmed.to_string();
+        }
         return match event_type {
             "memory_add" => "写入 Profile Memory".to_string(),
             "memory_replace" => "更新 Profile Memory".to_string(),
@@ -639,6 +638,10 @@ fn human_growth_summary(
             "memory_rollback" => "回滚 Profile Memory".to_string(),
             _ => "Profile Memory 已更新".to_string(),
         };
+    }
+
+    if !trimmed.is_empty() && !matches!(trimmed, "add" | "replace" | "remove" | "update") {
+        return trimmed.to_string();
     }
 
     if event_type.starts_with("skill_") {
@@ -703,17 +706,21 @@ fn human_growth_evidence_label(evidence: &Value) -> String {
 }
 
 fn read_growth_memory_preview(evidence: &Value) -> Option<String> {
-    let path = evidence.get("path").and_then(Value::as_str)?;
-    let content = std::fs::read_to_string(path).ok()?;
-    let preview = content
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or(content.trim())
-        .chars()
-        .take(80)
-        .collect::<String>();
-    (!preview.trim().is_empty()).then_some(preview)
+    [
+        evidence.get("content_preview").and_then(Value::as_str),
+        evidence.get("diff_summary").and_then(Value::as_str),
+        evidence
+            .pointer("/memory_version/content_preview")
+            .and_then(Value::as_str),
+        evidence
+            .pointer("/memory_version/diff_summary")
+            .and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty())
+    .map(|value| value.chars().take(120).collect::<String>())
 }
 
 fn parse_curator_findings(report_json: &str) -> Vec<EmployeeCuratorFinding> {

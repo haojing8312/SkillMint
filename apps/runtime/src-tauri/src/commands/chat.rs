@@ -3,8 +3,8 @@ use super::chat_compaction;
 use super::chat_runtime_io as chat_io;
 use super::chat_session_io;
 use super::skills::DbState;
-use crate::agent::runtime::{RuntimeTranscript, SessionAdmissionGateState, SessionRuntime};
 use crate::agent::AgentExecutor;
+use crate::agent::runtime::{RuntimeTranscript, SessionAdmissionGateState, SessionRuntime};
 use crate::approval_bus::ApprovalManager;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::runtime_environment::runtime_paths_from_app;
@@ -12,8 +12,8 @@ use crate::session_journal::SessionJournalStateHandle;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub use crate::agent::runtime::AskUserPendingSessionState;
@@ -701,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_memory_bundle_falls_back_to_legacy_memory_file() {
+    fn profile_memory_bundle_ignores_legacy_memory_file_for_profile_context() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let runtime_root = tmp.path().join("runtime-root");
         let memory_root = runtime_root.join("memory");
@@ -725,12 +725,9 @@ mod tests {
         );
         let bundle = chat_runtime_io::load_profile_memory_bundle(&locator);
 
-        assert_eq!(bundle.content, "legacy memory");
-        assert_eq!(bundle.source, "legacy");
-        assert_eq!(
-            bundle.source_path,
-            Some(legacy_memory_dir.join("MEMORY.md"))
-        );
+        assert_eq!(bundle.content, "");
+        assert_eq!(bundle.source, "none");
+        assert_eq!(bundle.source_path, None);
     }
 
     #[test]

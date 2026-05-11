@@ -50,6 +50,22 @@ function evidenceSummary(evidence: Record<string, unknown>) {
     .join(" · ");
 }
 
+function evidenceText(evidence: Record<string, unknown>, key: "content_preview" | "diff_summary") {
+  const direct = evidence[key];
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const memoryVersion = evidence.memory_version;
+  if (memoryVersion && typeof memoryVersion === "object" && !Array.isArray(memoryVersion)) {
+    const nested = (memoryVersion as Record<string, unknown>)[key];
+    if (typeof nested === "string" && nested.trim()) return nested.trim();
+  }
+  return "";
+}
+
+function memoryEvidenceSummary(eventType: string, evidence: Record<string, unknown>) {
+  if (!eventType.startsWith("memory_") && eventType !== "user_correction") return "";
+  return evidenceText(evidence, "content_preview") || evidenceText(evidence, "diff_summary");
+}
+
 export function EmployeeGrowthTimelineSection({
   loading,
   error,
@@ -88,9 +104,10 @@ export function EmployeeGrowthTimelineSection({
       ) : (
         <div data-testid="employee-growth-events" className="mt-3 space-y-2">
           {events.map((event) => {
-            const evidence = evidenceSummary(event.evidence_json);
+            const auditEvidence = evidenceSummary(event.evidence_json);
+            const memorySummary = memoryEvidenceSummary(event.event_type, event.evidence_json);
             const displaySummary =
-              event.display_summary?.trim() || event.summary?.trim() || event.target_label || eventLabel(event.event_type);
+              memorySummary || event.display_summary?.trim() || event.summary?.trim() || event.target_label || eventLabel(event.event_type);
             const targetLabel = event.target_label?.trim();
             const evidenceLabel = event.evidence_label?.trim();
             const sessionLabel = event.session_title?.trim();
@@ -120,13 +137,13 @@ export function EmployeeGrowthTimelineSection({
                     </span>
                   )}
                 </div>
-                {(event.session_id || event.target_id || evidence) && (
+                {(event.session_id || event.target_id || auditEvidence) && (
                   <details className="mt-2 text-[10px] text-gray-400">
                     <summary className="cursor-pointer select-none">审计详情</summary>
                     <div className="mt-1 space-y-1 rounded border border-gray-100 bg-gray-50 p-2">
                       {event.session_id && <div>session: {event.session_id}</div>}
                       {event.target_id && <div>target: {event.target_id}</div>}
-                      {evidence && <div>{evidence}</div>}
+                      {auditEvidence && <div>{auditEvidence}</div>}
                     </div>
                   </details>
                 )}

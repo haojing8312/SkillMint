@@ -1,11 +1,12 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 use crate::agent::types::{Tool, ToolContext};
 
@@ -160,7 +161,55 @@ impl MemoryTool {
 
     fn make_version_id() -> String {
         let timestamp = Utc::now().format("%Y%m%dT%H%M%S%6fZ");
-        format!("v{}", timestamp)
+        let nonce = Uuid::new_v4().simple().to_string();
+        format!("v{}_{}", timestamp, &nonce[..8])
+    }
+
+    fn memory_content_preview(content: &str) -> String {
+        content
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or_else(|| content.trim())
+            .chars()
+            .take(120)
+            .collect::<String>()
+    }
+
+    fn memory_change_preview(input: &Value, next_content: Option<&str>) -> String {
+        input["content"]
+            .as_str()
+            .map(Self::memory_content_preview)
+            .filter(|preview| !preview.trim().is_empty())
+            .or_else(|| {
+                next_content
+                    .map(Self::memory_content_preview)
+                    .filter(|preview| !preview.trim().is_empty())
+            })
+            .unwrap_or_default()
+    }
+
+    fn memory_diff_summary(input: &Value, action: &str, content_preview: &str) -> String {
+        input["diff_summary"]
+            .as_str()
+            .or_else(|| input["change_summary"].as_str())
+            .or_else(|| input["reason"].as_str())
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| match action {
+                "add" if !content_preview.trim().is_empty() => {
+                    format!("追加记忆：{content_preview}")
+                }
+                "replace" if !content_preview.trim().is_empty() => {
+                    format!("替换记忆：{content_preview}")
+                }
+                "remove" => "删除 Profile Memory".to_string(),
+                "rollback" if !content_preview.trim().is_empty() => {
+                    format!("回滚记忆：{content_preview}")
+                }
+                _ => format!("Profile Memory {action}"),
+            })
     }
 
     fn content_sha256(content: &str) -> String {
@@ -194,6 +243,8 @@ impl MemoryTool {
             .unwrap_or(metadata_path.as_path())
             .to_string_lossy()
             .replace('\\', "/");
+        let content_preview = Self::memory_change_preview(input, next_content);
+        let diff_summary = Self::memory_diff_summary(input, action, &content_preview);
         let entry = json!({
             "event_id": format!("evt_{version_id}"),
             "timestamp": Utc::now().to_rfc3339(),
@@ -204,6 +255,8 @@ impl MemoryTool {
             "snapshot_path": snapshot_rel,
             "metadata_path": metadata_rel,
             "content_sha256": Self::content_sha256(content),
+            "content_preview": content_preview,
+            "diff_summary": diff_summary,
             "deleted": next_content.is_none(),
             "source": input["source"].as_str().unwrap_or("agent"),
             "source_session_id": input["source_session_id"].as_str().unwrap_or(""),
@@ -310,8 +363,22 @@ impl MemoryTool {
             .or_else(|| input["reason"].as_str())
             .unwrap_or(action)
             .to_string();
+        let content_preview = record
+            .metadata
+            .get("content_preview")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let diff_summary = record
+            .metadata
+            .get("diff_summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let evidence = json!({
             "version_id": record.version_id,
+            "content_preview": content_preview,
+            "diff_summary": diff_summary,
             "memory_version": record.metadata,
             "scope": scope,
             "path": path.to_string_lossy().replace('\\', "/")
