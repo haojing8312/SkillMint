@@ -66,6 +66,12 @@ The counts below are the pre-Batch 3A baseline from `HEAD` before this classific
 These are compatibility boundaries that still anchor public commands, persisted aliases, or UI service contracts. They should be kept thin and marked temporary until callers move to neutral names.
 
 Representative files:
+- `apps/runtime/plugin-host/README.md`
+- `apps/runtime/plugin-host/package.json`
+- `apps/runtime/plugin-host/openclaw/package.json`
+- `apps/runtime/plugin-host/openclaw/plugin-sdk/index.ts`
+- `apps/runtime/plugin-host/src/loader.ts`
+- `apps/runtime/plugin-host/src/api.ts`
 - `apps/runtime/src-tauri/src/commands/openclaw_gateway.rs`
 - `apps/runtime/src-tauri/src/commands/openclaw_plugins.rs`
 - `apps/runtime/src-tauri/src/commands/openclaw_plugins/tauri_commands.rs`
@@ -74,7 +80,7 @@ Representative files:
 - `apps/runtime/src/types/im.ts`
 - `apps/runtime/src/components/settings/feishu/feishuSettingsService.ts`
 
-Removal rule: do not delete these until the Tauri command surface, frontend callers, persisted aliases such as `openclaw_agent_id`, and IM host dispatch paths have neutral replacements with regression coverage.
+Removal rule: do not delete these until the Tauri command surface, frontend callers, persisted aliases such as `openclaw_agent_id`, plugin-host SDK imports, and IM host dispatch paths have neutral replacements with regression coverage.
 
 ### B. Internal neutralization candidates that can be renamed or moved safely in small batches
 
@@ -107,6 +113,8 @@ Representative files:
 Removal rule: first prove no caller uses `/api/browser/compat` or the sidecar OpenClaw route engine, then remove sidecar tests and vendored code with replacement native provider or gateway coverage.
 
 Batch 3D caller audit result: `docs/plans/2026-05-11-browser-compat-caller-audit.md` shows browser compatibility is a known active temporary wrapper, not safe to delete yet. Runtime registration still exposes the unified `browser` compatibility tool through `/api/browser/compat`, so deletion is blocked until a native browser provider or neutral wrapper replaces that path.
+
+Batch 3E retirement plan result: `docs/plans/2026-05-11-plugin-host-openclaw-sdk-retirement-plan.md` classifies plugin-host/OpenClaw SDK compatibility as a retained temporary shim, not removed. Deletion is blocked until a Hermes-native platform adapter replacement exists and public command, package, service, frontend, test, and persisted alias callers have migrated to neutral names.
 
 ### D. Release-sensitive scripts, checks, and docs that require replacement or explicit deprecation
 
@@ -225,9 +233,15 @@ Result:
 ### Batch 3E. Plugin-host/OpenClaw SDK compatibility retirement plan
 
 Acceptance:
-- `[ ]` `apps/runtime/plugin-host/openclaw/**` and `openclaw/plugin-sdk` shim usage are classified as retained, renamed, or retired.
-- `[ ]` Official plugin host behavior has a Hermes-native platform adapter replacement plan or an explicit legacy-retirement plan.
-- `[ ]` Frontend and Tauri service contracts for `openclaw-lark` have neutral target names before public command removal.
+- `[x]` `apps/runtime/plugin-host/openclaw/**` and `openclaw/plugin-sdk` shim usage are classified as retained temporary shim surfaces.
+- `[x]` Official plugin host behavior has a Hermes-native platform adapter replacement plan or an explicit legacy-retirement plan.
+- `[x]` Frontend and Tauri service contracts for `openclaw-lark` have neutral target names before public command removal.
+- `[ ]` Hermes-native platform adapter replacement exists and active callers have migrated to neutral aliases.
+
+Result:
+- Batch 3E is documented in `docs/plans/2026-05-11-plugin-host-openclaw-sdk-retirement-plan.md`.
+- Plugin-host/OpenClaw SDK compatibility remains active as a temporary shim. It is not removed in Batch 3E.
+- Future code batches should introduce a neutral platform adapter host, plugin compatibility bridge, Feishu platform adapter service names, and public command aliases before removing OpenClaw-named surfaces.
 
 ## Risks
 

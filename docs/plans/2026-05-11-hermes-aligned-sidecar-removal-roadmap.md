@@ -303,22 +303,36 @@ cargo check
 
 #### Batch 3E. Plugin-host/OpenClaw SDK compatibility retirement plan
 
-**Status:** `[ ]`
+**Status:** `[~]` Audit and retirement plan complete; removal blocked until Hermes-native platform adapter replacement and public alias migration exist.
 
 **Scope:** Decide the retirement path for `openclaw/plugin-sdk` shim surfaces and official plugin-host compatibility.
 
+**Audit and plan:** `docs/plans/2026-05-11-plugin-host-openclaw-sdk-retirement-plan.md`
+
 **Acceptance:**
-- `[ ]` `apps/runtime/plugin-host/openclaw/**` and shim imports are classified as retained, renamed, or retired.
-- `[ ]` `openclaw-lark` public service names have neutral target names before public command removal.
-- `[ ]` Plugin-host compatibility is not deleted before a Hermes-native platform adapter replacement or explicit legacy-retirement plan exists.
+- `[x]` `apps/runtime/plugin-host/openclaw/**` and shim imports are classified as retained temporary shim surfaces.
+- `[x]` `openclaw-lark` public service names have neutral target names before public command removal.
+- `[x]` Plugin-host compatibility is not deleted before a Hermes-native platform adapter replacement or explicit legacy-retirement plan exists.
+- `[ ]` Hermes-native platform adapter replacement exists and active callers have migrated to neutral aliases.
 
 **Verification commands:**
 ```bash
 cd /mnt/d/code/workclaw
 git diff --check
 git status --short --branch
-# Re-run the reproducible bucket script from docs/plans/2026-05-11-openclaw-remnant-classification.md when updating classification counts.
+python3 - <<'PY'
+import subprocess, sys
+changed = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
+outside = [path for path in changed if not path.startswith('docs/plans/')]
+if outside:
+    print('\n'.join(outside))
+    sys.exit(1)
+print('docs_plans_only=OK')
+PY
+corepack pnpm test:release-docs
 ```
+
+**Batch 3E result:** Audit and retirement plan documented only. No runtime code, frontend code, Tauri code, plugin-host code, sidecar code, scripts, package manager files, tests, or vendored files were changed; plugin-host/OpenClaw SDK compatibility remains retained as a temporary shim.
 
 **Exit criteria:**
 - Batch 3A classification exists and points to smaller Batch 3B-3E work.
@@ -463,7 +477,7 @@ pnpm build:runtime
 
 **Batch 1, Batch 2, Batch 3A, Batch 3B-1, and Batch 3C are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, remaining OpenClaw references have a Batch 3 classification map, active README/docs narrative marks OpenClaw as historical legacy migration input, and existing OpenClaw vendor lanes have a documented replacement/deprecation plan.
 
-Next choose between **Batch 3B-2: Frontend visible copy**, **Batch 3D follow-up: native browser provider replacement**, and **Batch 3E: Plugin-host/OpenClaw SDK compatibility retirement plan**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E acceptance checks are ready. Batch 3D's caller audit is documented in `docs/plans/2026-05-11-browser-compat-caller-audit.md`; endpoint deletion remains blocked.
+Next choose between **Batch 3B-2: Frontend visible copy**, **Batch 3D follow-up: native browser provider replacement**, and **Batch 3E follow-up: Hermes-native platform adapter replacement and alias migration**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E replacement checks are ready. Batch 3D's caller audit is documented in `docs/plans/2026-05-11-browser-compat-caller-audit.md`; endpoint deletion remains blocked. Batch 3E's retirement plan is documented in `docs/plans/2026-05-11-plugin-host-openclaw-sdk-retirement-plan.md`; plugin-host/OpenClaw SDK compatibility deletion remains blocked.
 
 Batch 1 was chosen first because:
 
