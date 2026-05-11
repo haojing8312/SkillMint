@@ -487,7 +487,7 @@ pnpm build:runtime
 
 **Batch 1, Batch 2, Batch 3A, Batch 3B-1, and Batch 3C are complete**: Rust/Tauri now resolves IM routes natively, new code imports neutral IM ingress helpers, remaining OpenClaw references have a Batch 3 classification map, active README/docs narrative marks OpenClaw as historical legacy migration input, and existing OpenClaw vendor lanes have a documented replacement/deprecation plan.
 
-Batch 4A/4B is now the active implementation slice: MCP command add/restore/list-tools/call moves to native Rust stdio while preserving Tauri command names and the `mcp_servers` table. After Batch 4 validation passes, choose between **Batch 3D follow-up: native browser provider replacement** and **Batch 3E follow-up: Hermes-native platform adapter replacement and alias migration**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E replacement checks are ready. Batch 3D's caller audit is documented in `docs/plans/2026-05-11-browser-compat-caller-audit.md`; endpoint deletion remains blocked. Batch 3E's retirement plan is documented in `docs/plans/2026-05-11-plugin-host-openclaw-sdk-retirement-plan.md`; plugin-host/OpenClaw SDK compatibility deletion remains blocked.
+Batch 4A/4B is complete for active MCP add/restore/list-tools/call and dynamic tool registration: those paths now use native Rust stdio MCP while preserving Tauri command names and the `mcp_servers` table. The remaining sidecar-removal choices are **Batch 3D follow-up: native browser provider replacement** and **Batch 3E follow-up: Hermes-native platform adapter replacement and alias migration**. Do not start browser/vendor/plugin-host deletion until the specific Batch 3D-3E replacement checks are ready. Batch 3D's caller audit is documented in `docs/plans/2026-05-11-browser-compat-caller-audit.md`; endpoint deletion remains blocked. Batch 3E's retirement plan is documented in `docs/plans/2026-05-11-plugin-host-openclaw-sdk-retirement-plan.md`; plugin-host/OpenClaw SDK compatibility deletion remains blocked.
 
 Batch 1 was chosen first because:
 
@@ -497,7 +497,7 @@ Batch 1 was chosen first because:
 4. It creates the pattern for later: replace sidecar consumer first, delete endpoint later.
 5. It advances the Hermes direction by making routing runtime-owned and profile/IM aligned.
 
-Do **not** start with browser or MCP unless there is a blocking bug there. Those areas have external process/provider behavior and are higher risk.
+Do **not** start browser or IM platform replacement as part of the MCP closeout. Those areas have external process/provider behavior and need their own batches.
 
 ## 6. Acceptance Checklist
 
@@ -505,7 +505,7 @@ Do **not** start with browser or MCP unless there is a blocking bug there. Those
 - `[x]` Remaining OpenClaw references are classified before Batch 3 removal work.
 - `[ ]` No new code path calls `/api/browser/compat`.
 - `[x]` OpenClaw vendor sync lanes have a documented replacement/deprecation plan before removal.
-- `[ ]` MCP server restore/list/call works without sidecar HTTP.
+- `[x]` MCP server restore/list/call works without sidecar HTTP.
 - `[ ]` Browser tools execute without sidecar HTTP and remain in `browser` toolset.
 - `[ ]` Feishu/WeCom/channel connectors run through runtime gateway/platform adapters without sidecar base URL.
 - `[ ]` Root build/runtime scripts no longer build or package `apps/runtime/sidecar`.

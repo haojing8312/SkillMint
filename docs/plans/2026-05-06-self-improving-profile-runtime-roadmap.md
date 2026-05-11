@@ -282,7 +282,7 @@ profiles/<profile_id>/
 - `[~]` 将现有 tool metadata 映射到 toolset。当前 `toolsets` tool 使用 `ToolManifestEntry` 的 category/source/risk 字段，并通过工具名补齐 browser/mcp/im/media 等 projection；不改变原 metadata 和审批策略。
 - `[ ]` Skill 支持 `requires_toolsets`、`optional_toolsets`、`denied_toolsets`。
 - `[ ]` Profile 支持默认 allowed toolsets。
-- `[~]` MCP 和 sidecar 工具纳入统一 toolset gateway。当前 `mcp_*` 自动投影到 `mcp`，`browser_*` 自动投影到 `browser`；sidecar metadata 原地不变。
+- `[~]` MCP 和 sidecar 工具纳入统一 toolset gateway。当前 native MCP 工具发布 `ToolSource::Mcp` 并投影到 `mcp`，`browser_*` 自动投影到 `browser`；browser sidecar metadata 原地不变。
 
 验收标准：
 
@@ -305,7 +305,7 @@ profiles/<profile_id>/
 - `[x]` 第一批替换 `/api/openclaw/resolve-route`：IM route resolver 已由 Rust runtime 原生处理，保留当前调用契约和回归测试。
 - `[x]` 将 OpenClaw 命名的核心 routing/gateway 层迁移到中性 IM/profile runtime 命名，只保留必要的临时 adapter。
 - `[ ]` 删除 OpenClaw browser compatibility、vendor sync lanes 和 sidecar route endpoint。
-- `[ ]` 将 MCP server 管理、list/call tools 和动态工具注册迁入 native runtime，废弃 MCP sidecar bridge。
+- `[x]` 将 MCP server 管理、list/call tools 和动态工具注册迁入 native runtime，废弃 MCP sidecar bridge。当前 `add_mcp_server`、saved-server restore、list-tools 和 dynamic `mcp_<server>_<tool>` call 均走 Rust stdio MCP，不再走 `/api/mcp/*` sidecar HTTP。
 - `[ ]` 将 Feishu/WeCom/channel connector 迁入 gateway/platform adapter 边界，移除 `sidecar_base_url` 产品心智。
 - `[ ]` 将 browser automation backend 迁入 native browser provider，保留 Hermes-compatible browser tool schema。
 - `[ ]` 在所有消费者迁移后删除 `apps/runtime/sidecar`、sidecar lifecycle、bundle resources 和 sidecar build/test scripts。
@@ -314,7 +314,7 @@ profiles/<profile_id>/
 
 - `[x]` Rust/Tauri 不再调用 `/api/openclaw/resolve-route`。
 - `[ ]` OpenClaw compatibility 不再作为新 runtime 功能、文档或 release lane 的默认目标。
-- `[ ]` Browser、MCP、IM 工具都通过 native provider + Toolset Gateway 可观测，而不是通过 sidecar bridge 推断。
+- `[~]` Browser、MCP、IM 工具都通过 native provider + Toolset Gateway 可观测，而不是通过 sidecar bridge 推断。MCP 已由 native provider + `ToolSource::Mcp` 覆盖；browser/IM 仍待后续 native provider/platform adapter 批次。
 - `[ ]` Runtime startup 不再启动或 health-check sidecar process。
 - `[ ]` Desktop build/package 不再包含 `resources/sidecar-runtime`。
 
