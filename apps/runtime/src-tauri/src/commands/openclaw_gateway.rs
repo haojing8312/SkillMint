@@ -324,7 +324,7 @@ pub async fn plan_role_events_for_openclaw(
     event: &ImEvent,
 ) -> Result<Vec<ImRoleEventPayload>, String> {
     // Temporary OpenClaw compatibility adapter; native IM callers should use
-    // `plan_im_role_events`.
+    // `crate::commands::im_ingress::plan_im_role_events`.
     plan_im_role_events(pool, event).await
 }
 
@@ -333,7 +333,7 @@ pub async fn plan_role_dispatch_requests_for_openclaw(
     event: &ImEvent,
 ) -> Result<Vec<ImRoleDispatchRequest>, String> {
     // Temporary OpenClaw compatibility adapter; native IM callers should use
-    // `plan_im_role_dispatch_requests`.
+    // `crate::commands::im_ingress::plan_im_role_dispatch_requests`.
     plan_im_role_dispatch_requests(pool, event).await
 }
 
@@ -361,7 +361,7 @@ pub async fn resolve_openclaw_route_with_pool(
     event: &ImEvent,
 ) -> Result<serde_json::Value, String> {
     // Temporary OpenClaw compatibility adapter; native IM callers should use
-    // `resolve_im_route_with_pool`.
+    // `crate::commands::im_ingress::resolve_im_route_with_pool`.
     resolve_im_route_with_pool(pool, event).await
 }
 

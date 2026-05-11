@@ -1,9 +1,9 @@
 mod helpers;
 
+use runtime_lib::commands::im_ingress::resolve_im_route_with_pool;
 use runtime_lib::commands::im_routing::{
     upsert_im_routing_binding_with_pool, UpsertImRoutingBindingInput,
 };
-use runtime_lib::commands::openclaw_gateway::resolve_im_route_with_pool;
 use runtime_lib::im::types::{ImEvent, ImEventType};
 
 #[tokio::test]

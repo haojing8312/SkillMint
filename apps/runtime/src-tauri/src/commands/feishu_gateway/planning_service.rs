@@ -1,4 +1,4 @@
-use crate::commands::openclaw_gateway::{plan_im_role_dispatch_requests, plan_im_role_events};
+use crate::commands::im_ingress::{plan_im_role_dispatch_requests, plan_im_role_events};
 use crate::im::runtime_bridge::{ImRoleDispatchRequest, ImRoleEventPayload};
 use crate::im::types::ImEvent;
 use sqlx::SqlitePool;

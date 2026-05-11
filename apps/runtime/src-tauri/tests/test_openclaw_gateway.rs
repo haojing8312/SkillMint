@@ -1,12 +1,12 @@
 mod helpers;
 
 use runtime_lib::commands::im_config::bind_thread_roles_with_pool;
+use runtime_lib::commands::im_ingress::{plan_im_role_events, resolve_im_route_with_pool};
 use runtime_lib::commands::im_routing::{
     upsert_im_routing_binding_with_pool, UpsertImRoutingBindingInput,
 };
 use runtime_lib::commands::openclaw_gateway::{
-    parse_openclaw_payload, plan_im_role_events, resolve_im_route_with_pool,
-    validate_openclaw_auth_with_pool,
+    parse_openclaw_payload, validate_openclaw_auth_with_pool,
 };
 use runtime_lib::im::types::{ImEvent, ImEventType};
 

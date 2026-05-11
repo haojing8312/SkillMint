@@ -21,6 +21,7 @@ pub mod feishu_gateway;
 pub mod im_config;
 pub mod im_gateway;
 pub mod im_host;
+pub mod im_ingress;
 pub mod im_routing;
 pub mod mcp;
 pub mod models;

@@ -155,6 +155,7 @@ git grep -n 'api/openclaw/resolve-route\|call_sidecar_json("/api/openclaw/resolv
 2. Keep temporary wrappers for old function names only if existing callers need a short bridge.
 3. Update `matchedBy` strings only when downstream tests and UI expectations are migrated.
 4. Add comments marking any remaining `openclaw_*` names as temporary legacy adapters.
+5. Added `commands::im_ingress` as the neutral Rust facade for IM ingress and routing helpers; `commands::openclaw_gateway` now remains the public command and legacy compatibility boundary for these helpers.
 
 **Verification commands:**
 ```bash

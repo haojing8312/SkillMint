@@ -4,7 +4,7 @@ use crate::commands::feishu_gateway::{
     maybe_handle_feishu_approval_command_with_pool, parse_feishu_approval_command,
 };
 use crate::commands::im_gateway::{process_im_event, FeishuCallbackResult};
-use crate::commands::openclaw_gateway::{
+use crate::commands::im_ingress::{
     plan_im_role_dispatch_requests, plan_im_role_events, resolve_im_route_with_pool,
 };
 use crate::im::runtime_bridge::{

@@ -12,7 +12,7 @@ use crate::commands::feishu_gateway::types::FeishuInboundGateDecision;
 use crate::commands::im_gateway::process_im_event;
 use crate::commands::im_host::emit_inbound_dispatch_sessions;
 use crate::commands::im_host::maybe_handle_registered_approval_command_with_pool_and_app;
-use crate::commands::openclaw_gateway::resolve_im_route_with_pool;
+use crate::commands::im_ingress::resolve_im_route_with_pool;
 use crate::commands::skills::DbState;
 use crate::diagnostics::{self, ManagedDiagnosticsState};
 use crate::im::feishu_adapter::build_feishu_markdown_message;
