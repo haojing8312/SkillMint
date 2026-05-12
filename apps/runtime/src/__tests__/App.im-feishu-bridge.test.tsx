@@ -366,6 +366,11 @@ describe("App feishu IM bridge", () => {
             String(payload?.text ?? "").includes("项目经理"),
         ),
       ).toBe(true);
+      expect(
+        listWecomTextCalls().every(
+          (payload) => !("sidecar_base_url" in (payload as Record<string, unknown>)),
+        ),
+      ).toBe(true);
     });
   });
 

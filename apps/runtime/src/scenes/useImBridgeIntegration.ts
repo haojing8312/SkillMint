@@ -117,7 +117,6 @@ export function useImBridgeIntegration(options: {
       await invoke("send_wecom_text_message", {
         conversation_id: threadId,
         text,
-        sidecar_base_url: null,
       });
     };
 

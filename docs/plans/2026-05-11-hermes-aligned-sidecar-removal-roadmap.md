@@ -420,6 +420,8 @@ pnpm --dir apps/runtime exec tsc --noEmit
 
 **T2B partial result (2026-05-12):** WeCom public outbound text send now keeps the existing reply-plan test hook first, then defaults to a Rust runtime-owned native no-op transport response with `accepted=true`, stable `wecom:wecom-main` `message_id`/`msgid`, `delivered_at`, and `transport="native-wecom-noop"` without resolving a sidecar base URL or calling `/api/channels/send-message`. Send success and lifecycle events continue to be recorded in `ImChannelHostRuntimeState`; legacy WeCom sidecar start/health/stop compatibility helpers remain unchanged. This does not complete Feishu migration, channel diagnostics/catalog removal, settings UI cleanup, browser provider work, Batch 6/7, or full sidecar removal.
 
+**T2C partial result (2026-05-12):** Frontend WeCom connector settings, start/retry payloads, and IM outbound reply payloads no longer treat `sidecar_base_url` as active runtime configuration: settings normalization and save clear any legacy URL returned by the backend while preserving `corp_id`, `agent_id`, and `agent_secret`, the WeCom connector start payload omits `sidecarBaseUrl`, and runtime stream forwarding omits `sidecar_base_url` when invoking `send_wecom_text_message`. Backend/type compatibility fields and legacy helper code remain in place. This does not complete Feishu migration, channel diagnostics/catalog removal, browser provider work, Batch 6/7, or full sidecar removal.
+
 ### Batch 6. Native browser provider replaces sidecar Playwright HTTP bridge
 
 **Objective:** Preserve Hermes-compatible browser tool names while replacing sidecar HTTP execution with a native provider boundary.

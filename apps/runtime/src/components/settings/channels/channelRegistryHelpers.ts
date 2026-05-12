@@ -40,7 +40,7 @@ export function normalizeWecomGatewaySettings(
     corp_id: settings?.corp_id || "",
     agent_id: settings?.agent_id || "",
     agent_secret: settings?.agent_secret || "",
-    sidecar_base_url: settings?.sidecar_base_url || "",
+    sidecar_base_url: "",
   };
 }
 

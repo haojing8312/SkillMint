@@ -456,6 +456,57 @@ function installInvokeMock(overrides: Record<string, InvokeOverride> = {}) {
   });
 }
 
+function buildWecomRegistryEntriesWithLegacySettings(sidecarBaseUrl: string) {
+  return [
+    {
+      channel: "feishu",
+      display_name: "Feishu",
+      host_kind: "openclaw_plugin",
+      status: "stopped",
+      summary:
+        "飞书渠道由平台适配器兼容桥提供，WorkClaw 只负责路由、会话与回复生命周期。",
+      detail: "插件版本 2026.3.17 · 账号 default · 运行时未启动",
+      capabilities: ["media", "reactions", "threads", "outbound", "pairing"],
+      instance_id: "default",
+      last_error: null,
+      plugin_host: null,
+      runtime_status: null,
+      diagnostics: null,
+      monitor_status: null,
+      connector_settings: null,
+    },
+    {
+      channel: "wecom",
+      display_name: "企业微信连接器",
+      host_kind: "connector",
+      status: "ready",
+      summary: "企业微信渠道将通过平台 connector 宿主接入。",
+      detail: "凭据已配置 · wecom:wecom-main",
+      capabilities: ["receive_text", "send_text", "group_route", "direct_route"],
+      instance_id: "wecom:wecom-main",
+      last_error: null,
+      plugin_host: null,
+      runtime_status: {
+        running: false,
+        state: "ready",
+        started_at: null,
+        last_error: null,
+        reconnect_attempts: 0,
+        queue_depth: 0,
+        instance_id: "wecom:wecom-main",
+      },
+      diagnostics: null,
+      monitor_status: null,
+      connector_settings: {
+        corp_id: "ww-test-corp",
+        agent_id: "1000001",
+        agent_secret: "wecom-secret",
+        sidecar_base_url: sidecarBaseUrl,
+      },
+    },
+  ];
+}
+
 describe("SettingsView connector visibility", () => {
   beforeEach(() => {
     installInvokeMock();
@@ -1780,6 +1831,51 @@ describe("SettingsView connector visibility", () => {
       expect(invokeMock).toHaveBeenCalledWith("set_im_channel_host_running", {
         channel: "wecom",
         desiredRunning: true,
+      });
+    });
+  });
+
+  test("does not pass legacy sidecarBaseUrl when retrying the wecom connector", async () => {
+    installInvokeMock({
+      list_im_channel_registry: async () =>
+        buildWecomRegistryEntriesWithLegacySettings("http://127.0.0.1:8765"),
+      start_wecom_connector: async () => "wecom:wecom-main",
+    });
+
+    render(<SettingsView onClose={() => {}} initialTab="feishu" />);
+
+    const panel = await screen.findByTestId("connector-panel-wecom");
+    fireEvent.click(within(panel).getByRole("button", { name: "重试连接" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("start_wecom_connector", {
+        corpId: "ww-test-corp",
+        agentId: "1000001",
+        agentSecret: "wecom-secret",
+      });
+    });
+  });
+
+  test("does not save a legacy wecom sidecar URL as active connector settings", async () => {
+    installInvokeMock({
+      list_im_channel_registry: async () =>
+        buildWecomRegistryEntriesWithLegacySettings("http://127.0.0.1:8765"),
+      set_wecom_gateway_settings: async () => null,
+    });
+
+    render(<SettingsView onClose={() => {}} initialTab="feishu" />);
+
+    const panel = await screen.findByTestId("connector-panel-wecom");
+    fireEvent.click(within(panel).getByRole("button", { name: "保存企业微信连接器" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("set_wecom_gateway_settings", {
+        settings: {
+          corp_id: "ww-test-corp",
+          agent_id: "1000001",
+          agent_secret: "wecom-secret",
+          sidecar_base_url: "",
+        },
       });
     });
   });

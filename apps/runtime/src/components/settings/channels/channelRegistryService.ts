@@ -46,14 +46,22 @@ export function loadWecomGatewaySettings() {
   return invoke<WecomGatewaySettings>("get_wecom_gateway_settings");
 }
 
+function activeWecomGatewaySettings(settings: WecomGatewaySettings): WecomGatewaySettings {
+  return {
+    corp_id: settings.corp_id || "",
+    agent_id: settings.agent_id || "",
+    agent_secret: settings.agent_secret || "",
+    sidecar_base_url: "",
+  };
+}
+
 export async function saveWecomGatewaySettings(settings: WecomGatewaySettings) {
-  await invoke("set_wecom_gateway_settings", { settings });
+  await invoke("set_wecom_gateway_settings", { settings: activeWecomGatewaySettings(settings) });
   return loadWecomGatewaySettings();
 }
 
 export function startWecomConnector(settings?: Partial<WecomGatewaySettings>) {
   return invoke<string>("start_wecom_connector", {
-    sidecarBaseUrl: settings?.sidecar_base_url || null,
     corpId: settings?.corp_id || null,
     agentId: settings?.agent_id || null,
     agentSecret: settings?.agent_secret || null,
