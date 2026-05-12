@@ -7,63 +7,6 @@ use runtime_lib::commands::wecom_gateway::{
     start_wecom_connector_with_pool, stop_wecom_connector_with_pool,
     test_support as wecom_test_support,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-
-async fn spawn_mock_wecom_sidecar(
-    expected_requests: usize,
-) -> (
-    String,
-    tokio::task::JoinHandle<Vec<(String, serde_json::Value)>>,
-) {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind mock sidecar");
-    let addr = listener.local_addr().expect("local addr");
-    let handle = tokio::spawn(async move {
-        let mut requests = Vec::new();
-        for _ in 0..expected_requests {
-            let (mut socket, _) = listener.accept().await.expect("accept");
-            let mut buf = vec![0u8; 64 * 1024];
-            let n = socket.read(&mut buf).await.expect("read request");
-            let raw = String::from_utf8_lossy(&buf[..n]).to_string();
-            let request_line = raw.lines().next().unwrap_or_default().to_string();
-            let path = request_line
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("/")
-                .to_string();
-            let body = raw.split("\r\n\r\n").nth(1).unwrap_or("{}");
-            let body_json: serde_json::Value =
-                serde_json::from_str(body).unwrap_or_else(|_| serde_json::json!({}));
-            requests.push((path.clone(), body_json.clone()));
-
-            let output = match path.as_str() {
-                "/api/channels/send-message" => serde_json::json!({
-                    "message_id": "wecom-msg-1",
-                    "delivered_at": "2026-03-10T10:00:01Z"
-                }),
-                _ => serde_json::json!({}),
-            };
-
-            let response_body = serde_json::json!({
-                "output": output.to_string()
-            })
-            .to_string();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response_body.len(),
-                response_body
-            );
-            socket
-                .write_all(response.as_bytes())
-                .await
-                .expect("write response");
-        }
-        requests
-    });
-    (format!("http://{}", addr), handle)
-}
 
 #[tokio::test]
 async fn resolve_wecom_sidecar_base_url_falls_back_to_generic_im_sidecar_key() {
@@ -164,29 +107,45 @@ async fn wecom_connector_start_status_stop_uses_native_runtime_state_without_sid
 }
 
 #[tokio::test]
-async fn wecom_text_send_still_uses_channel_neutral_sidecar_endpoint() {
+async fn wecom_text_send_uses_native_noop_adapter_without_sidecar() {
     let (pool, _tmp) = helpers::setup_test_db().await;
-    let (base_url, server_task) = spawn_mock_wecom_sidecar(1).await;
-    set_app_setting(&pool, "im_sidecar_base_url", &base_url)
-        .await
-        .expect("set generic sidecar");
+    let host_runtime_state = wecom_test_support::new_wecom_host_runtime_state_for_tests();
+    wecom_test_support::clear_wecom_test_hooks();
 
     let send_result = send_wecom_text_message_with_pool(
         &pool,
         "conversation-1".to_string(),
         "hello".to_string(),
-        None,
-        None,
+        Some(&host_runtime_state),
+        Some("http://127.0.0.1:1".to_string()),
     )
     .await
-    .expect("send text");
-    assert!(send_result.contains("wecom-msg-1"));
+    .expect("send text without sidecar");
+    let send_result: serde_json::Value =
+        serde_json::from_str(&send_result).expect("parse native send result");
+    assert_eq!(send_result["accepted"], true);
+    assert_eq!(send_result["message_id"], "wecom:wecom-main");
+    assert_eq!(send_result["msgid"], "wecom:wecom-main");
+    assert_eq!(send_result["transport"], "native-wecom-noop");
+    assert!(send_result["delivered_at"]
+        .as_str()
+        .expect("delivered_at timestamp")
+        .contains('T'));
 
-    let requests = server_task.await.expect("mock sidecar task");
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].0, "/api/channels/send-message");
-    assert_eq!(requests[0].1["instance_id"], "wecom:wecom-main");
-    assert_eq!(requests[0].1["request"]["thread_id"], "conversation-1");
-    assert_eq!(requests[0].1["request"]["reply_target"], "conversation-1");
-    assert_eq!(requests[0].1["request"]["text"], "hello");
+    let runtime_status = wecom_test_support::wecom_runtime_status_for_tests(&host_runtime_state)
+        .expect("runtime status persisted")
+        .expect("wecom runtime status");
+    let logs = runtime_status["recent_logs"]
+        .as_array()
+        .expect("recent logs")
+        .iter()
+        .map(|entry| entry.as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(logs
+        .iter()
+        .any(|entry| *entry == "[wecom] reply_lifecycle phase=processing_started"));
+    assert!(logs.iter().any(|entry| *entry == "[wecom] send_result"));
+    assert!(logs
+        .iter()
+        .any(|entry| *entry == "[wecom] reply_lifecycle phase=fully_complete"));
 }

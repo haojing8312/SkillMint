@@ -6,10 +6,7 @@ use crate::commands::feishu_gateway::{call_sidecar_json, get_app_setting, set_ap
 use crate::commands::im_host::lifecycle::{
     SessionLifecycleDispatch, SessionProcessingStopDispatch,
 };
-use crate::commands::im_host::{
-    build_sidecar_channel_instance_id, build_sidecar_text_message_request,
-    parse_sidecar_channel_health,
-};
+use crate::commands::im_host::{build_sidecar_channel_instance_id, parse_sidecar_channel_health};
 use crate::commands::im_host::{
     get_im_channel_runtime_status_in_state, record_im_channel_runtime_status,
     ImChannelHostRuntimeState,
@@ -152,6 +149,17 @@ fn stopped_wecom_connector_status() -> WecomConnectorStatus {
         queue_depth: 0,
         instance_id: default_wecom_instance_id(),
     }
+}
+
+fn build_native_wecom_noop_send_response() -> serde_json::Value {
+    let message_id = default_wecom_instance_id();
+    serde_json::json!({
+        "message_id": message_id.clone(),
+        "msgid": message_id,
+        "accepted": true,
+        "delivered_at": chrono::Utc::now().to_rfc3339(),
+        "transport": "native-wecom-noop",
+    })
 }
 
 fn record_native_wecom_connector_status_in_state(
@@ -383,6 +391,8 @@ pub async fn send_wecom_text_message_with_pool(
     host_runtime_state: Option<&ImChannelHostRuntimeState>,
     sidecar_base_url: Option<String>,
 ) -> Result<String, String> {
+    let _ = pool;
+    let _ = sidecar_base_url;
     if let Some(host_runtime_state) = host_runtime_state {
         let _ = record_wecom_runtime_event_in_state(
             host_runtime_state,
@@ -395,10 +405,6 @@ pub async fn send_wecom_text_message_with_pool(
         );
     }
 
-    let resolved_sidecar_base_url = resolve_wecom_sidecar_base_url(pool, sidecar_base_url).await?;
-    let instance_id =
-        build_sidecar_channel_instance_id(DEFAULT_WECOM_ADAPTER_NAME, DEFAULT_WECOM_CONNECTOR_ID);
-    let request_payload = build_sidecar_text_message_request(&instance_id, &conversation_id, &text);
     let test_hook = wecom_outbound_send_hook_slot()
         .lock()
         .ok()
@@ -406,12 +412,7 @@ pub async fn send_wecom_text_message_with_pool(
     let response = if let Some(hook) = test_hook {
         hook(&conversation_id, &text)
     } else {
-        call_sidecar_json(
-            "/api/channels/send-message",
-            request_payload,
-            resolved_sidecar_base_url,
-        )
-        .await
+        Ok(build_native_wecom_noop_send_response())
     };
     match response {
         Ok(response) => {

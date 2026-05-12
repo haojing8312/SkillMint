@@ -60,26 +60,10 @@ pub(crate) fn parse_sidecar_channel_health(
     }
 }
 
-pub(crate) fn build_sidecar_text_message_request(
-    instance_id: &str,
-    conversation_id: &str,
-    text: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "instance_id": instance_id,
-        "request": {
-            "thread_id": conversation_id,
-            "reply_target": conversation_id,
-            "text": text,
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        build_sidecar_channel_instance_id, build_sidecar_text_message_request,
-        is_sidecar_channel_running, parse_sidecar_channel_health,
+        build_sidecar_channel_instance_id, is_sidecar_channel_running, parse_sidecar_channel_health,
     };
 
     #[test]
@@ -113,14 +97,5 @@ mod tests {
         assert_eq!(snapshot.started_at.as_deref(), Some("2026-04-14T00:00:00Z"));
         assert_eq!(snapshot.reconnect_attempts, 2);
         assert_eq!(snapshot.queue_depth, 5);
-    }
-
-    #[test]
-    fn builds_sidecar_send_message_request() {
-        let payload = build_sidecar_text_message_request("wecom:main", "room-1", "hello");
-        assert_eq!(payload["instance_id"], "wecom:main");
-        assert_eq!(payload["request"]["thread_id"], "room-1");
-        assert_eq!(payload["request"]["reply_target"], "room-1");
-        assert_eq!(payload["request"]["text"], "hello");
     }
 }

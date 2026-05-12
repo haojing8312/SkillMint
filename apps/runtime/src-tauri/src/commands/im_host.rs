@@ -103,10 +103,7 @@ pub(crate) use runtime_waiters::{
     drop_pending_runtime_request_with_status, fail_pending_runtime_requests_with_status,
     register_pending_runtime_request_with_status,
 };
-pub(crate) use sidecar_channel::{
-    build_sidecar_channel_instance_id, build_sidecar_text_message_request,
-    parse_sidecar_channel_health,
-};
+pub(crate) use sidecar_channel::{build_sidecar_channel_instance_id, parse_sidecar_channel_health};
 pub(crate) use startup_restore::restore_im_channels_with_pool;
 pub(crate) use target_resolver::{
     build_direct_reply_route_target, resolve_dispatch_thread_target, ImDirectRouteTargetOptions,
