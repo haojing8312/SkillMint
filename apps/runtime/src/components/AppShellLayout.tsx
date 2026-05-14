@@ -16,6 +16,7 @@ type InstallDialogProps = ComponentProps<typeof InstallDialog>;
 
 interface AppShellLayoutProps {
   activeMainView: SidebarProps["activeMainView"];
+  isSettingsActive?: SidebarProps["isSettingsActive"];
   selectedSkillId: string | null;
   visibleSessions: SidebarProps["sessions"];
   selectedSessionId: string | null;
@@ -42,6 +43,7 @@ interface AppShellLayoutProps {
 
 export function AppShellLayout({
   activeMainView,
+  isSettingsActive = false,
   selectedSkillId,
   visibleSessions,
   selectedSessionId,
@@ -71,6 +73,7 @@ export function AppShellLayout({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar
           activeMainView={activeMainView}
+          isSettingsActive={isSettingsActive}
           onOpenStartTask={handleOpenStartTask}
           onOpenExperts={handleOpenExpertsView}
           onOpenEmployees={handleOpenEmployeesView}
@@ -85,7 +88,7 @@ export function AppShellLayout({
           onCollapse={() => setSidebarCollapsed((prev) => !prev)}
           collapsed={sidebarCollapsed}
         />
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="relative flex flex-1 flex-col overflow-hidden">
           <ModelSetupHintBanner
             show={shouldShowModelSetupHint}
             onDismiss={dismissModelSetupHint}

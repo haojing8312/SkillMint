@@ -121,7 +121,7 @@ profiles/<profile_id>/
 - `[x]` 将旧员工 `AGENTS.md / SOUL.md / USER.md` 迁移到 `instructions/RULES.md / PERSONA.md / USER_CONTEXT.md`，并停止生成 OpenClaw-style mirror 目录。
 - `[~]` 将聊天会话、员工入口、IM 路由、团队运行入口接入 `profile_id`。
 - `[~]` 保留旧 `employee_id` UI/API 兼容层，但内部新上下文使用 profile。
-- `[ ]` 在员工中心展示 profile runtime 状态：记忆、技能、工具集、最近成长事件。
+- `[x]` 在员工中心展示 profile runtime 状态：记忆、技能、工具集、最近成长事件。2026-05-12 Batch A 在员工详情页新增 AI 员工运行时状态面板，聚合 Profile Home、Memory OS、Skill OS、Toolsets、Growth、Curator 只读证据。
 
 验收标准：
 

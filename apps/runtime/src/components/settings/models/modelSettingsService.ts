@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriRuntimeAvailable } from "../../../lib/tauriRuntime";
 import {
   DEFAULT_MODEL_PROVIDER_ID,
   buildModelFormFromCatalogItem,
@@ -145,10 +146,16 @@ export async function syncConnectionToRouting(
 }
 
 export async function listModelConfigs() {
+  if (!isTauriRuntimeAvailable()) {
+    return [];
+  }
   return invoke<ModelConfig[]>("list_model_configs");
 }
 
 export async function listProviderConfigs() {
+  if (!isTauriRuntimeAvailable()) {
+    return [];
+  }
   return invoke<ProviderConfig[]>("list_provider_configs");
 }
 

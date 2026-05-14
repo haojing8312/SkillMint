@@ -18,6 +18,7 @@ import { EmployeeCuratorReportsSection } from "../tools/EmployeeCuratorReportsSe
 import { EmployeeGrowthTimelineSection } from "../tools/EmployeeGrowthTimelineSection";
 import { EmployeeProfileFilesSection } from "../tools/EmployeeProfileFilesSection";
 import { EmployeeProfileMemoryStatusBar } from "../tools/EmployeeProfileMemoryStatusBar";
+import { EmployeeProfileRuntimeStatusPanel } from "../tools/EmployeeProfileRuntimeStatusPanel";
 import { EmployeeSkillOsSection } from "../tools/EmployeeSkillOsSection";
 
 type EmployeeHubFeishuRuntimeStatus = ReturnType<typeof toEmployeeHubFeishuRuntimeStatus>;
@@ -322,6 +323,15 @@ export function EmployeeHubEmployeesSection({
                 onOpenEmployeeCreatorSkill={() =>
                   onOpenEmployeeCreatorSkill?.({ mode: "update", employeeId: selectedEmployee.id })
                 }
+              />
+
+              <EmployeeProfileRuntimeStatusPanel
+                authorizedSkillIds={selectedEmployeeAuthorizedSkills.map((item) => item.id)}
+                curatorReports={curatorReports}
+                growthTimeline={growthTimeline}
+                profileMemoryStatus={profileMemoryStatus}
+                profileView={profileView}
+                skillOsIndex={skillOsIndex}
               />
 
               <EmployeeProfileMemoryStatusBar

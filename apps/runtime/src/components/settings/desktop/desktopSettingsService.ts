@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isTauriRuntimeAvailable } from "../../../lib/tauriRuntime";
 import type { RuntimePreferences } from "../../../types";
 
 export interface DesktopLifecyclePaths {
@@ -93,45 +94,84 @@ export function normalizeRuntimePreferences(raw: unknown): RuntimePreferences {
 }
 
 export async function getRuntimePreferences() {
+  if (!isTauriRuntimeAvailable()) {
+    return DEFAULT_RUNTIME_PREFERENCES;
+  }
   return invoke<RuntimePreferences>("get_runtime_preferences");
 }
 
 export async function saveRuntimeLanguagePreferences(input: RuntimeLanguagePreferencesInput) {
+  if (!isTauriRuntimeAvailable()) {
+    return normalizeRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      ...input,
+    });
+  }
   return invoke<RuntimePreferences>("set_runtime_preferences", { input });
 }
 
 export async function saveDesktopRuntimePreferences(input: DesktopRuntimePreferencesInput) {
+  if (!isTauriRuntimeAvailable()) {
+    return normalizeRuntimePreferences({
+      ...DEFAULT_RUNTIME_PREFERENCES,
+      ...input,
+    });
+  }
   return invoke<RuntimePreferences>("set_runtime_preferences", { input });
 }
 
 export async function getDesktopLifecyclePaths() {
+  if (!isTauriRuntimeAvailable()) {
+    return null;
+  }
   return invoke<DesktopLifecyclePaths>("get_desktop_lifecycle_paths");
 }
 
 export async function scheduleDesktopRuntimeRootMigration(targetRoot: string) {
+  if (!isTauriRuntimeAvailable()) {
+    return null;
+  }
   return invoke("schedule_desktop_runtime_root_migration", { targetRoot });
 }
 
 export async function getDesktopDiagnosticsStatus() {
+  if (!isTauriRuntimeAvailable()) {
+    return null;
+  }
   return invoke<DesktopDiagnosticsStatus>("get_desktop_diagnostics_status");
 }
 
 export async function openDesktopPath(path: string) {
+  if (!isTauriRuntimeAvailable()) {
+    return null;
+  }
   return invoke("open_desktop_path", { path });
 }
 
 export async function clearDesktopCacheAndLogs() {
+  if (!isTauriRuntimeAvailable()) {
+    return { removed_files: 0, removed_dirs: 0 } satisfies DesktopCleanupResult;
+  }
   return invoke<DesktopCleanupResult>("clear_desktop_cache_and_logs");
 }
 
 export async function exportDesktopEnvironmentSummary() {
+  if (!isTauriRuntimeAvailable()) {
+    return "";
+  }
   return invoke<string>("export_desktop_environment_summary");
 }
 
 export async function openDesktopDiagnosticsDir() {
+  if (!isTauriRuntimeAvailable()) {
+    return null;
+  }
   return invoke("open_desktop_diagnostics_dir");
 }
 
 export async function exportDesktopDiagnosticsBundle() {
+  if (!isTauriRuntimeAvailable()) {
+    return "";
+  }
   return invoke<string>("export_desktop_diagnostics_bundle");
 }

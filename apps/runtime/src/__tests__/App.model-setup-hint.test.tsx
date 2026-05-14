@@ -50,8 +50,15 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 vi.mock("../components/Sidebar", () => ({
   Sidebar: (props: any) => (
     <div>
-      <button onClick={props.onOpenStartTask}>open-start-task</button>
-      <button onClick={props.onSettings}>open-settings</button>
+      <button
+        aria-pressed={!props.isSettingsActive && props.activeMainView === "start-task"}
+        onClick={props.onOpenStartTask}
+      >
+        open-start-task
+      </button>
+      <button aria-pressed={Boolean(props.isSettingsActive)} onClick={props.onSettings}>
+        open-settings
+      </button>
     </div>
   ),
 }));
@@ -200,6 +207,8 @@ describe("App model setup hint", () => {
     await waitFor(() => {
       expect(screen.getByTestId("settings-view")).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: "open-settings" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "open-start-task" })).toHaveAttribute("aria-pressed", "false");
   });
 
   test("remembers dismissal across reload when still no model config", async () => {
@@ -951,7 +960,7 @@ describe("App model setup hint", () => {
     expect(screen.queryByTestId("model-setup-gate")).not.toBeInTheDocument();
   });
 
-  test("keeps the initial model setup gate below the desktop titlebar", async () => {
+  test("keeps the initial model setup gate scoped to the main pane below the desktop titlebar", async () => {
     render(<App />);
 
     await waitFor(() => {
@@ -959,7 +968,10 @@ describe("App model setup hint", () => {
     });
 
     expect(screen.getByTestId("app-titlebar")).toBeInTheDocument();
-    expect(screen.getByTestId("model-setup-gate")).toHaveClass("top-11");
+    expect(screen.getByTestId("model-setup-gate")).toHaveClass("absolute");
+    expect(screen.getByTestId("model-setup-gate")).toHaveClass("inset-0");
+    expect(screen.getByTestId("model-setup-gate")).not.toHaveClass("fixed");
+    expect(screen.getByTestId("model-setup-gate")).not.toHaveClass("top-11");
   });
 
   test("can reset first-use onboarding from dev settings tools and bring the gate back", async () => {

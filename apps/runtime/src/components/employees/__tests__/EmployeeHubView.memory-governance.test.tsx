@@ -521,6 +521,14 @@ describe("EmployeeHubView memory governance", () => {
     expect(screen.getByTestId("employee-profile-artifacts")).toHaveTextContent("instructions");
     expect(screen.getByTestId("employee-profile-artifacts")).toHaveTextContent("memories");
     expect(screen.getByTestId("employee-profile-artifacts")).toHaveTextContent("curator");
+    expect(screen.getByTestId("employee-profile-runtime-status")).toHaveTextContent("AI 员工运行时状态");
+    expect(screen.getByTestId("employee-profile-runtime-status")).toHaveTextContent("profile-sales");
+    expect(screen.getByTestId("employee-profile-runtime-memory")).toHaveTextContent("Profile Memory 可用");
+    expect(screen.getByTestId("employee-profile-runtime-skills")).toHaveTextContent("2 个技能授权");
+    expect(screen.getByTestId("employee-profile-runtime-toolsets")).toHaveTextContent("memory · web");
+    expect(screen.getByTestId("employee-profile-runtime-growth")).toHaveTextContent("3 条成长证据");
+    expect(screen.getByTestId("employee-profile-runtime-curator")).toHaveTextContent("1 份 Curator 报告");
+    expect(screen.getByTestId("employee-profile-runtime-status")).toHaveTextContent("Canonical Profile Runtime");
     expect(screen.getByText("导出 Profile")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("employee-profile-export"));
     await waitFor(() => {

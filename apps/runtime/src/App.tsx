@@ -462,6 +462,7 @@ export default function App() {
   return (
     <AppShellLayout
       activeMainView={activeMainView}
+      isSettingsActive={showSettings}
       selectedSkillId={selectedSkillId}
       visibleSessions={visibleSessions}
       selectedSessionId={selectedSessionId}

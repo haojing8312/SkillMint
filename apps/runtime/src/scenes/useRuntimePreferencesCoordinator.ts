@@ -1,9 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useState } from "react";
 import type { RuntimePreferences } from "../types";
+import {
+  isTauriInvokeUnavailableError,
+  isTauriRuntimeAvailable,
+} from "../lib/tauriRuntime";
 
 const DEFAULT_OPERATION_PERMISSION_MODE: "standard" | "full_access" =
   "standard";
+
+function warnRuntimePreferenceFailure(label: string, error: unknown) {
+  if (isTauriInvokeUnavailableError(error)) {
+    return;
+  }
+  console.warn(`${label}失败:`, error);
+}
 
 export function useRuntimePreferencesCoordinator() {
   const [defaultWorkDir, setDefaultWorkDir] = useState("");
@@ -12,6 +23,12 @@ export function useRuntimePreferencesCoordinator() {
   >(DEFAULT_OPERATION_PERMISSION_MODE);
 
   const loadRuntimePreferences = useCallback(async () => {
+    if (!isTauriRuntimeAvailable()) {
+      setDefaultWorkDir("");
+      setOperationPermissionMode(DEFAULT_OPERATION_PERMISSION_MODE);
+      return;
+    }
+
     try {
       const prefs = await invoke<RuntimePreferences>("get_runtime_preferences");
       if (!prefs || typeof prefs !== "object") {
@@ -30,7 +47,7 @@ export function useRuntimePreferencesCoordinator() {
           : "standard",
       );
     } catch (error) {
-      console.warn("加载运行时偏好失败:", error);
+      warnRuntimePreferenceFailure("加载运行时偏好", error);
       setDefaultWorkDir("");
       setOperationPermissionMode(DEFAULT_OPERATION_PERMISSION_MODE);
     }
@@ -46,6 +63,9 @@ export function useRuntimePreferencesCoordinator() {
       if (normalizedDefault) {
         return normalizedDefault;
       }
+      if (!isTauriRuntimeAvailable()) {
+        return "";
+      }
       try {
         const prefs = await invoke<RuntimePreferences>("get_runtime_preferences");
         const resolvedDefault =
@@ -59,7 +79,7 @@ export function useRuntimePreferencesCoordinator() {
         }
         return resolvedDefault;
       } catch (error) {
-        console.warn("加载默认工作目录失败:", error);
+        warnRuntimePreferenceFailure("加载默认工作目录", error);
         return "";
       }
     },

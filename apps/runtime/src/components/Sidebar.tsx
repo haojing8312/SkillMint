@@ -21,6 +21,7 @@ import { BRANDING, brandLogoSrc } from "../lib/branding";
 
 interface Props {
   activeMainView: "start-task" | "experts" | "experts-new" | "packaging" | "employees";
+  isSettingsActive?: boolean;
   onOpenStartTask: () => void;
   onOpenExperts: () => void;
   onOpenEmployees: () => void;
@@ -38,6 +39,7 @@ interface Props {
 
 export function Sidebar({
   activeMainView,
+  isSettingsActive = false,
   onOpenStartTask,
   onOpenExperts,
   onOpenEmployees,
@@ -55,9 +57,9 @@ export function Sidebar({
   const [searchQuery, setSearchQuery] = useState("");
   const sessionListRef = useRef<HTMLDivElement | null>(null);
 
-  const isStartTask = activeMainView === "start-task";
-  const isExperts = activeMainView === "experts" || activeMainView === "experts-new";
-  const isEmployees = activeMainView === "employees";
+  const isStartTask = !isSettingsActive && activeMainView === "start-task";
+  const isExperts = !isSettingsActive && (activeMainView === "experts" || activeMainView === "experts-new");
+  const isEmployees = !isSettingsActive && activeMainView === "employees";
   const iconClassName = "h-4 w-4 flex-shrink-0";
   const navButtonBaseClass =
     "sm-btn w-full justify-start rounded-xl border px-3 py-2.5 text-[13px] font-medium transition-colors";
@@ -142,6 +144,7 @@ export function Sidebar({
         </button>
         <button
           onClick={onOpenStartTask}
+          aria-pressed={isStartTask}
           className={`${collapsedNavButtonClass} ${
             isStartTask ? collapsedNavButtonActiveClass : ""
           }`}
@@ -152,6 +155,7 @@ export function Sidebar({
         </button>
         <button
           onClick={onOpenExperts}
+          aria-pressed={isExperts}
           className={`${collapsedNavButtonClass} ${
             isExperts ? collapsedNavButtonActiveClass : ""
           }`}
@@ -162,6 +166,7 @@ export function Sidebar({
         </button>
         <button
           onClick={onOpenEmployees}
+          aria-pressed={isEmployees}
           className={`${collapsedNavButtonClass} ${
             isEmployees ? collapsedNavButtonActiveClass : ""
           }`}
@@ -172,7 +177,10 @@ export function Sidebar({
         </button>
         <button
           onClick={onSettings}
-          className="sm-btn sm-btn-ghost w-8 h-8 rounded-md mt-auto"
+          aria-pressed={isSettingsActive}
+          className={`${collapsedNavButtonClass} mt-auto ${
+            isSettingsActive ? collapsedNavButtonActiveClass : ""
+          }`}
           title="设置"
           aria-label="设置"
         >
@@ -331,7 +339,12 @@ export function Sidebar({
       <div className="sm-divider p-3 space-y-2 border-t">
         <button
           onClick={onSettings}
-          className="sm-btn sm-btn-secondary w-full text-sm py-1.5 rounded-lg"
+          aria-pressed={isSettingsActive}
+          className={
+            isSettingsActive
+              ? `${navButtonBaseClass} ${navButtonActiveClass}`
+              : "sm-btn sm-btn-secondary w-full text-sm py-1.5 rounded-lg"
+          }
         >
           <Settings2 className={iconClassName} />
           设置
