@@ -525,6 +525,8 @@ pub(super) async fn apply_current_schema(pool: &SqlitePool) -> Result<()> {
             parent_step_id TEXT NOT NULL DEFAULT '',
             assignee_employee_id TEXT NOT NULL DEFAULT '',
             dispatch_source_employee_id TEXT NOT NULL DEFAULT '',
+            assignee_profile_id TEXT,
+            dispatch_source_profile_id TEXT,
             phase TEXT NOT NULL DEFAULT '',
             step_type TEXT NOT NULL DEFAULT 'execute',
             step_kind TEXT NOT NULL DEFAULT 'execute',
@@ -898,6 +900,24 @@ mod tests {
         assert!(
             session_columns.iter().any(|name| name == "profile_id"),
             "sessions should include nullable profile_id"
+        );
+
+        let group_run_step_columns: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('group_run_steps')")
+                .fetch_all(&pool)
+                .await
+                .expect("query group_run_steps columns");
+        assert!(
+            group_run_step_columns
+                .iter()
+                .any(|name| name == "assignee_profile_id"),
+            "group_run_steps should include nullable assignee_profile_id"
+        );
+        assert!(
+            group_run_step_columns
+                .iter()
+                .any(|name| name == "dispatch_source_profile_id"),
+            "group_run_steps should include nullable dispatch_source_profile_id"
         );
 
         let indexes: Vec<String> = sqlx::query_scalar(

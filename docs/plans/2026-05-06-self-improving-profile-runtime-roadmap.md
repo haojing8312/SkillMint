@@ -128,7 +128,7 @@ profiles/<profile_id>/
 - `[x]` 新创建员工必须拥有 profile home。当前通过员工助手/团队模板应用画像以及普通桌面 upsert 都会创建 canonical profile home；员工详情读取/导出会修复空 `profile_home`。
 - `[x]` 新创建员工不再依赖 `employees/<employee>/openclaw/...` 目录作为 profile source。
 - `[ ]` 旧员工启动后能迁移或映射到 profile，不丢会话。
-- `[ ]` 团队运行中的每个步骤绑定 profile，而不是只绑定文本 employee id。
+- `[x]` 团队运行中的每个步骤绑定 profile，而不是只绑定文本 employee id。2026-05-15 Phase 1 批次完成：team/group run step/session 持久化 `profile_id`，覆盖 start、reassign、review reject revision，并补齐 legacy SQLite 缺表/缺列 fallback 回归测试。
 - `[ ]` IM 路由能定位目标 profile。
 - `[ ]` Profile home 删除、重置、导出有明确交互和风险确认。
 

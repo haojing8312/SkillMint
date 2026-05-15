@@ -174,6 +174,7 @@ async fn create_agent_route_session(
             model_id: default_model_id,
             work_dir: employee.default_work_dir.trim(),
             employee_id: employee.employee_id.trim(),
+            profile_id: None,
         },
     )
     .await?;

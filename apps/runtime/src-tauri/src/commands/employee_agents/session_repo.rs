@@ -19,6 +19,7 @@ pub(crate) struct SessionSeedInput<'a> {
     pub model_id: &'a str,
     pub work_dir: &'a str,
     pub employee_id: &'a str,
+    pub profile_id: Option<&'a str>,
 }
 
 pub(crate) struct ThreadSessionLinkInput<'a> {
@@ -67,6 +68,16 @@ pub(crate) struct InboundEventLinkInput<'a> {
     pub im_event_id: &'a str,
     pub im_message_id: &'a str,
     pub created_at: &'a str,
+}
+
+async fn sessions_has_profile_id_column(pool: &SqlitePool) -> Result<bool, String> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'profile_id'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(count > 0)
 }
 
 async fn im_thread_sessions_has_conversation_column(pool: &SqlitePool) -> Result<bool, String> {
@@ -356,20 +367,38 @@ pub(crate) async fn insert_session_seed(
     pool: &SqlitePool,
     input: &SessionSeedInput<'_>,
 ) -> Result<(), String> {
-    sqlx::query(
-        "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id)
-         VALUES (?, ?, ?, ?, ?, 'standard', ?, ?)",
-    )
-    .bind(input.id)
-    .bind(input.skill_id)
-    .bind(input.title)
-    .bind(input.created_at)
-    .bind(input.model_id)
-    .bind(input.work_dir)
-    .bind(input.employee_id)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    if sessions_has_profile_id_column(pool).await? {
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id, profile_id)
+             VALUES (?, ?, ?, ?, ?, 'standard', ?, ?, ?)",
+        )
+        .bind(input.id)
+        .bind(input.skill_id)
+        .bind(input.title)
+        .bind(input.created_at)
+        .bind(input.model_id)
+        .bind(input.work_dir)
+        .bind(input.employee_id)
+        .bind(input.profile_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    } else {
+        sqlx::query(
+            "INSERT INTO sessions (id, skill_id, title, created_at, model_id, permission_mode, work_dir, employee_id)
+             VALUES (?, ?, ?, ?, ?, 'standard', ?, ?)",
+        )
+        .bind(input.id)
+        .bind(input.skill_id)
+        .bind(input.title)
+        .bind(input.created_at)
+        .bind(input.model_id)
+        .bind(input.work_dir)
+        .bind(input.employee_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

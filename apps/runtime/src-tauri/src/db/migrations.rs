@@ -396,6 +396,12 @@ pub(super) async fn apply_legacy_migrations(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await;
+    let _ = sqlx::query("ALTER TABLE group_run_steps ADD COLUMN assignee_profile_id TEXT")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE group_run_steps ADD COLUMN dispatch_source_profile_id TEXT")
+        .execute(pool)
+        .await;
     let _ = sqlx::query(
         "ALTER TABLE group_run_steps ADD COLUMN input_summary TEXT NOT NULL DEFAULT ''",
     )

@@ -275,6 +275,8 @@ pub struct EmployeeGroupRunStep {
     pub step_type: String,
     pub assignee_employee_id: String,
     pub dispatch_source_employee_id: String,
+    pub assignee_profile_id: Option<String>,
+    pub dispatch_source_profile_id: Option<String>,
     pub session_id: String,
     pub attempt_no: i64,
     pub status: String,

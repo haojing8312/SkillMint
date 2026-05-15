@@ -469,6 +469,8 @@ pub async fn setup_test_db() -> (SqlitePool, TempDir) {
             parent_step_id TEXT NOT NULL DEFAULT '',
             assignee_employee_id TEXT NOT NULL DEFAULT '',
             dispatch_source_employee_id TEXT NOT NULL DEFAULT '',
+            assignee_profile_id TEXT,
+            dispatch_source_profile_id TEXT,
             phase TEXT NOT NULL DEFAULT '',
             step_type TEXT NOT NULL DEFAULT 'execute',
             step_kind TEXT NOT NULL DEFAULT 'execute',

@@ -1,6 +1,6 @@
 use runtime_lib::agent::runtime::runtime_io::{
-    ProfileSessionManifestInput, ensure_profile_session_index_schema_with_pool,
-    index_profile_session_manifest_with_pool, write_profile_session_manifest,
+    ensure_profile_session_index_schema_with_pool, index_profile_session_manifest_with_pool,
+    write_profile_session_manifest, ProfileSessionManifestInput,
 };
 use runtime_lib::agent::tools::MemoryTool;
 use runtime_lib::agent::types::{Tool, ToolContext};
@@ -483,13 +483,12 @@ fn test_project_memory_versions_are_isolated_from_profile_versions() {
     assert_eq!(project_versions.as_array().unwrap().len(), 1);
     assert_eq!(project_versions[0]["scope"], "project");
     assert_eq!(project_versions[0]["target_key"], "workspace-a");
-    assert!(
-        dir.path()
-            .join("versions")
-            .join("projects")
-            .join("workspace-a")
-            .exists()
-    );
+    assert!(dir
+        .path()
+        .join("versions")
+        .join("projects")
+        .join("workspace-a")
+        .exists());
 
     let profile_versions_raw = tool.execute(json!({"action": "versions"}), &ctx).unwrap();
     let profile_versions: serde_json::Value = serde_json::from_str(&profile_versions_raw).unwrap();
@@ -611,14 +610,12 @@ fn test_im_memory_uses_separate_memory_dir() {
     assert!(result.contains("IM 记忆写入完成"));
 
     assert!(!profile_dir.path().join("roles").exists());
-    assert!(
-        im_dir
-            .path()
-            .join("roles")
-            .join("role-1")
-            .join("MEMORY.md")
-            .exists()
-    );
+    assert!(im_dir
+        .path()
+        .join("roles")
+        .join("role-1")
+        .join("MEMORY.md")
+        .exists());
 }
 
 #[test]

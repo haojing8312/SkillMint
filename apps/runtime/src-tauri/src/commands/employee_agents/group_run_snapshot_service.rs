@@ -83,6 +83,8 @@ fn map_group_run_step_snapshot(row: GroupRunStepSnapshotRow) -> super::super::Em
         step_type: row.step_type,
         assignee_employee_id: row.assignee_employee_id,
         dispatch_source_employee_id: row.dispatch_source_employee_id,
+        assignee_profile_id: row.assignee_profile_id,
+        dispatch_source_profile_id: row.dispatch_source_profile_id,
         session_id: row.session_id,
         attempt_no: row.attempt_no,
         status: row.status,

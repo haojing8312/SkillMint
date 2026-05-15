@@ -54,6 +54,8 @@ export interface EmployeeGroupRunStep {
   step_type: string;
   assignee_employee_id: string;
   dispatch_source_employee_id?: string;
+  assignee_profile_id?: string | null;
+  dispatch_source_profile_id?: string | null;
   session_id?: string;
   attempt_no?: number;
   status: "running" | "completed" | "failed" | string;

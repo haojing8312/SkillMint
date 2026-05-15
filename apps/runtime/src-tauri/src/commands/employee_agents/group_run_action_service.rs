@@ -4,7 +4,8 @@ use super::super::repo::{
     insert_plan_revision_step, list_failed_execute_assignees, list_failed_group_run_steps,
     mark_group_run_done_after_retry, mark_group_run_review_approved,
     mark_group_run_review_rejected, mark_review_step_completed,
-    reset_group_run_step_for_reassignment, update_group_run_after_reassignment,
+    reset_group_run_step_for_reassignment, resolve_real_profile_id_for_employee_alias,
+    update_group_run_after_reassignment,
 };
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -72,9 +73,18 @@ pub(crate) async fn reassign_group_run_step_with_pool(
         return Err("target employee is not eligible for execute reassignment".to_string());
     }
 
+    let assignee_profile_id =
+        resolve_real_profile_id_for_employee_alias(pool, &new_assignee).await?;
+
     let now = chrono::Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    reset_group_run_step_for_reassignment(&mut tx, step_id, &new_assignee).await?;
+    reset_group_run_step_for_reassignment(
+        &mut tx,
+        step_id,
+        &new_assignee,
+        assignee_profile_id.as_deref(),
+    )
+    .await?;
 
     let remaining_failed_assignees =
         list_failed_execute_assignees(&mut tx, &step_row.run_id).await?;
@@ -118,6 +128,7 @@ pub(crate) async fn reassign_group_run_step_with_pool(
         "step_reassigned",
         &serde_json::json!({
             "assignee_employee_id": new_assignee,
+            "assignee_profile_id": assignee_profile_id,
             "dispatch_source_employee_id": step_row.dispatch_source_employee_id,
             "previous_assignee_employee_id": step_row.previous_assignee_employee_id,
             "previous_output_summary": previous_output_summary,
@@ -176,7 +187,7 @@ pub(crate) async fn review_group_run_step_with_pool(
             revision_seed.assignee_employee_id.trim().to_lowercase()
         };
         let revision_step_id = Uuid::new_v4().to_string();
-        insert_plan_revision_step(
+        let revision_assignee_profile_id = insert_plan_revision_step(
             &mut tx,
             &revision_step_id,
             run_id,
@@ -217,6 +228,9 @@ pub(crate) async fn review_group_run_step_with_pool(
             &serde_json::json!({
                 "phase": "plan",
                 "step_type": "plan",
+                "assignee_employee_id": revision_assignee_employee_id,
+                "assignee_profile_id": revision_assignee_profile_id,
+                "dispatch_source_profile_id": Option::<String>::None,
                 "status": "pending",
             })
             .to_string(),

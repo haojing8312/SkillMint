@@ -152,12 +152,13 @@ pub(crate) fn build_group_run_execute_targets(
         return targets;
     }
 
+    let default_dispatch_source_employee_id = team_runtime_view.topology.coordinator_employee_id.clone();
     team_runtime_view
         .topology
         .executor_employee_ids
         .iter()
         .map(|employee_id| GroupRunExecuteTarget {
-            dispatch_source_employee_id: String::new(),
+            dispatch_source_employee_id: default_dispatch_source_employee_id.clone(),
             assignee_employee_id: employee_id.clone(),
         })
         .collect()
@@ -245,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn build_group_run_execute_targets_falls_back_to_topology_executors_when_rules_missing() {
+    fn build_group_run_execute_targets_falls_back_to_coordinator_dispatch_when_rules_missing() {
         let team_runtime_view = build_team_runtime_view(
             &[
                 employee("lead", "Lead"),
@@ -262,6 +263,6 @@ mod tests {
         let execute_targets = build_group_run_execute_targets(&team_runtime_view);
         assert_eq!(execute_targets.len(), 1);
         assert_eq!(execute_targets[0].assignee_employee_id, "worker");
-        assert!(execute_targets[0].dispatch_source_employee_id.is_empty());
+        assert_eq!(execute_targets[0].dispatch_source_employee_id, "lead");
     }
 }

@@ -40,6 +40,7 @@ pub(crate) struct GroupStepSessionRow {
 pub(crate) struct EmployeeSessionSeedRow {
     pub primary_skill_id: String,
     pub default_work_dir: String,
+    pub profile_id: Option<String>,
 }
 
 pub(crate) struct GroupRunStartConfigRow {
@@ -104,6 +105,8 @@ pub(crate) struct GroupRunStepSnapshotRow {
     pub step_type: String,
     pub assignee_employee_id: String,
     pub dispatch_source_employee_id: String,
+    pub assignee_profile_id: Option<String>,
+    pub dispatch_source_profile_id: Option<String>,
     pub session_id: String,
     pub attempt_no: i64,
     pub status: String,
@@ -187,18 +190,26 @@ pub(crate) async fn find_employee_session_seed_row(
     pool: &SqlitePool,
     employee_id: &str,
 ) -> Result<Option<EmployeeSessionSeedRow>, String> {
-    let row = sqlx::query(
-        "SELECT primary_skill_id, default_work_dir
+    let sql = if agent_profiles_has_legacy_employee_column(pool).await? {
+        "SELECT e.primary_skill_id, e.default_work_dir, NULLIF(TRIM(p.id), '') AS profile_id
+         FROM agent_employees e
+         LEFT JOIN agent_profiles p ON p.legacy_employee_row_id = e.id
+         WHERE lower(e.employee_id) = lower(?) OR lower(e.role_id) = lower(?)
+         ORDER BY e.is_default DESC, e.updated_at DESC
+         LIMIT 1"
+    } else {
+        "SELECT primary_skill_id, default_work_dir, NULL AS profile_id
          FROM agent_employees
          WHERE lower(employee_id) = lower(?) OR lower(role_id) = lower(?)
          ORDER BY is_default DESC, updated_at DESC
-         LIMIT 1",
-    )
-    .bind(employee_id)
-    .bind(employee_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+         LIMIT 1"
+    };
+    let row = sqlx::query(sql)
+        .bind(employee_id)
+        .bind(employee_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(row.map(|record| EmployeeSessionSeedRow {
         primary_skill_id: record
@@ -207,7 +218,158 @@ pub(crate) async fn find_employee_session_seed_row(
         default_work_dir: record
             .try_get("default_work_dir")
             .expect("employee session seed default_work_dir"),
+        profile_id: record
+            .try_get("profile_id")
+            .expect("employee session seed profile_id"),
     }))
+}
+
+async fn agent_profiles_has_column(pool: &SqlitePool, column_name: &str) -> Result<bool, String> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('agent_profiles') WHERE name = ?",
+    )
+    .bind(column_name)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+async fn agent_profiles_has_legacy_employee_column(pool: &SqlitePool) -> Result<bool, String> {
+    agent_profiles_has_column(pool, "legacy_employee_row_id").await
+}
+
+async fn tx_agent_profiles_has_column(
+    tx: &mut Transaction<'_, Sqlite>,
+    column_name: &str,
+) -> Result<bool, String> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('agent_profiles') WHERE name = ?",
+    )
+    .bind(column_name)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+async fn tx_agent_profiles_has_legacy_employee_column(
+    tx: &mut Transaction<'_, Sqlite>,
+) -> Result<bool, String> {
+    tx_agent_profiles_has_column(tx, "legacy_employee_row_id").await
+}
+
+pub(crate) async fn resolve_real_profile_id_for_employee_alias(
+    pool: &SqlitePool,
+    employee_id: &str,
+) -> Result<Option<String>, String> {
+    let trimmed = employee_id.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    if !agent_profiles_has_column(pool, "id").await? {
+        return Ok(None);
+    }
+
+    if agent_profiles_has_legacy_employee_column(pool).await? {
+        let row = sqlx::query_as::<_, (String,)>(
+            "SELECT NULLIF(TRIM(p.id), '')
+             FROM agent_employees e
+             INNER JOIN agent_profiles p ON p.legacy_employee_row_id = e.id
+             WHERE TRIM(p.id) <> ''
+               AND (lower(e.employee_id) = lower(?) OR lower(e.role_id) = lower(?) OR lower(e.id) = lower(?))
+             ORDER BY e.is_default DESC, e.updated_at DESC
+             LIMIT 1",
+        )
+        .bind(trimmed)
+        .bind(trimmed)
+        .bind(trimmed)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        if let Some((profile_id,)) = row {
+            return Ok(Some(profile_id));
+        }
+    }
+
+    let by_profile_id = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM agent_profiles WHERE TRIM(id) <> '' AND id = ? LIMIT 1",
+    )
+    .bind(trimmed)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(by_profile_id.map(|(profile_id,)| profile_id))
+}
+
+async fn resolve_real_profile_id_for_employee_alias_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    employee_id: &str,
+) -> Result<Option<String>, String> {
+    let trimmed = employee_id.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    if !tx_agent_profiles_has_column(tx, "id").await? {
+        return Ok(None);
+    }
+
+    if tx_agent_profiles_has_legacy_employee_column(tx).await? {
+        let row = sqlx::query_as::<_, (String,)>(
+            "SELECT NULLIF(TRIM(p.id), '')
+             FROM agent_employees e
+             INNER JOIN agent_profiles p ON p.legacy_employee_row_id = e.id
+             WHERE TRIM(p.id) <> ''
+               AND (lower(e.employee_id) = lower(?) OR lower(e.role_id) = lower(?) OR lower(e.id) = lower(?))
+             ORDER BY e.is_default DESC, e.updated_at DESC
+             LIMIT 1",
+        )
+        .bind(trimmed)
+        .bind(trimmed)
+        .bind(trimmed)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        if let Some((profile_id,)) = row {
+            return Ok(Some(profile_id));
+        }
+    }
+
+    let by_profile_id = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM agent_profiles WHERE TRIM(id) <> '' AND id = ? LIMIT 1",
+    )
+    .bind(trimmed)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(by_profile_id.map(|(profile_id,)| profile_id))
+}
+
+async fn group_run_steps_has_column(pool: &SqlitePool, column_name: &str) -> Result<bool, String> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('group_run_steps') WHERE name = ?",
+    )
+    .bind(column_name)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+async fn tx_group_run_steps_has_column(
+    tx: &mut Transaction<'_, Sqlite>,
+    column_name: &str,
+) -> Result<bool, String> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('group_run_steps') WHERE name = ?",
+    )
+    .bind(column_name)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(count > 0)
 }
 
 pub(crate) async fn find_recent_group_step_session_id(
@@ -437,26 +599,48 @@ pub(crate) async fn insert_plan_revision_step(
     revision_input: &str,
     comment: &str,
     next_review_round: i64,
-) -> Result<(), String> {
-    sqlx::query(
+) -> Result<Option<String>, String> {
+    let has_assignee_profile_column =
+        tx_group_run_steps_has_column(tx, "assignee_profile_id").await?;
+    let assignee_profile_id = if has_assignee_profile_column {
+        resolve_real_profile_id_for_employee_alias_tx(tx, revision_assignee_employee_id).await?
+    } else {
+        None
+    };
+    let assignee_profile_column = if has_assignee_profile_column {
+        ", assignee_profile_id"
+    } else {
+        ""
+    };
+    let assignee_profile_value = if has_assignee_profile_column {
+        ", ?"
+    } else {
+        ""
+    };
+    let sql = format!(
         "INSERT INTO group_run_steps (
-            id, run_id, round_no, parent_step_id, assignee_employee_id, phase, step_type, step_kind,
-            input, input_summary, output, output_summary, status, requires_review, review_status,
-            attempt_no, session_id, visibility, started_at, finished_at
-         ) VALUES (?, ?, ?, ?, ?, 'plan', 'plan', 'plan', ?, ?, '', '', 'pending', 1, 'pending', ?, '', 'internal', '', '')",
-    )
-    .bind(revision_step_id)
-    .bind(run_id)
-    .bind(0_i64)
-    .bind(review_step_id)
-    .bind(revision_assignee_employee_id)
-    .bind(revision_input)
-    .bind(comment)
-    .bind(next_review_round)
-    .execute(&mut **tx)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(())
+            id, run_id, round_no, parent_step_id, assignee_employee_id{assignee_profile_column},
+            phase, step_type, step_kind, input, input_summary, output, output_summary, status,
+            requires_review, review_status, attempt_no, session_id, visibility, started_at, finished_at
+         ) VALUES (?, ?, ?, ?, ?{assignee_profile_value}, 'plan', 'plan', 'plan', ?, ?, '', '', 'pending', 1, 'pending', ?, '', 'internal', '', '')"
+    );
+    let mut query = sqlx::query(&sql)
+        .bind(revision_step_id)
+        .bind(run_id)
+        .bind(0_i64)
+        .bind(review_step_id)
+        .bind(revision_assignee_employee_id);
+    if has_assignee_profile_column {
+        query = query.bind(assignee_profile_id.as_deref());
+    }
+    query
+        .bind(revision_input)
+        .bind(comment)
+        .bind(next_review_round)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(assignee_profile_id)
 }
 
 pub(crate) async fn mark_group_run_review_rejected(
@@ -626,6 +810,8 @@ pub(crate) async fn insert_group_run_step_seed(
     round_no: i64,
     assignee_employee_id: &str,
     dispatch_source_employee_id: &str,
+    assignee_profile_id: Option<&str>,
+    dispatch_source_profile_id: Option<&str>,
     phase: &str,
     step_type: &str,
     user_goal: &str,
@@ -635,41 +821,79 @@ pub(crate) async fn insert_group_run_step_seed(
     review_status: &str,
     now: &str,
 ) -> Result<(), String> {
-    sqlx::query(
+    let has_assignee_profile_column =
+        tx_group_run_steps_has_column(tx, "assignee_profile_id").await?;
+    let has_dispatch_source_profile_column =
+        tx_group_run_steps_has_column(tx, "dispatch_source_profile_id").await?;
+    let profile_columns = format!(
+        "{}{}",
+        if has_assignee_profile_column {
+            ", assignee_profile_id"
+        } else {
+            ""
+        },
+        if has_dispatch_source_profile_column {
+            ", dispatch_source_profile_id"
+        } else {
+            ""
+        }
+    );
+    let profile_values = format!(
+        "{}{}",
+        if has_assignee_profile_column {
+            ", ?"
+        } else {
+            ""
+        },
+        if has_dispatch_source_profile_column {
+            ", ?"
+        } else {
+            ""
+        }
+    );
+    let sql = format!(
         "INSERT INTO group_run_steps (
-            id, run_id, round_no, parent_step_id, assignee_employee_id, dispatch_source_employee_id,
+            id, run_id, round_no, parent_step_id, assignee_employee_id, dispatch_source_employee_id{profile_columns},
             phase, step_type, step_kind, input, input_summary, output, output_summary, status,
             requires_review, review_status, attempt_no, session_id, visibility, started_at, finished_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(step_id)
-    .bind(run_id)
-    .bind(round_no)
-    .bind("")
-    .bind(assignee_employee_id)
-    .bind(dispatch_source_employee_id)
-    .bind(phase)
-    .bind(step_type)
-    .bind(step_type)
-    .bind(user_goal)
-    .bind(if step_type == "plan" {
-        "已生成结构化计划"
-    } else {
-        ""
-    })
-    .bind(output)
-    .bind(output)
-    .bind(status)
-    .bind(if requires_review { 1_i64 } else { 0_i64 })
-    .bind(review_status)
-    .bind(0_i64)
-    .bind("")
-    .bind("internal")
-    .bind(now)
-    .bind(now)
-    .execute(&mut **tx)
-    .await
-    .map_err(|e| e.to_string())?;
+         ) VALUES (?, ?, ?, ?, ?, ?{profile_values}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    let mut query = sqlx::query(&sql)
+        .bind(step_id)
+        .bind(run_id)
+        .bind(round_no)
+        .bind("")
+        .bind(assignee_employee_id)
+        .bind(dispatch_source_employee_id);
+    if has_assignee_profile_column {
+        query = query.bind(assignee_profile_id);
+    }
+    if has_dispatch_source_profile_column {
+        query = query.bind(dispatch_source_profile_id);
+    }
+    query
+        .bind(phase)
+        .bind(step_type)
+        .bind(step_type)
+        .bind(user_goal)
+        .bind(if step_type == "plan" {
+            "已生成结构化计划"
+        } else {
+            ""
+        })
+        .bind(output)
+        .bind(output)
+        .bind(status)
+        .bind(if requires_review { 1_i64 } else { 0_i64 })
+        .bind(review_status)
+        .bind(0_i64)
+        .bind("")
+        .bind("internal")
+        .bind(now)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -799,24 +1023,47 @@ pub(crate) async fn reset_group_run_step_for_reassignment(
     tx: &mut Transaction<'_, Sqlite>,
     step_id: &str,
     assignee_employee_id: &str,
+    assignee_profile_id: Option<&str>,
 ) -> Result<(), String> {
-    sqlx::query(
-        "UPDATE group_run_steps
-         SET assignee_employee_id = ?,
-             status = 'pending',
-             output = '',
-             output_summary = '',
-             session_id = '',
-             started_at = '',
-             finished_at = '',
-             attempt_no = attempt_no + 1
-         WHERE id = ?",
-    )
-    .bind(assignee_employee_id)
-    .bind(step_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(|e| e.to_string())?;
+    if tx_group_run_steps_has_column(tx, "assignee_profile_id").await? {
+        sqlx::query(
+            "UPDATE group_run_steps
+             SET assignee_employee_id = ?,
+                 assignee_profile_id = ?,
+                 status = 'pending',
+                 output = '',
+                 output_summary = '',
+                 session_id = '',
+                 started_at = '',
+                 finished_at = '',
+                 attempt_no = attempt_no + 1
+             WHERE id = ?",
+        )
+        .bind(assignee_employee_id)
+        .bind(assignee_profile_id)
+        .bind(step_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    } else {
+        sqlx::query(
+            "UPDATE group_run_steps
+             SET assignee_employee_id = ?,
+                 status = 'pending',
+                 output = '',
+                 output_summary = '',
+                 session_id = '',
+                 started_at = '',
+                 finished_at = '',
+                 attempt_no = attempt_no + 1
+             WHERE id = ?",
+        )
+        .bind(assignee_employee_id)
+        .bind(step_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -1305,18 +1552,30 @@ pub(crate) async fn list_group_run_step_snapshot_rows(
     pool: &SqlitePool,
     run_id: &str,
 ) -> Result<Vec<GroupRunStepSnapshotRow>, String> {
-    let rows = sqlx::query(
+    let assignee_profile_expr = if group_run_steps_has_column(pool, "assignee_profile_id").await? {
+        "assignee_profile_id"
+    } else {
+        "NULL"
+    };
+    let dispatch_source_profile_expr =
+        if group_run_steps_has_column(pool, "dispatch_source_profile_id").await? {
+            "dispatch_source_profile_id"
+        } else {
+            "NULL"
+        };
+    let sql = format!(
         "SELECT id, round_no, step_type, assignee_employee_id,
-                COALESCE(dispatch_source_employee_id, ''), COALESCE(session_id, ''),
-                COALESCE(attempt_no, 1), status, COALESCE(output_summary, ''), output
+                COALESCE(dispatch_source_employee_id, ''), {assignee_profile_expr}, {dispatch_source_profile_expr},
+                COALESCE(session_id, ''), COALESCE(attempt_no, 1), status, COALESCE(output_summary, ''), output
          FROM group_run_steps
          WHERE run_id = ?
-         ORDER BY round_no ASC, started_at ASC, id ASC",
-    )
-    .bind(run_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+         ORDER BY round_no ASC, started_at ASC, id ASC"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(run_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(rows
         .into_iter()
         .map(|row| GroupRunStepSnapshotRow {
@@ -1327,11 +1586,15 @@ pub(crate) async fn list_group_run_step_snapshot_rows(
                 .try_get("assignee_employee_id")
                 .expect("step snapshot assignee"),
             dispatch_source_employee_id: row.try_get(4).expect("step snapshot dispatch_source"),
-            session_id: row.try_get(5).expect("step snapshot session_id"),
-            attempt_no: row.try_get(6).expect("step snapshot attempt_no"),
-            status: row.try_get(7).expect("step snapshot status"),
-            output_summary: row.try_get(8).expect("step snapshot output_summary"),
-            output: row.try_get(9).expect("step snapshot output"),
+            assignee_profile_id: row.try_get(5).expect("step snapshot assignee_profile_id"),
+            dispatch_source_profile_id: row
+                .try_get(6)
+                .expect("step snapshot dispatch_source_profile_id"),
+            session_id: row.try_get(7).expect("step snapshot session_id"),
+            attempt_no: row.try_get(8).expect("step snapshot attempt_no"),
+            status: row.try_get(9).expect("step snapshot status"),
+            output_summary: row.try_get(10).expect("step snapshot output_summary"),
+            output: row.try_get(11).expect("step snapshot output"),
         })
         .collect())
 }

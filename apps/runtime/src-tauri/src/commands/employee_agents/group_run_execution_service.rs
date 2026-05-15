@@ -3,7 +3,7 @@ use super::super::repo::{
     find_group_step_session_row, find_model_config_row, find_recent_group_step_session_id,
     insert_group_run_event, insert_group_run_record, insert_group_run_step_seed,
     insert_session_message, insert_session_seed, insert_tx_session_message,
-    list_session_message_rows, SessionSeedInput,
+    list_session_message_rows, resolve_real_profile_id_for_employee_alias, SessionSeedInput,
 };
 use super::super::{EmployeeGroupRunResult, StartEmployeeGroupRunInput};
 use super::{get_employee_group_run_snapshot_by_run_id_with_pool, list_agent_employees_with_pool};
@@ -110,7 +110,11 @@ async fn resolve_group_step_memory_binding(
             memory_dir: legacy_group_step_memory_dir(work_dir, employee_id, skill_id),
             profile_id: None,
         }),
-        Err(error) if error.to_string().contains("no such table: agent_profiles") => {
+        Err(error)
+            if error.to_string().contains("no such table: agent_profiles")
+                || (error.to_string().contains("no such column")
+                    && error.to_string().contains("legacy_employee_row_id")) =>
+        {
             Ok(GroupStepMemoryBinding {
                 memory_dir: legacy_group_step_memory_dir(work_dir, employee_id, skill_id),
                 profile_id: None,
@@ -489,6 +493,7 @@ pub(crate) async fn ensure_group_run_session_with_pool(
             model_id: &model_id,
             work_dir: &employee_row.default_work_dir,
             employee_id: coordinator_employee_id,
+            profile_id: employee_row.profile_id.as_deref(),
         },
     )
     .await?;
@@ -547,6 +552,7 @@ pub(crate) async fn ensure_group_step_session_with_pool(
             model_id: &model_id,
             work_dir: &employee_row.default_work_dir,
             employee_id: assignee_employee_id,
+            profile_id: employee_row.profile_id.as_deref(),
         },
     )
     .await?;
@@ -628,6 +634,21 @@ pub(crate) async fn start_employee_group_run_internal_with_pool(
         .unwrap_or(config.coordinator_employee_id.as_str())
         .to_string();
 
+    let mut profile_bound_steps = Vec::new();
+    for step in plan.steps {
+        let dispatch_source_employee_id = step.dispatch_source_employee_id.clone();
+        let assignee_profile_id =
+            resolve_real_profile_id_for_employee_alias(pool, &step.assignee_employee_id).await?;
+        let dispatch_source_profile_id =
+            resolve_real_profile_id_for_employee_alias(pool, &dispatch_source_employee_id).await?;
+        profile_bound_steps.push((
+            step,
+            dispatch_source_employee_id,
+            assignee_profile_id,
+            dispatch_source_profile_id,
+        ));
+    }
+
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     insert_group_run_record(
         &mut tx,
@@ -660,9 +681,10 @@ pub(crate) async fn start_employee_group_run_internal_with_pool(
         .await?;
     }
 
-    for step in plan.steps {
+    for (step, dispatch_source_employee_id, assignee_profile_id, dispatch_source_profile_id) in
+        profile_bound_steps
+    {
         let step_id = Uuid::new_v4().to_string();
-        let dispatch_source_employee_id = step.dispatch_source_employee_id.clone();
         insert_group_run_step_seed(
             &mut tx,
             &run_id,
@@ -670,6 +692,8 @@ pub(crate) async fn start_employee_group_run_internal_with_pool(
             step.round_no,
             &step.assignee_employee_id,
             &dispatch_source_employee_id,
+            assignee_profile_id.as_deref(),
+            dispatch_source_profile_id.as_deref(),
             &step.phase,
             &step.step_type,
             &user_goal,
@@ -690,6 +714,8 @@ pub(crate) async fn start_employee_group_run_internal_with_pool(
                 "step_type": step.step_type,
                 "assignee_employee_id": step.assignee_employee_id,
                 "dispatch_source_employee_id": dispatch_source_employee_id,
+                "assignee_profile_id": assignee_profile_id,
+                "dispatch_source_profile_id": dispatch_source_profile_id,
                 "status": step.status
             })
             .to_string(),

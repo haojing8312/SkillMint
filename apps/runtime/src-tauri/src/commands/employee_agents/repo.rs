@@ -29,6 +29,7 @@ pub(super) use group_run_repo::{
     get_group_run_session_id, insert_group_run_assistant_message, insert_group_run_event,
     insert_group_run_record, insert_group_run_step_seed, insert_plan_revision_step,
     insert_session_message, insert_tx_session_message, list_failed_execute_assignees,
+    resolve_real_profile_id_for_employee_alias,
     list_failed_group_run_steps, list_group_run_event_snapshot_rows,
     list_group_run_execute_outputs, list_group_run_step_snapshot_rows,
     list_pending_execute_step_ids, list_session_message_rows, load_group_run_blocking_counts,

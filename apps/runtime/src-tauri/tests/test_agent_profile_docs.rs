@@ -1,12 +1,12 @@
 mod helpers;
 
 use runtime_lib::commands::agent_profile::{
-    AgentProfileAnswerInput, AgentProfilePayload, apply_agent_profile_with_pool,
-    export_agent_profile_with_pool, generate_agent_profile_draft_with_pool,
-    get_agent_profile_files_with_pool,
+    apply_agent_profile_with_pool, export_agent_profile_with_pool,
+    generate_agent_profile_draft_with_pool, get_agent_profile_files_with_pool,
+    AgentProfileAnswerInput, AgentProfilePayload,
 };
 use runtime_lib::commands::employee_agents::{
-    UpsertAgentEmployeeInput, upsert_agent_employee_with_pool,
+    upsert_agent_employee_with_pool, UpsertAgentEmployeeInput,
 };
 
 #[tokio::test]
@@ -118,11 +118,10 @@ async fn apply_agent_profile_writes_canonical_instruction_files() {
         .expect("instructions artifact");
     assert!(instructions.exists);
     assert_eq!(instructions.file_count, 3);
-    assert!(
-        view.artifacts
-            .iter()
-            .any(|artifact| artifact.name == "memories" && artifact.exists)
-    );
+    assert!(view
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.name == "memories" && artifact.exists));
 }
 
 #[tokio::test]
@@ -381,9 +380,7 @@ async fn export_agent_profile_writes_profile_home_artifact_zip() {
     assert!(names.iter().any(|name| name == "PROFILE_EXPORT.json"));
     assert!(names.iter().any(|name| name == "instructions/RULES.md"));
     assert!(names.iter().any(|name| name == "memories/MEMORY.md"));
-    assert!(
-        names
-            .iter()
-            .any(|name| name == "curator/reports/curator-run.json")
-    );
+    assert!(names
+        .iter()
+        .any(|name| name == "curator/reports/curator-run.json"));
 }

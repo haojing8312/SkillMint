@@ -135,6 +135,8 @@ async fn team_template_runtime_columns_exist_on_group_tables() {
     let group_run_step_columns = table_columns(&pool, "group_run_steps").await;
     for required in [
         "parent_step_id",
+        "assignee_profile_id",
+        "dispatch_source_profile_id",
         "phase",
         "step_kind",
         "requires_review",
